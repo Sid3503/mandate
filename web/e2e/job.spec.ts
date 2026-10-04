@@ -25,6 +25,13 @@ async function amount(page: Page, dollars: string) {
 
 test.describe.configure({ mode: 'serial' })
 
+// The welcome tour opens by itself on a first visit and would cover the page, so every test starts as a returning visitor.
+// Tests tagged @tour start as a first-time visitor instead.
+test.beforeEach(async ({ page }) => {
+  if (test.info().title.includes('@tour')) return
+  await page.addInitScript(() => localStorage.setItem('mandate.tour.welcome', '1'))
+})
+
 test('the frozen job, end to end, from the owner console', async ({ page }) => {
   const job = `job_northwind_logo_${test.info().project.name}`
   await shots(page, '00-blank').catch(() => undefined)
@@ -275,6 +282,83 @@ test('an owner can cancel a locked payout before it is sent', async ({ page, req
   await page.getByRole('button', { name: 'Cancel this payout' }).click()
   await expect(page.locator('.page-head .chip').first()).toHaveText('Rejected')
   await expect(page.locator('.payout-status')).toHaveCount(0)
+})
+
+test('a first-time visitor is walked through the console, and it stays out of the way afterwards @tour', async ({ page }) => {
+  await page.goto('/app/')
+  await page.getByLabel('API key').fill(OWNER)
+  await page.getByRole('button', { name: 'Unlock console' }).click()
+  const tour = page.getByRole('dialog')
+  await expect(tour).toContainText('Welcome to Mandate')
+  await expect(tour).toContainText(/Step 1 of \d+/)
+  await shots(page, '20-tour-welcome')
+
+  await page.keyboard.press('ArrowRight')
+  await expect(tour).toContainText('How one payment moves')
+  await page.keyboard.press('ArrowRight')
+  await expect(tour).toContainText('Waiting for you')
+  await expect(page.locator('.tour-spot')).toBeVisible()
+  await shots(page, '21-tour-spotlight')
+
+  await page.keyboard.press('ArrowLeft')
+  await expect(tour).toContainText('How one payment moves')
+  await page.keyboard.press('Escape')
+  await expect(tour).toHaveCount(0)
+
+  // Leaving once is remembered: a reload does not bring it back.
+  await page.reload()
+  await expect(page.getByRole('heading', { name: /Waiting for you/ })).toBeVisible()
+  await page.waitForTimeout(1200)
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+
+  // It can always be reopened, from the Guide button or the full tour.
+  await page.getByRole('button', { name: /Guide/ }).click()
+  await expect(page.getByRole('dialog')).toContainText('Waiting for you')
+  await page.keyboard.press('Escape')
+})
+
+test('every screen has a guide that walks to its last step', async ({ page }) => {
+  await unlock(page, OWNER)
+  const screens = ['/app/', '/app/new', '/app/jobs', '/app/ledger', '/app/rules', '/app/system']
+  for (const path of screens) {
+    await page.goto(path)
+    await page.waitForLoadState('networkidle')
+    await page.getByRole('button', { name: /Guide/ }).click()
+    const tour = page.getByRole('dialog')
+    await expect(tour).toBeVisible()
+    const total = Number(/of (\d+)/i.exec((await tour.locator('.tour-count').textContent()) ?? '')?.[1])
+    expect(total).toBeGreaterThan(1)
+    for (let step = 1; step < total; step++) {
+      await tour.getByRole('button', { name: 'Next' }).click()
+      await expect(tour.locator('.tour-count')).toHaveText(`Step ${step + 1} of ${total}`)
+      // A step that points at something must have found it: no card stranded in the middle of the page.
+      const title = await tour.locator('.tour-title').innerText()
+      if (!/payment moves|Welcome/i.test(title)) {
+        await expect(page.locator('.tour-spot'), `${path}: ${title}`).toBeVisible()
+        await expect(page.locator('.tour-spot'), `${path}: ${title} is faded out`).toHaveCSS('opacity', '1')
+      }
+    }
+    if (path === '/app/new') await shots(page, '22-tour-new-request')
+    if (path === '/app/') await shots(page, '23-tour-inbox')
+    await tour.getByRole('button', { name: 'Done' }).click()
+    await expect(tour).toHaveCount(0)
+  }
+})
+
+test('a receipt has a guide, and the open tour passes axe', async ({ page, request }) => {
+  const asked = await (await request.post('/v1/proposals', {
+    headers: { authorization: `Bearer ${OWNER}`, 'idempotency-key': `tour-receipt-${test.info().project.name}-0001` },
+    data: { kind: 'charge', payee: 'Northwind', amountCents: 15000, currency: 'USD', category: 'design', description: 'Tour receipt', evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: 'job_tour_receipt' },
+  })).json()
+  await unlock(page, OWNER)
+  await page.goto(`/app/p/${asked.id}`)
+  await page.getByRole('button', { name: /Guide/ }).click()
+  const tour = page.getByRole('dialog')
+  await expect(tour).toContainText('The decision')
+  await shots(page, '24-tour-receipt')
+  const { default: AxeBuilder } = await import('@axe-core/playwright')
+  const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
+  expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
 })
 
 test('a proposer key can ask but never approve', async ({ page }) => {

@@ -136,6 +136,7 @@ h1, h2, h3 { margin: 0; }
 .panel { background: var(--surface); border: 1.5px solid var(--ink); padding: 22px; display: grid; gap: 14px; align-content: start; }
 .panel-ink { background: var(--ink); color: var(--paper); }
 .panel-ink .fine { color: #b6af9f; }
+.panel-ink .muted { color: #b6af9f; }
 .panel-ink .panel-title { color: var(--lime); }
 .panel-lime { background: var(--lime-soft); box-shadow: var(--shadow); }
 .kvs { display: grid; gap: 0; }
@@ -402,6 +403,40 @@ h1, h2, h3 { margin: 0; }
   .payouts li a .chip { display: none; }
   .check { padding-top: 0; }
   .hide-phone { display: none; }
+}
+
+/* ---------- guide + product tour ---------- */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.rail-tour { justify-self: start; color: var(--lime); text-align: left; }
+.guide-btn { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 5px 11px; border: 2px solid var(--ink); background: var(--surface); font: 700 12px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; cursor: pointer; transition: transform 0.08s ease, box-shadow 0.08s ease; }
+.guide-btn:hover { transform: translate(-1px, -1px); box-shadow: var(--shadow-s); }
+.guide-btn:active { transform: translate(1px, 1px); box-shadow: none; }
+.guide-dot { position: absolute; top: -6px; right: -6px; width: 12px; height: 12px; border: 2px solid var(--ink); background: var(--lime); border-radius: 50%; animation: pulse 1.6s ease-in-out infinite; }
+
+.tour-layer { position: fixed; inset: 0; z-index: 1000; }
+.tour-click, .tour-dim { position: absolute; inset: 0; }
+.tour-dim { background: rgba(5, 5, 5, 0.66); pointer-events: none; }
+.tour-spot { position: absolute; pointer-events: none; border: 3px solid var(--lime); outline: 2px solid var(--ink); box-shadow: 0 0 0 9999px rgba(5, 5, 5, 0.66); }
+.tour-card { position: absolute; width: 340px; max-width: calc(100vw - 24px); background: var(--surface); border: 2px solid var(--ink); box-shadow: var(--shadow); padding: 18px 18px 16px; display: grid; gap: 12px; }
+.tour-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.tour-count { font: 700 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); }
+.tour-x { display: grid; place-items: center; width: 32px; height: 32px; margin: -6px -6px -6px 0; border: 0; background: transparent; cursor: pointer; }
+.tour-x:hover { background: var(--lime); }
+.tour-title { font: 800 30px/0.98 var(--display); text-transform: uppercase; letter-spacing: -0.005em; padding-top: 0.04em; }
+.tour-body { font-size: 15px; line-height: 1.5; display: grid; gap: 10px; }
+.tour-body p { margin: 0; }
+.tour-hint { font: 600 12px/1.4 var(--mono); color: var(--mute); }
+.tour-list { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+ol.tour-list { padding-left: 22px; }
+.tour-list li::marker { font-weight: 800; }
+.tour-progress { display: flex; gap: 4px; }
+.tour-progress span { flex: 1; height: 7px; border: 1.5px solid var(--ink); background: var(--surface); }
+.tour-progress .done { background: var(--stone); }
+.tour-progress .on { background: var(--lime); }
+.tour-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 2px; }
+@media (max-width: 860px) {
+  .tour-title { font-size: 26px; }
+  .tour-card { padding: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

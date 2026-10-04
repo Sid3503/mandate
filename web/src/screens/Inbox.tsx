@@ -33,7 +33,7 @@ export function Inbox() {
       <ProblemCard error={proposals.error} />
 
       {proposals.data && waiting.length === 0 ? (
-        <Empty title="Nothing needs your tap">Requests at or above the automatic line land here. Everything else is settled or refused by the rules on its own.</Empty>
+        <div data-tour="empty"><Empty title="Nothing needs your tap">Requests at or above the automatic line land here. Everything else is settled or refused by the rules on its own.</Empty></div>
       ) : null}
 
       <div className="approvals">
@@ -50,7 +50,7 @@ export function Inbox() {
       </div>
 
       {ready.length > 0 ? (
-        <section className="section">
+        <section className="section" data-tour="ready">
           <h2 className="section-title">Approved requests · what happens next</h2>
           <div className="list">
             {ready.map((row) => <Row key={row.id} proposal={row} names={names} />)}
@@ -59,7 +59,7 @@ export function Inbox() {
       ) : null}
 
       {refused.length > 0 ? (
-        <section className="section">
+        <section className="section" data-tour="refused">
           <h2 className="section-title">Refused by the rules</h2>
           <div className="refusals">
             {refused.map((row) => (
@@ -112,7 +112,7 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   const disabled = !owner || !online || approve.isPending || reject.isPending
 
   return (
-    <article className={`approval${locked ? ' is-locked' : ''}`} aria-live="polite">
+    <article className={`approval${locked ? ' is-locked' : ''}`} aria-live="polite" data-tour="approval">
       <header className="approval-head">
         <span className={`kind kind-${proposal.kind}`}>{kind.arrow} {kind.label}</span>
         <span className="muted small">{relative(proposal.createdAt)}</span>
@@ -129,7 +129,7 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
           <div><dt>Funded by</dt><dd>{funding ? <>{names(funding.payeeId)} <Money cents={funding.capturedAmountCents} size="sm" /> settled ✓</> : <span className="mono">{proposal.fundingCaptureId ?? 'none'}</span>}</dd></div>
         ) : null}
         {proposal.jobId ? <div className="opt"><dt>Job</dt><dd><Link to={`/jobs/${proposal.jobId}`} className="mono">{proposal.jobId}</Link></dd></div> : null}
-        <div><dt>Why you?</dt><dd>{why}</dd></div>
+        <div data-tour="approval-why"><dt>Why you?</dt><dd>{why}</dd></div>
         {proposal.prompt ? <div className="opt"><dt>Asked as</dt><dd className="quote">“{proposal.prompt}”</dd></div> : null}
       </dl>
 
@@ -143,7 +143,7 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
         </div>
       ) : (
         <div className="approval-actions">
-          <button type="button" className="btn btn-lime btn-big" disabled={disabled} onClick={() => approve.mutate()}>
+          <button type="button" className="btn btn-lime btn-big" data-tour="approve" disabled={disabled} onClick={() => approve.mutate()}>
             {approve.isPending ? 'Locking…' : <>Approve <span className="money">{dollars(proposal.amountCents, proposal.currency)}</span></>}
           </button>
           <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => reject.mutate()}>{reject.isPending ? 'Rejecting…' : 'Reject'}</button>

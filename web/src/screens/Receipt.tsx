@@ -30,7 +30,7 @@ export function Receipt() {
 
       <div className="receipt-grid">
         <div className="stack-l">
-          <section className="panel">
+          <section className="panel" data-tour="receipt-decision">
             <div className="row between"><h2 className="panel-title">The decision</h2><GateChip gate={p.gate} /></div>
             <p className="decision-words">{explain(p.clause, p, warrant, names)}</p>
             <p className="server-words"><span>Server · {p.clause}</span>{p.detail}</p>
@@ -39,7 +39,7 @@ export function Receipt() {
 
           {isPayout(p) ? <PayoutPanel packet={data} warrant={warrant} names={names} /> : <Settle packet={data} warrant={warrant} names={names} />}
 
-          <section className="panel">
+          <section className="panel" data-tour="receipt-asked">
             <h2 className="panel-title">What was asked</h2>
             {data.prompt ? <p className="quote big">“{data.prompt}”</p> : <p className="muted">No sentence was recorded.</p>}
             <div className="kvs">
@@ -55,7 +55,7 @@ export function Receipt() {
         </div>
 
         <div className="stack-l">
-          <section className="panel panel-ink">
+          <section className="panel panel-ink" data-tour="receipt-lock">
             <h2 className="panel-title">The lock</h2>
             <Hash value={p.cartHash} full />
             <p className="fine">SHA-256 over payee, cents, currency, category, proof{p.jobId ? ', job' : ''}{p.fundingCaptureId ? ' and funding capture' : ''}. Settlement recomputes it and refuses on any difference.</p>
@@ -67,7 +67,7 @@ export function Receipt() {
           </section>
 
           {data.funding ? (
-            <section className="panel">
+            <section className="panel" data-tour="receipt-funding">
               <h2 className="panel-title">Funded by</h2>
               <div className="kvs">
                 <KV label="Client">{names(data.funding.clientId)}</KV>
@@ -79,7 +79,7 @@ export function Receipt() {
             </section>
           ) : null}
 
-          <section className="panel">
+          <section className="panel" data-tour="receipt-paypal">
             <h2 className="panel-title">PayPal</h2>
             <div className="kvs">
               {p.kind === 'payment' ? (
@@ -102,7 +102,7 @@ export function Receipt() {
             ) : null}
           </section>
 
-          <section className="panel">
+          <section className="panel" data-tour="receipt-timeline">
             <div className="row between"><h2 className="panel-title">Timeline</h2><DownloadReceipt packet={data} /></div>
             <Timeline events={data.events} />
           </section>
@@ -178,7 +178,7 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
   const refusal = tamper.error instanceof ApiError ? tamper.error : null
 
   return (
-    <section className="panel panel-lime">
+    <section className="panel panel-lime" data-tour="receipt-action">
       <div className="row between"><h2 className="panel-title">Settle with PayPal</h2><Chip tone="ink">{p.kind === 'refund' ? 'Payments v2 refund' : 'Orders v2 · money in'}</Chip></div>
       <p>
         PayPal will be asked for exactly <strong>{dollars(p.amountCents, p.currency)}</strong>
@@ -276,7 +276,7 @@ function PayoutPanel({ packet, warrant, names }: { packet: Packet; warrant: Warr
   ]
 
   return (
-    <section className="panel panel-lime payout-status" aria-live="polite">
+    <section className="panel panel-lime payout-status" aria-live="polite" data-tour="receipt-action">
       <div className="row between"><h2 className="panel-title">{paid ? 'Paid' : unsent ? 'Send the payout' : 'Payout status'}</h2><Chip tone={chip.tone}>{chip.label}</Chip></div>
       {paid ? (
         <p className="payout-lead"><strong>{dollars(p.amountCents, p.currency)} reached {who}’s PayPal account{receiver ? ` (${receiver})` : ''}.</strong> PayPal confirmed it as SUCCESS and the cents match the lock.</p>

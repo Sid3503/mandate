@@ -184,7 +184,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 48 API tests (Vitest), plus 18 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 48 API tests (Vitest), plus 24 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -678,7 +678,7 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 
 ```bash
 cd api && npm test && npm run typecheck        # 48 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 18 Playwright tests (desktop 1440×960 and Pixel 7)
+cd web && npm run typecheck && npm run e2e     # 24 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 
 **API tests (`api/test/`)** cover:
@@ -719,6 +719,7 @@ cd web && npm run typecheck && npm run e2e     # 18 Playwright tests (desktop 14
 7. offline is read-only
 8. installability (manifest, icons, service worker scoped to `/app/`, no API responses in any cache)
 9. axe WCAG 2.1 AA on every signed-in screen (AG Grid internals excluded)
+10. the guided tour: a first-time visitor sees the welcome tour, leaving it is remembered, every screen's guide reaches its last step with a lit spotlight on every target, and a receipt with the tour open passes axe
 
 Screenshots are written to `web/e2e/shots/`.
 

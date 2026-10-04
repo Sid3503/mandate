@@ -113,7 +113,7 @@ export function NewRequest() {
       <PageHead eyebrow="New request · the rules decide, not this screen" title="Ask to move money" />
       <div className="new-grid">
         <form className="panel stack" onSubmit={submit} aria-describedby="new-help">
-          <fieldset className="segmented" aria-label="Kind">
+          <fieldset className="segmented" aria-label="Kind" data-tour="new-kind">
             {(['charge', 'payment', 'refund'] as Kind[]).map((value) => (
               <label key={value} className={kind === value ? 'on' : ''}>
                 <input type="radio" name="kind" value={value} checked={kind === value} onChange={() => { setKind(value); send.reset() }} />
@@ -123,7 +123,7 @@ export function NewRequest() {
           </fieldset>
 
           {kind === 'refund' ? (
-            <label className="field">
+            <label className="field" data-tour="new-party">
               <span>Refund which settled payment</span>
               <select value={parent} onChange={(event) => setParent(event.target.value)} required>
                 <option value="">Choose a settled payment</option>
@@ -131,7 +131,7 @@ export function NewRequest() {
               </select>
             </label>
           ) : (
-            <label className="field">
+            <label className="field" data-tour="new-party">
               <span>{kind === 'charge' ? 'Bill which client' : 'Pay whom'}</span>
               <select value={stranger !== null ? '__stranger__' : party} onChange={(event) => {
                 if (event.target.value === '__stranger__') setStranger('')
@@ -147,7 +147,7 @@ export function NewRequest() {
           ) : null}
 
           {kind === 'payment' ? (
-            <label className="field">
+            <label className="field" data-tour="new-funding">
               <span>Funded by which client payment</span>
               <select value={funding} onChange={(event) => setFunding(event.target.value)}>
                 <option value="">Choose a settled client payment</option>
@@ -163,12 +163,12 @@ export function NewRequest() {
           ) : null}
 
           <div className="field-row">
-            <label className="field">
+            <label className="field" data-tour="new-amount">
               <span>Amount</span>
               <span className="dollar-input big"><span>$</span><input inputMode="decimal" autoComplete="off" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="90.00" required /></span>
               <small className="mono">{cents === null ? 'Dollars and cents' : `= ${cents} cents`}</small>
             </label>
-            <label className="field">
+            <label className="field" data-tour="new-work">
               <span>Kind of work</span>
               <select value={category} onChange={(event) => setCategory(event.target.value)} disabled={kind === 'refund' && Boolean(parentRow)}>
                 {(warrant.data?.categories ?? []).map((item) => <option key={item} value={item}>{item}</option>)}
@@ -179,7 +179,7 @@ export function NewRequest() {
           </div>
 
           <label className="field"><span>What it is for</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === 'charge' ? 'Northwind logo milestone 1 invoice' : 'Northwind logo milestone 1'} required maxLength={500} /></label>
-          <label className="field"><span>Link to the work</span><input type="url" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} placeholder="https://www.figma.com/file/northwind-logo" /><small>The rules need an https link.</small></label>
+          <label className="field" data-tour="new-proof"><span>Link to the work</span><input type="url" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} placeholder="https://www.figma.com/file/northwind-logo" /><small>The rules need an https link.</small></label>
           {kind !== 'payment' ? (
             <label className="field">
               <span>Job</span>
@@ -187,16 +187,16 @@ export function NewRequest() {
               <datalist id="jobs">{jobIds.map((id) => <option key={id} value={id} />)}</datalist>
             </label>
           ) : jobId ? <p className="fine">Job <span className="mono">{jobId}</span>, taken from the client payment.</p> : null}
-          <label className="field"><span>How it was asked, in words</span><textarea rows={2} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Pay Priya her $90 share for Northwind milestone 1" maxLength={4000} /></label>
+          <label className="field" data-tour="new-prompt"><span>How it was asked, in words</span><textarea rows={2} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Pay Priya her $90 share for Northwind milestone 1" maxLength={4000} /></label>
 
           <div className="row between wrap gap-s">
             <span className="mono small muted" title="Sent as the Idempotency-Key header">Idempotency-Key {idem.slice(0, 18)}…</span>
-            <button type="submit" className="btn btn-lime btn-big" disabled={!input || !online || send.isPending}>{send.isPending ? 'Asking the rules…' : 'Ask the rules'}</button>
+            <button type="submit" className="btn btn-lime btn-big" data-tour="new-submit" disabled={!input || !online || send.isPending}>{send.isPending ? 'Asking the rules…' : 'Ask the rules'}</button>
           </div>
           <ProblemCard error={send.error} />
         </form>
 
-        <aside className="stack-l" id="new-help" aria-live="polite">
+        <aside className="stack-l" id="new-help" aria-live="polite" data-tour="new-side">
           {result ? (
             <section className={`panel answer answer-${result.gate.toLowerCase()}`}>
               <div className="row between"><span className="eyebrow">The rules answered</span><GateChip gate={result.gate} /></div>

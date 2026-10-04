@@ -18,7 +18,7 @@ export function Jobs() {
         <Link className="btn btn-ghost" to="/new?kind=charge">Bill a client</Link>
       </PageHead>
       {proposals.isLoading ? <Loading /> : null}
-      {proposals.data && ids.length === 0 ? <Empty title="No jobs yet">Bill a client for a job. Contractor payouts are funded from what that client actually paid.</Empty> : null}
+      {proposals.data && ids.length === 0 ? <div data-tour="empty"><Empty title="No jobs yet">Bill a client for a job. Contractor payouts are funded from what that client actually paid.</Empty></div> : null}
       <div className="job-cards">
         {jobs.map((query, index) => query.data ? <JobCard key={ids[index]} job={query.data} names={names} /> : <Loading key={ids[index]} />)}
       </div>
@@ -28,7 +28,7 @@ export function Jobs() {
 
 function JobCard({ job, names }: { job: Job; names: Names }) {
   return (
-    <Link to={`/jobs/${job.jobId}`} className="job-card">
+    <Link to={`/jobs/${job.jobId}`} className="job-card" data-tour="job-card">
       <div className="row between"><span className="mono small">{job.jobId}</span><span className="muted small">{job.charges.length} in · {job.payouts.length} out</span></div>
       <h3>{job.client?.displayName ?? names(job.charges[0]?.payeeId)}</h3>
       <Flow totals={job.totals} compact />
@@ -67,7 +67,7 @@ export function JobScreen() {
         <Link className="btn btn-ghost" to={`/new?kind=charge&job=${encodeURIComponent(data.jobId)}`}>Bill the next milestone</Link>
       </PageHead>
 
-      <section className="totals">
+      <section className="totals" data-tour="job-totals">
         <div className="total total-in"><span>Money in</span><Money cents={data.totals.inCents} size="xl" /></div>
         <div className="total total-out"><span>Money out</span><Money cents={data.totals.outCents} size="xl" /></div>
         <div className="total"><span>Approved · not yet paid</span><Money cents={data.totals.heldCents} size="xl" /></div>
@@ -80,7 +80,7 @@ export function JobScreen() {
         <h2 className="section-title">Client payments and what they fund</h2>
         <div className="stack-l">
           {data.charges.map((charge) => (
-            <article key={charge.id} className="charge">
+            <article key={charge.id} className="charge" data-tour="job-charge">
               <div className="charge-head">
                 <Link to={`/p/${charge.id}`} className="charge-main">
                   <span className="kind kind-charge">↘ In</span>
@@ -99,7 +99,7 @@ export function JobScreen() {
                 ) : <span className="muted">Not settled yet, so it funds nothing.</span>}
               </div>
               {payoutsFor(charge).length > 0 ? (
-                <ul className="payouts">
+                <ul className="payouts" data-tour="job-payouts">
                   {payoutsFor(charge).map((payout) => (
                     <li key={payout.id}>
                       <Link to={`/p/${payout.id}`}>

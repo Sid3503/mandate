@@ -2,14 +2,15 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useOnline, useProposals, useSession } from '../lib/hooks'
 import { session } from '../lib/session'
+import { GuideButton, GuideProvider, useGuide } from './GuidedTour'
 import { Chip } from './ui'
 
 const NAV = [
-  { to: '/', label: 'Waiting', icon: 'M4 5h16v14H4z M4 9h16', end: true },
-  { to: '/jobs', label: 'Jobs', icon: 'M4 7h16v12H4z M9 7V4h6v3' },
-  { to: '/new', label: 'Ask', icon: 'M12 5v14 M5 12h14' },
-  { to: '/ledger', label: 'Ledger', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16' },
-  { to: '/rules', label: 'Rules', icon: 'M6 4h12v16H6z M9 9h6 M9 13h6 M9 17h3' },
+  { to: '/', label: 'Waiting', tour: 'nav-waiting', icon: 'M4 5h16v14H4z M4 9h16', end: true },
+  { to: '/jobs', label: 'Jobs', tour: 'nav-jobs', icon: 'M4 7h16v12H4z M9 7V4h6v3' },
+  { to: '/new', label: 'Ask', tour: 'nav-new', icon: 'M12 5v14 M5 12h14' },
+  { to: '/ledger', label: 'Ledger', tour: 'nav-ledger', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16' },
+  { to: '/rules', label: 'Rules', tour: 'nav-rules', icon: 'M6 4h12v16H6z M9 9h6 M9 13h6 M9 17h3' },
 ]
 
 function Icon({ path }: { path: string }) {
@@ -33,6 +34,15 @@ export function Mark({ size = 28 }: { size?: number }) {
 }
 
 export function Shell() {
+  return (
+    <GuideProvider>
+      <ShellFrame />
+    </GuideProvider>
+  )
+}
+
+function ShellFrame() {
+  const guide = useGuide()
   const online = useOnline()
   const me = useSession()
   const proposals = useProposals()
@@ -51,7 +61,7 @@ export function Shell() {
         <div className="brand"><Mark /><span>Mandate</span></div>
         <nav className="rail-nav">
           {NAV.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.end} className="rail-link">
+            <NavLink key={item.to} to={item.to} end={item.end} className="rail-link" data-tour={item.tour}>
               <Icon path={item.icon} />
               <span>{item.label === 'Ask' ? 'New request' : item.label === 'Waiting' ? 'Waiting for you' : item.label}</span>
               {item.to === '/' && waiting > 0 ? <span className="badge">{waiting}</span> : null}
@@ -60,7 +70,8 @@ export function Shell() {
         </nav>
         <div className="rail-foot">
           <NavLink to="/system" className="rail-link small">System</NavLink>
-          <div className="who">
+          <button type="button" className="link rail-tour" onClick={() => guide.start('welcome')}>Full tour</button>
+          <div className="who" data-tour="keys">
             <span className="mono">{me.data?.role === 'owner' ? 'Owner key' : me.data?.role === 'proposer' ? 'Proposer key' : '…'}</span>
             <button type="button" className="link" onClick={lock}>Lock</button>
           </div>
@@ -72,6 +83,7 @@ export function Shell() {
         <header className="topbar">
           <div className="brand brand-mobile"><Mark size={24} /><span>Mandate</span></div>
           <div className="topbar-status">
+            <GuideButton />
             {me.data?.role === 'proposer' ? <Chip tone="need">Proposer · can ask, not approve</Chip> : null}
             {me.data ? <Chip tone={me.data.paypalConfigured ? 'auto' : 'muted'}>{me.data.paypalConfigured ? 'PayPal sandbox' : 'PayPal not set'}</Chip> : null}
             <NavLink to="/system" className="topbar-sys" aria-label="System">v{me.data?.version ?? '—'}</NavLink>
@@ -89,7 +101,7 @@ export function Shell() {
 
       <nav className="tabbar" aria-label="Main">
         {NAV.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.end} className="tab">
+          <NavLink key={item.to} to={item.to} end={item.end} className="tab" data-tour={item.tour}>
             <Icon path={item.icon} />
             <span>{item.label}</span>
             {item.to === '/' && waiting > 0 ? <span className="badge">{waiting}</span> : null}

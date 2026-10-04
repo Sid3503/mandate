@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
+import { useGuide } from '../components/GuidedTour'
 import { Chip, KV, Loading, PageHead } from '../components/ui'
 import { api } from '../lib/api'
 import { when } from '../lib/format'
@@ -10,6 +11,7 @@ export function System() {
   const health = useQuery({ queryKey: ['health'], queryFn: api.health })
   const ready = useQuery({ queryKey: ['ready'], queryFn: api.ready, refetchInterval: 20_000 })
   const me = useSession()
+  const guide = useGuide()
   const navigate = useNavigate()
   const client = useQueryClient()
   const lock = () => {
@@ -20,10 +22,11 @@ export function System() {
   return (
     <div className="page">
       <PageHead eyebrow="System" title="This server">
+        <button type="button" className="btn btn-ghost" onClick={() => guide.start('welcome')}>Take the full tour</button>
         <button type="button" className="btn btn-ghost" onClick={lock}>Lock console</button>
       </PageHead>
       <div className="rules-grid">
-        <section className="panel">
+        <section className="panel" data-tour="system-checks">
           <h2 className="panel-title">Checks</h2>
           {ready.isLoading ? <Loading /> : null}
           <ul className="checks">
@@ -38,7 +41,7 @@ export function System() {
           </ul>
           <p className="fine">Readiness only fails when the ledger cannot be read. Missing PayPal credentials are a warning: the rules still decide, nothing settles.</p>
         </section>
-        <section className="panel">
+        <section className="panel" data-tour="system-console">
           <h2 className="panel-title">This console</h2>
           <div className="kvs">
             <KV label="Key">{me.data?.role === 'owner' ? 'Owner · can approve, settle, change rules' : 'Proposer · can ask and read'}</KV>

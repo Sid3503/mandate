@@ -68,7 +68,7 @@ export function Eyebrow({ children }: { children: ReactNode }) {
 
 export function PageHead({ eyebrow, title, children }: { eyebrow: string; title: ReactNode; children?: ReactNode }) {
   return (
-    <header className="page-head">
+    <header className="page-head" data-tour="page-head">
       <div>
         <Eyebrow>{eyebrow}</Eyebrow>
         <h1>{title}</h1>

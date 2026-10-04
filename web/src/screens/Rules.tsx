@@ -54,20 +54,20 @@ export function Rules() {
   return (
     <div className="page">
       <PageHead eyebrow={`Rules · version ${current.version} is live`} title="The rules">
-        {owner && !editing ? <button type="button" className="btn btn-ink" onClick={() => setEditing(true)}>Write version {current.version + 1}</button> : null}
+        {owner && !editing ? <button type="button" className="btn btn-ink" data-tour="rules-write" onClick={() => setEditing(true)}>Write version {current.version + 1}</button> : null}
       </PageHead>
 
       {editing ? <Editor current={current} onDone={(version) => { setEditing(false); if (version) setSelected(version) }} /> : null}
 
       <div className="rules-grid">
-        <section className="panel">
+        <section className="panel" data-tour="rules-words">
           <div className="row between"><h2 className="panel-title">Version {shown.version} in plain words</h2>{shown.version === current.version ? <Chip tone="auto">live</Chip> : <Chip tone="muted">past</Chip>}</div>
           <ol className="rule-list">{ruleSentences(shown).map((line) => <li key={line}>{line}</li>)}</ol>
           <p className="fine">A request is always judged against the version live when it was asked. Publishing a new version never rewrites an open request.</p>
         </section>
 
         <aside className="stack-l">
-          <section className="panel">
+          <section className="panel" data-tour="rules-history">
             <h2 className="panel-title">History</h2>
             <ol className="versions">
               {list.map((item) => (
@@ -86,7 +86,7 @@ export function Rules() {
               ))}
             </ol>
           </section>
-          <section className="panel">
+          <section className="panel" data-tour="rules-diff">
             <h2 className="panel-title">{previous ? `What changed from v${previous.version}` : 'Starting rules'}</h2>
             <Changes changes={diff(previous ? body(previous) : null, body(shown))} first={!previous} />
           </section>

@@ -52,7 +52,7 @@ export function Ledger() {
   return (
     <div className="page page-wide">
       <PageHead eyebrow="Append-only · every attempt, including the refused ones" title="Ledger">
-        <div className="segmented small" role="tablist">
+        <div className="segmented small" role="tablist" data-tour="ledger-tabs">
           <button type="button" role="tab" aria-selected={tab === 'requests'} className={tab === 'requests' ? 'on' : ''} onClick={() => setTab('requests')}>Requests</button>
           <button type="button" role="tab" aria-selected={tab === 'events'} className={tab === 'events' ? 'on' : ''} onClick={() => setTab('events')}>Events</button>
         </div>
@@ -116,15 +116,15 @@ function Requests() {
   return (
     <>
       <div className="grid-tools">
-        <div className="chips-row" role="group" aria-label="Show">
+        <div className="chips-row" role="group" aria-label="Show" data-tour="ledger-filters">
           {PRESETS.map((item) => (
             <button key={item.id} type="button" className={`filter${preset === item.id ? ' on' : ''}`} onClick={() => setPreset(item.id)}>{item.label}</button>
           ))}
         </div>
-        <input className="search" type="search" placeholder="Search names, rules, jobs…" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search the ledger" />
+        <input className="search" data-tour="ledger-search" type="search" placeholder="Search names, rules, jobs…" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search the ledger" />
       </div>
       <ProblemCard error={proposals.error} />
-      <div className="grid-wrap" style={{ height: Math.min(680, 140 + rows.length * 62) }}>
+      <div className="grid-wrap" data-tour="ledger-grid" style={{ height: Math.min(680, 140 + rows.length * 62) }}>
         <AgGridReact<Proposal>
           theme={theme}
           rowData={rows}
@@ -141,7 +141,7 @@ function Requests() {
           overlayNoRowsTemplate="Nothing here yet."
         />
       </div>
-      <p className="grid-foot"><span>{rows.length} requests</span><span><strong>{dollars(refusedCents)}</strong> asked for and refused · PayPal never called for any of it</span></p>
+      <p className="grid-foot" data-tour="ledger-foot"><span>{rows.length} requests</span><span><strong>{dollars(refusedCents)}</strong> asked for and refused · PayPal never called for any of it</span></p>
     </>
   )
 }

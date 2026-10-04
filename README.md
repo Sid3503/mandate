@@ -50,7 +50,7 @@ To run against the real PayPal sandbox, see [Setup](docs/REFERENCE.md#running-ag
 ```
 
 - **Server:** `api/` is TypeScript, Hono, Zod and SQLite, with an OpenAPI contract, idempotency keys, and integer cents.
-- **Console:** `web/` is an installable React app at `/app/` with an AG Grid ledger. It works read-only offline and never caches money calls.
+- **Console:** `web/` is an installable React app at `/app/` with an AG Grid ledger. It works read-only offline and never caches money calls. A first-time visitor gets a guided tour, and every screen has a **Guide** button that walks through exactly what is on it.
 - **Two keys:** the owner key approves and settles. The proposer key, which an agent would hold, can only ask and read.
 - **Money out is Payouts, never Orders.** Checkout collects money for the studio, so it cannot pay a contractor. Pending, unclaimed and failed payouts are shown as such, never as paid.
 
@@ -68,7 +68,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-48 API tests, 18 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
+48 API tests, 24 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
 
 ## Where to read next
 

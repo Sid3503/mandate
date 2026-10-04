@@ -32,6 +32,16 @@ npm run build           # api serves web/dist at /app/
 npm run dev             # http://localhost:5173/app/
 ```
 
+## Guided tour
+
+The console teaches itself, because it is complex at first.
+
+- **First visit:** after unlocking, a 9-step welcome tour explains the one flow (ask, check, tap, pay, receipt) and points at the sidebar, the key and the Guide button. Leaving it with Esc or Skip is remembered in this browser (`localStorage`), so it never nags.
+- **Guide button (top right, with a lime dot until seen):** a walkthrough of the screen you are on: Waiting for you, New request, Jobs, a job, Ledger, Rules, a receipt, System. The sidebar **Full tour** link and System's **Take the full tour** replay the welcome tour.
+- **Keys:** → or Enter next, ← back, Esc leave. Focus stays inside the card and returns to where it was. Reduced motion is respected.
+- **Where it lives:** `src/components/ui/product-tour.tsx` is the generic component (spotlight, card, `useTour`). `src/components/GuidedTour.tsx` is the provider and the Guide button. `src/lib/tours.tsx` holds every script. A step points at an element with a `data-tour="…"` attribute. A step whose target is not on screen (an empty inbox has no approval card) is left out, so a guide never points at nothing.
+- **Adding a step:** put `data-tour="my-thing"` on the element, then add `{ target: '[data-tour="my-thing"]', title, content, placement }` to the right list in `tours.tsx`.
+
 ## Rules this app follows
 
 - **The API key lives in `sessionStorage`.** It is never bundled and never written to disk. Closing the tab locks the console.
