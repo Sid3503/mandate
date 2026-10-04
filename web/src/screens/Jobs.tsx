@@ -70,7 +70,7 @@ export function JobScreen() {
       <section className="totals">
         <div className="total total-in"><span>Money in</span><Money cents={data.totals.inCents} size="xl" /></div>
         <div className="total total-out"><span>Money out</span><Money cents={data.totals.outCents} size="xl" /></div>
-        <div className="total"><span>Held for payouts</span><Money cents={data.totals.heldCents} size="xl" /></div>
+        <div className="total"><span>Reserved for payouts</span><Money cents={data.totals.heldCents} size="xl" /></div>
         <div className="total total-kept"><span>Kept by the studio</span><Money cents={data.totals.keptCents} size="xl" /></div>
       </section>
       <Flow totals={data.totals} />
@@ -106,7 +106,7 @@ export function JobScreen() {
                         <span className="kind kind-payment">↗ Out</span>
                         <span>{names(payout.payeeId)}</span>
                         <Money cents={payout.amountCents} />
-                        <PhaseChip phase={payout.phase} />
+                        <PhaseChip phase={payout.phase} kind="payment" />
                       </Link>
                     </li>
                   ))}
@@ -122,7 +122,7 @@ export function JobScreen() {
           <h2 className="section-title">Payouts with nothing behind them</h2>
           <ul className="payouts">
             {unfunded.map((payout) => (
-              <li key={payout.id}><Link to={`/p/${payout.id}`}><span className="kind kind-payment">↗ Out</span><span>{names(payout.payeeId)}</span><Money cents={payout.amountCents} /><PhaseChip phase={payout.phase} /></Link></li>
+              <li key={payout.id}><Link to={`/p/${payout.id}`}><span className="kind kind-payment">↗ Out</span><span>{names(payout.payeeId)}</span><Money cents={payout.amountCents} /><PhaseChip phase={payout.phase} kind="payment" /></Link></li>
             ))}
           </ul>
         </section>

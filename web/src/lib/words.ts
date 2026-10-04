@@ -25,6 +25,11 @@ export const PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
   capture_refused: { label: 'Refused at PayPal', tone: 'deny' },
 }
 
+/** A contractor payout cannot use Orders checkout; its approved lock stays reserved until Payouts is connected. */
+export function awaitingPayoutRail(proposal: Pick<Proposal, 'kind' | 'phase'>): boolean {
+  return proposal.kind === 'payment' && (proposal.phase === 'locked' || proposal.phase === 'order_created' || proposal.phase === 'capture_inflight')
+}
+
 export const EVENT: Record<string, string> = {
   'proposal.created': 'Asked',
   'proposal.approved': 'Approved · lock signed',
@@ -83,7 +88,8 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
 /** Server problems that are not rule decisions, in plain words. */
 export function problemWords(code: string): string {
   switch (code) {
-    case 'paypal.buyer_pending': return 'PayPal is waiting for the buyer. Open the PayPal page, approve, then settle again.'
+    case 'paypal.buyer_pending': return 'The buyer has not approved the PayPal order. No capture has happened yet.'
+    case 'payout.unavailable': return 'Approved and reserved for the contractor, but not paid. Contractor Payouts is not connected; Orders checkout would pay the studio.'
     case 'paypal.unconfigured': return 'This server has no PayPal sandbox credentials, so it cannot settle.'
     case 'paypal.upstream': return 'PayPal rejected the call. Nothing moved. Use the debug id in the PayPal dashboard.'
     case 'auth.forbidden': return 'This key can ask and read. Only the owner key can approve, settle, or change the rules.'

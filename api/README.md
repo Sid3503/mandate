@@ -88,7 +88,7 @@ Northwind (`client_northwind`) is a client on the warrant. The warrant sets `fun
 - **Lock.** The job and the funding capture are part of the lock (cart v2).
 - **Job receipt.** `GET /v1/jobs/{jobId}` returns the charges, the payouts, the refunds, what each capture can still fund, and `totals` (`inCents`, `outCents`, `heldCents`, `keptCents`).
 
-Until the Payouts spike (step 3) lands, a payout settles through the same Orders route as before.
+Contractor payouts are **not** settled through Orders. An approved payout is locked and reserved (it counts in `heldCents` on the job receipt), and `POST /v1/proposals/:id/capture` returns `409 payout.unavailable` without calling PayPal, until the Payouts rail (step 3) exists. A payout that an older build opened an Orders checkout for is never captured, even if a buyer approves it. A claimed amount that differs from the lock still returns `cart.immutable` first.
 
 ## Scale
 

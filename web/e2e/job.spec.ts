@@ -103,28 +103,35 @@ test('the frozen job, end to end, from the owner console', async ({ page }) => {
   await page.screenshot({ path: `e2e/shots/${test.info().project.name}-05b-fold.png`, animations: 'disabled' })
   await payout.getByRole('button', { name: /Approve \$90\.00/ }).click()
   await expect(payout.getByText('Approved · locked')).toBeVisible()
+  await expect(payout).toContainText('not yet paid')
   await page.waitForTimeout(600)
   await shots(page, '06-priya-locked')
-  await payout.getByRole('link', { name: 'Settle →' }).click()
+  await payout.getByRole('link', { name: 'View payout status →' }).click()
+
+  // Money out is reserved, never sent through Orders checkout: say so, and offer no way to send it wrongly.
+  const status = page.locator('.payout-status')
+  await expect(status).toContainText('approved and reserved for Priya Shah, but it has not been sent')
+  await expect(status).toContainText('Reserved · not paid')
+  await expect(page.getByRole('button', { name: /Settle|Check PayPal/ })).toHaveCount(0)
+  await expect(page.getByRole('link', { name: 'Open PayPal ↗' })).toHaveCount(0)
+  await expect(page.locator('.match-flag')).toHaveText('reserved · not paid')
+  await shots(page, '07-payout-status')
 
   // A retry at $250 is refused: the lock is $90.
-  await page.getByText('Integrity check · try to settle a different amount').click()
+  await page.getByText('Integrity check · try to change the amount').click()
   await page.getByLabel('Claimed amount').fill('250')
   await page.getByRole('button', { name: 'Send claim' }).click()
   await expect(page.locator('.refused-claim')).toContainText('cart.immutable')
   await expect(page.locator('.refused-claim')).toContainText('$0 moved')
-  await shots(page, '07-receipt-refused-claim')
+  await shots(page, '08-receipt-refused-claim')
 
-  await page.getByRole('button', { name: /Settle \$90\.00/ }).click()
-  await expect(page.locator('.match-flag')).toHaveText('cents match ✓')
-  await expect(page.getByText('Funded by').first()).toBeVisible()
-  await shots(page, '08-receipt-settled')
-
-  // The job: $150 in, $90 out, $60 kept.
+  // The job: $150 in, $0 out, $90 reserved for Priya, $60 kept.
   await page.goto(`/app/jobs/${job}`)
   await expect(page.locator('.total-in')).toContainText('$150.00')
-  await expect(page.locator('.total-out')).toContainText('$90.00')
+  await expect(page.locator('.total-out')).toContainText('$0.00')
+  await expect(page.locator('.totals')).toContainText('Reserved for payouts')
   await expect(page.locator('.total-kept')).toContainText('$60.00')
+  await expect(page.locator('.payouts')).toContainText('Approved · awaiting Payouts')
   await shots(page, '09-job')
 
   // The ledger grid shows the refusals.
@@ -152,6 +159,33 @@ test('the frozen job, end to end, from the owner console', async ({ page }) => {
   await page.goto('/app/system')
   await expect(page.getByText('Owner · can approve, settle, change rules')).toBeVisible()
   await shots(page, '14-system')
+})
+
+test('a buyer who has not approved gets a clear "still waiting" answer, not a silent retry', async ({ page }) => {
+  await unlock(page, OWNER)
+  const answer = await ask(page, async () => {
+    await page.getByText('Money in').click()
+    await amount(page, '150')
+    await page.getByLabel('What it is for').fill('Northwind pending buyer')
+    await page.getByLabel('Link to the work').fill('https://www.figma.com/file/northwind-logo')
+    await page.getByLabel('Job').fill('job_pending_buyer')
+  })
+  await answer.getByRole('link', { name: 'Open receipt →' }).click()
+  await page.goto('/app/')
+  const card = page.locator('.approval').filter({ hasText: 'Northwind pending buyer' })
+  await card.getByRole('button', { name: /Approve/ }).click()
+  await card.getByRole('link', { name: 'Settle →' }).click()
+  await page.route('**/v1/proposals/*/capture', (route) => route.fulfill({
+    status: 409,
+    contentType: 'application/problem+json',
+    body: JSON.stringify({ code: 'paypal.buyer_pending', title: 'Buyer has not approved the PayPal order', status: 409, detail: 'Open the approve URL, then capture again.', approveUrl: 'https://www.sandbox.paypal.com/checkoutnow?token=TEST' }),
+  }))
+  await page.getByRole('button', { name: /Settle \$150\.00/ }).click()
+  await expect(page.locator('.still-waiting')).toContainText('nothing was captured and $0 moved')
+  await expect(page.locator('.still-waiting')).toContainText('Checked PayPal at')
+  await expect(page.getByRole('button', { name: 'Check PayPal and settle' })).toBeEnabled()
+  await expect(page.getByRole('link', { name: 'Open PayPal ↗' })).toBeVisible()
+  await shots(page, '16-buyer-pending')
 })
 
 test('a proposer key can ask but never approve', async ({ page }) => {

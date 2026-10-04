@@ -248,6 +248,22 @@ h1, h2, h3 { margin: 0; }
 .match-flag.ok { background: var(--lime); color: var(--ink); }
 .buyer { border: 1.5px dashed var(--ink); padding: 14px; display: grid; gap: 10px; background: var(--surface); }
 .buyer p { margin: 0; }
+.buyer .how { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.still-waiting { display: flex; gap: 12px; align-items: flex-start; border-top: 1.5px solid var(--ink); padding-top: 10px; font-size: 14px; }
+.still-waiting .chip { flex: none; }
+.payout-lead { margin: 0; font-size: 21px; line-height: 1.3; }
+.payout-status p { margin: 0; }
+.steps-list { list-style: none; margin: 0; padding: 0; display: grid; border: 1.5px solid var(--ink); background: var(--surface); }
+.steps-list li { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); align-items: start; }
+.steps-list li:last-child { border-bottom: 0; }
+.steps-list li > div { display: grid; gap: 2px; }
+.steps-list li > div span { font-size: 14px; color: var(--mute); }
+.steps-list li:not(.done):not(.now) { color: var(--mute); }
+.step-mark { width: 26px; height: 26px; border: 1.5px solid var(--ink); display: grid; place-items: center; font: 800 14px var(--mono); background: var(--surface); }
+.steps-list .done .step-mark { background: var(--lime); }
+.steps-list .now { background: var(--paper); }
+.steps-list .now .step-mark { background: var(--ink); color: var(--lime); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.45; } }
 .tamper { border-top: 1.5px solid var(--ink); padding-top: 12px; }
 .tamper summary { cursor: pointer; font: 700 12px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .tamper form { margin-top: 14px; align-items: flex-end; }

@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { ApiError } from '../lib/api'
 import { dollars } from '../lib/money'
-import { GATE, PHASE, problemWords } from '../lib/words'
-import type { Gate } from '../lib/types'
+import { awaitingPayoutRail, GATE, PHASE, problemWords } from '../lib/words'
+import type { Gate, Proposal } from '../lib/types'
 
 export function Chip({ tone = 'ink', children, title }: { tone?: 'deny' | 'auto' | 'need' | 'ink' | 'muted' | 'build'; children: ReactNode; title?: string }) {
   return <span className={`chip chip-${tone}`} title={title}>{children}</span>
@@ -13,8 +13,10 @@ export function GateChip({ gate }: { gate: Gate }) {
   return <Chip tone={info.tone}>{info.label}</Chip>
 }
 
-export function PhaseChip({ phase }: { phase: string }) {
-  const info = PHASE[phase] ?? { label: phase, tone: 'muted' as const }
+export function PhaseChip({ phase, kind }: { phase: string; kind?: Proposal['kind'] }) {
+  const info = kind && awaitingPayoutRail({ kind, phase })
+    ? { label: 'Approved · awaiting Payouts', tone: 'need' as const }
+    : PHASE[phase] ?? { label: phase, tone: 'muted' as const }
   return <Chip tone={info.tone}>{info.label}</Chip>
 }
 

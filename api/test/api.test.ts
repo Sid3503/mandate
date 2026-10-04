@@ -141,7 +141,7 @@ describe('dry runs', () => {
     expect(body.prompt).toBe('Buy the team lunch for $18')
   })
 
-  it('locks Priya at $90, refuses a $250 claim, then captures the locked amount once', async () => {
+  it('locks Priya at $90, refuses a $250 claim, and cannot open Orders to pay a contractor', async () => {
     const paypal = new FakePayPal()
     const { app } = harness({ paypal })
     const fundingCaptureId = await fund(app, paypal)
@@ -174,24 +174,27 @@ describe('dry runs', () => {
     expect(still.amountCents).toBe(9000)
 
     const captured = await app.request(`http://mandate.test/v1/proposals/${created.id}/capture`, { method: 'POST', headers: auth() })
-    expect(captured.status).toBe(200)
-    const done = await captured.json()
-    expect(done.phase).toBe('captured')
-    expect(done.captureId).toBeTruthy()
-    expect(done.capturedAmountCents).toBe(9000)
-    expect(paypal.captureCalls).toBe(2)
+    expect(captured.status).toBe(409)
+    expect(captured.headers.get('content-type')).toContain('application/problem+json')
+    const unavailable = await captured.json()
+    expect(unavailable.code).toBe('payout.unavailable')
+    expect(unavailable.lockedAmountCents).toBe(9000)
+    expect(paypal.orders.size).toBe(1) // Northwind's charge; no second order
+    expect(paypal.captureCalls).toBe(1)
 
     const replay = await app.request(`http://mandate.test/v1/proposals/${created.id}/capture`, { method: 'POST', headers: auth() })
-    expect(replay.status).toBe(200)
-    expect(paypal.captureCalls).toBe(2)
+    expect(replay.status).toBe(409)
+    expect((await replay.json()).code).toBe('payout.unavailable')
+    expect(paypal.orders.size).toBe(1)
+    expect(paypal.captureCalls).toBe(1)
 
     const packet = await (await app.request(`http://mandate.test/v1/proposals/${created.id}/packet`, { headers: auth() })).json()
     expect(packet.prompt).toContain('Northwind milestone 1')
     expect(packet.clause).toBe('amount.needs_approval')
     expect(packet.approval.type).toBe('proposal.approved')
-    expect(packet.amounts).toEqual({ approvedCents: 9000, capturedCents: 9000, match: true })
-    expect(packet.orderId).toBe(done.orderId)
-    expect(packet.captureId).toBe(done.captureId)
+    expect(packet.amounts).toEqual({ approvedCents: 9000, capturedCents: null, match: null })
+    expect(packet.orderId).toBeNull()
+    expect(packet.captureId).toBeNull()
     expect(packet.funding).toMatchObject({ captureId: fundingCaptureId, clientId: 'client_northwind', capturedCents: 15000, phase: 'captured' })
   })
 
@@ -216,44 +219,38 @@ describe('dry runs', () => {
     expect(body.orderId).toBeNull()
   })
 
-  it('denies a third $90 payout over the $180 cap and cites the earlier capture ids', async () => {
+  it('reserves two approved $90 payouts and denies a third over the $180 cap', async () => {
     const { app, paypal } = harness()
-    const ids: string[] = []
     for (const description of ['Northwind logo milestone 1', 'Northwind logo milestone 2']) {
       const fundingCaptureId = await fund(app, paypal, { description: `${description} invoice` })
       const created = await (await propose(app, { ...priya, description, fundingCaptureId })).json()
       await app.request(`http://mandate.test/v1/proposals/${created.id}/approve`, { method: 'POST', headers: auth() })
-      const captured = await (await app.request(`http://mandate.test/v1/proposals/${created.id}/capture`, { method: 'POST', headers: auth() })).json()
-      ids.push(captured.captureId)
     }
     const extra = await fund(app, paypal, { description: 'Northwind logo extra revision invoice' })
     const third = await (await propose(app, { ...priya, description: 'Northwind logo extra revision', fundingCaptureId: extra })).json()
     expect(third.gate).toBe('DENY')
     expect(third.clause).toBe('cap.monthly')
     expect(third.orderId).toBeNull()
-    expect(third.detail).toContain(ids[0])
-    expect(third.detail).toContain(ids[1])
+    expect(third.detail).toContain('already reserved 18000 cents')
+    expect(third.detail).toContain('prior captures: none') // locked intents, not fake capture ids
+    expect(paypal!.orders.size).toBe(3) // charges only
   })
 
-  it('gates a refund against the capture instead of calling PayPal directly', async () => {
+  it('gates a refund of a client charge instead of calling PayPal directly', async () => {
     const paypal = new FakePayPal()
     const { app } = harness({ paypal })
     const fundingCaptureId = await fund(app, paypal)
-    const created = await (await propose(app, { ...priya, fundingCaptureId })).json()
-    await app.request(`http://mandate.test/v1/proposals/${created.id}/approve`, { method: 'POST', headers: auth() })
-    const captured = await (await app.request(`http://mandate.test/v1/proposals/${created.id}/capture`, { method: 'POST', headers: auth() })).json()
-
     const unlinked = await (await propose(app, { ...priya, kind: 'refund', amountCents: 9000, description: 'Work was not delivered' })).json()
     expect(unlinked.clause).toBe('refund.unlinked')
     expect(paypal.refundCalls).toBe(0)
 
     const refund = await (await propose(app, {
-      ...priya,
+      ...northwind,
       kind: 'refund',
-      amountCents: 9000,
-      parentCaptureId: captured.captureId,
-      description: 'Work was not delivered',
-      prompt: 'Refund Priya, the work was not delivered',
+      amountCents: 15000,
+      parentCaptureId: fundingCaptureId,
+      description: 'Northwind cancelled',
+      prompt: 'Refund Northwind for the cancelled milestone',
     })).json()
     expect(refund.gate).toBe('NEEDS_APPROVAL')
     await app.request(`http://mandate.test/v1/proposals/${refund.id}/approve`, { method: 'POST', headers: auth() })
@@ -263,12 +260,11 @@ describe('dry runs', () => {
     expect(paypal.refundCalls).toBe(1)
   })
 
-  it('refuses to capture when the live PayPal amount changes', async () => {
+  it('refuses a client charge when the live PayPal amount changes', async () => {
     const paypal = new FakePayPal()
     paypal.autoApprove = false
     const { app } = harness({ paypal })
-    const fundingCaptureId = await fund(app, paypal)
-    const created = await (await propose(app, { ...priya, fundingCaptureId })).json()
+    const created = await (await propose(app, northwind)).json()
     await app.request(`http://mandate.test/v1/proposals/${created.id}/approve`, { method: 'POST', headers: auth() })
     const waiting = await app.request(`http://mandate.test/v1/proposals/${created.id}/capture`, { method: 'POST', headers: auth() })
     expect(waiting.status).toBe(409)
@@ -279,7 +275,7 @@ describe('dry runs', () => {
     const refused = await app.request(`http://mandate.test/v1/proposals/${created.id}/capture`, { method: 'POST', headers: auth() })
     expect(refused.status).toBe(409)
     expect((await refused.json()).code).toBe('cart.immutable')
-    expect(paypal.captureCalls).toBe(1)
+    expect(paypal.captureCalls).toBe(0)
   })
 })
 
@@ -362,18 +358,43 @@ describe('money in releases money out', () => {
     expect(paypal.captureCalls).toBe(calls)
   })
 
-  it('shows the job receipt: $150 in, $90 out, $60 kept', async () => {
+  it('shows the job receipt: $150 in, $90 reserved, $0 out, $60 kept', async () => {
     const paypal = new FakePayPal()
     const { app } = harness({ paypal })
     const fundingCaptureId = await fund(app, paypal)
     const payout = await (await propose(app, { ...priya, fundingCaptureId })).json()
     await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
-    await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
+    const blocked = await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
+    expect((await blocked.json()).code).toBe('payout.unavailable')
     const job = await (await app.request(`http://mandate.test/v1/jobs/${JOB}`, { headers: auth() })).json()
     expect(job.client.displayName).toBe('Northwind')
-    expect(job.totals).toEqual({ inCents: 15000, outCents: 9000, heldCents: 0, keptCents: 6000 })
+    expect(job.totals).toEqual({ inCents: 15000, outCents: 0, heldCents: 9000, keptCents: 6000 })
     expect(job.charges[0].fundableCents).toBe(0)
     expect(job.payouts).toHaveLength(1)
+    expect(job.payouts[0]).toMatchObject({ phase: 'locked', orderId: null, captureId: null })
+  })
+
+  it('does not capture an already-created contractor checkout, even after its buyer approves', async () => {
+    const paypal = new FakePayPal()
+    const { app, db } = harness({ paypal })
+    const fundingCaptureId = await fund(app, paypal)
+    const payout = await (await propose(app, { ...priya, fundingCaptureId })).json()
+    await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
+
+    // An older build created this Orders checkout for money-out. It is not a Payouts item.
+    const oldOrder = await paypal.createOrder({ proposalId: payout.id, amountCents: 9000, currency: 'USD', description: payout.description, payeeEmail: null })
+    const repo = new Repo(db)
+    repo.saveOrder(payout.id, oldOrder.orderId, oldOrder.approveUrl, NOW.toISOString())
+    paypal.approve(oldOrder.orderId)
+    const before = paypal.captureCalls
+    for (let i = 0; i < 2; i++) {
+      const response = await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
+      expect(response.status).toBe(409)
+      expect((await response.json()).code).toBe('payout.unavailable')
+    }
+    const saved = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}`, { headers: auth() })).json()
+    expect(saved).toMatchObject({ phase: 'order_created', orderId: oldOrder.orderId, captureId: null, amountCents: 9000 })
+    expect(paypal.captureCalls).toBe(before)
   })
 })
 

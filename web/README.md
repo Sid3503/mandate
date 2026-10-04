@@ -6,7 +6,7 @@ An installable web app (PWA) for the owner, built only on the API in `../api`. I
 | --- | --- | --- |
 | Unlock | `/app/unlock` | `GET /ready`, `GET /v1/session` |
 | Waiting for you | `/app/` | `GET /v1/proposals`, `POST …/approve`, `POST …/reject` |
-| Receipt | `/app/p/:id` | `GET …/packet`, `POST …/capture` (including the claimed-amount integrity check) |
+| Receipt | `/app/p/:id` | `GET …/packet`, `POST …/capture` (client charges and refunds; the claimed-amount integrity check). Contractor payouts show a **Payout status** checklist instead of Settle. |
 | Jobs | `/app/jobs`, `/app/jobs/:jobId` | `GET /v1/jobs/:jobId` |
 | New request | `/app/new` | `GET /v1/warrant`, `POST /v1/proposals` with an `Idempotency-Key` |
 | Ledger | `/app/ledger` | `GET /v1/proposals`, `GET /v1/ledger` (AG Grid Community) |
@@ -39,13 +39,14 @@ npm run dev             # http://localhost:5173/app/
 - **No guessing.** The New request screen never predicts the rule decision. It sends the request and shows the server's clause and detail beside a plain-language sentence.
 - **Double taps do nothing extra.** Each distinct request body gets its own `Idempotency-Key`, and a retry of the same body reuses it. Approve and capture are idempotent on the server.
 - **Integer cents.** Dollars are parsed as strings into cents, with no floating point.
+- **A buyer who has not approved** gets a visible "Still waiting" answer with the check time, and a three-step how-to, instead of a silent retry.
 - **Proposer keys** see every screen, but approve, settle and rule changes are disabled, with the reason shown.
 
 ## Checks
 
 ```bash
 npm run typecheck
-npm run e2e             # Playwright with the local Chrome; desktop and a Pixel 7 viewport
+npm run e2e             # Playwright with the local Chrome; desktop and a Pixel 7 viewport (test servers on :8779 and :8778)
 ```
 
 The end-to-end suite covers:
@@ -55,9 +56,9 @@ The end-to-end suite covers:
   - a payout before the client has paid is refused
   - Northwind's $150 is billed, approved and settled
   - Priya's $90 is funded by that payment and approved
+  - the receipt says it is reserved and not paid, with no Settle or Open PayPal control
   - a $250 claim is refused
-  - the payout settles with matching cents
-  - the job shows $150 in, $90 out, $60 kept
+  - the job shows $150 in, $0 out, $90 reserved, $60 kept
   - the ledger shows the refusals
   - rules v2 is published through a reviewed diff
 - **The proposer key** cannot approve.

@@ -7,7 +7,7 @@ import { relative } from '../lib/format'
 import { dollars } from '../lib/money'
 import { useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useWarrant } from '../lib/hooks'
 import type { Proposal } from '../lib/types'
-import { explain, KIND, type Names } from '../lib/words'
+import { awaitingPayoutRail, explain, KIND, type Names } from '../lib/words'
 
 export function Inbox() {
   const proposals = useProposals()
@@ -51,7 +51,7 @@ export function Inbox() {
 
       {ready.length > 0 ? (
         <section className="section">
-          <h2 className="section-title">Locked · ready to settle</h2>
+          <h2 className="section-title">Approved requests · what happens next</h2>
           <div className="list">
             {ready.map((row) => <Row key={row.id} proposal={row} names={names} />)}
           </div>
@@ -89,7 +89,7 @@ function Row({ proposal, names }: { proposal: Proposal; names: Names }) {
       <span className={`kind kind-${proposal.kind}`}>{KIND[proposal.kind].arrow} {KIND[proposal.kind].short}</span>
       <span className="list-who">{names(proposal.payeeId)}<small>{proposal.description}</small></span>
       <Money cents={proposal.amountCents} />
-      <PhaseChip phase={proposal.phase} />
+      <PhaseChip phase={proposal.phase} kind={proposal.kind} />
       <span className="list-go" aria-hidden="true">→</span>
     </Link>
   )
@@ -135,9 +135,11 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
 
       {locked ? (
         <div className="approval-locked">
-          <div className="row between"><Chip tone="auto">Approved · locked</Chip><Link className="btn btn-ink" to={`/p/${proposal.id}`}>Settle →</Link></div>
+          <div className="row between"><Chip tone="auto">Approved · locked</Chip><Link className="btn btn-ink" to={`/p/${proposal.id}`}>{awaitingPayoutRail(proposal) ? 'View payout status →' : 'Settle →'}</Link></div>
           <div className="lock-line"><span className="eyebrow">Lock</span><Hash value={proposal.cartHash} reveal full /></div>
-          <p className="fine">PayPal may now move exactly {proposal.amountCents} cents to {names(proposal.payeeId)}. Any other amount is refused.</p>
+          <p className="fine">{awaitingPayoutRail(proposal)
+            ? `${dollars(proposal.amountCents)} is reserved for ${names(proposal.payeeId)}, not yet paid. PayPal Payouts is not connected; an Orders checkout would pay the studio instead.`
+            : `The server can now settle exactly ${dollars(proposal.amountCents)}. Any other amount is refused.`}</p>
         </div>
       ) : (
         <div className="approval-actions">

@@ -16,8 +16,8 @@ export default defineConfig({
   reporter: [['list']],
   use: { channel: 'chrome', trace: 'retain-on-failure' },
   projects: [
-    { name: 'desktop', use: { baseURL: 'http://127.0.0.1:8799', viewport: { width: 1440, height: 960 } } },
-    { name: 'phone', use: { ...devices['Pixel 7'], channel: 'chrome', baseURL: 'http://127.0.0.1:8798' } },
+    { name: 'desktop', use: { baseURL: 'http://127.0.0.1:8779', viewport: { width: 1440, height: 960 } } },
+    { name: 'phone', use: { ...devices['Pixel 7'], channel: 'chrome', baseURL: 'http://127.0.0.1:8778' } },
   ],
-  webServer: [server(8799), server(8798)],
+  webServer: [server(8779), server(8778)],
 })

@@ -7,7 +7,7 @@ import { when } from '../lib/format'
 import { useIsOwner, useNames, useOnline, useRefreshMoney, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { LedgerEvent, Packet, Warrant } from '../lib/types'
-import { EVENT, explain, KIND, type Names } from '../lib/words'
+import { awaitingPayoutRail, EVENT, explain, KIND, type Names } from '../lib/words'
 
 export function Receipt() {
   const { id = '' } = useParams()
@@ -25,7 +25,7 @@ export function Receipt() {
   return (
     <div className="page receipt">
       <PageHead eyebrow={`Receipt · ${kind.label} · rules v${p.warrantVersion}`} title={<>{dollars(p.amountCents, p.currency)} <span className="title-sub">{verb} {names(p.payeeId)}</span></>}>
-        <PhaseChip phase={p.phase} />
+        <PhaseChip phase={p.phase} kind={p.kind} />
       </PageHead>
 
       <div className="receipt-grid">
@@ -61,8 +61,8 @@ export function Receipt() {
             <p className="fine">SHA-256 over payee, cents, currency, category, proof{p.jobId ? ', job' : ''}{p.fundingCaptureId ? ' and funding capture' : ''}. Settlement recomputes it and refuses on any difference.</p>
             <div className="match">
               <div><span>Approved</span><Money cents={data.amounts.approvedCents} size="lg" /></div>
-              <div><span>Settled</span><Money cents={data.amounts.capturedCents} size="lg" /></div>
-              <div className={`match-flag${data.amounts.match ? ' ok' : ''}`}>{data.amounts.match === null ? 'not settled' : data.amounts.match ? 'cents match ✓' : 'mismatch'}</div>
+              <div><span>{p.kind === 'payment' ? 'Paid' : 'Settled'}</span><Money cents={data.amounts.capturedCents} size="lg" /></div>
+              <div className={`match-flag${data.amounts.match ? ' ok' : ''}`}>{data.amounts.match === null ? (awaitingPayoutRail(p) ? 'reserved · not paid' : p.kind === 'payment' ? 'not paid' : 'not settled') : data.amounts.match ? 'cents match ✓' : 'mismatch'}</div>
             </div>
           </section>
 
@@ -145,13 +145,15 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
   const online = useOnline()
   const refresh = useRefreshMoney()
   const [claim, setClaim] = useState('')
-  const settle = useMutation({ mutationFn: () => api.capture(p.id), onSettled: () => void refresh() })
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null)
+  const settle = useMutation({ mutationFn: () => api.capture(p.id), onSettled: () => { setCheckedAt(new Date()); void refresh() } })
   const tamper = useMutation({
     mutationFn: (cents: number) => api.capture(p.id, cents),
     onSettled: () => void refresh(),
   })
   const settleable = p.phase === 'locked' || p.phase === 'order_created'
   if (!settleable) return null
+  if (awaitingPayoutRail(p)) return <PayoutStatus packet={packet} warrant={warrant} names={names} />
   const pending = settle.error instanceof ApiError && settle.error.code === 'paypal.buyer_pending' ? settle.error : null
   const approveUrl = (pending?.body.approveUrl as string | undefined) ?? p.approveUrl ?? null
   const disabled = !owner || !online || settle.isPending
@@ -171,14 +173,25 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
         The server reads the live PayPal order first and refuses if the amount, currency or reference differ from the lock.
       </p>
       {pending || (p.phase === 'order_created' && approveUrl) ? (
-        <div className="buyer">
-          <p><strong>Waiting on the PayPal buyer.</strong> {p.kind === 'charge' ? `${names(p.payeeId)} has` : 'The buyer has'} to approve the order in PayPal. Then settle again.</p>
+        <div className="buyer" aria-live="polite">
+          <p><strong>Step 1 of 2 · the PayPal buyer approves.</strong> {p.kind === 'charge' ? `${names(p.payeeId)}’s account` : 'The buyer'} has to approve this ${dollars(p.amountCents)} order on PayPal. Mandate cannot do it for them.</p>
+          <ol className="how">
+            <li>Open PayPal with the button below (it opens a new tab).</li>
+            <li>Sign in as the sandbox buyer and approve the order.</li>
+            <li>Come back here and press <em>Check PayPal and settle</em>.</li>
+          </ol>
           {approveUrl ? <a className="btn btn-ink" href={approveUrl} target="_blank" rel="noreferrer noopener">Open PayPal ↗</a> : null}
+          {pending && !settle.isPending ? (
+            <div className="still-waiting" role="status">
+              <Chip tone="need">Still waiting</Chip>
+              <span>Checked PayPal{checkedAt ? ` at ${checkedAt.toLocaleTimeString('en-US')}` : ''}. The buyer has not approved the order yet, so <strong>nothing was captured and $0 moved</strong>. Approve it on PayPal, then check again.</span>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <div className="row gap-s wrap">
         <button type="button" className="btn btn-ink btn-big" disabled={disabled} onClick={() => settle.mutate()}>
-          {settle.isPending ? 'Settling…' : pending || p.phase === 'order_created' ? 'I approved in PayPal · settle' : `Settle ${dollars(p.amountCents)}`}
+          {settle.isPending ? 'Asking PayPal…' : pending || p.phase === 'order_created' ? 'Check PayPal and settle' : `Settle ${dollars(p.amountCents)}`}
         </button>
       </div>
       {!owner ? <p className="fine">Only the owner key can settle.</p> : null}
@@ -202,6 +215,80 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
           </div>
         ) : null}
         {tamper.isSuccess ? <p className="fine">The claim matched the lock, so it settled normally.</p> : null}
+      </details>
+    </section>
+  )
+}
+
+/**
+ * A contractor payout is approved and reserved, but Orders checkout can only collect money for the studio.
+ * This panel says exactly where the money is, and offers no button that could send it the wrong way.
+ */
+function PayoutStatus({ packet, warrant, names }: { packet: Packet; warrant: Warrant | undefined; names: Names }) {
+  const p = packet.proposal
+  const owner = useIsOwner()
+  const online = useOnline()
+  const refresh = useRefreshMoney()
+  const [claim, setClaim] = useState('')
+  const tamper = useMutation({ mutationFn: (cents: number) => api.capture(p.id, cents), onSettled: () => void refresh() })
+  const claimCents = parseCents(claim)
+  const refusal = tamper.error instanceof ApiError ? tamper.error : null
+  const funded = packet.funding
+  const steps: Array<{ done: boolean; now?: boolean; title: string; body: string }> = [
+    { done: true, title: 'Asked', body: packet.events[0]?.payload.actor === 'proposer' ? 'An agent’s key proposed this.' : 'Proposed with the owner key.' },
+    { done: true, title: 'Rules checked', body: `${names(p.payeeId)} is on the rules, and ${dollars(p.amountCents)} is at or above the automatic line.` },
+    { done: Boolean(funded && funded.phase === 'captured'), title: 'Funded by the client', body: funded ? `${names(funded.clientId)}’s ${dollars(funded.capturedCents)} payment settled, so this payout is covered.` : 'No client payment is cited.' },
+    { done: true, title: 'Approved and locked', body: `Payee, ${dollars(p.amountCents)}, category, proof, job and funding are fixed in the lock.` },
+    { done: false, now: true, title: 'Payout to ' + names(p.payeeId), body: 'Waiting for the contractor payout rail. It is not connected yet, so nothing has been sent.' },
+    { done: false, title: 'Paid and receipted', body: 'Appears here with the PayPal payout id, and the cents are checked against the lock.' },
+  ]
+
+  return (
+    <section className="panel panel-lime payout-status" aria-live="polite">
+      <div className="row between"><h2 className="panel-title">Payout status</h2><Chip tone="need">Reserved · not paid</Chip></div>
+      <p className="payout-lead">
+        <strong>{dollars(p.amountCents, p.currency)} is approved and reserved for {names(p.payeeId)}, but it has not been sent.</strong>
+      </p>
+      <p>
+        PayPal checkout is for taking money <em>in</em>. A buyer approving it would pay the studio’s own account, not {names(p.payeeId)}, so Mandate does not use it for contractors.
+        This payout waits for PayPal Payouts, and nothing on this page can send it the wrong way.
+      </p>
+      <ol className="steps-list">
+        {steps.map((step) => (
+          <li key={step.title} className={step.done ? 'done' : step.now ? 'now' : ''}>
+            <span className="step-mark" aria-hidden="true">{step.done ? '✓' : step.now ? '…' : ''}</span>
+            <div><strong>{step.title}</strong><span>{step.body}</span></div>
+          </li>
+        ))}
+      </ol>
+      {p.phase === 'order_created' || p.orderId ? (
+        <div className="buyer">
+          <p><strong>An old PayPal checkout exists for this request.</strong> An earlier version opened Orders checkout for it. Ignore it and do not approve it in PayPal: it would charge a buyer, not pay {names(p.payeeId)}, and Mandate will not capture it.</p>
+          <p className="mono small">Order {p.orderId}</p>
+        </div>
+      ) : null}
+      <div className="row gap-s wrap">
+        <Link className="btn btn-ink" to={p.jobId ? `/jobs/${p.jobId}` : '/jobs'}>See the job</Link>
+        {funded?.proposalId ? <Link className="btn btn-ghost" to={`/p/${funded.proposalId}`}>Open the client payment →</Link> : null}
+      </div>
+
+      <details className="tamper">
+        <summary>Integrity check · try to change the amount</summary>
+        <form onSubmit={(event) => { event.preventDefault(); if (claimCents !== null) tamper.mutate(claimCents) }} className="row gap-s wrap">
+          <label className="field field-inline">
+            <span>Claimed amount</span>
+            <span className="dollar-input"><span>$</span><input inputMode="decimal" value={claim} onChange={(event) => setClaim(event.target.value)} placeholder={centsInput(p.amountCents * 2 + 7000)} /></span>
+          </label>
+          <button type="submit" className="btn btn-ghost" disabled={!owner || !online || claimCents === null || tamper.isPending}>Send claim</button>
+        </form>
+        {refusal ? (
+          <div className="refused-claim">
+            <Chip tone="deny">{refusal.status} · {refusal.code}</Chip>
+            <p>{refusal.code === 'cart.immutable' ? explain(refusal.code, p, warrant, names) : 'Same claim as the locked amount. The payout still waits for the Payouts rail.'}</p>
+            <p className="server-words"><span>Server</span>{refusal.detail}</p>
+            <NoMoneyMoved />
+          </div>
+        ) : null}
       </details>
     </section>
   )

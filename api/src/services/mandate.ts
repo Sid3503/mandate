@@ -525,6 +525,24 @@ export class MandateService {
         })
       }
     }
+    // Orders collects a buyer payment for the studio. It is never a contractor payout.
+    // This also covers money-out rows with an Orders checkout created by older builds:
+    // a buyer approving that checkout must not make it capturable through this route.
+    if (row.kind === 'payment') {
+      return {
+        result: {
+          status: 409,
+          body: problemValue('payout.unavailable', 'Contractor payout not connected',
+            'This payment is approved and reserved, but PayPal Payouts is not connected. Orders checkout pays the studio, not the contractor. No payout was sent.', {
+              proposalId: row.id,
+              lockedAmountCents: row.amount_cents,
+              phase: row.phase,
+            }),
+        },
+        row,
+        resume: row.phase,
+      }
+    }
     const resume = row.phase === 'capture_inflight' ? (row.order_id ? 'order_created' : 'locked') : row.phase
     this.repo.setPhase(row.id, 'capture_inflight', now)
     return { result: null, row, resume }

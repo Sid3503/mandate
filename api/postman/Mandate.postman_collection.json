@@ -472,7 +472,7 @@
           }
         },
         {
-          "name": "Capture locked cart",
+          "name": "Priya payout: no Orders checkout (payout.unavailable)",
           "event": [
             {
               "listen": "test",
@@ -480,15 +480,10 @@
                 "type": "text/javascript",
                 "exec": [
                   "const body = pm.response.json();",
-                  "pm.test('capture or buyer still pending', function () {",
-                  "  pm.expect(pm.response.code).to.be.oneOf([200, 409, 503]);",
-                  "  if (pm.response.code === 200) {",
-                  "    pm.expect(body.phase).to.eql('captured');",
-                  "    pm.expect(body.capturedAmountCents).to.eql(9000);",
-                  "    pm.collectionVariables.set('captureId', body.captureId);",
-                  "  } else {",
-                  "    pm.expect(body.code).to.be.oneOf(['paypal.buyer_pending', 'paypal.unconfigured', 'paypal.upstream']);",
-                  "  }",
+                  "pm.test('a contractor payout is reserved, never sent through Orders', function () {",
+                  "  pm.response.to.have.status(409);",
+                  "  pm.expect(body.code).to.eql('payout.unavailable');",
+                  "  pm.expect(body.lockedAmountCents).to.eql(9000);",
                   "});"
                 ]
               }
@@ -513,11 +508,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('packet names the prompt and the clause', function () {",
+                  "pm.test('packet names the prompt, the clause and the funding', function () {",
                   "  const body = pm.response.json();",
                   "  pm.expect(body.prompt).to.include('Northwind milestone 1');",
                   "  pm.expect(body.clause).to.eql('amount.needs_approval');",
                   "  pm.expect(body.approval.type).to.eql('proposal.approved');",
+                  "  pm.expect(body.amounts.capturedCents).to.eql(null);",
+                  "  pm.expect(body.funding.phase).to.eql('captured');",
                   "});"
                 ]
               }
@@ -537,10 +534,12 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('money in and out for the job', function () {",
+                  "pm.test('money in, with the payout reserved and not paid', function () {",
                   "  const body = pm.response.json();",
                   "  pm.expect(body.client.displayName).to.eql('Northwind');",
-                  "  pm.expect(body.totals).to.have.property('inCents');",
+                  "  pm.expect(body.totals.inCents).to.eql(15000);",
+                  "  pm.expect(body.totals.outCents).to.eql(0);",
+                  "  pm.expect(body.totals.heldCents).to.eql(9000);",
                   "});"
                 ]
               }
