@@ -30,8 +30,27 @@ export type ProposalRow = {
   reserved_at: string | null
   job_id: string | null
   funding_capture_id: string | null
+  payout_batch_id: string | null
+  payout_item_id: string | null
+  payout_status: string | null
+  payout_txn_id: string | null
+  payout_fee_cents: number | null
   created_at: string
   updated_at: string
+}
+
+/** Phases in which a payout's money is spoken for: locked, sent to PayPal, or paid. */
+export const RESERVED_PHASES = ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured'] as const
+const RESERVED_SQL = RESERVED_PHASES.map((phase) => `'${phase}'`).join(', ')
+
+export type PayoutUpdate = {
+  phase: string
+  status: string
+  itemId: string | null
+  transactionId: string | null
+  feeCents: number | null
+  /** Set only when the payout is settled (PayPal reports SUCCESS). */
+  paidCents: number | null
 }
 
 export type EventRow = {
@@ -86,7 +105,8 @@ export type NewProposal = {
 
 const PROPOSAL_COLUMNS = `id, warrant_id, warrant_version, kind, parent_capture_id, payee_id, amount_cents, currency,
   category, description, evidence_url, prompt, gate, clause, detail, phase, cart_hash, order_id, capture_id,
-  refund_id, approve_url, captured_amount_cents, reserved_at, job_id, funding_capture_id, created_at, updated_at`
+  refund_id, approve_url, captured_amount_cents, reserved_at, job_id, funding_capture_id, payout_batch_id, payout_item_id,
+  payout_status, payout_txn_id, payout_fee_cents, created_at, updated_at`
 
 export class Repo {
   constructor(private readonly db: DatabaseSync) {}
@@ -161,7 +181,7 @@ export class Repo {
     const rows = this.db.prepare(
       `SELECT amount_cents AS amountCents, capture_id AS captureId FROM proposals
        WHERE kind = 'payment' AND funding_capture_id = ?
-         AND phase IN ('locked', 'order_created', 'capture_inflight', 'captured')`,
+         AND phase IN (${RESERVED_SQL})`,
     ).all(fundingCaptureId) as Array<{ amountCents: number; captureId: string | null }>
     return rows.reduce((sum, row) => sum + Math.max(0, row.amountCents - (row.captureId ? this.refundedCents(row.captureId) : 0)), 0)
   }
@@ -195,7 +215,7 @@ export class Repo {
     return this.db.prepare(
       `SELECT amount_cents AS amountCents, capture_id AS captureId FROM proposals
        WHERE warrant_id = ? AND kind = 'payment' AND reserved_at >= ? AND reserved_at < ?
-         AND phase IN ('locked', 'order_created', 'capture_inflight', 'captured')`,
+         AND phase IN (${RESERVED_SQL})`,
     ).all(warrantId, start, end) as Array<{ amountCents: number; captureId: string | null }>
   }
 
@@ -237,7 +257,7 @@ export class Repo {
 
   eventsFor(proposalId: string): EventRow[] {
     return this.db.prepare(
-      'SELECT id, proposal_id, type, clause, payload_json, created_at FROM events WHERE proposal_id = ? ORDER BY created_at ASC, id ASC',
+      'SELECT id, proposal_id, type, clause, payload_json, created_at FROM events WHERE proposal_id = ? ORDER BY created_at ASC, rowid ASC',
     ).all(proposalId) as EventRow[]
   }
 
@@ -261,6 +281,25 @@ export class Repo {
     this.db.prepare(
       `UPDATE proposals SET phase = 'captured', capture_id = ?, captured_amount_cents = ?, updated_at = ? WHERE id = ? AND kind IN ('payment', 'charge')`,
     ).run(captureId, amountCents, now, id)
+  }
+
+  /** The payout batch now exists at PayPal. From here the payout is in flight, not merely locked. */
+  savePayoutBatch(id: string, batchId: string, now: string): void {
+    this.db.prepare(
+      `UPDATE proposals SET phase = 'payout_sent', payout_batch_id = ?, payout_status = 'PENDING', updated_at = ? WHERE id = ?`,
+    ).run(batchId, now, id)
+  }
+
+  applyPayout(id: string, update: PayoutUpdate, now: string): void {
+    this.db.prepare(
+      `UPDATE proposals SET phase = ?, payout_status = ?, payout_item_id = COALESCE(?, payout_item_id),
+         payout_txn_id = COALESCE(?, payout_txn_id), payout_fee_cents = COALESCE(?, payout_fee_cents),
+         captured_amount_cents = COALESCE(?, captured_amount_cents), updated_at = ? WHERE id = ?`,
+    ).run(update.phase, update.status, update.itemId, update.transactionId, update.feeCents, update.paidCents, now, id)
+  }
+
+  proposalByPayoutBatch(batchId: string): ProposalRow | null {
+    return (this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE payout_batch_id = ?`).get(batchId) as ProposalRow | undefined) ?? null
   }
 
   markRefunded(id: string, refundId: string, amountCents: number, now: string): void {

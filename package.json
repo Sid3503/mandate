@@ -7,5 +7,6 @@
     "start": "npm --prefix api start",
     "test": "npm --prefix api test && npm --prefix web run e2e",
     "demo": "npm --prefix web run build && node api/node_modules/tsx/dist/cli.mjs api/src/dev/e2e-server.ts"
-  }
+  },
+  "license": "MIT"
 }

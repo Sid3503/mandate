@@ -7,7 +7,7 @@ import { relative } from '../lib/format'
 import { dollars } from '../lib/money'
 import { useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useWarrant } from '../lib/hooks'
 import type { Proposal } from '../lib/types'
-import { awaitingPayoutRail, explain, KIND, type Names } from '../lib/words'
+import { explain, isPayout, KIND, type Names } from '../lib/words'
 
 export function Inbox() {
   const proposals = useProposals()
@@ -17,7 +17,7 @@ export function Inbox() {
   const [settledHere, setSettledHere] = useState<Record<string, Proposal>>({})
   const rows = proposals.data?.data ?? []
   const waiting = rows.filter((row) => row.phase === 'pending_approval' || settledHere[row.id])
-  const ready = rows.filter((row) => (row.phase === 'locked' || row.phase === 'order_created') && !settledHere[row.id])
+  const ready = rows.filter((row) => ['locked', 'order_created', 'payout_sent', 'payout_unclaimed'].includes(row.phase) && !settledHere[row.id])
   const refused = rows.filter((row) => row.phase === 'denied').slice(0, 4)
 
   return (
@@ -135,10 +135,10 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
 
       {locked ? (
         <div className="approval-locked">
-          <div className="row between"><Chip tone="auto">Approved · locked</Chip><Link className="btn btn-ink" to={`/p/${proposal.id}`}>{awaitingPayoutRail(proposal) ? 'View payout status →' : 'Settle →'}</Link></div>
+          <div className="row between"><Chip tone="auto">Approved · locked</Chip><Link className="btn btn-ink" to={`/p/${proposal.id}`}>{isPayout(proposal) ? 'Send the payout →' : 'Settle →'}</Link></div>
           <div className="lock-line"><span className="eyebrow">Lock</span><Hash value={proposal.cartHash} reveal full /></div>
-          <p className="fine">{awaitingPayoutRail(proposal)
-            ? `${dollars(proposal.amountCents)} is reserved for ${names(proposal.payeeId)}, not yet paid. PayPal Payouts is not connected; an Orders checkout would pay the studio instead.`
+          <p className="fine">{isPayout(proposal)
+            ? `${dollars(proposal.amountCents)} is locked for ${names(proposal.payeeId)} and not yet paid. Sending it uses PayPal Payouts, which pays ${names(proposal.payeeId)}’s own account.`
             : `The server can now settle exactly ${dollars(proposal.amountCents)}. Any other amount is refused.`}</p>
         </div>
       ) : (

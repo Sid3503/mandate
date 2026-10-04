@@ -70,7 +70,7 @@ export function JobScreen() {
       <section className="totals">
         <div className="total total-in"><span>Money in</span><Money cents={data.totals.inCents} size="xl" /></div>
         <div className="total total-out"><span>Money out</span><Money cents={data.totals.outCents} size="xl" /></div>
-        <div className="total"><span>Reserved for payouts</span><Money cents={data.totals.heldCents} size="xl" /></div>
+        <div className="total"><span>Approved · not yet paid</span><Money cents={data.totals.heldCents} size="xl" /></div>
         <div className="total total-kept"><span>Kept by the studio</span><Money cents={data.totals.keptCents} size="xl" /></div>
       </section>
       <Flow totals={data.totals} />

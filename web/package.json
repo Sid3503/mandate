@@ -34,5 +34,6 @@
     "vite": "^8.3.2",
     "vite-plugin-pwa": "^2.0.0",
     "workbox-window": "^7.4.1"
-  }
+  },
+  "license": "MIT"
 }

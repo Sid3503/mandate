@@ -23,11 +23,31 @@ export const PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
   captured: { label: 'Settled', tone: 'auto' },
   refunded: { label: 'Refunded', tone: 'auto' },
   capture_refused: { label: 'Refused at PayPal', tone: 'deny' },
+  payout_sent: { label: 'Sent · PayPal processing', tone: 'need' },
+  payout_unclaimed: { label: 'Sent · unclaimed', tone: 'need' },
+  payout_failed: { label: 'Payout failed', tone: 'deny' },
 }
 
-/** A contractor payout cannot use Orders checkout; its approved lock stays reserved until Payouts is connected. */
-export function awaitingPayoutRail(proposal: Pick<Proposal, 'kind' | 'phase'>): boolean {
-  return proposal.kind === 'payment' && (proposal.phase === 'locked' || proposal.phase === 'order_created' || proposal.phase === 'capture_inflight')
+/** Money out reads differently from money in: it is sent and paid, not captured. */
+const PAYOUT_PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'need' | 'ink' | 'muted' }> = {
+  locked: { label: 'Approved · ready to send', tone: 'ink' },
+  order_created: { label: 'Approved · ready to send', tone: 'ink' },
+  capture_inflight: { label: 'Sending', tone: 'ink' },
+  captured: { label: 'Paid', tone: 'auto' },
+}
+
+export function phaseInfo(phase: string, kind?: Kind): { label: string; tone: 'deny' | 'auto' | 'need' | 'ink' | 'muted' } {
+  return (kind === 'payment' ? PAYOUT_PHASE[phase] : undefined) ?? PHASE[phase] ?? { label: phase, tone: 'muted' }
+}
+
+/** A contractor payout that is approved, sent, or finished. It is paid through PayPal Payouts, never Orders checkout. */
+export function isPayout(proposal: Pick<Proposal, 'kind'>): boolean {
+  return proposal.kind === 'payment'
+}
+
+/** A payout PayPal already holds, or one the owner can still send. Both show on the Waiting-for-you page. */
+export function payoutInProgress(proposal: Pick<Proposal, 'kind' | 'phase'>): boolean {
+  return proposal.kind === 'payment' && ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed'].includes(proposal.phase)
 }
 
 export const EVENT: Record<string, string> = {
@@ -40,6 +60,11 @@ export const EVENT: Record<string, string> = {
   'order.created': 'PayPal order created',
   'capture.completed': 'Settled with PayPal',
   'refund.completed': 'Refunded with PayPal',
+  'payout.sent': 'Payout sent to PayPal',
+  'payout.status': 'PayPal is processing the payout',
+  'payout.completed': 'Paid by PayPal',
+  'payout.unclaimed': 'Sent · receiver has no PayPal account yet',
+  'payout.failed': 'PayPal failed the payout',
 }
 
 export type Names = (id: string | null | undefined) => string
@@ -89,8 +114,8 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
 export function problemWords(code: string): string {
   switch (code) {
     case 'paypal.buyer_pending': return 'The buyer has not approved the PayPal order. No capture has happened yet.'
-    case 'payout.unavailable': return 'Approved and reserved for the contractor, but not paid. Contractor Payouts is not connected; Orders checkout would pay the studio.'
     case 'paypal.unconfigured': return 'This server has no PayPal sandbox credentials, so it cannot settle.'
+    case 'payee.unknown': return 'The contractor is not on the rules this payout was approved under. Nothing was sent.'
     case 'paypal.upstream': return 'PayPal rejected the call. Nothing moved. Use the debug id in the PayPal dashboard.'
     case 'auth.forbidden': return 'This key can ask and read. Only the owner key can approve, settle, or change the rules.'
     case 'auth.unauthorized': return 'That key was not accepted.'

@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS proposals (
   reserved_at TEXT,
   job_id TEXT,
   funding_capture_id TEXT,
+  payout_batch_id TEXT,
+  payout_item_id TEXT,
+  payout_status TEXT,
+  payout_txn_id TEXT,
+  payout_fee_cents INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -84,6 +89,10 @@ export function migrate(db: DatabaseSync): void {
   const columns = new Set((db.prepare('PRAGMA table_info(proposals)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!columns.has('job_id')) db.exec('ALTER TABLE proposals ADD COLUMN job_id TEXT')
   if (!columns.has('funding_capture_id')) db.exec('ALTER TABLE proposals ADD COLUMN funding_capture_id TEXT')
+  for (const [name, type] of [['payout_batch_id', 'TEXT'], ['payout_item_id', 'TEXT'], ['payout_status', 'TEXT'], ['payout_txn_id', 'TEXT'], ['payout_fee_cents', 'INTEGER']] as const) {
+    if (!columns.has(name)) db.exec(`ALTER TABLE proposals ADD COLUMN ${name} ${type}`)
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS proposals_payout_batch ON proposals(payout_batch_id) WHERE payout_batch_id IS NOT NULL')
   db.exec('CREATE INDEX IF NOT EXISTS proposals_job ON proposals(job_id, created_at)')
   db.exec('CREATE INDEX IF NOT EXISTS proposals_funding ON proposals(funding_capture_id)')
 }

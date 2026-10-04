@@ -28,6 +28,17 @@ const app = createApp({
   },
 })
 
+// Test-only controls for how the fake PayPal answers a payout. They need the owner key like everything else.
+app.post('/__fake/payouts/:outcome', (c) => {
+  const outcome = c.req.param('outcome')
+  if (outcome === 'settle') paypal.settlePayouts('SUCCESS')
+  else if (outcome === 'unregistered') paypal.unregistered.add('priya.shah@example.com')
+  else if (outcome === 'registered') paypal.unregistered.delete('priya.shah@example.com')
+  else if (outcome === 'SUCCESS' || outcome === 'PENDING' || outcome === 'FAILED') paypal.payoutOutcome = outcome
+  else return c.json({ error: 'unknown outcome' }, 400)
+  return c.json({ ok: true, outcome })
+})
+
 serve({ fetch: app.fetch, hostname: '127.0.0.1', port }, () => {
   console.log(JSON.stringify({ message: 'e2e server', port, paypal: 'fake', buyer: paypal.autoApprove ? 'auto' : 'manual' }))
 })

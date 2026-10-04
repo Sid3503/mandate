@@ -28,6 +28,14 @@ export type Packet = {
   amounts: { approvedCents: number | null; capturedCents: number | null; match: boolean | null }
   orderId: string | null
   captureId: string | null
+  payout: {
+    batchId: string
+    itemId: string | null
+    status: string | null
+    transactionId: string | null
+    feeCents: number | null
+    receiver: string | null
+  } | null
   job: string | null
   funding: {
     captureId: string

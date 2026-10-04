@@ -601,7 +601,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Owner only. Reject a pending proposal. */
+        /** Owner only. Reject a pending proposal, or cancel a locked payout before anything has been sent to PayPal. */
         post: {
             parameters: {
                 query?: never;
@@ -664,7 +664,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Owner only. Server capture. Amount in the body is a claim, never the amount sent to PayPal. A different claim is refused. */
+        /** Owner only. Settle from the lock: an Orders capture for a client charge, a Payouts item for a contractor payout, a refund for a refund. Calling it again on a payout still at PayPal re-reads its status. Amount in the body is a claim, never the amount sent to PayPal. A different claim is refused. */
         post: {
             parameters: {
                 query?: never;
@@ -733,6 +733,40 @@ export interface paths {
                     content: {
                         "application/problem+json": components["schemas"]["Problem"];
                     };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhooks/paypal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** PayPal payout webhook. No credential. The body only names a payout batch; the batch is re-read from PayPal, so a forged call cannot change a status. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Received. refreshed says whether a payout was re-read. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };
@@ -939,6 +973,11 @@ export interface components {
             refundId: string | null;
             approveUrl: string | null;
             capturedAmountCents: number | null;
+            payoutBatchId: string | null;
+            payoutItemId: string | null;
+            payoutStatus: string | null;
+            payoutTransactionId: string | null;
+            payoutFeeCents: number | null;
             createdAt: string;
             updatedAt: string;
         };

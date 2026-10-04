@@ -6,7 +6,7 @@ An installable web app (PWA) for the owner, built only on the API in `../api`. I
 | --- | --- | --- |
 | Unlock | `/app/unlock` | `GET /ready`, `GET /v1/session` |
 | Waiting for you | `/app/` | `GET /v1/proposals`, `POST …/approve`, `POST …/reject` |
-| Receipt | `/app/p/:id` | `GET …/packet`, `POST …/capture` (client charges and refunds; the claimed-amount integrity check). Contractor payouts show a **Payout status** checklist instead of Settle. |
+| Receipt | `/app/p/:id` | `GET …/packet`, `POST …/capture` (client charges and refunds; the claimed-amount integrity check). Contractor payouts show a **Send the payout** panel instead of Settle (ready, sent, paid, unclaimed, failed; cancel until sent). |
 | Jobs | `/app/jobs`, `/app/jobs/:jobId` | `GET /v1/jobs/:jobId` |
 | New request | `/app/new` | `GET /v1/warrant`, `POST /v1/proposals` with an `Idempotency-Key` |
 | Ledger | `/app/ledger` | `GET /v1/proposals`, `GET /v1/ledger` (AG Grid Community) |
@@ -56,9 +56,10 @@ The end-to-end suite covers:
   - a payout before the client has paid is refused
   - Northwind's $150 is billed, approved and settled
   - Priya's $90 is funded by that payment and approved
-  - the receipt says it is reserved and not paid, with no Settle or Open PayPal control
+  - the receipt offers **Send $90.00 to Priya Shah** (Payouts, no Open PayPal control), and only says Paid after PayPal confirms
   - a $250 claim is refused
-  - the job shows $150 in, $0 out, $90 reserved, $60 kept
+  - the job shows $150 in, $90 out, $60 kept
+  - a payout PayPal is still processing is not called paid, a receiver with no PayPal account is unclaimed, a failed payout is released, and a locked payout can be cancelled
   - the ledger shows the refusals
   - rules v2 is published through a reviewed diff
 - **The proposer key** cannot approve.

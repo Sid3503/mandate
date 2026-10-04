@@ -9,7 +9,7 @@ import { shortId, when } from '../lib/format'
 import { useNames, useNarrow, useProposals, useWarrant } from '../lib/hooks'
 import { dollars } from '../lib/money'
 import type { LedgerEvent, Proposal } from '../lib/types'
-import { EVENT, explain, GATE, KIND, PHASE } from '../lib/words'
+import { EVENT, explain, GATE, KIND, phaseInfo } from '../lib/words'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -36,7 +36,7 @@ const theme = themeQuartz.withParams({
 type Preset = 'all' | 'refused' | 'waiting' | 'settled' | 'in' | 'out'
 const PRESETS: Array<{ id: Preset; label: string; test: (row: Proposal) => boolean }> = [
   { id: 'all', label: 'Everything', test: () => true },
-  { id: 'refused', label: 'Refused', test: (row) => row.gate === 'DENY' || row.phase === 'capture_refused' },
+  { id: 'refused', label: 'Refused', test: (row) => row.gate === 'DENY' || row.phase === 'capture_refused' || row.phase === 'payout_failed' },
   { id: 'waiting', label: 'Waiting for you', test: (row) => row.phase === 'pending_approval' },
   { id: 'settled', label: 'Settled', test: (row) => row.phase === 'captured' || row.phase === 'refunded' },
   { id: 'in', label: 'Money in', test: (row) => row.kind === 'charge' },
@@ -103,7 +103,7 @@ function Requests() {
       headerName: 'Now', field: 'phase', width: 190,
       cellRenderer: (params: ICellRendererParams<Proposal>) => {
         if (params.data?.phase === 'denied') return <span className="muted">stored · not sent</span>
-        const info = params.data ? PHASE[params.data.phase] : undefined
+        const info = params.data ? phaseInfo(params.data.phase, params.data.kind) : undefined
         return info ? <Tone value={info.label} tone={info.tone} /> : params.data?.phase ?? null
       },
     },

@@ -26,7 +26,7 @@ export type AppDeps = {
   }
 }
 
-const PUBLIC = new Set(['/', '/health', '/ready', '/openapi.json'])
+const PUBLIC = new Set(['/', '/health', '/ready', '/openapi.json', '/v1/webhooks/paypal'])
 
 /** Routes only the owner key may call. A proposer, such as an agent, can ask but never decide or move money. */
 const OWNER_ONLY = [
@@ -196,6 +196,27 @@ export function createApp(deps: AppDeps) {
     const parsed = CaptureSchema.safeParse(body)
     if (!parsed.success) throw invalidRequest(parsed.error)
     return send(c, await service.capture(c.req.param('id'), parsed.data.claimedAmountCents))
+  })
+
+  // PayPal tells us a payout changed. The body is never trusted: it only names a batch, and the
+  // batch is re-read from PayPal with our own credentials. A forged call can at worst cause a read.
+  app.post('/v1/webhooks/paypal', async (c) => {
+    let batchId: string | null = null
+    try {
+      const event = JSON.parse(await c.req.text()) as { event_type?: unknown; resource?: Record<string, unknown> }
+      const resource = event.resource ?? {}
+      const header = resource.batch_header as Record<string, unknown> | undefined
+      const found = resource.payout_batch_id ?? header?.payout_batch_id
+      if (typeof found === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(found)) batchId = found
+    } catch {
+      batchId = null
+    }
+    if (!batchId) return c.json({ received: true, refreshed: false })
+    try {
+      return c.json({ received: true, ...(await service.refreshPayoutBatch(batchId)) })
+    } catch {
+      return c.json({ received: true, refreshed: false })
+    }
   })
 
   app.get('/v1/jobs/:jobId', (c) => c.json(service.job(c.req.param('jobId'))))

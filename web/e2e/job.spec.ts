@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
 
 const OWNER = 'owner-e2e-key-0123456789'
 const PROPOSER = 'proposer-e2e-key-0123456789'
@@ -106,16 +106,15 @@ test('the frozen job, end to end, from the owner console', async ({ page }) => {
   await expect(payout).toContainText('not yet paid')
   await page.waitForTimeout(600)
   await shots(page, '06-priya-locked')
-  await payout.getByRole('link', { name: 'View payout status →' }).click()
+  await payout.getByRole('link', { name: 'Send the payout →' }).click()
 
-  // Money out is reserved, never sent through Orders checkout: say so, and offer no way to send it wrongly.
+  // Money out goes through PayPal Payouts, straight to Priya. Nothing here opens an Orders checkout.
   const status = page.locator('.payout-status')
-  await expect(status).toContainText('approved and reserved for Priya Shah, but it has not been sent')
-  await expect(status).toContainText('Reserved · not paid')
-  await expect(page.getByRole('button', { name: /Settle|Check PayPal/ })).toHaveCount(0)
+  await expect(status).toContainText('Send exactly $90.00 to Priya Shah')
+  await expect(status).toContainText('Ready to send')
   await expect(page.getByRole('link', { name: 'Open PayPal ↗' })).toHaveCount(0)
-  await expect(page.locator('.match-flag')).toHaveText('reserved · not paid')
-  await shots(page, '07-payout-status')
+  await expect(page.locator('.match-flag')).toHaveText('not paid')
+  await shots(page, '07-payout-ready')
 
   // A retry at $250 is refused: the lock is $90.
   await page.getByText('Integrity check · try to change the amount').click()
@@ -125,13 +124,21 @@ test('the frozen job, end to end, from the owner console', async ({ page }) => {
   await expect(page.locator('.refused-claim')).toContainText('$0 moved')
   await shots(page, '08-receipt-refused-claim')
 
-  // The job: $150 in, $0 out, $90 reserved for Priya, $60 kept.
+  // Send it. PayPal confirms, and only then does the page say paid.
+  await page.getByRole('button', { name: /Send \$90\.00 to Priya Shah/ }).click()
+  await expect(status).toContainText('reached Priya Shah’s PayPal account')
+  await expect(status.locator('.chip').first()).toHaveText('Paid')
+  await expect(page.locator('.match-flag')).toHaveText('cents match ✓')
+  await expect(page.getByText('Payout batch')).toBeVisible()
+  await expect(page.getByRole('button', { name: /Send \$90|Check PayPal/ })).toHaveCount(0)
+  await shots(page, '07b-payout-paid')
+
+  // The job: $150 in, $90 out, $60 kept.
   await page.goto(`/app/jobs/${job}`)
   await expect(page.locator('.total-in')).toContainText('$150.00')
-  await expect(page.locator('.total-out')).toContainText('$0.00')
-  await expect(page.locator('.totals')).toContainText('Reserved for payouts')
+  await expect(page.locator('.total-out')).toContainText('$90.00')
   await expect(page.locator('.total-kept')).toContainText('$60.00')
-  await expect(page.locator('.payouts')).toContainText('Approved · awaiting Payouts')
+  await expect(page.locator('.payouts')).toContainText('Paid')
   await shots(page, '09-job')
 
   // The ledger grid shows the refusals.
@@ -186,6 +193,88 @@ test('a buyer who has not approved gets a clear "still waiting" answer, not a si
   await expect(page.getByRole('button', { name: 'Check PayPal and settle' })).toBeEnabled()
   await expect(page.getByRole('link', { name: 'Open PayPal ↗' })).toBeVisible()
   await shots(page, '16-buyer-pending')
+})
+
+/** The frozen job's $180 monthly cap would stop a third $90 payout, so these extra payouts run under a wider cap. */
+async function widerCap(request: APIRequestContext) {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  const current = await (await request.get('/v1/warrant', { headers })).json()
+  if (current.monthlyCapCents >= 90_000) return
+  const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
+  await request.put('/v1/warrant', { headers, data: { ...body, monthlyCapCents: 90_000 } })
+}
+
+/** Money in and out through the API, so the payout tests can spend their time on the receipt screen. */
+async function fundedPayout(request: APIRequestContext, job: string) {
+  await widerCap(request)
+  const headers = { authorization: `Bearer ${OWNER}` }
+  const post = async (path: string, data?: unknown, key?: string) =>
+    (await request.post(path, { headers: { ...headers, ...(key ? { 'idempotency-key': key } : {}) }, data })).json()
+  const charge = await post('/v1/proposals', { kind: 'charge', payee: 'Northwind', amountCents: 15000, currency: 'USD', category: 'design', description: `Invoice ${job}`, evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job }, `charge-${job}-0001`)
+  await post(`/v1/proposals/${charge.id}/approve`)
+  const captured = await post(`/v1/proposals/${charge.id}/capture`)
+  const payout = await post('/v1/proposals', { payee: 'Priya', amountCents: 9000, currency: 'USD', category: 'design', description: `Share ${job}`, evidenceUrl: 'https://www.figma.com/file/northwind-logo', prompt: 'Pay Priya her $90 share', jobId: job, fundingCaptureId: captured.captureId }, `payout-${job}-0001`)
+  await post(`/v1/proposals/${payout.id}/approve`)
+  return payout.id as string
+}
+
+async function fake(request: APIRequestContext, outcome: string) {
+  await request.post(`/__fake/payouts/${outcome}`, { headers: { authorization: `Bearer ${OWNER}` } })
+}
+
+test('a payout PayPal is still processing is not called paid until PayPal says so', async ({ page, request }) => {
+  await fake(request, 'PENDING')
+  const id = await fundedPayout(request, `job_slow_${test.info().project.name}`)
+  await unlock(page, OWNER)
+  await page.goto(`/app/p/${id}`)
+  await page.getByRole('button', { name: /Send \$90\.00 to Priya Shah/ }).click()
+  const status = page.locator('.payout-status')
+  await expect(status.locator('.chip').first()).toHaveText('Sent · PayPal processing')
+  await expect(status).toContainText('It is not paid until PayPal says so')
+  await expect(page.locator('.match-flag')).toHaveText('not paid')
+  await expect(status.locator('.still-waiting')).toContainText('PayPal says PENDING')
+  await shots(page, '17-payout-processing')
+  await page.goto(`/app/jobs/job_slow_${test.info().project.name}`)
+  await expect(page.locator('.total-out')).toContainText('$0.00')
+  await expect(page.locator('.totals')).toContainText('Approved · not yet paid')
+
+  await fake(request, 'settle')
+  await page.goto(`/app/p/${id}`)
+  await page.getByRole('button', { name: 'Check PayPal' }).click()
+  await expect(status.locator('.chip').first()).toHaveText('Paid')
+  await expect(page.locator('.match-flag')).toHaveText('cents match ✓')
+  await fake(request, 'SUCCESS')
+})
+
+test('a receiver PayPal cannot find is unclaimed, and a failed payout is released', async ({ page, request }) => {
+  await fake(request, 'unregistered')
+  const unclaimed = await fundedPayout(request, `job_unclaimed_${test.info().project.name}`)
+  await unlock(page, OWNER)
+  await page.goto(`/app/p/${unclaimed}`)
+  await page.getByRole('button', { name: /Send \$90\.00 to Priya Shah/ }).click()
+  const status = page.locator('.payout-status')
+  await expect(status.locator('.chip').first()).toHaveText('Sent · unclaimed')
+  await expect(status).toContainText('Mandate does not count it as paid')
+  await shots(page, '18-payout-unclaimed')
+  await fake(request, 'registered')
+
+  await fake(request, 'FAILED')
+  const failed = await fundedPayout(request, `job_failed_${test.info().project.name}`)
+  await page.goto(`/app/p/${failed}`)
+  await page.getByRole('button', { name: /Send \$90\.00 to Priya Shah/ }).click()
+  await expect(status.locator('.chip').first()).toHaveText('Payout failed')
+  await expect(status).toContainText('PayPal did not pay Priya Shah')
+  await shots(page, '19-payout-failed')
+  await fake(request, 'SUCCESS')
+})
+
+test('an owner can cancel a locked payout before it is sent', async ({ page, request }) => {
+  const id = await fundedPayout(request, `job_cancel_${test.info().project.name}`)
+  await unlock(page, OWNER)
+  await page.goto(`/app/p/${id}`)
+  await page.getByRole('button', { name: 'Cancel this payout' }).click()
+  await expect(page.locator('.page-head .chip').first()).toHaveText('Rejected')
+  await expect(page.locator('.payout-status')).toHaveCount(0)
 })
 
 test('a proposer key can ask but never approve', async ({ page }) => {

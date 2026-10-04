@@ -35,7 +35,8 @@ export function NewRequest() {
   const [parent, setParent] = useState(params.get('parent') ?? '')
 
   const rows = proposals.data?.data ?? []
-  const captured = rows.filter((row) => row.phase === 'captured' && (row.kind === 'charge' || row.kind === 'payment'))
+  // Only PayPal captures can be refunded or fund a payout. A paid payout has a Payouts id, not a capture id.
+  const captured = rows.filter((row) => row.phase === 'captured' && Boolean(row.captureId) && (row.kind === 'charge' || row.kind === 'payment'))
   const charges = captured.filter((row) => row.kind === 'charge')
   const jobIds = [...new Set(rows.map((row) => row.jobId).filter((id): id is string => Boolean(id)))]
   const fundingJobs = [...new Set(charges.map((row) => row.jobId).filter((id): id is string => Boolean(id)))]

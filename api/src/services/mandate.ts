@@ -1,17 +1,19 @@
 import { randomUUID } from 'node:crypto'
-import type { Repo, ProposalRow, ProposalKind } from '../db/repo'
+import type { Repo, ProposalRow, ProposalKind, PayoutUpdate } from '../db/repo'
 import { Clause, decide, fundableCents, resolveCategory, resolveClient, resolvePayee, type FundingCharge } from '../domain/gate'
 import { cartHash, stableHash, type CartFields } from '../domain/hash'
 import { monthWindow } from '../domain/period'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
 import { WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
-import { PayPalError, type PayPalPort } from '../paypal/port'
+import { PayPalError, type LivePayout, type PayPalPort } from '../paypal/port'
 import { Problem } from '../http/problem'
 
 export type HttpResult = { status: number; body: unknown }
 export type Role = 'owner' | 'proposer'
 
-const RESUME_PHASES = new Set(['locked', 'order_created'])
+const RESUME_PHASES = new Set(['locked', 'order_created', 'payout_sent', 'payout_unclaimed'])
+/** Payout phases where PayPal already holds the batch, so money may already have left. */
+const PAYOUT_LIVE_PHASES = ['payout_sent', 'payout_unclaimed']
 const INFLIGHT_MS = 30_000
 
 export type ProposalView = {
@@ -39,6 +41,11 @@ export type ProposalView = {
   refundId: string | null
   approveUrl: string | null
   capturedAmountCents: number | null
+  payoutBatchId: string | null
+  payoutItemId: string | null
+  payoutStatus: string | null
+  payoutTransactionId: string | null
+  payoutFeeCents: number | null
   createdAt: string
   updatedAt: string
   links: { self: string; packet: string }
@@ -70,6 +77,11 @@ export function toView(row: ProposalRow): ProposalView {
     refundId: row.refund_id,
     approveUrl: row.approve_url,
     capturedAmountCents: row.captured_amount_cents,
+    payoutBatchId: row.payout_batch_id,
+    payoutItemId: row.payout_item_id,
+    payoutStatus: row.payout_status,
+    payoutTransactionId: row.payout_txn_id,
+    payoutFeeCents: row.payout_fee_cents,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     links: { self: `/v1/proposals/${row.id}`, packet: `/v1/proposals/${row.id}/packet` },
@@ -132,7 +144,7 @@ export class MandateService {
     const now = this.iso()
     return this.repo.transaction(() => {
       const row = this.require(id)
-      if (row.phase === 'locked' || row.phase === 'order_created' || row.phase === 'captured' || row.phase === 'refunded') {
+      if (['locked', 'order_created', 'captured', 'refunded', ...PAYOUT_LIVE_PHASES].includes(row.phase)) {
         return { status: 200, body: toView(this.require(id)) }
       }
       if (row.phase !== 'pending_approval' || row.gate === 'DENY') {
@@ -180,11 +192,14 @@ export class MandateService {
     return this.repo.transaction(() => {
       const row = this.require(id)
       if (row.phase === 'rejected') return { status: 200, body: toView(row) }
-      if (row.phase !== 'pending_approval') {
+      // A locked payout can be cancelled while nothing has been sent to PayPal. This also voids a
+      // checkout an older build opened for it.
+      const cancellable = row.kind === 'payment' && !row.payout_batch_id && (row.phase === 'locked' || row.phase === 'order_created')
+      if (row.phase !== 'pending_approval' && !cancellable) {
         throw new Problem(409, 'proposal.state', 'Proposal cannot be rejected', `Phase is ${row.phase}.`)
       }
       this.repo.setPhase(row.id, 'rejected', now)
-      this.repo.insertEvent(randomUUID(), row.id, 'proposal.rejected', row.clause, { actor: 'owner' }, now)
+      this.repo.insertEvent(randomUUID(), row.id, 'proposal.rejected', row.clause, { actor: 'owner', wasLocked: cancellable }, now)
       return { status: 200, body: toView(this.require(id)) }
     })
   }
@@ -201,6 +216,7 @@ export class MandateService {
     try {
       const current = this.require(id)
       if (current.kind === 'refund') return await this.settleRefund(current)
+      if (current.kind === 'payment') return await this.settlePayout(current)
       return await this.settlePayment(current)
     } catch (error) {
       if (this.require(id).phase === 'capture_inflight') this.repo.setPhase(id, resume, this.iso())
@@ -261,6 +277,98 @@ export class MandateService {
       }, now)
     })
     return { status: 200, body: toView(this.require(saved.id)) }
+  }
+
+  /** Money out. Sends one PayPal Payouts item from the lock, then reads it back from PayPal and checks it. */
+  private async settlePayout(current: ProposalRow): Promise<HttpResult> {
+    if (!this.paypal) throw new Problem(503, 'paypal.unconfigured', 'PayPal is not configured', 'Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET before capture.')
+    let batchId = current.payout_batch_id
+    if (!batchId) {
+      const warrant = this.repo.warrant(current.warrant_id, current.warrant_version)
+      const payee = warrant?.body.payees.find((item) => item.id === current.payee_id)
+      if (!payee || !current.cart_hash) {
+        throw new Problem(409, Clause.payeeUnknown, 'Payee is not on the rules', 'The contractor for this payout is not on the rules it was approved under. Nothing was sent.')
+      }
+      const sent = await this.paypal.sendPayout({
+        proposalId: current.id,
+        cartHash: current.cart_hash,
+        receiverEmail: payee.email,
+        amountCents: current.amount_cents,
+        currency: current.currency,
+        note: current.description,
+      })
+      batchId = sent.batchId
+      const now = this.iso()
+      this.repo.transaction(() => {
+        this.repo.savePayoutBatch(current.id, sent.batchId, now)
+        this.repo.insertEvent(randomUUID(), current.id, 'payout.sent', current.clause, {
+          batchId: sent.batchId,
+          receiver: payee.email,
+          amountCents: current.amount_cents,
+          currency: current.currency,
+        }, now)
+      })
+    }
+    const saved = this.require(current.id)
+    const live = await this.paypal.getPayout(batchId)
+    return this.applyLivePayout(saved, live)
+  }
+
+  private applyLivePayout(row: ProposalRow, live: LivePayout): HttpResult {
+    const item = live.item
+    if (!item) return { status: 200, body: toView(this.require(row.id)) }
+    if (item.amountCents !== row.amount_cents || item.currency !== row.currency || (item.senderItemId !== null && item.senderItemId !== row.id)) {
+      const now = this.iso()
+      this.repo.transaction(() => {
+        this.repo.refuse(row.id, now)
+        this.repo.insertEvent(randomUUID(), row.id, 'capture.refused', Clause.cartImmutable, {
+          lockedAmountCents: row.amount_cents,
+          liveAmountCents: item.amountCents,
+          liveCurrency: item.currency,
+          batchId: live.batchId,
+        }, now)
+      })
+      return {
+        status: 409,
+        body: problemValue(Clause.cartImmutable, 'PayPal payout does not match the locked cart', `Locked amount is ${row.amount_cents} ${row.currency} cents. PayPal reports ${item.amountCents} ${item.currency} cents.`, {
+          proposalId: row.id,
+          batchId: live.batchId,
+          lockedAmountCents: row.amount_cents,
+          liveAmountCents: item.amountCents,
+        }),
+      }
+    }
+    const update = payoutUpdate(item)
+    const now = this.iso()
+    this.repo.transaction(() => {
+      this.repo.applyPayout(row.id, update, now)
+      if (row.phase !== update.phase || row.payout_status !== item.status) {
+        const type = update.phase === 'captured' ? 'payout.completed'
+          : update.phase === 'payout_unclaimed' ? 'payout.unclaimed'
+          : update.phase === 'payout_failed' ? 'payout.failed'
+          : 'payout.status'
+        this.repo.insertEvent(randomUUID(), row.id, type, row.clause, {
+          batchId: live.batchId,
+          itemId: item.itemId,
+          status: item.status,
+          transactionId: item.transactionId,
+          amountCents: item.amountCents,
+          feeCents: item.feeCents,
+          error: item.errorName,
+        }, now)
+      }
+    })
+    return { status: 200, body: toView(this.require(row.id)) }
+  }
+
+  /** PayPal reports on a payout batch. The body is never trusted: the batch is re-read from PayPal. */
+  async refreshPayoutBatch(batchId: string): Promise<{ refreshed: boolean }> {
+    if (!this.paypal) return { refreshed: false }
+    const row = this.repo.proposalByPayoutBatch(batchId)
+    if (!row || !['payout_sent', 'payout_unclaimed'].includes(row.phase)) return { refreshed: false }
+    const live = await this.paypal.getPayout(batchId)
+    this.applyLivePayout(row, live)
+    return { refreshed: true }
   }
 
   private async settleRefund(current: ProposalRow): Promise<HttpResult> {
@@ -332,6 +440,14 @@ export class MandateService {
       },
       orderId: row.order_id,
       captureId: row.capture_id,
+      payout: row.payout_batch_id ? {
+        batchId: row.payout_batch_id,
+        itemId: row.payout_item_id,
+        status: row.payout_status,
+        transactionId: row.payout_txn_id,
+        feeCents: row.payout_fee_cents,
+        receiver: payee?.email ?? null,
+      } : null,
       job: row.job_id,
       funding: row.funding_capture_id ? this.fundingSummary(row.funding_capture_id) : null,
       events,
@@ -495,7 +611,7 @@ export class MandateService {
         resume: row.phase,
       }
     }
-    if (row.phase === 'captured' || row.phase === 'refunded') {
+    if (row.phase === 'captured' || row.phase === 'refunded' || row.phase === 'payout_failed') {
       return { result: { status: 200, body: toView(row) }, row, resume: row.phase }
     }
     if (row.phase === 'capture_inflight') {
@@ -510,7 +626,8 @@ export class MandateService {
     if (cartHash(fields) !== row.cart_hash) {
       throw new Problem(409, Clause.cartImmutable, 'Cart hash does not match the row', 'The stored cart does not match its hash.', { proposalId: row.id })
     }
-    if (row.kind === 'payment' && row.funding_capture_id) {
+    // Once PayPal holds the batch the money may already have left, so a later refund of the client payment cannot stop it.
+    if (row.kind === 'payment' && row.funding_capture_id && !row.payout_batch_id) {
       const funding = this.repo.paymentByCapture(row.funding_capture_id)
       const warrant = this.repo.warrant(row.warrant_id, row.warrant_version)
       const state = funding ? this.fundingState(funding) : null
@@ -525,25 +642,7 @@ export class MandateService {
         })
       }
     }
-    // Orders collects a buyer payment for the studio. It is never a contractor payout.
-    // This also covers money-out rows with an Orders checkout created by older builds:
-    // a buyer approving that checkout must not make it capturable through this route.
-    if (row.kind === 'payment') {
-      return {
-        result: {
-          status: 409,
-          body: problemValue('payout.unavailable', 'Contractor payout not connected',
-            'This payment is approved and reserved, but PayPal Payouts is not connected. Orders checkout pays the studio, not the contractor. No payout was sent.', {
-              proposalId: row.id,
-              lockedAmountCents: row.amount_cents,
-              phase: row.phase,
-            }),
-        },
-        row,
-        resume: row.phase,
-      }
-    }
-    const resume = row.phase === 'capture_inflight' ? (row.order_id ? 'order_created' : 'locked') : row.phase
+    const resume = row.phase === 'capture_inflight' ? (row.payout_batch_id ? 'payout_sent' : row.order_id ? 'order_created' : 'locked') : row.phase
     this.repo.setPhase(row.id, 'capture_inflight', now)
     return { result: null, row, resume }
   }
@@ -650,7 +749,7 @@ export class MandateService {
     const refundedOf = (row: ProposalRow) => (row.capture_id ? this.repo.refundedCents(row.capture_id) : 0)
     const inCents = charges.filter((row) => row.phase === 'captured').reduce((sum, row) => sum + (row.captured_amount_cents ?? 0) - refundedOf(row), 0)
     const outCents = payouts.filter((row) => row.phase === 'captured').reduce((sum, row) => sum + (row.captured_amount_cents ?? 0) - refundedOf(row), 0)
-    const heldCents = payouts.filter((row) => ['locked', 'order_created', 'capture_inflight'].includes(row.phase)).reduce((sum, row) => sum + row.amount_cents, 0)
+    const heldCents = payouts.filter((row) => ['locked', 'order_created', 'capture_inflight', ...PAYOUT_LIVE_PHASES].includes(row.phase)).reduce((sum, row) => sum + row.amount_cents, 0)
     return {
       jobId,
       client,
@@ -701,6 +800,21 @@ export function decodeCursor(cursor: string): { createdAt: string; id: string } 
     throw new Problem(400, 'cursor.invalid', 'Cursor is invalid', 'The cursor could not be read.')
   }
   return { createdAt, id }
+}
+
+function payoutUpdate(item: NonNullable<LivePayout['item']>): PayoutUpdate {
+  const phase = item.status === 'SUCCESS' ? 'captured'
+    : item.status === 'UNCLAIMED' ? 'payout_unclaimed'
+    : ['FAILED', 'BLOCKED', 'RETURNED', 'DENIED', 'REFUNDED', 'REVERSED'].includes(item.status) ? 'payout_failed'
+    : 'payout_sent'
+  return {
+    phase,
+    status: item.status,
+    itemId: item.itemId,
+    transactionId: item.transactionId,
+    feeCents: item.feeCents,
+    paidCents: phase === 'captured' ? item.amountCents : null,
+  }
 }
 
 function problemValue(code: string, title: string, detail: string, extensions: Record<string, unknown>) {

@@ -62,7 +62,7 @@ Open **http://127.0.0.1:8799/app/** and unlock with:
 | Owner | `owner-e2e-key-0123456789` | Everything: ask, approve, settle, change the rules |
 | Proposer (an agent's key) | `proposer-e2e-key-0123456789` | Ask and read only |
 
-Demo mode keeps everything in memory and uses a fake PayPal whose buyer approves at once, so a client charge's **Settle** completes immediately. A contractor payout does **not** settle, on purpose: it stays approved and reserved until the Payouts rail is connected (see [Money out, honestly](#money-out-honestly)). Restarting `npm run demo` starts from an empty ledger. To use the real PayPal sandbox, see [Running against the PayPal sandbox](#running-against-the-paypal-sandbox).
+Demo mode keeps everything in memory and uses a fake PayPal whose buyer approves at once, so a client charge's **Settle** completes immediately. A contractor payout goes through the fake Payouts instead, which pays at once; see [Money out](#money-out-through-paypal-payouts) for the real rail and its unpaid and failed states. Restarting `npm run demo` starts from an empty ledger. To use the real PayPal sandbox, see [Running against the PayPal sandbox](#running-against-the-paypal-sandbox).
 
 ---
 
@@ -86,7 +86,7 @@ Every number in the code, the seed data, the tests, the Postman collection, the 
 | 1. Deal | Northwind's agent and the studio's agent agree $300 in two $150 milestones. $450 and $200 are refused. | A pure function: the terms must fit **both** sides' rules. | none | planned |
 | 2. Money in | The studio bills milestone 1. Meera approves the charge. Northwind pays $150. | Studio rules + Meera's tap + the PayPal buyer | Orders v2 | **built** |
 | 3. Delivery | Priya posts the Figma link. | Code checks an `https` link exists. | none | **built** (evidence check) |
-| 4. Money out | The captured $150 funds Priya's $90. $90 ≥ $20, so Meera taps once. The $90 is approved and **reserved**. | Studio rules + funding rule + Meera's tap | Payouts (next). Orders checkout is refused for contractors. | **built** up to the lock; **the payout itself is not sent yet** |
+| 4. Money out | The captured $150 funds Priya's $90. $90 ≥ $20, so Meera taps once. The server sends exactly the locked cents to Priya's own PayPal account and only says *paid* when PayPal does. | Studio rules + funding rule + Meera's tap | **Payouts v1** | **built, live in sandbox** |
 | 5. Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | none | — | **built** |
 
 One sentence: **the client's money coming in releases the contractor's money going out, and the agents on both sides can act only inside the rules their owners signed.**
@@ -139,15 +139,14 @@ This is the end-to-end story in the owner console. It is also the script for the
 
 ### 4. The hero tap
 
-**Waiting for you**. The card shows *Funded by Northwind $150.00 settled ✓* and *Why you? $90.00 is at or above $20.00*. → **Approve $90.00**. The lock hash appears and the card says *$90.00 is reserved for Priya Shah, not yet paid*. → **View payout status →**.
+**Waiting for you**. The card shows *Funded by Northwind $150.00 settled ✓* and *Why you? $90.00 is at or above $20.00*. → **Approve $90.00**. The lock hash appears and the card says *$90.00 is locked for Priya Shah and not yet paid*. → **Send the payout →**.
 
-The receipt shows **Payout status · Reserved · not paid** with a checklist: asked ✓, rules checked ✓, funded by the client ✓, approved and locked ✓, **payout to Priya … (waiting for the payout rail)**, paid and receipted. There is no Settle button and no "Open PayPal" link, because nothing on this screen can send the money the wrong way.
+The receipt shows **Send the payout · Ready to send** with a checklist: asked ✓, rules checked ✓, funded by the client ✓, approved and locked ✓, **sent to Priya through PayPal Payouts**, paid and receipted. There is no "Open PayPal" link, because money out never uses a buyer checkout. Open **Integrity check**, enter `250`, and **Send claim**: **409 · cart.immutable · $0 moved**. Then **Send $90.00 to Priya Shah**. The panel changes to **Paid** only after PayPal reports SUCCESS, with the payout batch id, the transaction id, the $0.25 PayPal fee and **cents match ✓**. If PayPal is still processing it says *Sent · PayPal processing* and **Check PayPal** asks again. If the receiver has no PayPal account it says *Sent · unclaimed* and does not count it as paid. **Cancel this payout** is available until something is sent.
 
-Open **Integrity check**, enter `250`, and **Send claim**. The result is **409 · cart.immutable · $0 moved**.
 
 ### 5. The job
 
-**Jobs** → Northwind shows **$150 in · $0 out · $90 reserved for payouts · $60 kept**. The client payment can still fund **$0.00**, and Priya's row says *Approved · awaiting Payouts*.
+**Jobs** → Northwind shows **$150 in · $90 out · $0 approved-not-yet-paid · $60 kept**. The client payment can still fund **$0.00**, and Priya's row says *Paid*. While PayPal is still processing, the $90 shows under *Approved · not yet paid* and *Money out* stays $0.
 
 ### 6. The refusals
 
@@ -176,19 +175,19 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Rules (warrant) | Versioned. Seeded for Line Studio and the frozen job. History endpoint. A new version never rewrites an open request. |
 | Gate | A pure function. `DENY`, `AUTO` or `NEEDS_APPROVAL`, with a rule code and the server's sentence. A denial is stored and creates no PayPal order. |
 | Money in | Client charges (`kind: "charge"`) settled through PayPal Orders v2, with the client as buyer. |
-| Money out | Contractor payouts (`kind: "payment"`) that must cite a captured charge on the same job, within a 60% share. Checked at propose, approve and capture. Approved payouts are **reserved**; settling one returns `409 payout.unavailable` until the Payouts rail exists. |
+| Money out | Contractor payouts (`kind: "payment"`) that must cite a captured charge on the same job, within a 60% share. Checked at propose, approve and capture. Sent through **PayPal Payouts** straight to the contractor's PayPal account, never through Orders. |
 | Refunds | A new proposal against a capture id, through the same gate and the same settle route (PayPal Payments v2). |
 | Lock | A SHA-256 over payee, cents, currency, category, evidence, kind, job and funding capture. Recomputed at settle. |
 | Settlement | Server only. A stable `PayPal-Request-Id`. The live order is re-read and checked before capture. A different claimed amount is refused without calling PayPal. |
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 41 API tests (Vitest), plus 12 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 48 API tests (Vitest), plus 18 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
 
-Not built yet: the AI agents, the MCP server, the deal check, PayPal Payouts, webhooks, and a server signature over the lock. See [Roadmap](#roadmap-what-is-left).
+Not built yet: the AI agents, the MCP server, the deal check, and a server signature over the lock. See [Roadmap](#roadmap-what-is-left).
 
 ---
 
@@ -352,6 +351,12 @@ Open **http://127.0.0.1:8787/app/** and unlock with `dev-mandate-key-change-me`.
 
 There is no return URL yet, so after approving the PayPal page may stay on *Pay with*. The order is approved; settle from the console.
 
+To pay a contractor for real in the sandbox:
+
+1. **Rules → Write a new version** and set Priya's email to a sandbox personal account that exists (for example the US personal account in [KT.md](KT.md)). The seeded `priya.shah@example.com` is not a PayPal account, so PayPal would hold the money as *unclaimed*. The payout uses the email from the rules version it was approved under.
+2. Approve Priya's $90, open the receipt, and press **Send $90.00 to Priya Shah**. PayPal usually finishes within a minute: press **Check PayPal** until it says **Paid**.
+3. PayPal can also call `POST /v1/webhooks/paypal` (register `https://<your-host>/v1/webhooks/paypal` for the payout item events once the server is deployed). The server treats it as a nudge and re-reads the batch from PayPal.
+
 ### Live reload while working on the console
 
 ```bash
@@ -371,7 +376,7 @@ An installable web app (PWA) for the owner, built only on the existing API. It h
 | --- | --- | --- | --- |
 | **Unlock** | `/app/unlock` | Ledger and PayPal readiness. Enter an owner or proposer key. | `GET /ready`, `GET /v1/session` |
 | **Waiting for you** | `/app/` | Approval cards: who, how much, for what, the proof link, **which client payment funds it**, and **why it needs you**. **Approve $90.00** shows the lock hash being set. Below are approved requests and what happens next (settle a client charge, or see a payout's status), and recent refusals with "$0 moved". | `GET /v1/proposals`, `POST …/approve`, `POST …/reject` |
-| **Receipt** | `/app/p/:id` | The decision in plain words and the server's words, the full lock hash, approved vs settled cents ("cents match ✓"), funded by, PayPal ids, a timeline, and a JSON download. For a client charge, **Settle** walks the PayPal buyer step and answers "Still waiting" with the time it checked when the buyer has not approved. For a contractor payout, a **Payout status** checklist replaces Settle. The **integrity check** sends a different claimed amount and shows the refusal. | `GET …/packet`, `POST …/capture` |
+| **Receipt** | `/app/p/:id` | The decision in plain words and the server's words, the full lock hash, approved vs settled cents ("cents match ✓"), funded by, PayPal ids, a timeline, and a JSON download. For a client charge, **Settle** walks the PayPal buyer step and answers "Still waiting" with the time it checked when the buyer has not approved. For a contractor payout, a **Send the payout** panel replaces Settle and follows the payout from ready to sent to paid, unclaimed or failed, with a **Cancel this payout** button until it is sent. The **integrity check** sends a different claimed amount and shows the refusal. | `GET …/packet`, `POST …/capture` |
 | **Jobs** | `/app/jobs`, `/app/jobs/:jobId` | Money in, out, held and kept, with bars. Each client payment with what it can still fund and the payouts under it. Shortcuts to bill the next milestone or pay a contractor from a payment. | `GET /v1/jobs/:jobId` |
 | **New request** | `/app/new` | Money in, money out or refund. People and categories come from the rules. The funding picker lists only settled client payments, with what each can still fund. You can deliberately pick "not funded yet", "someone not on the rules" or another kind of work to see refusals. The answer card is always the server's decision; the screen never predicts it. | `GET /v1/warrant`, `POST /v1/proposals` |
 | **Ledger** | `/app/ledger` | An AG Grid Community table of every request, with filters (everything, refused, waiting, settled, money in, money out), search, refusals highlighted, and a compact phone layout. An events tab lists every event, with paging. | `GET /v1/proposals`, `GET /v1/ledger` |
@@ -426,7 +431,7 @@ More detail is in [web/README.md](web/README.md).
                                   refunded (for kind: refund)
 ```
 
-Money reserved against the monthly cap counts contractor payouts in `locked`, `order_created`, `capture_inflight` or `captured` within the month in the warrant timezone (`Asia/Kolkata`), minus refunded cents. Client charges never count against the contractor cap.
+Money reserved against the monthly cap counts contractor payouts in `locked`, `order_created`, `capture_inflight`, `payout_sent`, `payout_unclaimed` or `captured` within the month in the warrant timezone (`Asia/Kolkata`), minus refunded cents. Client charges never count against the contractor cap.
 
 Full API notes are in [api/README.md](api/README.md).
 
@@ -481,20 +486,33 @@ Full API notes are in [api/README.md](api/README.md).
 - **Checked three times:**
   1. at propose (the gate),
   2. at approve (re-checked before locking),
-  3. at capture: if the client payment was refunded in the meantime, the payout capture is refused (`funding.exceeds`) and PayPal is not called. (Until Payouts exists, a payout capture is refused with `payout.unavailable` anyway.)
+  3. at capture: if the client payment was refunded in the meantime, the payout capture is refused (`funding.exceeds`) and PayPal is not called. Once PayPal already holds the payout batch this check is skipped: the money may already have left, so the only job left is to read its status.
 - **The lock includes the job and the funding capture** (cart v2), so neither can be swapped after the tap.
 - **Job receipt:** `GET /v1/jobs/{jobId}` returns charges (with `fundableCents`), payouts, refunds, and totals: `inCents`, `outCents`, `heldCents`, `keptCents`. For the frozen job that is 15000 / 9000 / 0 / 6000.
 
-### Money out, honestly
+### Money out through PayPal Payouts
 
-PayPal checkout (Orders v2) collects money *from a buyer into the studio's account*. It cannot send money *to Priya*: a buyer approving it would pay the studio's own business account. So Mandate **does not use Orders for contractor payouts**:
+PayPal checkout (Orders v2) collects money *from a buyer into the studio's account*. It cannot send money *to Priya*: a buyer approving it would pay the studio's own business account. So contractors are paid with **PayPal Payouts v1**, straight to their own PayPal account. Orders is never used for money out.
 
-- Approving a payout locks and **reserves** it: it counts against the monthly cap and against what the client payment can fund.
-- `POST /v1/proposals/:id/capture` on a payout returns **`409 payout.unavailable`** without calling PayPal. The one exception to that order of checks is the claimed-amount check, which still returns `cart.immutable` first.
-- A payout that an older build opened an Orders checkout for is handled the same way: the checkout is ignored and never captured, even if a buyer approves it. The console flags it on the receipt.
-- The job receipt counts the $90 as **reserved** (`heldCents`), not **out** (`outCents`), until a real payout is sent.
+`POST /v1/proposals/:id/capture` on a locked payout:
 
-The next step is the one-day PayPal Payouts spike (US business → Priya's sandbox account). If it works, `capture` for a payout sends a Payouts item from the lock. If it does not, the demo shows the reserved payout and the real refusal from paying `priya.shah@example.com` through Orders. No made-up success.
+1. Recomputes the lock, re-checks the funding, and reads the receiver from the rules version the payout was approved under (not the latest).
+2. Sends one Payouts item with exactly the locked cents. `sender_batch_id` is derived from the lock hash (`mandate_<hash>`), `sender_item_id` is the proposal id, and the `PayPal-Request-Id` is stable, so a retry or a crash can never pay twice.
+3. Reads the batch back from PayPal and checks the amount, currency and `sender_item_id` against the lock. A mismatch sets `capture_refused` and `cart.immutable`.
+4. Maps PayPal's item status to a phase, and never calls anything *paid* that PayPal has not confirmed:
+
+| PayPal item status | Phase | Counts as |
+| --- | --- | --- |
+| `SUCCESS` | `captured` | **paid** (`outCents`), with transaction id and fee |
+| `PENDING`, `ONHOLD` | `payout_sent` | approved, not yet paid |
+| `UNCLAIMED` (the receiver has no PayPal account) | `payout_unclaimed` | approved, not yet paid. PayPal holds it up to 30 days. |
+| `FAILED`, `BLOCKED`, `RETURNED`, `DENIED`, `REFUNDED`, `REVERSED` | `payout_failed` | nothing. The reservation is released and it can be proposed again. |
+
+Calling capture again on a `payout_sent` or `payout_unclaimed` payout re-reads its status (the console's **Check PayPal** button). PayPal can also tell the server: `POST /v1/webhooks/paypal` takes a payout event, reads only the batch id from it, and **re-reads the batch from PayPal** with the server's own credentials. A forged webhook can at worst cause one read; it cannot change a status.
+
+A locked payout can be cancelled (`POST …/reject`, owner only) while no batch has been sent. This also voids a checkout an older build opened for it: that Orders order is never captured, and sending the payout ignores it. A payout already at PayPal cannot be cancelled.
+
+The sender pays PayPal's Payouts fee (`$0.25` per item in the sandbox) from the studio's balance on top of the $90, so Priya receives the full $90. It is stored as `payoutFeeCents` and shown on the receipt.
 
 ---
 
@@ -579,7 +597,7 @@ P=$(curl -s -X POST $B/v1/proposals "${H[@]}" -H "idempotency-key: priya-m1-$(da
   \"fundingCaptureId\":\"$CAP\"}" | jq -r .id)
 curl -s -X POST $B/v1/proposals/$P/approve -H "authorization: Bearer $K" >/dev/null
 curl -s -X POST $B/v1/proposals/$P/capture "${H[@]}" -d '{"claimedAmountCents":25000}' | jq '{code,lockedAmountCents}'   # 409
-curl -s -X POST $B/v1/proposals/$P/capture -H "authorization: Bearer $K" | jq '{code,lockedAmountCents}'    # 409 payout.unavailable: reserved, not sent
+curl -s -X POST $B/v1/proposals/$P/capture -H "authorization: Bearer $K" | jq '{phase,payoutStatus,capturedAmountCents}'    # Payouts, not Orders
 curl -s $B/v1/jobs/job_northwind_logo -H "authorization: Bearer $K" | jq .totals   # in 15000, out 0, held 9000, kept 6000
 ```
 
@@ -619,7 +637,7 @@ Import `api/postman/Mandate.postman_collection.json` and `api/postman/Mandate.lo
 | `cart.immutable` | 409 | The lock holds. A different amount or body was refused, and PayPal was not asked. |
 | `shape.invalid` | DENY | The amount must be a whole number of cents above zero. |
 
-HTTP problems that are not rule decisions: `auth.unauthorized` (401), `auth.forbidden` (403), `idempotency.missing` (400), `idempotency.mismatch` (422), `idempotency.inflight` (409), `proposal.state` (409), `capture.inflight` (409), `paypal.buyer_pending` (409), `payout.unavailable` (409), `paypal.unconfigured` (503), `paypal.upstream` (502), `rate.limited` (429), `request.invalid` (400), `request.unsupported_media_type` (415), `route.not_found` (404), `job.missing` (404 on `/v1/jobs`).
+HTTP problems that are not rule decisions: `auth.unauthorized` (401), `auth.forbidden` (403), `idempotency.missing` (400), `idempotency.mismatch` (422), `idempotency.inflight` (409), `proposal.state` (409), `capture.inflight` (409), `paypal.buyer_pending` (409), `paypal.unconfigured` (503), `paypal.upstream` (502), `rate.limited` (429), `request.invalid` (400), `request.unsupported_media_type` (415), `route.not_found` (404), `job.missing` (404 on `/v1/jobs`).
 
 ---
 
@@ -629,7 +647,7 @@ HTTP problems that are not rule decisions: `auth.unauthorized` (401), `auth.forb
 | --- | --- | --- |
 | Client pays the studio (money in) | **Orders v2**: create, get, capture | **live in sandbox** |
 | Refund a settled payment | **Payments v2** capture refund | **live** (tested with the fake; same gated route) |
-| Studio pays Priya (money out) | **Payouts**, with `sender_batch_id` from the lock | next (one-day spike) |
+| Studio pays Priya (money out) | **Payouts v1**: create batch, get batch, webhook refresh. `sender_batch_id` comes from the lock. | **live in sandbox** |
 | Invoices, reports, disputes behind the rules | `@paypal/agent-toolkit`, server-side only | planned |
 | Keep the ledger true when no browser returns | Webhooks, signature-verified | planned |
 | Prove who Priya is | Log in with PayPal | planned |
@@ -645,6 +663,9 @@ Auth is OAuth client credentials. The token is cached and never sent to the brow
 | Order `6C811134271727847`, capture `64R136545B749934W` | same India account | same US business | Completed through this API. Proposal `e2430dc6-…`, $25, cents match. |
 | Order `4XJ37793MB337931H`, capture `8SC68460EW2924617` | US personal account | same US business | Completed |
 | Order `93C08793GB3750533` | India account | `priya.shah@example.com` | Never captured. A non-PayPal email was used as the receiver and the buyer's card was refused. Marked `capture_refused`. **This is why money out moves to Payouts.** |
+| Payout batch `4AR5DRK9RGFK4` | US business | US personal `sb-rgmi053183971@personal.example.com` | Payouts spike, $1.00. `SUCCESS` in about 20 seconds, fee $0.25. |
+| Payout batch `GU3KQ5DP62L5W` | US business | `priya.shah@example.com` (no PayPal account) | Payouts spike, $1.00. Batch `SUCCESS` but the item is **`UNCLAIMED`** (`RECEIVER_UNREGISTERED`). This is why Mandate does not call that paid. |
+| Payout batch `HW3G2QMRP3ESQ`, transaction `0R2645951J352425F` | US business | Priya's registered sandbox account (rules v3) | Priya's $90 for Northwind milestone 1, funded by capture `6GX18294LL7579630`. `SUCCESS`, fee $0.25, cents match. Job: $150 in, $90 out, $60 kept. |
 | Order `8LL14012RY135930H` | waiting on the sandbox buyer | US business | Northwind's $150 charge under rules v2, approved and locked. Approve in PayPal, then settle in the console. |
 
 Sandbox accounts used are listed in [KT.md](KT.md). Passwords live only in the PayPal dashboard and `.env`.
@@ -654,8 +675,8 @@ Sandbox accounts used are listed in [KT.md](KT.md). Passwords live only in the P
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 41 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 12 Playwright tests (desktop 1440×960 and Pixel 7)
+cd api && npm test && npm run typecheck        # 48 Vitest tests
+cd web && npm run typecheck && npm run e2e     # 18 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 
 **API tests (`api/test/`)** cover:
@@ -675,19 +696,27 @@ cd web && npm run typecheck && npm run e2e     # 12 Playwright tests (desktop 14
   - payouts refused before the client pays
   - the second $90 refused, and re-checked at approve
   - the payout refused after the client is refunded
-  - the job receipt ($150 / $90 / $60)
+  - the payout sent through Payouts, replay-safe (one PayPal call), with the packet and the job receipt ($150 in / $90 out / $60 kept)
+  - a slow payout that stays unpaid until PayPal finishes, an unclaimed one, a failed one that frees the reservation, and a PayPal amount that differs from the lock
+  - a payout with an old Orders checkout attached is paid through Payouts and the checkout is never captured
+  - cancelling a locked payout, but not one already sent
+  - the webhook re-reading PayPal instead of trusting its body
 - **Roles:** the proposer gets 403 on approve, reject, capture and rule changes.
 - **Rules history.**
 - **Console serving:** CSP, immutable assets, client-route fallback, path traversal refused.
-- **The PayPal payload.**
+- **The PayPal payloads:** the Orders request, and the Payouts item with the lock-derived batch id.
 
 **End-to-end tests (`web/e2e/job.spec.ts`)**, against a fresh in-memory server per viewport:
 
-1. the frozen job, entirely through the console
-2. the proposer key cannot approve
-3. offline is read-only
-4. installability (manifest, icons, service worker scoped to `/app/`, no API responses in any cache)
-5. axe WCAG 2.1 AA on every signed-in screen (AG Grid internals excluded)
+1. the frozen job, entirely through the console (refusals, $150 in, $90 out through Payouts, $60 kept)
+2. a buyer who has not approved gets a visible "still waiting"
+3. a payout PayPal is still processing is not called paid until PayPal says so
+4. an unclaimed payout and a failed payout
+5. cancelling a locked payout
+6. the proposer key cannot approve
+7. offline is read-only
+8. installability (manifest, icons, service worker scoped to `/app/`, no API responses in any cache)
+9. axe WCAG 2.1 AA on every signed-in screen (AG Grid internals excluded)
 
 Screenshots are written to `web/e2e/shots/`.
 
@@ -701,7 +730,8 @@ Screenshots are written to `web/e2e/shots/`.
 - **The rules are code and data,** not a prompt. A pure function decides. AI may only *add* friction (make something need a tap). It cannot remove a refusal.
 - **Separate keys:** an agent gets the proposer key and cannot approve, settle or change rules.
 - **Locks are hashes** recomputed at settle. The live PayPal order is compared before capture. A client-sent amount is only ever a claim.
-- **Idempotency** at every money step: proposal keys, and stable PayPal request ids for create, capture and refund.
+- **Idempotency** at every money step: proposal keys, and stable PayPal request ids for create, capture, refund and payout (the payout batch id comes from the lock hash).
+- **A payout is paid only when PayPal says so.** Pending, unclaimed and failed payouts are shown as such and never counted as paid. Webhooks only trigger a re-read from PayPal.
 - **Refusals are stored** with their reason, so the ledger shows what was attempted, not only what moved.
 - **Console:**
   - a strict CSP (`script-src 'self'`, `connect-src 'self'`, `frame-ancestors 'none'`)
@@ -746,13 +776,13 @@ In build order. If a week is lost, cut the grid features before the lock.
 
 1. ✅ **Reseed the rules to the frozen job.**
 2. ✅ **Money in funds money out.**
-3. ⬜ **Payouts spike, one day.** US business → Priya's sandbox account. If it works it becomes the money-out rail, with payout item webhooks. If not, the demo shows a locked payout plus the real `priya.shah@example.com` refusal. No made-up success.
+3. ✅ **Payouts.** The spike worked, and money out now runs on Payouts v1 with the unpaid and failed states and a webhook that re-reads PayPal. ⬜ Register the webhook in the PayPal dashboard once the server is deployed.
 4. ✅ **Approval card and keys** (owner console, owner vs proposer). ⬜ A server signature over the lock, shown on the receipt.
 5. ⬜ **MCP server** with the proposer key: `propose`, `list_ledger`, `explain`. The clerk (gpt-oss:20b through the Vercel AI SDK) is an MCP client of it.
 6. ⬜ **One-round deal check:** a pure function that refuses $450 and $200 and accepts $300 against both sides' rules.
 7. ✅ **AG Grid ledger and job view.** ⬜ The read-only agent query.
 8. ⬜ **Webhooks** (verified, deduplicated), a return URL after PayPal approval, a public Postman workspace, the Render deploy, the video.
-9. ⬜ **An open-source `LICENSE` file** at the repo root. The hackathon requires one, visible on GitHub.
+9. ✅ **An open-source `LICENSE` file** (MIT) at the repo root, visible on GitHub.
 
 Cut on purpose: passkeys, multi-round negotiation, the 90-day backtest, KERNEL, Elastic, Zapier, Channel3, Bryntum.
 
@@ -779,7 +809,8 @@ The rules are data, so the same server works for anyone whose money is moved by 
 | "Waiting for you 0" after unlocking | The ledger is empty. Follow the [demo walkthrough](#demo-walkthrough). |
 | `/app/` returns `route.not_found: The owner console is not built` | Run `npm run build` (or `cd web && npm run build`), then restart the API. |
 | Settle says **Still waiting** | The PayPal buyer has not approved the order. Click **Open PayPal**, approve as the sandbox buyer, then **Check PayPal and settle**. Nothing was captured. |
-| Priya's $90 shows **Reserved · not paid** and there is no Settle button | Expected. Contractor payouts cannot use Orders checkout; they wait for the Payouts rail. See [Money out, honestly](#money-out-honestly). |
+| Priya's payout says **Sent · unclaimed** | PayPal found no account for her email. Use a real sandbox account's email as her address in the rules (`priya.shah@example.com` is not a PayPal account), then propose again. |
+| Priya's payout says **Sent · PayPal processing** | PayPal has not finished. Press **Check PayPal**; sandbox payouts usually finish within a minute. |
 | `paypal.unconfigured` | The server started without PayPal credentials. Start it with `node --env-file=../.env …`. |
 | `paypal.upstream` with a debug id | PayPal rejected the call. Look the `debugId` up in the PayPal developer dashboard. Nothing moved. |
 | A payout is refused with `funding.missing` | Settle the client charge first, then choose it under "Funded by". |
@@ -796,5 +827,9 @@ The rules are data, so the same server works for anyone whose money is moved by 
 - `pitch/deck-codex.html`: the pitch deck (open it in a browser; arrow keys move between slides, `N` shows speaker notes, `A` shows the appendix).
 - `pitch/demo-video-script.md`: a timed script for the 3-minute video.
 - [KT.md](KT.md): handover notes from the first build, including the sandbox accounts and the receiver lesson.
+
+## License
+
+[MIT](LICENSE). Copyright (c) 2026 Siddharth Mishra.
 
 > **AI can act on your money without owning your money.**

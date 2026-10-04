@@ -1,6 +1,6 @@
 import { centsToPayPal, payPalToCents } from '../domain/money'
 import { paypalRequestId } from '../domain/hash'
-import { PayPalError, type CapturedPayment, type CreatedOrder, type LiveOrder, type PayPalPort, type RefundedPayment } from './port'
+import { PayPalError, type CapturedPayment, type CreatedOrder, type LiveOrder, type LivePayout, type PayPalPort, type RefundedPayment, type SentPayout } from './port'
 
 type Token = { value: string; expiresAt: number }
 
@@ -126,6 +126,55 @@ export function createPayPalClient(options: {
         body: { amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents) } },
       })
       return { refundId: stringField(json, 'id'), status: stringField(json, 'status') } satisfies RefundedPayment
+    },
+    async sendPayout(input) {
+      const senderBatchId = `mandate_${input.cartHash.slice(0, 48)}`
+      const { json } = await call('/v1/payments/payouts', {
+        method: 'POST',
+        requestId: paypalRequestId(`${input.proposalId}:payout`),
+        body: {
+          sender_batch_header: {
+            sender_batch_id: senderBatchId,
+            email_subject: 'You have a payment',
+            email_message: 'A payment was sent to you from a client job.',
+            recipient_type: 'EMAIL',
+          },
+          items: [{
+            recipient_type: 'EMAIL',
+            receiver: input.receiverEmail,
+            amount: { currency: input.currency, value: centsToPayPal(input.amountCents) },
+            note: input.note.slice(0, 160),
+            sender_item_id: input.proposalId,
+          }],
+        },
+      })
+      const header = asJson(json.batch_header)
+      return { batchId: stringField(header, 'payout_batch_id'), status: stringField(header, 'batch_status') } satisfies SentPayout
+    },
+    async getPayout(batchId) {
+      const { json } = await call(`/v1/payments/payouts/${encodeURIComponent(batchId)}?page_size=1`, { method: 'GET' })
+      const header = asJson(json.batch_header)
+      const items = Array.isArray(json.items) ? json.items : []
+      const first = asJson(items[0])
+      let item: LivePayout['item'] = null
+      if (first) {
+        const inner = asJson(first.payout_item)
+        const amount = asJson(inner?.amount)
+        const fee = asJson(first.payout_item_fee)
+        const errors = asJson(first.errors)
+        item = {
+          itemId: stringField(first, 'payout_item_id'),
+          senderItemId: typeof inner?.sender_item_id === 'string' ? inner.sender_item_id : null,
+          status: stringField(first, 'transaction_status'),
+          transactionId: typeof first.transaction_id === 'string' ? first.transaction_id : null,
+          amountCents: payPalToCents(stringField(amount, 'value')),
+          currency: stringField(amount, 'currency'),
+          feeCents: fee && typeof fee.value === 'string' ? payPalToCents(fee.value) : null,
+          errorName: typeof errors?.name === 'string' ? errors.name : null,
+          receiver: typeof inner?.receiver === 'string' ? inner.receiver : null,
+        }
+      }
+      return { batchId: stringField(header, 'payout_batch_id'), batchStatus: stringField(header, 'batch_status'), item } satisfies LivePayout
     },
   }
 }

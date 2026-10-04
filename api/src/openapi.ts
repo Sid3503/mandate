@@ -50,6 +50,11 @@ const ProposalSchema = z.object({
   refundId: z.string().nullable(),
   approveUrl: z.string().nullable(),
   capturedAmountCents: z.number().int().nullable(),
+  payoutBatchId: z.string().nullable(),
+  payoutItemId: z.string().nullable(),
+  payoutStatus: z.string().nullable(),
+  payoutTransactionId: z.string().nullable(),
+  payoutFeeCents: z.number().int().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 }).openapi('Proposal')
@@ -188,7 +193,7 @@ export function buildOpenApi(publicUrl: string) {
     path: '/v1/proposals/{id}/reject',
     tags: ['proposals'],
     security: bearer,
-    summary: 'Owner only. Reject a pending proposal.',
+    summary: 'Owner only. Reject a pending proposal, or cancel a locked payout before anything has been sent to PayPal.',
     request: { params: z.object({ id: z.uuid() }) },
     responses: { 200: { description: 'Rejected' }, 401: problem, 403: problem, 409: problem },
   })
@@ -197,12 +202,19 @@ export function buildOpenApi(publicUrl: string) {
     path: '/v1/proposals/{id}/capture',
     tags: ['proposals'],
     security: bearer,
-    summary: 'Owner only. Server capture. Amount in the body is a claim, never the amount sent to PayPal. A different claim is refused.',
+    summary: 'Owner only. Settle from the lock: an Orders capture for a client charge, a Payouts item for a contractor payout, a refund for a refund. Calling it again on a payout still at PayPal re-reads its status. Amount in the body is a claim, never the amount sent to PayPal. A different claim is refused.',
     request: {
       params: z.object({ id: z.uuid() }),
       body: { content: { 'application/json': { schema: CaptureSchema } }, required: false },
     },
     responses: { 200: { description: 'Captured or replayed' }, 401: problem, 403: problem, 409: problem, 502: problem, 503: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/webhooks/paypal',
+    tags: ['proposals'],
+    summary: 'PayPal payout webhook. No credential. The body only names a payout batch; the batch is re-read from PayPal, so a forged call cannot change a status.',
+    responses: { 200: { description: 'Received. refreshed says whether a payout was re-read.' } },
   })
   registry.registerPath({
     method: 'get',

@@ -141,7 +141,7 @@ describe('dry runs', () => {
     expect(body.prompt).toBe('Buy the team lunch for $18')
   })
 
-  it('locks Priya at $90, refuses a $250 claim, and cannot open Orders to pay a contractor', async () => {
+  it('locks Priya at $90, refuses a $250 claim, then pays her through Payouts, never Orders', async () => {
     const paypal = new FakePayPal()
     const { app } = harness({ paypal })
     const fundingCaptureId = await fund(app, paypal)
@@ -174,27 +174,29 @@ describe('dry runs', () => {
     expect(still.amountCents).toBe(9000)
 
     const captured = await app.request(`http://mandate.test/v1/proposals/${created.id}/capture`, { method: 'POST', headers: auth() })
-    expect(captured.status).toBe(409)
-    expect(captured.headers.get('content-type')).toContain('application/problem+json')
-    const unavailable = await captured.json()
-    expect(unavailable.code).toBe('payout.unavailable')
-    expect(unavailable.lockedAmountCents).toBe(9000)
+    expect(captured.status).toBe(200)
+    const paid = await captured.json()
+    expect(paid).toMatchObject({ phase: 'captured', capturedAmountCents: 9000, orderId: null, captureId: null, payoutStatus: 'SUCCESS', payoutFeeCents: 25 })
+    expect(paid.payoutBatchId).toMatch(/^BATCH-/)
     expect(paypal.orders.size).toBe(1) // Northwind's charge; no second order
     expect(paypal.captureCalls).toBe(1)
+    expect(paypal.payoutCalls).toBe(1)
+    expect([...paypal.payouts.values()][0]).toMatchObject({ receiver: 'priya.shah@example.com', amountCents: 9000, currency: 'USD', proposalId: created.id })
 
     const replay = await app.request(`http://mandate.test/v1/proposals/${created.id}/capture`, { method: 'POST', headers: auth() })
-    expect(replay.status).toBe(409)
-    expect((await replay.json()).code).toBe('payout.unavailable')
-    expect(paypal.orders.size).toBe(1)
-    expect(paypal.captureCalls).toBe(1)
+    expect(replay.status).toBe(200)
+    expect((await replay.json()).payoutBatchId).toBe(paid.payoutBatchId)
+    expect(paypal.payoutCalls).toBe(1)
 
     const packet = await (await app.request(`http://mandate.test/v1/proposals/${created.id}/packet`, { headers: auth() })).json()
     expect(packet.prompt).toContain('Northwind milestone 1')
     expect(packet.clause).toBe('amount.needs_approval')
     expect(packet.approval.type).toBe('proposal.approved')
-    expect(packet.amounts).toEqual({ approvedCents: 9000, capturedCents: null, match: null })
+    expect(packet.amounts).toEqual({ approvedCents: 9000, capturedCents: 9000, match: true })
     expect(packet.orderId).toBeNull()
     expect(packet.captureId).toBeNull()
+    expect(packet.payout).toMatchObject({ batchId: paid.payoutBatchId, status: 'SUCCESS', receiver: 'priya.shah@example.com', feeCents: 25 })
+    expect(packet.events.map((event: { type: string }) => event.type)).toEqual(['proposal.created', 'proposal.approved', 'capture.refused', 'payout.sent', 'payout.completed'])
     expect(packet.funding).toMatchObject({ captureId: fundingCaptureId, clientId: 'client_northwind', capturedCents: 15000, phase: 'captured' })
   })
 
@@ -358,43 +360,177 @@ describe('money in releases money out', () => {
     expect(paypal.captureCalls).toBe(calls)
   })
 
-  it('shows the job receipt: $150 in, $90 reserved, $0 out, $60 kept', async () => {
+  it('shows the job receipt: $150 in, $90 out, $60 kept, with the payout held until PayPal finishes', async () => {
     const paypal = new FakePayPal()
+    paypal.payoutOutcome = 'PENDING'
     const { app } = harness({ paypal })
     const fundingCaptureId = await fund(app, paypal)
     const payout = await (await propose(app, { ...priya, fundingCaptureId })).json()
     await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
-    const blocked = await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
-    expect((await blocked.json()).code).toBe('payout.unavailable')
-    const job = await (await app.request(`http://mandate.test/v1/jobs/${JOB}`, { headers: auth() })).json()
+    const slow = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })).json()
+    expect(slow).toMatchObject({ phase: 'payout_sent', payoutStatus: 'PENDING', capturedAmountCents: null })
+    let job = await (await app.request(`http://mandate.test/v1/jobs/${JOB}`, { headers: auth() })).json()
     expect(job.client.displayName).toBe('Northwind')
     expect(job.totals).toEqual({ inCents: 15000, outCents: 0, heldCents: 9000, keptCents: 6000 })
     expect(job.charges[0].fundableCents).toBe(0)
+
+    paypal.settlePayouts('SUCCESS')
+    const done = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })).json()
+    expect(done).toMatchObject({ phase: 'captured', payoutStatus: 'SUCCESS', capturedAmountCents: 9000 })
+    expect(paypal.payoutCalls).toBe(1)
+    job = await (await app.request(`http://mandate.test/v1/jobs/${JOB}`, { headers: auth() })).json()
+    expect(job.totals).toEqual({ inCents: 15000, outCents: 9000, heldCents: 0, keptCents: 6000 })
     expect(job.payouts).toHaveLength(1)
-    expect(job.payouts[0]).toMatchObject({ phase: 'locked', orderId: null, captureId: null })
+    expect(job.payouts[0]).toMatchObject({ phase: 'captured', orderId: null, captureId: null })
   })
 
-  it('does not capture an already-created contractor checkout, even after its buyer approves', async () => {
+  it('does not call a payout to an account PayPal cannot find "paid"', async () => {
+    const paypal = new FakePayPal()
+    paypal.unregistered.add('priya.shah@example.com')
+    const { app } = harness({ paypal })
+    const fundingCaptureId = await fund(app, paypal)
+    const payout = await (await propose(app, { ...priya, fundingCaptureId })).json()
+    await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
+    const sent = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })).json()
+    expect(sent).toMatchObject({ phase: 'payout_unclaimed', payoutStatus: 'UNCLAIMED', capturedAmountCents: null })
+    const job = await (await app.request(`http://mandate.test/v1/jobs/${JOB}`, { headers: auth() })).json()
+    expect(job.totals).toEqual({ inCents: 15000, outCents: 0, heldCents: 9000, keptCents: 6000 })
+    const packet = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}/packet`, { headers: auth() })).json()
+    expect(packet.amounts.match).toBeNull()
+    expect(packet.events.find((event: { type: string }) => event.type === 'payout.unclaimed')).toMatchObject({ payload: { error: 'RECEIVER_UNREGISTERED' } })
+  })
+
+  it('releases the reservation when PayPal fails the payout, and refuses to call it paid', async () => {
+    const paypal = new FakePayPal()
+    paypal.payoutOutcome = 'FAILED'
+    const { app } = harness({ paypal })
+    const fundingCaptureId = await fund(app, paypal)
+    const payout = await (await propose(app, { ...priya, fundingCaptureId })).json()
+    await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
+    const failed = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })).json()
+    expect(failed).toMatchObject({ phase: 'payout_failed', payoutStatus: 'FAILED', capturedAmountCents: null })
+    const again = await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
+    expect((await again.json()).phase).toBe('payout_failed')
+    expect(paypal.payoutCalls).toBe(1)
+    const job = await (await app.request(`http://mandate.test/v1/jobs/${JOB}`, { headers: auth() })).json()
+    expect(job.totals).toEqual({ inCents: 15000, outCents: 0, heldCents: 0, keptCents: 15000 })
+    expect(job.charges[0].fundableCents).toBe(9000)
+  })
+
+  it('refuses a payout whose amount PayPal reports differently from the lock', async () => {
+    const paypal = new FakePayPal()
+    paypal.payoutOutcome = 'PENDING'
+    const { app } = harness({ paypal })
+    const fundingCaptureId = await fund(app, paypal)
+    const payout = await (await propose(app, { ...priya, fundingCaptureId })).json()
+    await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
+    const sent = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })).json()
+    paypal.mutatePayout(sent.payoutBatchId, 25000)
+    const refused = await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
+    expect(refused.status).toBe(409)
+    const body = await refused.json()
+    expect(body).toMatchObject({ code: 'cart.immutable', lockedAmountCents: 9000, liveAmountCents: 25000 })
+    const saved = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}`, { headers: auth() })).json()
+    expect(saved.phase).toBe('capture_refused')
+    expect(saved.capturedAmountCents).toBeNull()
+  })
+
+  it('pays through Payouts even when an older build already opened an Orders checkout for the row', async () => {
     const paypal = new FakePayPal()
     const { app, db } = harness({ paypal })
     const fundingCaptureId = await fund(app, paypal)
     const payout = await (await propose(app, { ...priya, fundingCaptureId })).json()
     await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
 
-    // An older build created this Orders checkout for money-out. It is not a Payouts item.
     const oldOrder = await paypal.createOrder({ proposalId: payout.id, amountCents: 9000, currency: 'USD', description: payout.description, payeeEmail: null })
-    const repo = new Repo(db)
-    repo.saveOrder(payout.id, oldOrder.orderId, oldOrder.approveUrl, NOW.toISOString())
+    new Repo(db).saveOrder(payout.id, oldOrder.orderId, oldOrder.approveUrl, NOW.toISOString())
     paypal.approve(oldOrder.orderId)
     const before = paypal.captureCalls
-    for (let i = 0; i < 2; i++) {
-      const response = await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
-      expect(response.status).toBe(409)
-      expect((await response.json()).code).toBe('payout.unavailable')
-    }
-    const saved = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}`, { headers: auth() })).json()
-    expect(saved).toMatchObject({ phase: 'order_created', orderId: oldOrder.orderId, captureId: null, amountCents: 9000 })
-    expect(paypal.captureCalls).toBe(before)
+    const response = await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ phase: 'captured', payoutStatus: 'SUCCESS', orderId: oldOrder.orderId, captureId: null })
+    expect(paypal.captureCalls).toBe(before) // the old checkout was never captured
+    expect(paypal.payoutCalls).toBe(1)
+  })
+
+  it('lets the owner cancel a locked payout before anything is sent, but not after', async () => {
+    const paypal = new FakePayPal()
+    paypal.payoutOutcome = 'PENDING'
+    const { app, db } = harness({ paypal })
+    const fundingCaptureId = await fund(app, paypal)
+    const first = await (await propose(app, { ...priya, fundingCaptureId })).json()
+    await app.request(`http://mandate.test/v1/proposals/${first.id}/approve`, { method: 'POST', headers: auth() })
+    const oldOrder = await paypal.createOrder({ proposalId: first.id, amountCents: 9000, currency: 'USD', description: first.description, payeeEmail: null })
+    new Repo(db).saveOrder(first.id, oldOrder.orderId, oldOrder.approveUrl, NOW.toISOString())
+
+    const proposerCancel = await app.request(`http://mandate.test/v1/proposals/${first.id}/reject`, { method: 'POST', headers: auth(PROPOSER) })
+    expect(proposerCancel.status).toBe(403)
+    const cancelled = await app.request(`http://mandate.test/v1/proposals/${first.id}/reject`, { method: 'POST', headers: auth() })
+    expect(cancelled.status).toBe(200)
+    expect((await cancelled.json()).phase).toBe('rejected')
+    expect(paypal.payoutCalls).toBe(0)
+    const noLongerCapturable = await app.request(`http://mandate.test/v1/proposals/${first.id}/capture`, { method: 'POST', headers: auth() })
+    expect(noLongerCapturable.status).toBe(409)
+    expect((await noLongerCapturable.json()).code).toBe('proposal.state')
+
+    // The $90 is free again, so a replacement payout can be proposed and sent.
+    const second = await (await propose(app, { ...priya, description: 'Northwind logo milestone 1, corrected', fundingCaptureId })).json()
+    expect(second.gate).toBe('NEEDS_APPROVAL')
+    await app.request(`http://mandate.test/v1/proposals/${second.id}/approve`, { method: 'POST', headers: auth() })
+    const sent = await (await app.request(`http://mandate.test/v1/proposals/${second.id}/capture`, { method: 'POST', headers: auth() })).json()
+    expect(sent.phase).toBe('payout_sent')
+    const tooLate = await app.request(`http://mandate.test/v1/proposals/${second.id}/reject`, { method: 'POST', headers: auth() })
+    expect(tooLate.status).toBe(409)
+  })
+
+  it('keeps checking a payout that is already at PayPal even if the client payment is refunded', async () => {
+    const paypal = new FakePayPal()
+    paypal.payoutOutcome = 'PENDING'
+    const { app } = harness({ paypal })
+    const fundingCaptureId = await fund(app, paypal)
+    const payout = await (await propose(app, { ...priya, fundingCaptureId })).json()
+    await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
+    await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
+    const refund = await (await propose(app, { ...northwind, kind: 'refund', parentCaptureId: fundingCaptureId, description: 'Northwind cancelled', prompt: 'Refund Northwind milestone 1' })).json()
+    await app.request(`http://mandate.test/v1/proposals/${refund.id}/approve`, { method: 'POST', headers: auth() })
+    await app.request(`http://mandate.test/v1/proposals/${refund.id}/capture`, { method: 'POST', headers: auth() })
+    paypal.settlePayouts('SUCCESS')
+    const done = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })).json()
+    expect(done).toMatchObject({ phase: 'captured', payoutStatus: 'SUCCESS' })
+    expect(paypal.payoutCalls).toBe(1)
+  })
+
+  it('refreshes a payout from a PayPal webhook by re-reading PayPal, never from the webhook body', async () => {
+    const paypal = new FakePayPal()
+    paypal.payoutOutcome = 'PENDING'
+    const { app } = harness({ paypal })
+    const fundingCaptureId = await fund(app, paypal)
+    const payout = await (await propose(app, { ...priya, fundingCaptureId })).json()
+    await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
+    const sent = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })).json()
+
+    const forged = await app.request('http://mandate.test/v1/webhooks/paypal', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event_type: 'PAYMENT.PAYOUTS-ITEM.SUCCEEDED', resource: { payout_batch_id: sent.payoutBatchId, transaction_status: 'SUCCESS', payout_item: { amount: { value: '9999.00' } } } }),
+    })
+    expect(forged.status).toBe(200)
+    expect((await forged.json()).refreshed).toBe(true)
+    let saved = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}`, { headers: auth() })).json()
+    expect(saved.phase).toBe('payout_sent') // PayPal itself still says PENDING
+
+    paypal.settlePayouts('SUCCESS')
+    await app.request('http://mandate.test/v1/webhooks/paypal', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ event_type: 'PAYMENT.PAYOUTS-ITEM.SUCCEEDED', resource: { payout_batch_id: sent.payoutBatchId } }),
+    })
+    saved = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}`, { headers: auth() })).json()
+    expect(saved).toMatchObject({ phase: 'captured', capturedAmountCents: 9000 })
+
+    const junk = await app.request('http://mandate.test/v1/webhooks/paypal', { method: 'POST', body: 'not json' })
+    expect(junk.status).toBe(200)
+    expect((await junk.json()).refreshed).toBe(false)
   })
 })
 
@@ -528,6 +664,44 @@ describe('PayPal payload', () => {
     expect(JSON.parse(orderCalls[0]!.body).purchase_units[0].amount.value).toBe('150.00')
     expect(payPalToCents(JSON.parse(orderCalls[0]!.body).purchase_units[0].amount.value)).toBe(15000)
     expect(JSON.parse(orderCalls[1]!.body).purchase_units[0].payee).toBeUndefined()
+  })
+})
+
+describe('PayPal Payouts payload', () => {
+  it('sends one item with the locked cents, a batch id from the lock hash, and reads the result back', async () => {
+    const calls: Array<{ path: string; method: string; headers: Record<string, string>; body: string }> = []
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input)
+      calls.push({ path: url, method: String(init?.method ?? 'GET'), headers: (init?.headers ?? {}) as Record<string, string>, body: String(init?.body ?? '') })
+      if (url.endsWith('/v1/oauth2/token')) return new Response(JSON.stringify({ access_token: 'tok', expires_in: 300 }), { status: 200 })
+      if (url.endsWith('/v1/payments/payouts')) {
+        return new Response(JSON.stringify({ batch_header: { payout_batch_id: 'BATCH1', batch_status: 'PENDING' } }), { status: 201 })
+      }
+      return new Response(JSON.stringify({
+        batch_header: { payout_batch_id: 'BATCH1', batch_status: 'SUCCESS' },
+        items: [{
+          payout_item_id: 'ITEM1',
+          transaction_id: 'TXN1',
+          transaction_status: 'UNCLAIMED',
+          payout_item_fee: { currency: 'USD', value: '0.25' },
+          errors: { name: 'RECEIVER_UNREGISTERED' },
+          payout_item: { receiver: 'priya.shah@example.com', sender_item_id: 'prop-1', amount: { currency: 'USD', value: '90.00' } },
+        }],
+      }), { status: 200 })
+    }
+    const client = createPayPalClient({ clientId: 'id', clientSecret: 'secret', baseUrl: 'https://api-m.sandbox.paypal.com', fetch: fetchImpl })
+    const hash = 'ab'.repeat(32)
+    const sent = await client.sendPayout({ proposalId: '11111111-1111-4111-8111-111111111111', cartHash: hash, receiverEmail: 'priya.shah@example.com', amountCents: 9000, currency: 'USD', note: 'Northwind logo milestone 1' })
+    expect(sent).toEqual({ batchId: 'BATCH1', status: 'PENDING' })
+    const post = calls.find((call) => call.path.endsWith('/v1/payments/payouts'))!
+    const body = JSON.parse(post.body)
+    expect(body.sender_batch_header.sender_batch_id).toBe(`mandate_${hash.slice(0, 48)}`)
+    expect(body.items).toHaveLength(1)
+    expect(body.items[0]).toMatchObject({ receiver: 'priya.shah@example.com', amount: { currency: 'USD', value: '90.00' }, sender_item_id: '11111111-1111-4111-8111-111111111111' })
+    expect(post.headers['paypal-request-id']).toMatch(/^[0-9a-f-]{36}$/)
+
+    const live = await client.getPayout('BATCH1')
+    expect(live.item).toMatchObject({ itemId: 'ITEM1', status: 'UNCLAIMED', amountCents: 9000, feeCents: 25, errorName: 'RECEIVER_UNREGISTERED', senderItemId: 'prop-1' })
   })
 })
 
