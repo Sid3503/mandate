@@ -1,6 +1,6 @@
 # Mandate — knowledge transfer
 
-Handoff for the warrant server and the sandbox runs behind it. The product story is in [README.md](README.md). How to call the API is in [api/README.md](api/README.md).
+Handoff for the warrant server and the sandbox runs behind it. The product story is in [README.md](README.md), with the long version in [docs/REFERENCE.md](docs/REFERENCE.md). How to call the API is in [api/README.md](api/README.md).
 
 ## What this repo is
 
