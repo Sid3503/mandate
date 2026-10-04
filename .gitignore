@@ -1,0 +1,11 @@
+.env
+node_modules/
+api/data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+web/dist/
+web/test-results/
+web/playwright-report/
+web/e2e/shots/
+web/openapi.json

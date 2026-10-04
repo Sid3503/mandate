@@ -1,0 +1,5 @@
+e2e/shots/
+test-results/
+playwright-report/
+dist/
+openapi.json
