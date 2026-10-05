@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Mark } from '../components/Shell'
 import { Chip, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
@@ -78,6 +78,7 @@ export function Unlock() {
           </button>
           <ProblemCard error={error} />
         </form>
+        <p className="fine"><Link to="/welcome" className="link">← What is Mandate?</Link></p>
         <p className="fine">The owner key can approve, settle and change the rules. A proposer key, the kind an agent gets, can only ask and read.</p>
       </section>
     </div>

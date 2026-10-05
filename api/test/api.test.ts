@@ -714,3 +714,15 @@ describe('repo inflight marker', () => {
     expect(repo.idempotency('pending-key')?.state).toBe('pending')
   })
 })
+
+describe('the front door', () => {
+  it('sends a browser to the product and everything else to the JSON index', async () => {
+    const { app } = harness()
+    const browser = await app.request('http://mandate.test/', { headers: { accept: 'text/html,application/xhtml+xml' } })
+    expect(browser.status).toBe(302)
+    expect(browser.headers.get('location')).toBe('/app/welcome')
+    const client = await app.request('http://mandate.test/')
+    expect(client.status).toBe(200)
+    expect((await client.json()).service).toBe('mandate-api')
+  })
+})

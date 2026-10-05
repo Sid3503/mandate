@@ -163,14 +163,18 @@ export function createApp(deps: AppDeps) {
   app.onError(onError)
   app.notFound((c) => sendProblem(c, new Problem(404, 'route.not_found', 'Not found', 'No route matches this path.')))
 
-  app.get('/', (c) => c.json({
-    service: 'mandate-api',
-    version: VERSION,
-    health: '/health',
-    ready: '/ready',
-    openapi: '/openapi.json',
-    console: '/app/',
-  }))
+  // A browser that opens the server's address lands on the product. Everything else gets the JSON index.
+  app.get('/', (c) => {
+    if ((c.req.header('accept') ?? '').includes('text/html')) return c.redirect('/app/welcome', 302)
+    return c.json({
+      service: 'mandate-api',
+      version: VERSION,
+      health: '/health',
+      ready: '/ready',
+      openapi: '/openapi.json',
+      console: '/app/',
+    })
+  })
 
   app.get('/health', (c) => health(c, 'pass', {
     'api:alive': [{ status: 'pass', componentType: 'system', time: deps.now().toISOString() }],

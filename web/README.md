@@ -32,6 +32,10 @@ npm run build           # api serves web/dist at /app/
 npm run dev             # http://localhost:5173/app/
 ```
 
+## The landing page
+
+`/app/welcome` is the public front door. A visitor with no key who opens `/app/` sees it instead of a bare unlock form, and the server's address (`/`) sends a browser there. It explains the product in the same visual language as the console and the pitch deck: the hero with an example approval card, the five steps, the $300 job as $150 in, $90 out, $60 kept, real screenshots, six things that fail, and the six agent tools. "Open the console" goes to Unlock, or straight into the console once a key is held. Deep links such as `/app/jobs` still go to Unlock. The screenshots live in `public/landing/` and are left out of the offline cache.
+
 ## New screens
 
 - **Deals** (`/app/deals`): "Let the agents negotiate" is a live stage: each agent takes a seat and shows when it is thinking, every offer lands as a pin on the price line, and the rule behind each refusal appears as it happens. A Stop button ends it. Afterwards it shows the negotiation turn by turn, a picture of where both companies' rules overlap (owner only), each agreed deal with a signature **Verify** button, and billing of the next milestone. You can also make an offer yourself.

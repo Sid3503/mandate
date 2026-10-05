@@ -5,8 +5,7 @@ const PROPOSER = 'proposer-e2e-key-0123456789'
 const shots = (page: Page, name: string) => page.screenshot({ path: `e2e/shots/${test.info().project.name}-${name}.png`, fullPage: true, animations: 'disabled' })
 
 async function unlock(page: Page, key: string) {
-  await page.goto('/app/')
-  await expect(page).toHaveURL(/\/app\/unlock/)
+  await page.goto('/app/unlock')
   await page.getByLabel('API key').fill(key)
   await page.getByRole('button', { name: 'Unlock console' }).click()
   await expect(page.getByRole('heading', { name: /Waiting for you/ })).toBeVisible()
@@ -286,6 +285,8 @@ test('an owner can cancel a locked payout before it is sent', async ({ page, req
 
 test('a first-time visitor is walked through the console, and it stays out of the way afterwards @tour', async ({ page }) => {
   await page.goto('/app/')
+  await expect(page).toHaveURL(/\/app\/welcome/)
+  await page.getByRole('link', { name: 'Unlock' }).first().click()
   await page.getByLabel('API key').fill(OWNER)
   await page.getByRole('button', { name: 'Unlock console' }).click()
   const tour = page.getByRole('dialog')
@@ -472,6 +473,31 @@ test('a client charge can be billed as a PayPal invoice and settles only when Pa
   await request.post('/__fake/payouts/invoices-off', { headers })
 })
 
+test('a visitor with no key sees what Mandate is first, and can reach the unlock', async ({ page }) => {
+  await page.goto('/app/')
+  await expect(page).toHaveURL(/\/app\/welcome/)
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Agents can ask.')
+  await expect(page.getByRole('heading', { level: 2, name: /Ask\. Check\. Tap\. Pay\. Prove\./ })).toBeVisible()
+  await expect(page.locator('.land-table tbody tr')).toHaveCount(6)
+  await expect(page.locator('.land-tools li')).toHaveCount(7)
+  await shots(page, '30-landing')
+  // Deep links to the console still ask for a key rather than showing the landing page.
+  await page.goto('/app/jobs')
+  await expect(page).toHaveURL(/\/app\/unlock/)
+  await expect(page.getByRole('link', { name: /What is Mandate/ })).toBeVisible()
+  await page.getByRole('link', { name: /What is Mandate/ }).click()
+  await expect(page).toHaveURL(/\/app\/welcome/)
+  await page.getByRole('link', { name: 'Open the console' }).first().click()
+  await expect(page).toHaveURL(/\/app\/unlock/)
+  // Once unlocked, the same button goes straight into the console.
+  await page.getByLabel('API key').fill(OWNER)
+  await page.getByRole('button', { name: 'Unlock console' }).click()
+  await expect(page.getByRole('heading', { name: /Waiting for you/ })).toBeVisible()
+  await page.goto('/app/welcome')
+  await page.getByRole('link', { name: 'Open the console' }).first().click()
+  await expect(page).toHaveURL(/\/app\/?$/)
+})
+
 test('a proposer key can ask but never approve', async ({ page }) => {
   await unlock(page, PROPOSER)
   await expect(page.getByText('Proposer · can ask, not approve')).toBeVisible()
@@ -522,6 +548,10 @@ test('installs as an app: manifest, icons, and a service worker scoped to /app/'
 
 test('every signed-in screen passes axe (WCAG 2.1 AA)', async ({ page }) => {
   const { default: AxeBuilder } = await import('@axe-core/playwright')
+  await page.goto('/app/welcome')
+  await page.waitForLoadState('networkidle')
+  const landing = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
+  expect(landing.violations.map((v) => `/app/welcome ${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
   await unlock(page, OWNER)
   for (const path of ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/system']) {
     await page.goto(path)

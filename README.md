@@ -35,7 +35,7 @@ npm run setup && npm run build
 cd api && node --env-file=../.env ./node_modules/tsx/dist/cli.mjs src/main.ts
 ```
 
-Open **http://127.0.0.1:8787/app/** and unlock with `dev-mandate-key-change-me`. A guided tour opens on first visit, and every screen has a **Guide** button.
+Open **http://127.0.0.1:8787/** (it opens the landing page, which explains the product; press **Unlock**) and unlock with `dev-mandate-key-change-me`. A guided tour opens on first visit, and every screen has a **Guide** button.
 
 The route: **Deals → Let the agents negotiate** ($450 and $200 refused, $300 agreed and signed) → bill milestone 1 → approve → **Settle**, then approve the order in PayPal as the sandbox buyer and press **Check PayPal and settle** → **Clerk**: "pay Priya her share…" → approve → **Send $90.00** → **Jobs**: $150 in, $90 out, $60 kept. Then paste the fake vendor email into **Clerk** and watch the rules refuse it.
 
@@ -73,7 +73,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-109 API tests, 32 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
+110 API tests, 34 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
 
 ## Where to read next
 

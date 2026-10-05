@@ -581,6 +581,96 @@ ol.tour-list { padding-left: 22px; }
   .pin span { font-size: 14px; padding: 3px 6px; }
   .stage-foot.is-agreed { margin: 0 -22px; }
 }
+
+/* ---------- landing ---------- */
+.land { min-height: 100vh; background: var(--paper); }
+.land-nav { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px clamp(16px, 4vw, 48px); background: var(--paper); border-bottom: 2px solid var(--ink); }
+.land-nav .brand { color: var(--ink); }
+.land-links { display: flex; gap: 22px; }
+.land-links a { font: 700 12px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; text-decoration: none; padding: 8px 0; border-bottom: 2px solid transparent; }
+.land-links a:hover { border-bottom-color: var(--ink); }
+.land main > section { padding-left: clamp(16px, 4vw, 48px); padding-right: clamp(16px, 4vw, 48px); }
+.land-hero { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: clamp(24px, 5vw, 72px); align-items: center; max-width: 1240px; margin: 0 auto; padding-top: clamp(28px, 5vw, 72px); padding-bottom: clamp(40px, 6vw, 88px); }
+.land-hero-copy { display: grid; gap: 22px; }
+.land-hero h1 { font: 800 clamp(52px, 6.4vw, 96px)/0.98 var(--display); text-transform: uppercase; letter-spacing: -0.01em; padding-top: 0.04em; }
+.land-hero h1 .hl { line-height: 1.12; padding: 0.02em 0.12em 0; }
+.land-hero .lede { max-width: 54ch; }
+.land-figure { margin: 0; display: grid; gap: 14px; }
+.land-card { transform: rotate(1.4deg); pointer-events: none; user-select: none; }
+.land-fake-btn { pointer-events: none; width: 100%; }
+.land-strip { background: var(--ink); color: var(--paper); }
+.land-strip p { max-width: 1144px; margin: 0 auto; padding: 22px 0; font: 600 clamp(18px, 2.2vw, 26px)/1.35 var(--body); }
+.land-strip b { color: var(--lime); }
+.land-section { max-width: 1240px; margin: 0 auto; padding-top: clamp(48px, 8vw, 104px); padding-bottom: clamp(16px, 3vw, 32px); display: grid; gap: 20px; }
+.land-section h2 { font: 800 clamp(40px, 6vw, 84px)/0.98 var(--display); text-transform: uppercase; letter-spacing: -0.005em; padding-top: 0.04em; max-width: 18ch; }
+.land-section .lede { max-width: 60ch; }
+.land-steps { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(5, 1fr); border: 2px solid var(--ink); background: var(--surface); }
+.land-steps li { padding: 22px 18px; border-right: 1.5px solid var(--ink); display: grid; gap: 10px; align-content: start; }
+.land-steps li:last-child { border-right: 0; }
+.land-steps li:nth-child(3) { background: var(--lime); }
+.land-steps h3 { font: 800 36px/1 var(--display); text-transform: uppercase; }
+.land-steps p { margin: 0; font-size: 15px; line-height: 1.5; }
+.land-ink { max-width: none; background: var(--ink); color: var(--paper); margin-top: clamp(48px, 8vw, 104px); padding-top: clamp(40px, 6vw, 80px); padding-bottom: clamp(40px, 6vw, 80px); padding-left: max(clamp(16px, 4vw, 48px), calc((100vw - 1240px) / 2 + 48px)) !important; padding-right: max(clamp(16px, 4vw, 48px), calc((100vw - 1240px) / 2 + 48px)) !important; }
+.land-ink .eyebrow { color: var(--lime); }
+.land-ink .fine { color: #b6af9f; }
+.land-flow { list-style: none; margin: 10px 0; padding: 0; display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap; }
+.land-flow li:not(.arrow) { flex: 1 1 170px; border: 2px solid var(--paper); padding: 18px; display: grid; gap: 6px; align-content: start; }
+.land-flow li b { font: 800 clamp(52px, 6vw, 84px)/0.95 var(--display); }
+.land-flow li small { font-size: 14px; color: #d6d0c3; }
+.land-flow li .eyebrow { color: #b6af9f; }
+.land-flow li.in { background: var(--lime); color: var(--ink); border-color: var(--lime); }
+.land-flow li.in small, .land-flow li.in .eyebrow { color: var(--ink); }
+.land-flow li.kept { border-style: dashed; }
+.land-flow .arrow { display: grid; place-items: center; font: 800 32px var(--display); color: var(--lime); flex: 0 0 auto; }
+.land-shots { display: grid; grid-template-columns: 1.3fr 1fr; gap: 24px; align-items: start; margin-top: 8px; }
+.land-shots figure { margin: 0; display: grid; gap: 10px; }
+.land-shots figure:first-child { grid-row: span 2; }
+.land-shots img { width: 100%; height: auto; border: 2px solid var(--ink); box-shadow: var(--shadow-s); background: var(--surface); }
+.land-shots figcaption { font-size: 14px; line-height: 1.45; max-width: 60ch; }
+.land-table-wrap { overflow-x: auto; border: 2px solid var(--ink); background: var(--surface); }
+.land-table { width: 100%; border-collapse: collapse; font-size: 16px; }
+.land-table th { text-align: left; background: var(--ink); color: var(--paper); font: 700 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; padding: 14px 16px; }
+.land-table td { padding: 14px 16px; border-top: 1px solid var(--line); vertical-align: top; }
+.land-table td:nth-child(2) { white-space: nowrap; }
+.land-zero { font: 800 clamp(72px, 14vw, 200px)/0.9 var(--display); text-transform: uppercase; margin: 8px 0 0; }
+.land-split { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr); gap: clamp(24px, 5vw, 64px); align-items: start; }
+.land-split > div { display: grid; gap: 18px; }
+.land-tools { list-style: none; margin: 0; padding: 0; display: grid; border: 2px solid var(--ink); background: var(--surface); box-shadow: var(--shadow-s); }
+.land-tools li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.land-tools li:last-child { border-bottom: 0; }
+.land-tools code { font-size: 15px; font-weight: 700; }
+.land-tools .none { background: var(--ink); color: var(--paper); }
+.land-facts ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink); }
+.land-facts li { padding: 20px 18px; border-right: 1px solid var(--line); display: grid; gap: 6px; align-content: start; }
+.land-facts li:last-child { border-right: 0; }
+.land-facts b { font: 800 30px/1 var(--display); text-transform: uppercase; }
+.land-facts span { font-size: 14px; color: var(--mute); line-height: 1.45; }
+.land-cta { background: var(--lime); border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink); margin-top: clamp(48px, 8vw, 104px); padding-top: clamp(40px, 6vw, 72px) !important; padding-bottom: clamp(40px, 6vw, 72px) !important; display: grid; gap: 18px; justify-items: start; }
+.land-cta { padding-left: max(clamp(16px, 4vw, 48px), calc((100vw - 1240px) / 2 + 48px)) !important; padding-right: max(clamp(16px, 4vw, 48px), calc((100vw - 1240px) / 2 + 48px)) !important; }
+.land-cta h2 { font: 800 clamp(48px, 8vw, 120px)/0.95 var(--display); text-transform: uppercase; padding-top: 0.04em; }
+.land-cta p { margin: 0; font-size: 20px; max-width: 56ch; }
+.land-foot { max-width: none; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 22px max(clamp(16px, 4vw, 48px), calc((100vw - 1240px) / 2 + 48px)); background: var(--ink); color: var(--paper); }
+.land-foot p { margin: 0; font-size: 14px; color: #d6d0c3; }
+.land-foot a { color: var(--lime); font-weight: 700; }
+@media (max-width: 960px) {
+  .land-hero, .land-split, .land-shots { grid-template-columns: 1fr; }
+  .land-shots figure:first-child { grid-row: auto; }
+  .land-steps { grid-template-columns: 1fr 1fr; }
+  .land-steps li { border-bottom: 1.5px solid var(--ink); }
+  .land-steps li:nth-child(2n) { border-right: 0; }
+  .land-facts ul { grid-template-columns: 1fr 1fr; }
+  .land-facts li:nth-child(2n) { border-right: 0; }
+  .land-card { transform: none; }
+}
+@media (max-width: 860px) {
+  .land-links { display: none; }
+  .land-flow .arrow { display: none; }
+}
+@media (max-width: 560px) {
+  .land-steps, .land-facts ul { grid-template-columns: 1fr; }
+  .land-steps li, .land-facts li { border-right: 0; }
+  .land-table th:nth-child(3), .land-table td:nth-child(3) { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

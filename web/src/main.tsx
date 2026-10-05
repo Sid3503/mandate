@@ -13,6 +13,7 @@ import { Shell } from './components/Shell'
 import { ApiError } from './lib/api'
 import { session } from './lib/session'
 import { Inbox } from './screens/Inbox'
+import { Landing } from './screens/Landing'
 import { Clerk } from './screens/Clerk'
 import { Deals } from './screens/Deals'
 import { JobScreen, Jobs } from './screens/Jobs'
@@ -45,7 +46,8 @@ queryClient.getQueryCache().subscribe((event) => {
 
 function RequireKey({ children }: { children: ReactNode }) {
   const where = useLocation()
-  if (!session.get()) return <Navigate to="/unlock" replace state={{ from: where.pathname }} />
+  // The front door: a visitor with no key sees what Mandate is before being asked for one.
+  if (!session.get()) return <Navigate to={where.pathname === '/' ? '/welcome' : '/unlock'} replace state={{ from: where.pathname }} />
   return <>{children}</>
 }
 
@@ -54,6 +56,7 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter basename="/app">
         <Routes>
+          <Route path="/welcome" element={<Landing />} />
           <Route path="/unlock" element={<Unlock />} />
           <Route element={<RequireKey><Shell /></RequireKey>}>
             <Route index element={<Inbox />} />
