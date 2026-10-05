@@ -1,17 +1,22 @@
 import { randomUUID } from 'node:crypto'
 import type { Repo, ProposalRow, ProposalKind, PayoutUpdate } from '../db/repo'
-import { Clause, decide, fundableCents, resolveCategory, resolveClient, resolvePayee, type FundingCharge } from '../domain/gate'
+import { Clause, decide, fundableCents, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
 import { cartHash, stableHash, type CartFields } from '../domain/hash'
+import { lockMessage, type Signer } from '../domain/signing'
 import { monthWindow } from '../domain/period'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
 import { WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
+import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
 import { PayPalError, type LivePayout, type PayPalPort } from '../paypal/port'
 import { Problem } from '../http/problem'
+import { runIdempotent } from './idempotency'
 
 export type HttpResult = { status: number; body: unknown }
 export type Role = 'owner' | 'proposer'
 
-const RESUME_PHASES = new Set(['locked', 'order_created', 'payout_sent', 'payout_unclaimed'])
+const RESUME_PHASES = new Set(['locked', 'order_created', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'])
+/** Charge phases where a PayPal invoice exists. The client may already have paid it. */
+const INVOICE_PHASES = ['invoice_draft', 'invoice_sent']
 /** Payout phases where PayPal already holds the batch, so money may already have left. */
 const PAYOUT_LIVE_PHASES = ['payout_sent', 'payout_unclaimed']
 const INFLIGHT_MS = 30_000
@@ -46,6 +51,13 @@ export type ProposalView = {
   payoutStatus: string | null
   payoutTransactionId: string | null
   payoutFeeCents: number | null
+  dealId: string | null
+  milestone: number | null
+  lockSignature: string | null
+  lockKeyId: string | null
+  invoiceId: string | null
+  invoiceUrl: string | null
+  invoiceStatus: string | null
   createdAt: string
   updatedAt: string
   links: { self: string; packet: string }
@@ -82,6 +94,13 @@ export function toView(row: ProposalRow): ProposalView {
     payoutStatus: row.payout_status,
     payoutTransactionId: row.payout_txn_id,
     payoutFeeCents: row.payout_fee_cents,
+    dealId: row.deal_id,
+    milestone: row.milestone,
+    lockSignature: row.lock_sig,
+    lockKeyId: row.lock_key_id,
+    invoiceId: row.invoice_id,
+    invoiceUrl: row.invoice_url,
+    invoiceStatus: row.invoice_status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     links: { self: `/v1/proposals/${row.id}`, packet: `/v1/proposals/${row.id}/packet` },
@@ -93,7 +112,73 @@ export class MandateService {
     private readonly repo: Repo,
     private readonly paypal: PayPalPort | null,
     private readonly now: () => Date,
+    private readonly signer: Signer,
+    /** Bill clients with PayPal invoices (the Agent Toolkit). Null means checkout only. */
+    private readonly invoices: InvoicePort | null = null,
   ) {}
+
+  /**
+   * Boot-time housekeeping. Remembers the public key, and signs locks made before signatures existed, but only
+   * when their stored hash still recomputes from their own fields (so a row edited before this point is not blessed).
+   */
+  prepareSigning(): { signed: number; skipped: number } {
+    const now = this.iso()
+    for (const key of this.signer.publicKeys()) this.repo.rememberSigningKey(key.keyId, key.publicKeyPem, now)
+    for (const stored of this.repo.signingKeys()) this.signer.addPublicKey(stored.publicPem)
+    let signed = 0
+    let skipped = 0
+    for (const row of this.repo.unsignedLocks()) {
+      let intact = false
+      try {
+        intact = cartHash(this.cartFields(row)) === row.cart_hash
+      } catch {
+        intact = false
+      }
+      if (!intact) {
+        skipped += 1
+        continue
+      }
+      this.repo.signLock(row.id, this.signer.sign(lockMessage(row.id, row.cart_hash!)))
+      signed += 1
+    }
+    return { signed, skipped }
+  }
+
+  /** Whether a row's signature verifies for exactly its id and hash. Unsigned rows never verify. */
+  lockValid(row: ProposalRow): boolean {
+    return Boolean(row.cart_hash) && this.signer.verify(lockMessage(row.id, row.cart_hash!), row.lock_sig, row.lock_key_id)
+  }
+
+  /** Independent re-check of one lock, for the receipt's Verify button and for auditors. */
+  verifyLock(id: string) {
+    const row = this.require(id)
+    const hashMatches = (() => {
+      if (!row.cart_hash) return null
+      try {
+        return cartHash(this.cartFields(row)) === row.cart_hash
+      } catch {
+        return false
+      }
+    })()
+    const signatureValid = row.cart_hash ? this.lockValid(row) : null
+    return {
+      proposalId: row.id,
+      locked: Boolean(row.cart_hash),
+      cartHash: row.cart_hash,
+      hashMatches,
+      signature: row.lock_sig,
+      keyId: row.lock_key_id,
+      algorithm: 'ed25519' as const,
+      signatureValid,
+      message: row.cart_hash ? lockMessage(row.id, row.cart_hash) : null,
+      verdict: !row.cart_hash ? 'not_locked' : hashMatches && signatureValid ? 'valid' : 'invalid',
+      publicKeys: this.signer.publicKeys(),
+    }
+  }
+
+  publicKeys() {
+    return { data: this.signer.publicKeys() }
+  }
 
   currentWarrant() {
     const warrant = this.repo.latestWarrant()
@@ -119,32 +204,17 @@ export class MandateService {
     return { status: 201, body: saved }
   }
 
-  propose(input: ProposalCreate, idempotencyKey: string, actor: Role = 'owner'): HttpResult {
+  propose(input: ProposalCreate, idempotencyKey: string, actor: Role = 'owner', runId: string | null = null): HttpResult {
     const hash = stableHash(input)
     const now = this.iso()
-    return this.repo.transaction(() => {
-      const existing = this.repo.idempotency(idempotencyKey)
-      if (existing?.state === 'done') {
-        if (existing.request_hash !== hash) {
-          throw new Problem(422, 'idempotency.mismatch', 'Idempotency-Key is already used', 'This key was stored for a different request body.')
-        }
-        return { status: existing.status_code ?? 200, body: JSON.parse(existing.response_json ?? '{}') as unknown }
-      }
-      if (existing?.state === 'pending') {
-        throw new Problem(409, 'idempotency.inflight', 'A request is outstanding for this Idempotency-Key', 'Retry after the original request finishes.')
-      }
-      this.repo.insertIdempotency(idempotencyKey, hash, now)
-      const result = this.proposeNew(input, now, actor)
-      this.repo.finishIdempotency(idempotencyKey, result.status, result.body, now)
-      return result
-    })
+    return runIdempotent(this.repo, idempotencyKey, hash, now, () => this.proposeNew(input, now, actor, runId))
   }
 
   approve(id: string): HttpResult {
     const now = this.iso()
     return this.repo.transaction(() => {
       const row = this.require(id)
-      if (['locked', 'order_created', 'captured', 'refunded', ...PAYOUT_LIVE_PHASES].includes(row.phase)) {
+      if (['locked', 'order_created', 'captured', 'refunded', ...INVOICE_PHASES, ...PAYOUT_LIVE_PHASES].includes(row.phase)) {
         return { status: 200, body: toView(this.require(id)) }
       }
       if (row.phase !== 'pending_approval' || row.gate === 'DENY') {
@@ -181,7 +251,7 @@ export class MandateService {
       }
       const fields = this.cartFields(row)
       const hash = cartHash(fields)
-      this.repo.lockProposal(row.id, hash, now)
+      this.repo.lockProposal(row.id, hash, this.signer.sign(lockMessage(row.id, hash)), now)
       this.repo.insertEvent(randomUUID(), row.id, 'proposal.approved', row.clause, { actor: 'owner', cartHash: hash }, now)
       return { status: 200, body: toView(this.require(id)) }
     })
@@ -217,6 +287,10 @@ export class MandateService {
       const current = this.require(id)
       if (current.kind === 'refund') return await this.settleRefund(current)
       if (current.kind === 'payment') return await this.settlePayout(current)
+      if (current.kind === 'charge' && this.invoices && !current.order_id) {
+        const invoiced = await this.settleInvoice(current)
+        if (invoiced) return invoiced
+      }
       return await this.settlePayment(current)
     } catch (error) {
       if (this.require(id).phase === 'capture_inflight') this.repo.setPhase(id, resume, this.iso())
@@ -371,6 +445,108 @@ export class MandateService {
     return { refreshed: true }
   }
 
+  /**
+   * Money in by PayPal invoice. The invoice is made from the locked cart: the client, the cents, the proof and the
+   * proposal id as its reference. It settles only when PayPal says the invoice was paid, for exactly the locked
+   * cents, under that reference. Returns null when the app has no permission to invoice, so checkout can take over.
+   */
+  private async settleInvoice(current: ProposalRow): Promise<HttpResult | null> {
+    const invoices = this.invoices!
+    let row = current
+    if (!row.invoice_id) {
+      const warrant = this.repo.warrant(row.warrant_id, row.warrant_version)
+      const client = warrant?.body.clients.find((item) => item.id === row.payee_id)
+      if (!client) throw new Problem(409, Clause.payeeUnknown, 'Client is not on the rules', 'The client for this charge is not on the rules it was approved under. Nothing was sent.')
+      const number = invoiceNumberFor(row.id)
+      let invoiceId: string | null = null
+      try {
+        invoiceId = (await invoices.findByNumber(number))?.invoiceId ?? null
+        if (!invoiceId) {
+          invoiceId = (await invoices.createDraft({
+            proposalId: row.id,
+            invoiceNumber: number,
+            amountCents: row.amount_cents,
+            currency: row.currency,
+            title: row.description,
+            description: row.evidence_url ? `Proof of work: ${row.evidence_url}` : row.description,
+            note: row.prompt ?? row.description,
+            recipientEmail: client.email,
+            recipientName: client.displayName,
+          })).invoiceId
+        }
+      } catch (error) {
+        if (error instanceof PayPalError && (error.httpStatus === 401 || error.httpStatus === 403)) {
+          const now = this.iso()
+          this.repo.insertEvent(randomUUID(), row.id, 'invoice.unavailable', row.clause, { reason: 'PayPal app has no Invoicing permission', status: error.httpStatus }, now)
+          this.repo.setPhase(row.id, row.phase === 'capture_inflight' ? 'locked' : row.phase, now)
+          return null
+        }
+        throw error
+      }
+      const now = this.iso()
+      this.repo.transaction(() => {
+        this.repo.saveInvoiceDraft(row.id, invoiceId!, now)
+        this.repo.insertEvent(randomUUID(), row.id, 'invoice.created', row.clause, { invoiceId, invoiceNumber: number, amountCents: row.amount_cents }, now)
+      })
+      row = this.require(row.id)
+    }
+    // Send once. A drafted invoice is sent; one PayPal already reports as sent, paid or cancelled is only read.
+    if (row.invoice_status === 'DRAFT' || row.invoice_status === null) {
+      const sent = await invoices.send(row.invoice_id!, row.description)
+      const now = this.iso()
+      this.repo.transaction(() => {
+        this.repo.saveInvoice(row.id, row.invoice_id!, sent.payerUrl, 'SENT', now)
+        this.repo.insertEvent(randomUUID(), row.id, 'invoice.sent', row.clause, { invoiceId: row.invoice_id, payerUrl: sent.payerUrl }, now)
+      })
+      row = this.require(row.id)
+    }
+    return this.applyLiveInvoice(row, await invoices.get(row.invoice_id!))
+  }
+
+  private applyLiveInvoice(row: ProposalRow, live: LiveInvoice): HttpResult {
+    const paid = live.status === 'PAID' || live.status === 'PARTIALLY_PAID' || live.paidCents > 0
+    const mismatch = live.totalCents !== row.amount_cents || live.currency !== row.currency || (live.reference !== null && live.reference !== row.id)
+    if (mismatch) {
+      // The invoice is not the one we locked. Whatever it says, we do not call it paid.
+      return this.refuseLive(row, live.totalCents, live.currency)
+    }
+    if (live.status === 'PAID' && live.paidCents === row.amount_cents && live.transactionId) {
+      const now = this.iso()
+      this.repo.transaction(() => {
+        this.repo.markCaptured(row.id, live.transactionId!, live.paidCents, now)
+        this.repo.setInvoiceStatus(row.id, live.status, now)
+        this.repo.insertEvent(randomUUID(), row.id, 'capture.completed', row.clause, { invoiceId: live.invoiceId, captureId: live.transactionId, amountCents: live.paidCents, via: 'invoice' }, now)
+      })
+      return { status: 200, body: toView(this.require(row.id)) }
+    }
+    const now = this.iso()
+    // Not settled: the invoice is out with the client. Leave the "settling" marker that capture set.
+    if (row.phase === 'capture_inflight') this.repo.setPhase(row.id, 'invoice_sent', now)
+    if (live.status !== row.invoice_status) {
+      this.repo.transaction(() => {
+        this.repo.setInvoiceStatus(row.id, live.status, now)
+        this.repo.insertEvent(randomUUID(), row.id, 'invoice.status', row.clause, { invoiceId: live.invoiceId, status: live.status, paidCents: live.paidCents }, now)
+      })
+    }
+    if (live.status === 'CANCELLED') {
+      this.repo.setPhase(row.id, 'capture_refused', now)
+      this.repo.insertEvent(randomUUID(), row.id, 'capture.refused', row.clause, { invoiceId: live.invoiceId, reason: 'invoice cancelled' }, now)
+    } else if (paid) {
+      // Paid, but not in full or not through PayPal: the money is not the locked cents, so it is not called settled.
+      this.repo.insertEvent(randomUUID(), row.id, 'invoice.partial', row.clause, { invoiceId: live.invoiceId, paidCents: live.paidCents, lockedCents: row.amount_cents }, now)
+    }
+    return { status: 200, body: toView(this.require(row.id)) }
+  }
+
+  /** A PayPal invoice event names an invoice. Re-read it from PayPal and settle only on what PayPal says. */
+  async refreshInvoice(invoiceId: string): Promise<{ refreshed: boolean }> {
+    if (!this.invoices) return { refreshed: false }
+    const row = this.repo.proposalByInvoice(invoiceId)
+    if (!row || !INVOICE_PHASES.includes(row.phase)) return { refreshed: false }
+    this.applyLiveInvoice(row, await this.invoices.get(invoiceId))
+    return { refreshed: true }
+  }
+
   private async settleRefund(current: ProposalRow): Promise<HttpResult> {
     if (!this.paypal) throw new Problem(503, 'paypal.unconfigured', 'PayPal is not configured', 'Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET before capture.')
     if (!current.parent_capture_id) {
@@ -433,6 +609,15 @@ export class MandateService {
       prompt: row.prompt,
       clause: row.clause,
       approval,
+      invoice: row.invoice_id ? { id: row.invoice_id, status: row.invoice_status, url: row.invoice_url } : null,
+      agentRun: this.agentRunFor(events),
+      lock: row.cart_hash ? {
+        hash: row.cart_hash,
+        signature: row.lock_sig,
+        keyId: row.lock_key_id,
+        algorithm: 'ed25519' as const,
+        signatureValid: this.lockValid(row),
+      } : null,
       amounts: {
         approvedCents: row.cart_hash ? row.amount_cents : null,
         capturedCents: row.captured_amount_cents,
@@ -454,6 +639,16 @@ export class MandateService {
     }
   }
 
+  /** The chat behind a request, when an agent asked for it. The receipt can then answer "who said what". */
+  private agentRunFor(events: Array<{ type: string; payload: unknown }>) {
+    const created = events.find((event) => event.type === 'proposal.created')
+    const runId = (created?.payload as { runId?: unknown } | undefined)?.runId
+    if (typeof runId !== 'string') return null
+    const run = this.repo.agentRun(runId)
+    if (!run) return null
+    return { id: run.id, agent: run.agent, model: run.model, status: run.status, input: run.input, output: run.output, createdAt: run.created_at }
+  }
+
   private fundingSummary(captureId: string) {
     const charge = this.repo.paymentByCapture(captureId)
     if (!charge) return { captureId, proposalId: null, clientId: null, capturedCents: null, phase: 'missing' }
@@ -468,7 +663,7 @@ export class MandateService {
     }
   }
 
-  private proposeNew(input: ProposalCreate, now: string, actor: Role): HttpResult {
+  private proposeNew(input: ProposalCreate, now: string, actor: Role, runId: string | null = null): HttpResult {
     if (input.proposalId) return this.amend(input, now)
     const warrant = this.repo.latestWarrant()
     if (!warrant) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
@@ -484,6 +679,9 @@ export class MandateService {
       : resolveCategory(warrant.body, input.category)
     const evidenceUrl = input.evidenceUrl ?? (input.kind === 'refund' ? parent?.evidence_url ?? null : null)
     const cap = this.reservation(warrant.id, warrant.body, now)
+    const dealId = input.kind === 'charge' ? input.dealId ?? null : null
+    const milestone = dealId ? input.milestone ?? null : null
+    const deal = input.kind === 'charge' ? this.dealContext(dealId, milestone, jobId) : null
     const decision = decide(warrant.body, {
       kind: input.kind,
       payeeId: payee?.id ?? null,
@@ -503,6 +701,9 @@ export class MandateService {
       jobId,
       fundingCaptureId,
       funding: fundingRow ? this.fundingState(fundingRow) : null,
+      dealId,
+      milestone,
+      deal,
     }, cap)
     const id = randomUUID()
     const lockNow = decision.gate === 'AUTO'
@@ -519,7 +720,11 @@ export class MandateService {
       parentCaptureId: input.parentCaptureId ?? null,
       jobId,
       fundingCaptureId,
+      dealId,
+      milestone,
     } : null
+    const lockHash = fields ? cartHash(fields) : null
+    const lockSig = lockHash ? this.signer.sign(lockMessage(id, lockHash)) : null
     const phase = decision.gate === 'DENY' ? 'denied' : lockNow ? 'locked' : 'pending_approval'
     this.repo.insertProposal({
       id,
@@ -529,6 +734,8 @@ export class MandateService {
       parentCaptureId: input.parentCaptureId ?? null,
       jobId,
       fundingCaptureId,
+      dealId,
+      milestone,
       payeeId: payee?.id ?? null,
       amountCents: input.amountCents,
       currency: input.currency,
@@ -540,7 +747,9 @@ export class MandateService {
       clause: decision.clause,
       detail: decision.detail,
       phase,
-      cartHash: fields ? cartHash(fields) : null,
+      cartHash: lockHash,
+      lockSig: lockSig?.signature ?? null,
+      lockKeyId: lockSig?.keyId ?? null,
       reservedAt: lockNow ? now : null,
       now,
     })
@@ -548,6 +757,7 @@ export class MandateService {
       actor,
       gate: decision.gate,
       prompt: input.prompt ?? null,
+      runId,
       priorCaptureIds: decision.clause === Clause.capMonthly ? cap.priorCaptureIds : undefined,
     }, now)
     const view = toView(this.require(id))
@@ -626,6 +836,11 @@ export class MandateService {
     if (cartHash(fields) !== row.cart_hash) {
       throw new Problem(409, Clause.cartImmutable, 'Cart hash does not match the row', 'The stored cart does not match its hash.', { proposalId: row.id })
     }
+    // A hash can be recomputed by anyone who can write the database. Only the server's key can sign it.
+    if (!this.lockValid(row)) {
+      this.repo.insertEvent(randomUUID(), row.id, 'capture.refused', 'lock.signature_invalid', { keyId: row.lock_key_id, signed: Boolean(row.lock_sig) }, now)
+      throw new Problem(409, 'lock.signature_invalid', 'The lock signature does not verify', 'This lock was not signed by the server, or was changed after it was signed. PayPal was not called.', { proposalId: row.id })
+    }
     // Once PayPal holds the batch the money may already have left, so a later refund of the client payment cannot stop it.
     if (row.kind === 'payment' && row.funding_capture_id && !row.payout_batch_id) {
       const funding = this.repo.paymentByCapture(row.funding_capture_id)
@@ -642,7 +857,7 @@ export class MandateService {
         })
       }
     }
-    const resume = row.phase === 'capture_inflight' ? (row.payout_batch_id ? 'payout_sent' : row.order_id ? 'order_created' : 'locked') : row.phase
+    const resume = row.phase === 'capture_inflight' ? (row.payout_batch_id ? 'payout_sent' : row.invoice_id ? 'invoice_sent' : row.order_id ? 'order_created' : 'locked') : row.phase
     this.repo.setPhase(row.id, 'capture_inflight', now)
     return { result: null, row, resume }
   }
@@ -705,6 +920,19 @@ export class MandateService {
       parentCaptureId: row.parent_capture_id,
       jobId: row.job_id,
       fundingCaptureId: row.funding_capture_id,
+      dealId: row.deal_id,
+      milestone: row.milestone,
+    }
+  }
+
+  /** The deal facts the gate needs for a charge. Resolved here so the gate itself stays a pure function. */
+  private dealContext(dealId: string | null, milestone: number | null, jobId: string | null): DealContext {
+    const row = dealId ? this.repo.deal(dealId) : null
+    const terms = row && row.status === 'agreed' ? (JSON.parse(row.terms_json) as { milestones: Array<{ amountCents: number }> }) : null
+    return {
+      agreed: row && terms && row.job_id ? { id: row.id, jobId: row.job_id, buyerId: row.buyer_id, milestoneCents: terms.milestones.map((item) => item.amountCents) } : null,
+      jobHasDeal: jobId ? this.repo.agreedDealByJob(jobId) !== null : false,
+      milestoneBilled: dealId && milestone !== null ? this.repo.chargeForMilestone(dealId, milestone) !== null : false,
     }
   }
 

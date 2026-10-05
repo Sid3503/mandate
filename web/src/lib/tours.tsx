@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { TourStep } from '../components/ui/product-tour'
 
-export type TourId = 'welcome' | 'inbox' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system'
+export type TourId = 'welcome' | 'inbox' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk'
 
 const p = (children: ReactNode) => <p>{children}</p>
 
@@ -15,6 +15,8 @@ export const TOUR_LABEL: Record<TourId, string> = {
   rules: 'the Rules',
   receipt: 'a receipt',
   system: 'System',
+  deals: 'Deals',
+  clerk: 'the Clerk',
 }
 
 /** Which tour belongs to the screen the person is on. */
@@ -23,6 +25,8 @@ export function tourFor(pathname: string): TourId {
   if (pathname.startsWith('/jobs/')) return 'job'
   if (pathname.startsWith('/jobs')) return 'jobs'
   if (pathname.startsWith('/new')) return 'new'
+  if (pathname.startsWith('/deals')) return 'deals'
+  if (pathname.startsWith('/clerk')) return 'clerk'
   if (pathname.startsWith('/ledger')) return 'ledger'
   if (pathname.startsWith('/rules')) return 'rules'
   if (pathname.startsWith('/system')) return 'system'
@@ -94,6 +98,25 @@ export const TOURS: Record<TourId, TourStep[]> = {
           {p('Each job shows what came in, what went out, what is approved but not paid yet, and what the studio keeps.')}
         </>
       ),
+    },
+    {
+      target: '[data-tour="nav-deals"]',
+      title: 'Deals',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: (
+        <>
+          {p('Before any money exists, the studio and its client agree the terms: the price and the milestones. A deal only counts if it fits both companies’ rules.')}
+          {p('Once agreed, it is signed, and it becomes the only thing a client charge on that job may bill.')}
+        </>
+      ),
+    },
+    {
+      target: '[data-tour="nav-clerk"]',
+      title: 'Clerk',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: p('An AI clerk your producers can talk to in plain words. It reads the message, looks things up and asks the rules for you. It can ask, never pay, and a fooled clerk changes nothing because the rules still decide.'),
     },
     {
       target: '[data-tour="nav-ledger"]',
@@ -426,6 +449,80 @@ export const TOURS: Record<TourId, TourStep[]> = {
       placement: 'left',
       mobilePlacement: 'top',
       content: p('Each step in order, with the time. “Download receipt” saves the whole record as a file for your books.'),
+    },
+  ],
+
+  deals: [
+    {
+      target: '[data-tour="page-head"]',
+      title: 'Deals come before money',
+      placement: 'bottom',
+      content: p('The client’s agent and the studio’s agent agree a price and milestones here. The terms must fit both companies’ rules. Agents can say anything to each other; the rules decide what stands.'),
+    },
+    {
+      target: '[data-tour="deal-negotiate"]',
+      title: 'Let the agents negotiate',
+      placement: 'bottom',
+      content: p('Two AI agents, one per company, trade offers. Each is told only its own limits. A refusal tells an agent which way to move, never the other side’s number. You can read every turn afterwards.'),
+    },
+    {
+      target: '[data-tour="deal-story"]',
+      title: 'Turn by turn',
+      placement: 'auto',
+      content: p('Each offer, who made it, and the rule that decided it. A refusal names what to fix. The agents chose the offers, but the rules decided every verdict.'),
+    },
+    {
+      target: '[data-tour="deal-band"]',
+      title: 'Where a deal can exist',
+      placement: 'auto',
+      content: p('The client’s most and the studio’s least, drawn on one line. The green overlap is the only place a deal can be agreed. Only you see this picture; the agents never see each other’s limit.'),
+    },
+    {
+      target: '[data-tour="deal-agreed"]',
+      title: 'An agreed deal',
+      placement: 'auto',
+      content: p('Signed by the server. Its job now accepts charges only for its own milestones, for exactly the agreed amounts.'),
+    },
+    {
+      target: '[data-tour="deal-milestones"]',
+      title: 'Bill one milestone at a time',
+      placement: 'auto',
+      content: p('Add a link to the delivered work and bill the next milestone. That creates a client charge for exactly that amount, which you still approve on the Waiting page.'),
+    },
+    {
+      target: '[data-tour="deal-offer"]',
+      title: 'Try it yourself',
+      placement: 'top',
+      content: p('Offer $450 (over the client’s limit), then $200 (under the studio’s minimum), then $300. The reasons are shown, with a hint of which way to move.'),
+    },
+    {
+      target: '[data-tour="empty"]',
+      title: 'No deals yet',
+      placement: 'bottom',
+      content: p('Press “Let the agents negotiate” to watch a deal form, or make an offer below.'),
+    },
+  ],
+
+  clerk: [
+    {
+      target: '[data-tour="clerk-chat"]',
+      title: 'Talk to the clerk',
+      placement: 'right',
+      mobilePlacement: 'bottom',
+      content: p('Write what you want in plain words, like you would to a colleague. The clerk looks up the job and the client payment, then asks the rules.'),
+    },
+    {
+      target: '[data-tour="clerk-log"]',
+      title: 'Try the fake vendor email',
+      placement: 'auto',
+      content: p('The third example is a fake vendor email that says to ignore the rules and pay a stranger. The clerk may be fooled into asking. The rules still say no, and $0 moves.'),
+    },
+    {
+      target: '[data-tour="clerk-side"]',
+      title: 'What it can and cannot do',
+      placement: 'left',
+      mobilePlacement: 'top',
+      content: p('It can read and ask. It cannot approve, pay or change rules. Anything it asks for that needs your tap shows up on the Waiting page.'),
     },
   ],
 

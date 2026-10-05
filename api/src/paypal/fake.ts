@@ -1,3 +1,4 @@
+import type { InvoicePort, InvoiceRequest, LiveInvoice } from './invoices'
 import { PayPalError, type LivePayout, type PayPalPort } from './port'
 
 type StoredOrder = {
@@ -146,5 +147,73 @@ export class FakePayPal implements PayPalPort {
     const order = this.orders.get(orderId)
     if (!order) throw new Error(`missing ${orderId}`)
     order.amountCents = amountCents
+  }
+}
+
+export class FakeInvoices implements InvoicePort {
+  readonly invoices = new Map<string, { number: string; proposalId: string; totalCents: number; currency: string; status: string; reference: string; transactionId: string | null; paidCents: number; email: string }>()
+  createCalls = 0
+  sendCalls = 0
+  /** When set, creating fails the way an app without Invoicing permission does. */
+  unauthorised = false
+  /** Pay as soon as the invoice is sent, like a client who pays at once. */
+  autoPay = false
+
+  async createDraft(input: InvoiceRequest) {
+    if (this.unauthorised) throw new PayPalError(403, 'PAYPAL_API_HTTP_ERROR', null, 'Authorization failed due to insufficient permissions.')
+    this.createCalls += 1
+    const existing = [...this.invoices.entries()].find(([, item]) => item.number === input.invoiceNumber)
+    if (existing) throw new PayPalError(422, 'DUPLICATE_INVOICE_NUMBER', null, 'invoice number')
+    const invoiceId = `INV2-${input.proposalId.replaceAll('-', '').slice(0, 12).toUpperCase()}`
+    this.invoices.set(invoiceId, { number: input.invoiceNumber, proposalId: input.proposalId, totalCents: input.amountCents, currency: input.currency, status: 'DRAFT', reference: input.proposalId, transactionId: null, paidCents: 0, email: input.recipientEmail })
+    return { invoiceId }
+  }
+
+  async send(invoiceId: string) {
+    const invoice = this.invoices.get(invoiceId)
+    if (!invoice) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', null, invoiceId)
+    this.sendCalls += 1
+    invoice.status = 'SENT'
+    if (this.autoPay) this.pay(invoiceId)
+    return { payerUrl: `https://www.sandbox.paypal.com/invoice/p/#${invoiceId}` }
+  }
+
+  async get(invoiceId: string): Promise<LiveInvoice> {
+    const invoice = this.invoices.get(invoiceId)
+    if (!invoice) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', null, invoiceId)
+    return {
+      invoiceId,
+      number: invoice.number,
+      status: invoice.status,
+      totalCents: invoice.totalCents,
+      currency: invoice.currency,
+      paidCents: invoice.paidCents,
+      transactionId: invoice.transactionId,
+      reference: invoice.reference,
+      payerUrl: `https://www.sandbox.paypal.com/invoice/p/#${invoiceId}`,
+    }
+  }
+
+  async findByNumber(number: string) {
+    const found = [...this.invoices.entries()].find(([, item]) => item.number === number)
+    return found ? { invoiceId: found[0] } : null
+  }
+
+  /** The client pays the invoice in PayPal. */
+  pay(invoiceId: string, cents?: number) {
+    const invoice = this.invoices.get(invoiceId)
+    if (!invoice) throw new Error(`missing ${invoiceId}`)
+    invoice.status = 'PAID'
+    invoice.paidCents = cents ?? invoice.totalCents
+    invoice.transactionId = `CAP-INV-${invoiceId.slice(5, 17)}`
+  }
+
+  setStatus(invoiceId: string, status: string) {
+    this.invoices.get(invoiceId)!.status = status
+  }
+
+  /** Simulates PayPal reporting a different total than the one we asked for. */
+  mutateTotal(invoiceId: string, cents: number) {
+    this.invoices.get(invoiceId)!.totalCents = cents
   }
 }

@@ -19,6 +19,18 @@ services:
         generateValue: true
       - key: PROPOSER_KEY
         generateValue: true
+      - key: BUYER_AGENT_KEY
+        generateValue: true
+      # Ed25519 private key (PKCS8 PEM) that signs locks and deals. Generate once:
+      #   node -e "console.log(require('crypto').generateKeyPairSync('ed25519').privateKey.export({type:'pkcs8',format:'pem'}))"
+      # The free disk is wiped on restart, so keep this stable or old receipts stop verifying.
+      - key: SIGNING_KEY
+        sync: false
+      # Turns the clerk and the negotiating agents on. Everything else works without it.
+      - key: OLLAMA_API_KEY
+        sync: false
+      - key: AGENT_MODEL
+        value: gpt-oss:20b
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET

@@ -23,6 +23,8 @@ export const PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
   captured: { label: 'Settled', tone: 'auto' },
   refunded: { label: 'Refunded', tone: 'auto' },
   capture_refused: { label: 'Refused at PayPal', tone: 'deny' },
+  invoice_draft: { label: 'Invoice drafted', tone: 'need' },
+  invoice_sent: { label: 'Invoice sent · waiting for the client', tone: 'need' },
   payout_sent: { label: 'Sent · PayPal processing', tone: 'need' },
   payout_unclaimed: { label: 'Sent · unclaimed', tone: 'need' },
   payout_failed: { label: 'Payout failed', tone: 'deny' },
@@ -60,6 +62,11 @@ export const EVENT: Record<string, string> = {
   'order.created': 'PayPal order created',
   'capture.completed': 'Settled with PayPal',
   'refund.completed': 'Refunded with PayPal',
+  'invoice.created': 'PayPal invoice drafted',
+  'invoice.sent': 'Invoice sent to the client',
+  'invoice.status': 'PayPal updated the invoice',
+  'invoice.partial': 'Invoice part-paid, not counted as settled',
+  'invoice.unavailable': 'Invoicing not permitted, used checkout instead',
   'payout.sent': 'Payout sent to PayPal',
   'payout.status': 'PayPal is processing the payout',
   'payout.completed': 'Paid by PayPal',
@@ -104,6 +111,14 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
     case 'funding.missing': return 'The client has not paid for this yet, so nothing funds the payout.'
     case 'funding.job_mismatch': return 'That client payment belongs to a different job.'
     case 'funding.exceeds': return `That client payment cannot fund this much at a ${share} contractor share.`
+    case 'deal.required': return 'This job has an agreed deal, so a charge on it must bill one of the deal’s milestones.'
+    case 'deal.unknown': return 'The deal this charge names does not exist or was never agreed.'
+    case 'deal.milestone_mismatch': return 'A milestone can only be billed for exactly its agreed amount.'
+    case 'deal.milestone_billed': return 'That milestone has already been billed.'
+    case 'deal.milestone_unknown': return 'The deal has no such milestone.'
+    case 'deal.job_mismatch': return 'That deal belongs to a different job.'
+    case 'deal.party_mismatch': return 'That deal was made with a different client.'
+    case 'lock.signature_invalid': return 'The lock’s signature does not verify, so nothing was sent to PayPal.'
     case 'cart.immutable': return 'The lock holds. A different amount was refused, and PayPal was not asked.'
     case 'shape.invalid': return 'The amount must be a whole number of cents above zero.'
     default: return clause
@@ -148,4 +163,27 @@ export function ruleSentences(warrant: Warrant): string[] {
     `Everything moves in ${warrant.currency}, counted in whole cents.`,
   ]
   return lines
+}
+
+/** The deal check's rule codes, in words for a person who is not a lawyer. */
+export const DEAL_RULE: Record<string, string> = {
+  'deal.over_buyer_limit': 'Over what the client’s rules allow',
+  'deal.under_seller_minimum': 'Under the studio’s minimum',
+  'deal.shape': 'Milestones do not add up to the total',
+  'deal.currency': 'Wrong currency',
+  'deal.category_buyer': 'The client does not buy this kind of work',
+  'deal.category_seller': 'The studio does not sell this kind of work',
+  'deal.milestone_too_large': 'A milestone is larger than the client allows',
+  'deal.milestone_too_small': 'A milestone is smaller than the studio allows',
+  'deal.too_many_milestones': 'More milestones than one side allows',
+  'deal.proof_required': 'Each milestone needs a proof link',
+  'deal.due_date_past': 'The due date has passed',
+  'deal.job_taken': 'That job id is already in use',
+  'deal.thread_closed': 'This negotiation already has a deal',
+}
+
+export const AGENT_LABEL: Record<string, string> = {
+  clerk: 'Studio clerk',
+  'negotiator:seller': 'Studio’s negotiator',
+  'negotiator:buyer': 'Client’s negotiator',
 }

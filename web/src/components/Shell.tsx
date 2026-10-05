@@ -8,6 +8,8 @@ import { Chip } from './ui'
 const NAV = [
   { to: '/', label: 'Waiting', tour: 'nav-waiting', icon: 'M4 5h16v14H4z M4 9h16', end: true },
   { to: '/jobs', label: 'Jobs', tour: 'nav-jobs', icon: 'M4 7h16v12H4z M9 7V4h6v3' },
+  { to: '/deals', label: 'Deals', tour: 'nav-deals', icon: 'M3 12h7 M14 12h7 M9 7l3 5-3 5 M15 7l-3 5 3 5' },
+  { to: '/clerk', label: 'Clerk', tour: 'nav-clerk', icon: 'M4 5h16v11H9l-5 4z M8 9h8 M8 12h5' },
   { to: '/new', label: 'Ask', tour: 'nav-new', icon: 'M12 5v14 M5 12h14' },
   { to: '/ledger', label: 'Ledger', tour: 'nav-ledger', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16' },
   { to: '/rules', label: 'Rules', tour: 'nav-rules', icon: 'M6 4h12v16H6z M9 9h6 M9 13h6 M9 17h3' },

@@ -17,6 +17,13 @@ export const Clause = {
   fundingMissing: 'funding.missing',
   fundingJobMismatch: 'funding.job_mismatch',
   fundingExceeds: 'funding.exceeds',
+  dealUnknown: 'deal.unknown',
+  dealRequired: 'deal.required',
+  dealJobMismatch: 'deal.job_mismatch',
+  dealPartyMismatch: 'deal.party_mismatch',
+  dealMilestoneUnknown: 'deal.milestone_unknown',
+  dealMilestoneMismatch: 'deal.milestone_mismatch',
+  dealMilestoneBilled: 'deal.milestone_billed',
 } as const
 
 export type GateName = 'DENY' | 'AUTO' | 'NEEDS_APPROVAL'
@@ -48,6 +55,16 @@ export type FundingCharge = {
   payoutHeldCents: number
 }
 
+/** What the gate needs to know about the deal a charge bills, resolved by the service from the database. */
+export type DealContext = {
+  /** The agreed deal named by the charge, or null when it names none or an unknown one. */
+  agreed: { id: string; jobId: string; buyerId: string; milestoneCents: number[] } | null
+  /** True when the charge's job already has an agreed deal, so every charge on it must cite that deal. */
+  jobHasDeal: boolean
+  /** True when the named milestone already has a live charge. */
+  milestoneBilled: boolean
+}
+
 export type GateProposal = {
   kind: 'payment' | 'charge' | 'refund'
   payeeId: string | null
@@ -59,6 +76,9 @@ export type GateProposal = {
   jobId?: string | null
   fundingCaptureId?: string | null
   funding?: FundingCharge | null
+  dealId?: string | null
+  milestone?: number | null
+  deal?: DealContext | null
 }
 
 /** Cents a captured client charge can still fund for contractors under the share rule. */
@@ -113,6 +133,21 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
   }
   if (proposal.kind === 'charge' && !proposal.jobId) {
     return deny(Clause.jobMissing, 'a client charge must name the job it pays for')
+  }
+  if (proposal.kind === 'charge') {
+    const context = proposal.deal
+    if (proposal.dealId) {
+      const agreed = context?.agreed ?? null
+      if (!agreed) return deny(Clause.dealUnknown, 'the deal named by this charge does not exist or was never agreed')
+      if (agreed.jobId !== proposal.jobId) return deny(Clause.dealJobMismatch, `the deal belongs to job ${agreed.jobId}`)
+      if (agreed.buyerId !== proposal.payeeId) return deny(Clause.dealPartyMismatch, 'the deal was made with a different client')
+      const expected = proposal.milestone === null || proposal.milestone === undefined ? undefined : agreed.milestoneCents[proposal.milestone]
+      if (expected === undefined) return deny(Clause.dealMilestoneUnknown, 'the deal has no such milestone')
+      if (expected !== proposal.amountCents) return deny(Clause.dealMilestoneMismatch, `the deal says this milestone is ${expected} cents`)
+      if (context?.milestoneBilled) return deny(Clause.dealMilestoneBilled, 'this milestone has already been billed')
+    } else if (context?.jobHasDeal) {
+      return deny(Clause.dealRequired, 'this job has an agreed deal, so charges on it must bill one of its milestones')
+    }
   }
   if (proposal.kind === 'payment' && warrant.fundingRequired) {
     const funding = proposal.funding ?? null

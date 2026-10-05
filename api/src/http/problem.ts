@@ -51,6 +51,6 @@ export function onError(error: Error, c: Context): Response {
     return sendProblem(c, new Problem(error.status, 'request.invalid', 'Request is invalid', error.message))
   }
   const requestId = c.get('requestId') as string | undefined
-  console.error(JSON.stringify({ level: 'error', requestId, name: error.name }))
+  console.error(JSON.stringify({ level: 'error', requestId, name: error.name, message: process.env.LOG_ERRORS ? error.message : undefined }))
   return sendProblem(c, new Problem(500, 'internal', 'Internal error', 'The request failed.'))
 }

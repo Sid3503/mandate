@@ -3,21 +3,40 @@ import { Hono } from 'hono'
 import type { DatabaseSync } from 'node:sqlite'
 import { VERSION } from './config'
 import { databaseReady } from './db/database'
-import { Repo } from './db/repo'
+import { z } from 'zod'
+import { BillMilestoneSchema, DealOfferSchema } from './domain/deal'
+import type { Signer } from './domain/signing'
 import { IdempotencyKeySchema, ProposalCreateSchema, CaptureSchema, ListQuerySchema } from './domain/schemas'
 import { onError, Problem, sendProblem, invalidRequest } from './http/problem'
 import { WEB_CSP, webAsset } from './http/web'
 import { buildOpenApi } from './openapi'
+import type { InvoicePort } from './paypal/invoices'
 import type { PayPalPort } from './paypal/port'
-import { decodeCursor, MandateService, type HttpResult, type Role } from './services/mandate'
+import { handleMcp } from './mcp/http'
+import { AgentService } from './agents/service'
+import type { AgentModel } from './agents/model'
+import { buildServices, type Services } from './services/container'
+import { decodeCursor, type HttpResult } from './services/mandate'
+import { buyerPrincipal, OWNER, STUDIO, type Principal } from './services/principal'
 
 export type AppDeps = {
   db: DatabaseSync
   paypal: PayPalPort | null
   now: () => Date
+  /** Signs locks and agreed deals. Tests get a throwaway key. */
+  signer?: Signer
+  /** Bills clients with PayPal invoices through the Agent Toolkit. Omit for checkout only. */
+  invoices?: InvoicePort | null
+  /** Pre-built services, for when another entry point (the MCP server, the agents) must share them. */
+  services?: Services
+  /** The language model behind the clerk and the negotiators. Without it the agents are off and everything else works. */
+  model?: AgentModel | null
   config: {
     apiKey: string
     proposerKey?: string | null
+    /** A client's agent. It can make and read offers for that one client and nothing else. */
+    buyerAgentKey?: string | null
+    buyerAgentParty?: string
     webDist?: string | null
     rateLimitPerMinute: number
     paypalConfigured: boolean
@@ -26,21 +45,42 @@ export type AppDeps = {
   }
 }
 
-const PUBLIC = new Set(['/', '/health', '/ready', '/openapi.json', '/v1/webhooks/paypal'])
+const ClerkMessageSchema = z.object({ message: z.string().trim().min(1).max(4000), conversationId: z.uuid().optional() }).strict()
+const NegotiationSchema = z.object({
+  buyer: z.string().trim().max(200).optional(),
+  task: z.string().trim().max(300).optional(),
+  sellerBrief: z.string().trim().max(600).optional(),
+  buyerBrief: z.string().trim().max(600).optional(),
+  maxOffers: z.number().int().min(2).max(8).optional(),
+}).strict()
+
+const PUBLIC = new Set(['/', '/health', '/ready', '/openapi.json', '/v1/webhooks/paypal', '/.well-known/mandate-keys.json'])
 
 /** Routes only the owner key may call. A proposer, such as an agent, can ask but never decide or move money. */
 const OWNER_ONLY = [
   { method: 'PUT', pattern: /^\/v1\/warrant$/ },
+  { method: 'GET', pattern: /^\/v1\/party-rules$/ },
+  { method: 'PUT', pattern: /^\/v1\/party-rules\/[^/]+$/ },
+  { method: 'POST', pattern: /^\/v1\/negotiations$/ },
+  { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture)$/ },
 ]
+
+/** A client's agent may do only this. Everything else is the studio's business. */
+function buyerMayCall(method: string, path: string): boolean {
+  return (method === 'GET' && (path === '/v1/session' || path === '/v1/deals' || path === '/v1/party-rules/mine' || /^\/v1\/deals\/[^/]+$/.test(path)))
+    || (method === 'POST' && (path === '/v1/deals/offers' || path === '/mcp'))
+}
 
 function isWeb(path: string): boolean {
   return path === '/app' || path.startsWith('/app/')
 }
 
 export function createApp(deps: AppDeps) {
-  const app = new Hono<{ Variables: { requestId: string; role: Role } }>()
-  const service = new MandateService(new Repo(deps.db), deps.paypal, deps.now)
+  const app = new Hono<{ Variables: { requestId: string; principal: Principal } }>()
+  const services = deps.services ?? buildServices(deps)
+  const { mandate: service, deals } = services
+  const agents = new AgentService(services, deps.model ?? null, deps.now)
   const buckets = new Map<string, { count: number; reset: number }>()
   const openapi = buildOpenApi(deps.config.publicUrl)
 
@@ -88,14 +128,18 @@ export function createApp(deps: AppDeps) {
     const header = c.req.header('authorization') ?? ''
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
     const owner = token !== '' && sameSecret(token, deps.config.apiKey)
-    const proposer = !owner && token !== '' && Boolean(deps.config.proposerKey) && sameSecret(token, deps.config.proposerKey!)
-    if (!owner && !proposer) {
+    const studio = !owner && token !== '' && Boolean(deps.config.proposerKey) && sameSecret(token, deps.config.proposerKey!)
+    const buyer = !owner && !studio && token !== '' && Boolean(deps.config.buyerAgentKey) && sameSecret(token, deps.config.buyerAgentKey!)
+    if (!owner && !studio && !buyer) {
       throw new Problem(401, 'auth.unauthorized', 'Unauthorized', 'Provide Authorization: Bearer <api key>.')
     }
-    const role: Role = owner ? 'owner' : 'proposer'
-    c.set('role', role)
-    if (role !== 'owner' && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
+    const principal: Principal = owner ? OWNER : studio ? STUDIO : buyerPrincipal(deps.config.buyerAgentParty ?? 'client_northwind')
+    c.set('principal', principal)
+    if (principal.role !== 'owner' && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
       throw new Problem(403, 'auth.forbidden', 'Owner key required', 'A proposer key can propose and read. Only the owner can approve, reject, capture, or change the warrant.')
+    }
+    if (principal.side === 'buyer' && !buyerMayCall(c.req.method, c.req.path)) {
+      throw new Problem(403, 'auth.forbidden', 'Not available to a client agent', 'A client agent can make and read deal offers for its own client. Nothing else.')
     }
     await next()
   })
@@ -137,6 +181,12 @@ export function createApp(deps: AppDeps) {
     const status = dbOk ? 'pass' : 'fail'
     return health(c, status, {
       'sqlite:read': [{ status: dbOk ? 'pass' : 'fail', componentType: 'datastore', time: deps.now().toISOString() }],
+      'agents:model': [{
+        status: agents.enabled ? 'pass' : 'warn',
+        componentType: 'vendor',
+        observedValue: agents.modelName ?? 'off',
+        time: deps.now().toISOString(),
+      }],
       'paypal:credentials': [{
         status: paypalStatus,
         componentType: 'vendor',
@@ -148,7 +198,8 @@ export function createApp(deps: AppDeps) {
 
   app.get('/openapi.json', (c) => c.json(openapi))
 
-  app.get('/v1/session', (c) => c.json({ role: c.get('role'), version: VERSION, paypalConfigured: deps.config.paypalConfigured }))
+  app.get('/v1/session', (c) => c.json({ role: c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName } }))
+  app.get('/.well-known/mandate-keys.json', (c) => c.json(service.publicKeys()))
   app.get('/v1/warrant', (c) => c.json(service.currentWarrant()))
   app.get('/v1/warrant/versions', (c) => c.json(service.warrantVersions()))
   app.put('/v1/warrant', async (c) => {
@@ -163,7 +214,7 @@ export function createApp(deps: AppDeps) {
     if (!key.success) throw new Problem(400, 'idempotency.missing', 'Idempotency-Key is missing', 'POST /v1/proposals requires an Idempotency-Key of 8 to 255 token characters.')
     const parsed = ProposalCreateSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
-    return send(c, service.propose(parsed.data, key.data, c.get('role')))
+    return send(c, service.propose(parsed.data, key.data, c.get('principal').role))
   })
 
   app.get('/v1/proposals', (c) => {
@@ -174,6 +225,7 @@ export function createApp(deps: AppDeps) {
 
   app.get('/v1/proposals/:id', (c) => c.json(service.packet(c.req.param('id')).proposal))
   app.get('/v1/proposals/:id/packet', (c) => c.json(service.packet(c.req.param('id'))))
+  app.get('/v1/proposals/:id/verify', (c) => c.json(service.verifyLock(c.req.param('id'))))
 
   app.post('/v1/proposals/:id/approve', async (c) => {
     await assertEmpty(c)
@@ -202,24 +254,82 @@ export function createApp(deps: AppDeps) {
   // batch is re-read from PayPal with our own credentials. A forged call can at worst cause a read.
   app.post('/v1/webhooks/paypal', async (c) => {
     let batchId: string | null = null
+    let invoiceId: string | null = null
     try {
       const event = JSON.parse(await c.req.text()) as { event_type?: unknown; resource?: Record<string, unknown> }
       const resource = event.resource ?? {}
       const header = resource.batch_header as Record<string, unknown> | undefined
       const found = resource.payout_batch_id ?? header?.payout_batch_id
       if (typeof found === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(found)) batchId = found
+      const invoice = (resource.invoice as Record<string, unknown> | undefined)?.id ?? (typeof resource.id === 'string' && resource.id.startsWith('INV') ? resource.id : undefined)
+      if (typeof invoice === 'string' && /^INV[A-Za-z0-9-]{3,64}$/.test(invoice)) invoiceId = invoice
     } catch {
       batchId = null
     }
-    if (!batchId) return c.json({ received: true, refreshed: false })
     try {
-      return c.json({ received: true, ...(await service.refreshPayoutBatch(batchId)) })
+      if (batchId) return c.json({ received: true, ...(await service.refreshPayoutBatch(batchId)) })
+      if (invoiceId) return c.json({ received: true, ...(await service.refreshInvoice(invoiceId)) })
     } catch {
       return c.json({ received: true, refreshed: false })
     }
+    return c.json({ received: true, refreshed: false })
   })
 
-  app.get('/v1/jobs/:jobId', (c) => c.json(service.job(c.req.param('jobId'))))
+  app.get('/v1/jobs/:jobId', (c) => c.json({ ...service.job(c.req.param('jobId')), deal: deals.summaryForJob(c.req.param('jobId')) }))
+
+  // ---------- the agent door ----------
+  app.all('/mcp', (c) => handleMcp(c.req.raw, services, c.get('principal')))
+
+  // ---------- the agents: a clerk for staff, and two negotiators ----------
+  app.post('/v1/clerk/messages', async (c) => {
+    assertJson(c)
+    const parsed = ClerkMessageSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return c.json(await agents.clerk(parsed.data, c.get('principal')))
+  })
+  app.get('/v1/clerk/conversations/:id', (c) => c.json(agents.conversation(c.req.param('id'))))
+  app.post('/v1/negotiations', async (c) => {
+    assertJson(c)
+    const parsed = NegotiationSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return c.json(await agents.negotiate(parsed.data, c.get('principal')))
+  })
+  app.get('/v1/agent-runs', (c) => c.json(agents.recentRuns(30)))
+  app.get('/v1/agent-runs/:id', (c) => c.json(agents.run(c.req.param('id'))))
+
+  // ---------- deals: two companies' agents agree terms inside both owners' rules ----------
+  app.post('/v1/deals/offers', async (c) => {
+    assertJson(c)
+    const key = IdempotencyKeySchema.safeParse(c.req.header('idempotency-key'))
+    if (!key.success) throw new Problem(400, 'idempotency.missing', 'Idempotency-Key is missing', 'POST /v1/deals/offers requires an Idempotency-Key of 8 to 255 token characters.')
+    const principal = c.get('principal')
+    const parsed = DealOfferSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    if (principal.role === 'proposer' && !parsed.data.as && !principal.side) {
+      throw new Problem(400, 'deal.as_required', 'Say which party is offering', 'Set "as" to buyer or seller.')
+    }
+    return send(c, deals.offer(parsed.data, key.data, principal))
+  })
+  app.get('/v1/deals', (c) => {
+    const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50) || 50))
+    return c.json(deals.list(limit, c.get('principal')))
+  })
+  app.get('/v1/deals/:id', (c) => c.json(deals.get(c.req.param('id'), c.get('principal'))))
+  app.get('/v1/deals/:id/verify', (c) => c.json(deals.verify(c.req.param('id'))))
+  app.post('/v1/deals/:id/milestones/:n/bill', async (c) => {
+    assertJson(c)
+    const milestone = Number(c.req.param('n'))
+    if (!Number.isInteger(milestone) || milestone < 0 || milestone > 11) throw new Problem(404, 'deal.milestone_unknown', 'No such milestone', 'Milestones are numbered from 0.')
+    const parsed = BillMilestoneSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return send(c, deals.bill(c.req.param('id'), milestone, parsed.data, c.get('principal')))
+  })
+  app.get('/v1/party-rules', (c) => c.json(deals.rules()))
+  app.get('/v1/party-rules/mine', (c) => c.json(deals.rulesFor(c.get('principal'))))
+  app.put('/v1/party-rules/:partyId', async (c) => {
+    assertJson(c)
+    return send(c, deals.publishRules(c.req.param('partyId'), await readJson(c)))
+  })
 
   app.get('/v1/ledger', (c) => {
     const query = ListQuerySchema.safeParse({ limit: c.req.query('limit') ?? 50, cursor: c.req.query('cursor') })

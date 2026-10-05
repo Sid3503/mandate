@@ -438,6 +438,95 @@ ol.tour-list { padding-left: 22px; }
   .tour-title { font-size: 26px; }
   .tour-card { padding: 16px; }
 }
+
+/* ---------- deals, clerk, signatures, invoices ---------- */
+.btn-small { min-height: 34px; padding: 6px 12px; font-size: 13px; }
+.deals-lede { margin: -8px 0 22px; }
+.deal-list { margin-top: 24px; }
+.deal-card { border: 2px solid var(--ink); background: var(--sheet); padding: 20px; display: grid; gap: 16px; box-shadow: var(--shadow-s); }
+.deal-card.is-agreed { background: var(--lime-soft); box-shadow: var(--shadow); }
+.deal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.deal-head h2 { font: 800 34px/1 var(--display); text-transform: uppercase; margin-top: 4px; }
+.offers { list-style: none; margin: 0; padding: 0; display: grid; border: 1.5px solid var(--ink); background: var(--surface); }
+.offers li { display: grid; grid-template-columns: 70px 110px 1fr; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 14px; }
+.offers li:last-child { border-bottom: 0; }
+.offers li.no { border-left: 5px solid var(--ink); }
+.offers li.yes { border-left: 5px solid var(--lime); background: var(--lime-soft); }
+.deal-cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; align-items: start; }
+.milestones { list-style: none; margin: 0 0 10px; padding: 0; display: grid; border: 1.5px solid var(--ink); background: var(--surface); }
+.milestones li { display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.milestones li:last-child { border-bottom: 0; }
+.grow { flex: 1; min-width: 80px; }
+.bill { display: grid; gap: 12px; margin-top: 14px; }
+.deal-strip { border: 1.5px solid var(--ink); background: var(--lime-soft); padding: 14px 16px; display: grid; gap: 10px; margin-bottom: 18px; }
+.rule-band { margin: 0 0 22px; }
+.band-track { position: relative; height: 34px; border: 2px solid var(--ink); background: var(--surface); overflow: hidden; }
+.band-track i { position: absolute; top: 0; bottom: 0; }
+.band-buyer { background: repeating-linear-gradient(135deg, var(--stone) 0 6px, transparent 6px 12px); }
+.band-seller { background: repeating-linear-gradient(45deg, var(--ink) 0 2px, transparent 2px 8px); opacity: 0.55; }
+.band-zone { background: var(--lime); border-left: 2px solid var(--ink); border-right: 2px solid var(--ink); }
+.band-legend { display: flex; gap: 20px; justify-content: space-between; flex-wrap: wrap; font-size: 14px; }
+.story .turns { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.turn { border: 1.5px solid var(--ink); padding: 12px 14px; display: grid; gap: 6px; background: var(--surface); }
+.turn-seller { margin-right: 14%; }
+.turn-buyer { margin-left: 14%; background: var(--paper); }
+.turn-who { font: 700 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); }
+.turn-why { margin: 0; font-size: 14px; }
+.turn .quote { margin: 0; }
+.offer-form { margin-top: 28px; }
+.answer-auto { background: var(--lime-soft); } .answer-deny { background: var(--surface); }
+.offer-form .answer { border: 1.5px solid var(--ink); padding: 14px; display: grid; gap: 8px; margin-top: 12px; }
+
+.sig { display: grid; gap: 8px; padding: 12px; border: 1.5px dashed currentColor; }
+.sig-text { word-break: break-all; font-size: 12px; }
+.sig-result { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1.5px solid var(--ink); font-size: 14px; background: var(--lime); color: var(--ink); }
+.sig-result.bad { background: var(--ink); color: var(--lime); border-color: var(--lime); }
+.panel-ink .sig a { color: var(--lime); }
+.panel-ink .sig .btn-ghost { color: var(--paper); border-color: var(--paper); }
+.panel-ink .sig-text { color: var(--paper); }
+.panel-ink-sig { margin: 4px 0; }
+
+.agent-trace { border-top: 1px solid var(--line); padding-top: 12px; display: grid; gap: 8px; }
+.trace { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 13px; }
+.trace .bad { color: #7a1d0f; }
+
+.clerk-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr); gap: 24px; align-items: start; }
+.chat { gap: 0; padding: 0; overflow: hidden; }
+.chat .log { padding: 18px; display: grid; gap: 16px; min-height: 360px; max-height: 62vh; overflow-y: auto; align-content: start; }
+.chat-empty { display: grid; gap: 10px; }
+.chat-examples { display: grid; gap: 8px; }
+.example { text-align: left; border: 1.5px solid var(--ink); background: var(--surface); padding: 10px 12px; cursor: pointer; font-size: 14px; line-height: 1.35; }
+.example:hover:not(:disabled) { background: var(--lime); }
+.example:disabled { opacity: 0.5; cursor: not-allowed; }
+.exchange { display: grid; gap: 10px; }
+.bubble { border: 1.5px solid var(--ink); padding: 10px 14px; max-width: 88%; display: grid; gap: 6px; font-size: 15px; }
+.bubble p { margin: 0; }
+.bubble .said { font: 700 10px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--mute); }
+.bubble.me { justify-self: end; background: var(--ink); color: var(--paper); border-color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.bubble.me .said { color: var(--lime); }
+.bubble.clerk { background: var(--surface); box-shadow: var(--shadow-s); }
+.asked { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding-top: 8px; border-top: 1px dashed var(--rule); }
+.guard { border-left: 4px solid var(--ink); padding-left: 8px; }
+.dots { display: inline-flex; gap: 5px; } .dots i { width: 8px; height: 8px; background: var(--ink); animation: pulse 1s ease-in-out infinite; } .dots i:nth-child(2) { animation-delay: 0.15s; } .dots i:nth-child(3) { animation-delay: 0.3s; }
+.composer { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 12px; border-top: 2px solid var(--ink); background: var(--paper); align-items: end; }
+.composer textarea { border: 1.5px solid var(--ink); background: #fff; padding: 10px 12px; resize: none; border-radius: 0; min-height: 58px; }
+.composer textarea:focus { outline: none; box-shadow: 0 0 0 3px var(--lime), 0 0 0 4.5px var(--ink); }
+.agents-off { padding: 12px 18px; background: var(--paper); border-bottom: 1.5px solid var(--ink); font-size: 14px; }
+.can { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.can li { padding: 8px 10px; border: 1.5px solid var(--ink); font-size: 14px; }
+.can .yes { background: var(--lime-soft); } .can .no { background: var(--surface); }
+@media (max-width: 960px) {
+  .deal-cols, .clerk-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 860px) {
+  .tabbar { grid-template-columns: repeat(7, 1fr) !important; }
+  .tab { font-size: 9px !important; letter-spacing: 0 !important; }
+  .turn-seller { margin-right: 0; } .turn-buyer { margin-left: 0; }
+  .offers li { grid-template-columns: 56px 92px 1fr; font-size: 13px; }
+  .chat .log { max-height: 52vh; min-height: 280px; }
+  .bubble { max-width: 96%; }
+  .deal-head h2 { font-size: 28px; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

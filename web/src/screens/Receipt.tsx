@@ -1,13 +1,14 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { Signature } from '../components/Signature'
 import { Chip, GateChip, Hash, KV, Loading, Money, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
 import { api, ApiError } from '../lib/api'
 import { when } from '../lib/format'
 import { useIsOwner, useNames, useOnline, useRefreshMoney, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { LedgerEvent, Packet, Warrant } from '../lib/types'
-import { EVENT, explain, isPayout, KIND, type Names } from '../lib/words'
+import { AGENT_LABEL, EVENT, explain, isPayout, KIND, type Names } from '../lib/words'
 
 export function Receipt() {
   const { id = '' } = useParams()
@@ -42,6 +43,7 @@ export function Receipt() {
           <section className="panel" data-tour="receipt-asked">
             <h2 className="panel-title">What was asked</h2>
             {data.prompt ? <p className="quote big">“{data.prompt}”</p> : <p className="muted">No sentence was recorded.</p>}
+            {data.agentRun ? <AgentTrace run={data.agentRun} /> : null}
             <div className="kvs">
               <KV label="Kind">{kind.label}</KV>
               <KV label={p.kind === 'charge' ? 'Client' : 'Payee'}>{names(p.payeeId)}</KV>
@@ -59,6 +61,7 @@ export function Receipt() {
             <h2 className="panel-title">The lock</h2>
             <Hash value={p.cartHash} full />
             <p className="fine">SHA-256 over payee, cents, currency, category, proof{p.jobId ? ', job' : ''}{p.fundingCaptureId ? ' and funding capture' : ''}. Settlement recomputes it and refuses on any difference.</p>
+            {p.cartHash ? <div className="panel-ink-sig"><Signature kind="lock" id={p.id} signature={p.lockSignature} keyId={p.lockKeyId} /></div> : null}
             <div className="match">
               <div><span>Approved</span><Money cents={data.amounts.approvedCents} size="lg" /></div>
               <div><span>{p.kind === 'payment' ? 'Paid' : 'Settled'}</span><Money cents={data.amounts.capturedCents} size="lg" /></div>
@@ -91,7 +94,8 @@ export function Receipt() {
                 </>
               ) : (
                 <>
-                  <KV label="Order" mono>{p.orderId ?? '—'}</KV>
+                  {data.invoice ? <KV label="Invoice" mono>{data.invoice.id}</KV> : <KV label="Order" mono>{p.orderId ?? '—'}</KV>}
+                  {data.invoice ? <KV label="Invoice is">{data.invoice.status ?? '—'}</KV> : null}
                   <KV label="Capture" mono>{p.captureId ?? '—'}</KV>
                 </>
               )}
@@ -118,7 +122,7 @@ function Timeline({ events }: { events: LedgerEvent[] }) {
       {events.map((event) => {
         const refused = event.type.includes('refused') || event.type.includes('blocked')
         return (
-          <li key={event.id} className={refused ? 'is-refused' : event.type === 'capture.completed' || event.type === 'payout.completed' || event.type === 'proposal.approved' ? 'is-good' : event.type === 'payout.failed' ? 'is-refused' : ''}>
+          <li key={event.id} className={refused ? 'is-refused' : event.type === 'capture.completed' || event.type === 'payout.completed' || event.type === 'invoice.sent' || event.type === 'proposal.approved' ? 'is-good' : event.type === 'payout.failed' ? 'is-refused' : ''}>
             <span className="tl-dot" aria-hidden="true" />
             <div>
               <div className="row between gap-s"><strong>{EVENT[event.type] ?? event.type}</strong><span className="mono muted small">{when(event.createdAt)}</span></div>
@@ -165,8 +169,9 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
     mutationFn: (cents: number) => api.capture(p.id, cents),
     onSettled: () => void refresh(),
   })
-  const settleable = p.phase === 'locked' || p.phase === 'order_created'
+  const settleable = p.phase === 'locked' || p.phase === 'order_created' || p.phase === 'invoice_draft' || p.phase === 'invoice_sent'
   if (!settleable) return null
+  if (p.phase === 'invoice_draft' || p.phase === 'invoice_sent') return <InvoicePanel packet={packet} names={names} />
   const pending = settle.error instanceof ApiError && settle.error.code === 'paypal.buyer_pending' ? settle.error : null
   const approveUrl = (pending?.body.approveUrl as string | undefined) ?? p.approveUrl ?? null
   const disabled = !owner || !online || settle.isPending
@@ -362,5 +367,53 @@ function PayoutPanel({ packet, warrant, names }: { packet: Packet; warrant: Warr
         </details>
       ) : null}
     </section>
+  )
+}
+
+/** A client charge billed as a PayPal invoice. It is settled only when PayPal says the client paid it. */
+function InvoicePanel({ packet, names }: { packet: Packet; names: Names }) {
+  const p = packet.proposal
+  const online = useOnline()
+  const refresh = useRefreshMoney()
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null)
+  const check = useMutation({ mutationFn: () => api.capture(p.id), onSettled: () => { setCheckedAt(new Date()); void refresh() } })
+  const owner = useIsOwner()
+  const url = packet.invoice?.url ?? p.invoiceUrl
+  return (
+    <section className="panel panel-lime" data-tour="receipt-action" aria-live="polite">
+      <div className="row between"><h2 className="panel-title">Waiting for {names(p.payeeId)} to pay</h2><Chip tone="need">Invoice {packet.invoice?.status?.toLowerCase() ?? 'sent'}</Chip></div>
+      <p className="payout-lead"><strong>PayPal sent {names(p.payeeId)} an invoice for {dollars(p.amountCents, p.currency)}.</strong></p>
+      <p>It is settled only when PayPal says the client paid exactly that amount. Nothing on this page can mark it paid.</p>
+      <div className="row gap-s wrap">
+        {url ? <a className="btn btn-ink" href={url} target="_blank" rel="noreferrer noopener">Open the invoice ↗</a> : null}
+        <button type="button" className="btn btn-ghost" disabled={!owner || !online || check.isPending} onClick={() => check.mutate()}>{check.isPending ? 'Asking PayPal…' : 'Check PayPal'}</button>
+      </div>
+      {checkedAt && check.isSuccess && !check.isPending && p.phase !== 'captured' ? (
+        <div className="still-waiting" role="status"><Chip tone="need">Still waiting</Chip><span>Checked PayPal at {checkedAt.toLocaleTimeString('en-US')}. The invoice has not been paid in full, so <strong>nothing is settled and $0 moved</strong>.</span></div>
+      ) : null}
+      <ProblemCard error={check.error} />
+    </section>
+  )
+}
+
+/** The chat behind a request an agent asked for: who said what, and every tool the agent used. */
+function AgentTrace({ run }: { run: NonNullable<Packet['agentRun']> }) {
+  const owner = useIsOwner()
+  const [open, setOpen] = useState(false)
+  const trace = useQuery({ queryKey: ['agent-run', run.id], queryFn: () => api.agentRun(run.id), enabled: open && owner })
+  return (
+    <div className="agent-trace" data-tour="receipt-agent">
+      <div className="row between wrap gap-s"><span className="eyebrow">Asked through the {AGENT_LABEL[run.agent] ?? run.agent}</span><Chip tone="muted">{run.model}</Chip></div>
+      <p className="fine">The agent’s reply: {run.output ?? '—'}</p>
+      {owner ? <button type="button" className="link" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? 'Hide every step' : 'Show every step the agent took'}</button> : null}
+      {open ? (
+        <ol className="trace">
+          {(trace.data?.trace ?? []).flatMap((step, index) => [
+            ...step.toolCalls.map((call, i) => <li key={`c${index}${i}`}><b>asked</b> <code>{call.tool}</code> <span className="mono small">{JSON.stringify(call.input).slice(0, 160)}</span></li>),
+            ...step.toolResults.map((result, i) => <li key={`r${index}${i}`} className={result.ok ? '' : 'bad'}><b>{result.ok ? 'rules said' : 'error'}</b> <span className="mono small">{JSON.stringify(result.output).slice(0, 200)}</span></li>),
+          ])}
+        </ol>
+      ) : null}
+    </div>
   )
 }

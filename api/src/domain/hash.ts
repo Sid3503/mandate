@@ -13,11 +13,33 @@ export type CartFields = {
   parentCaptureId: string | null
   jobId?: string | null
   fundingCaptureId?: string | null
+  /** The agreed deal and milestone this charge bills. Present only on deal-linked charges (cart v3). */
+  dealId?: string | null
+  milestone?: number | null
 }
 
 export function canonicalCart(fields: CartFields): string {
   const jobId = fields.jobId ?? null
   const fundingCaptureId = fields.fundingCaptureId ?? null
+  if (fields.dealId) {
+    return JSON.stringify({
+      v: 3,
+      proposalId: fields.proposalId,
+      warrantId: fields.warrantId,
+      warrantVersion: fields.warrantVersion,
+      payeeId: fields.payeeId,
+      amountCents: fields.amountCents,
+      currency: fields.currency,
+      category: fields.category,
+      evidenceUrl: fields.evidenceUrl,
+      kind: fields.kind,
+      parentCaptureId: fields.parentCaptureId,
+      jobId,
+      fundingCaptureId,
+      dealId: fields.dealId,
+      milestone: fields.milestone ?? null,
+    })
+  }
   if (jobId !== null || fundingCaptureId !== null || fields.kind === 'charge') {
     return JSON.stringify({
       v: 2,

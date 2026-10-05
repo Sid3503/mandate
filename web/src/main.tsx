@@ -13,6 +13,8 @@ import { Shell } from './components/Shell'
 import { ApiError } from './lib/api'
 import { session } from './lib/session'
 import { Inbox } from './screens/Inbox'
+import { Clerk } from './screens/Clerk'
+import { Deals } from './screens/Deals'
 import { JobScreen, Jobs } from './screens/Jobs'
 import { NewRequest } from './screens/NewRequest'
 import { Receipt } from './screens/Receipt'
@@ -58,6 +60,8 @@ createRoot(document.getElementById('root')!).render(
             <Route path="p/:id" element={<Receipt />} />
             <Route path="jobs" element={<Jobs />} />
             <Route path="jobs/:jobId" element={<JobScreen />} />
+            <Route path="deals" element={<Deals />} />
+            <Route path="clerk" element={<Clerk />} />
             <Route path="new" element={<NewRequest />} />
             <Route path="ledger" element={<Suspense fallback={<div className="page"><Loading label="Opening ledger" /></div>}><Ledger /></Suspense>} />
             <Route path="rules" element={<Rules />} />

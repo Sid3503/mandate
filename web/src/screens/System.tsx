@@ -11,6 +11,7 @@ export function System() {
   const health = useQuery({ queryKey: ['health'], queryFn: api.health })
   const ready = useQuery({ queryKey: ['ready'], queryFn: api.ready, refetchInterval: 20_000 })
   const me = useSession()
+  const keys = useQuery({ queryKey: ['signing-keys'], queryFn: api.signingKeys })
   const guide = useGuide()
   const navigate = useNavigate()
   const client = useQueryClient()
@@ -47,8 +48,14 @@ export function System() {
             <KV label="Key">{me.data?.role === 'owner' ? 'Owner · can approve, settle, change rules' : 'Proposer · can ask and read'}</KV>
             <KV label="API version" mono>{me.data?.version ?? '—'}</KV>
             <KV label="PayPal">{me.data?.paypalConfigured ? 'Sandbox credentials set' : 'Not configured'}</KV>
+            <KV label="Agents">{me.data?.agents.enabled ? `On · ${me.data.agents.model}` : 'Off · set OLLAMA_API_KEY'}</KV>
             <KV label="Origin" mono>{location.origin}</KV>
             <KV label="Offline">App shell only. Money calls are never cached or queued.</KV>
+          </div>
+          <div className="kvs" data-tour="system-keys">
+            {(keys.data?.data ?? []).map((key) => (
+              <KV key={key.keyId} label={key.current ? 'Signing key' : 'Retired key'} mono>{key.keyId} · {key.publicKeyBase64Url.slice(0, 16)}…</KV>
+            ))}
           </div>
           <a className="btn btn-ghost" href="/openapi.json" target="_blank" rel="noreferrer">OpenAPI 3.1 contract ↗</a>
         </section>

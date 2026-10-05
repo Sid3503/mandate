@@ -74,3 +74,18 @@ export function useRefreshMoney() {
     client.invalidateQueries({ queryKey: ['ledger'] }),
   ])
 }
+
+export function useDeals() {
+  return useQuery({ queryKey: ['deals'], queryFn: () => api.deals(), refetchInterval: 20_000 })
+}
+
+/** The deals and the money they bill move together. */
+export function useRefreshDeals() {
+  const refreshMoney = useRefreshMoney()
+  const client = useQueryClient()
+  return () => Promise.all([client.invalidateQueries({ queryKey: ['deals'] }), refreshMoney()])
+}
+
+export function useAgentsOn(): boolean {
+  return useSession().data?.agents.enabled === true
+}

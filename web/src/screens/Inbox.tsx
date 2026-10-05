@@ -17,7 +17,7 @@ export function Inbox() {
   const [settledHere, setSettledHere] = useState<Record<string, Proposal>>({})
   const rows = proposals.data?.data ?? []
   const waiting = rows.filter((row) => row.phase === 'pending_approval' || settledHere[row.id])
-  const ready = rows.filter((row) => ['locked', 'order_created', 'payout_sent', 'payout_unclaimed'].includes(row.phase) && !settledHere[row.id])
+  const ready = rows.filter((row) => ['locked', 'order_created', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'].includes(row.phase) && !settledHere[row.id])
   const refused = rows.filter((row) => row.phase === 'denied').slice(0, 4)
 
   return (

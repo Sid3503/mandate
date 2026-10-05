@@ -93,3 +93,17 @@ Contractor payouts are **never** settled through Orders. `POST /v1/proposals/:id
 ## Scale
 
 One process, one SQLite file, one writer per proposal. The gate is a pure function. PayPal is the only network call, and only the capture route can make it. A later multi-studio deployment swaps SQLite for Postgres and keeps this schema: integer cents, append-only `events`, reservations counted inside the decision transaction.
+
+## Deals, signatures, MCP, agents and invoices
+
+The full description is in [docs/REFERENCE.md](../docs/REFERENCE.md#deals-signed-locks-the-agent-door-and-invoices). The short version for someone calling the API:
+
+- `POST /v1/deals/offers` with `{ buyer, terms, as?, threadId?, prompt? }` and an `Idempotency-Key`. Agreed only if the terms fit both companies' rules. A client agent key (`BUYER_AGENT_KEY`) can call this and the read routes for its own client, nothing else.
+- `GET /v1/proposals/:id/verify` and `GET /v1/deals/:id/verify` re-check a signature. `GET /.well-known/mandate-keys.json` publishes the public keys.
+- A charge on a job with an agreed deal must send `dealId` and `milestone`, for exactly the agreed cents (`POST /v1/deals/:id/milestones/:n/bill` fills that in).
+- `POST /mcp` is the agent door; `npm run mcp` serves it over stdio. Tools: `get_rules`, `get_jobs`, `propose`, `list_ledger`, `offer_deal`, `explain`. No tool can approve or pay.
+- `POST /v1/clerk/messages` and `POST /v1/negotiations` need `OLLAMA_API_KEY`. `npm run eval:agents` tests them against the real model.
+- Billing a client by invoice needs **Invoicing** enabled on the PayPal app; without it charges fall back to checkout and record `invoice.unavailable`.
+- Copy `.env.example` for the variables.
+
+New problem codes: `lock.signature_invalid`, `deal.wrong_side`, `deal.thread_closed`, `agents.unconfigured`, `agent.model_error`, `agent.timeout`, `budget.exceeded` (inside MCP tool results).

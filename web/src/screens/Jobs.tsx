@@ -67,6 +67,7 @@ export function JobScreen() {
         <Link className="btn btn-ghost" to={`/new?kind=charge&job=${encodeURIComponent(data.jobId)}`}>Bill the next milestone</Link>
       </PageHead>
 
+      {data.deal ? <DealStrip deal={data.deal} jobId={data.jobId} /> : null}
       <section className="totals" data-tour="job-totals">
         <div className="total total-in"><span>Money in</span><Money cents={data.totals.inCents} size="xl" /></div>
         <div className="total total-out"><span>Money out</span><Money cents={data.totals.outCents} size="xl" /></div>
@@ -139,5 +140,24 @@ export function JobScreen() {
         </section>
       ) : null}
     </div>
+  )
+}
+
+function DealStrip({ deal }: { deal: NonNullable<Job['deal']>; jobId: string }) {
+  return (
+    <section className="deal-strip" data-tour="job-deal" aria-label="The agreed deal">
+      <div className="row between wrap gap-s">
+        <span className="eyebrow">Agreed deal · {dollars(deal.totalCents)} · {deal.scope}</span>
+        <Link className="link" to="/deals">{deal.signatureValid ? 'Signed ✓' : 'Signature does not verify'} · see the deal →</Link>
+      </div>
+      <ol className="milestones">
+        {deal.milestones.map((item) => (
+          <li key={item.index}>
+            <span className="mono small">M{item.index + 1}</span><span className="grow">{item.title}</span><Money cents={item.amountCents} />
+            {item.chargeId ? <Link to={`/p/${item.chargeId}`}><PhaseChip phase={item.phase ?? 'pending_approval'} /></Link> : <Link className="btn btn-ghost btn-small" to="/deals">Bill it</Link>}
+          </li>
+        ))}
+      </ol>
+    </section>
   )
 }

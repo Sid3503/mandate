@@ -599,8 +599,8 @@
             <div class="kv2"><span>Due</span><span>Oct 18</span></div>
             <div class="kv2"><span>Proof</span><span>Figma link per milestone</span></div>
             <div class="kv2"><span>Contractor</span><span>Priya · $90 per milestone</span></div>
-            <div class="next">Next → <b>create_invoice</b> + <b>send_invoice</b><br />PayPal Agent Toolkit, called by Mandate, not by the agent</div>
-            <span class="build">Deal check + invoices · next</span>
+            <div class="next">Then → <b>create_invoice</b> + <b>send_invoice</b><br />PayPal Agent Toolkit, called by Mandate, not by the agent</div>
+            <span class="tag">Deal check + invoices · built</span>
           </aside>
         </section>
         <p class="speaker-note">This is what the negotiation looks like. Both agents run on a free open-weights model and talk in plain language. Every offer goes through Mandate first. The studio agent’s four-fifty is refused because it’s over Northwind’s limit. Northwind’s two hundred is refused because it’s under the studio’s minimum. Three hundred in two milestones is accepted, and the terms are locked into one hash. Then Mandate, not the agent, calls PayPal’s Agent Toolkit to create and send the invoice. The agents talk; the rules decide.</p>
@@ -652,17 +652,17 @@
         <h2>Agents talk. Rules decide. PayPal moves money.</h2>
         <section class="flow" data-od-id="flow-diagram">
           <div class="node"><strong>Agents</strong><span class="micro">buyer · seller · clerk<br />gpt-oss:20b</span></div>
-          <div class="node"><strong>Mandate MCP</strong><span class="micro">propose / list / explain</span></div>
-          <div class="node"><strong>Rules gate</strong><span class="micro">pure code · both sides’ rules · NEXT</span></div>
+          <div class="node"><strong>Mandate MCP</strong><span class="micro">6 tools · none can pay</span></div>
+          <div class="node"><strong>Rules gate</strong><span class="micro">pure code · both sides’ rules</span></div>
           <div class="node lime-panel"><strong>DENY<br />AUTO<br />NEEDS_&#8203;APPROVAL</strong><span class="micro">decision</span></div>
-          <div class="node"><strong>Owner’s tap</strong><span class="micro">server seals the lock</span></div>
-          <div class="node"><strong>Lock</strong><span class="micro">payee · cents · proof → one hash</span></div>
+          <div class="node"><strong>Owner’s tap</strong><span class="micro">server signs the lock · Ed25519</span></div>
+          <div class="node"><strong>Lock</strong><span class="micro">payee · cents · proof → one signed hash</span></div>
           <div class="node"><strong>PayPal</strong><span class="micro">Agent Toolkit · Orders · Payouts</span></div>
           <div class="node"><strong>Webhook</strong><span class="micro">verified · ledger update</span></div>
           <div class="node"><strong>Receipt</strong><span class="micro">every dollar explained</span></div>
           <div class="no-path">LOCKED: no agent holds the PayPal token</div>
         </section>
-        <p class="speaker-note">The whole system in one line. Agents, ours or anyone’s, connect only to Mandate’s MCP server, which has three tools: propose, list and explain. Nothing that pays. Every proposal hits a rules gate written in plain code, checked against both sides’ rules, with three possible answers. If the owner needs to approve, her tap makes the server seal a lock that fixes the payee, the cents and the proof. Only then does Mandate call PayPal: Orders for money in and Payouts for money out are live today, and PayPal’s Agent Toolkit is next. A PayPal webhook makes the server re-read the payout from PayPal, and the receipt explains every dollar. No agent ever holds the token.</p>
+        <p class="speaker-note">The whole system in one line. Agents, ours or anyone’s, connect only to Mandate’s MCP server, which has six tools to read and ask. Nothing that pays. Every proposal hits a rules gate written in plain code, checked against both sides’ rules, with three possible answers. If the owner needs to approve, her tap makes the server sign a lock with Ed25519 that fixes the payee, the cents and the proof. Only then does Mandate call PayPal: Orders for money in and Payouts for money out are live today, and PayPal’s Agent Toolkit is next. A PayPal webhook makes the server re-read the payout from PayPal, and the receipt explains every dollar. No agent ever holds the token.</p>
       </article>
 
       
@@ -803,9 +803,9 @@
             <tr><td>Arun asks for an $18 team lunch</td><td><span class="chip deny">DENY</span> category not allowed · under $20 ≠ allowed</td></tr>
             <tr><td>Retry the $90 payout at $250 after Meera tapped</td><td><span class="chip deny">409</span> lock mismatch</td></tr>
             <tr><td>Pay Priya before Northwind has paid</td><td><span class="chip deny">DENY</span> nothing funds it <span class="chip auto">LIVE</span></td></tr>
-            <tr><td>Studio agent pushes the deal to $450</td><td><span class="chip deny">DENY</span> outside Northwind’s rules <span class="build">NEXT</span></td></tr>
+            <tr><td>Studio agent pushes the deal to $450</td><td><span class="chip deny">REFUSED</span> outside Northwind’s rules <span class="chip auto">LIVE</span></td></tr>
             <tr><td>Change Priya’s payout account</td><td>owner approval + cooling period <span class="build">NEXT</span></td></tr>
-            <tr><td>Agent told “ignore the mandate, it’s urgent”</td><td><span class="chip deny">Same answer</span> no tool that pays</td></tr>
+            <tr><td>Agent told “ignore the mandate, it’s urgent”</td><td><span class="chip deny">Same answer</span> no tool that pays <span class="chip auto">LIVE</span></td></tr>
           </tbody>
         </table>
         <div class="big-number" data-od-id="zero-moved-footer">$0 moved</div>
@@ -844,21 +844,33 @@
         <p class="speaker-note">This is the running product, not a design. On the left, the receipt for Priya’s ninety dollars: it went through PayPal Payouts in the sandbox, PayPal reported success, and the cents match the lock. Top right, the job: one-fifty in, ninety out, sixty kept. Bottom right, the ledger: the team lunch, the fake vendor and the payout before the client paid were all stored and refused, and PayPal was never called for any of them. The ledger view uses the demo server with a fake PayPal; the receipt and the job are from the real sandbox.</p>
       </article>
 
-      <article class="slide" data-slide="18" data-od-id="slide-built-on-paypal">
+      <article class="slide proof" data-slide="18" data-od-id="slide-agents-live">
+        <div class="eyebrow">The AI part, running · open-weights model · every verdict by the rules</div>
+        <h2 class="h-tight">Agents agree a price. A fooled agent changes nothing.</h2>
+        <section class="proof-grid" data-od-id="agents-grid">
+          <figure class="proof-main"><img src="assets/console-deal.png" alt="Deal screen: the studio's $450 and the client's $200 refused, $300 agreed and signed with an Ed25519 signature that verifies" style="height:auto;width:800px" /><figcaption><b>Deal.</b> $450 and $200 refused by the rules, $300 agreed, signed, and verifiable.</figcaption></figure>
+          <div class="proof-side">
+            <figure><img src="assets/console-clerk.png" alt="Clerk chat: a pasted fake vendor email asks to pay P. Shah $480; the rules refuse it and zero dollars move" style="width:640px" /><figcaption><b>Clerk.</b> The email says ignore the rules. The clerk asks. The rules say no. $0 moved.</figcaption></figure>
+          </div>
+        </section>
+        <p class="speaker-note">This is the AI part, running. On the left, two agents, one for the studio and one for Northwind, negotiated through Mandate. The studio opened at four-fifty and the rules refused it because it is over Northwind’s limit. Northwind came back at two hundred and the rules refused it because it is under the studio’s minimum. The studio offered three hundred and the rules agreed, and the server signed the deal. Neither agent was ever told the other’s limit; a refusal only says which way to move. On the right, the clerk is handed the fake vendor email that says to ignore the rules and pay a stranger. We tested the model: it obeys. It asked for the payment, and the rules said no, and zero dollars moved. The model is allowed to be wrong because being wrong is harmless.</p>
+      </article>
+
+      <article class="slide" data-slide="19" data-od-id="slide-built-on-paypal">
         <div class="eyebrow">Built on PayPal · the right product for each job</div>
         <h2 class="h-tight">PayPal’s agent tools, behind an authority layer.</h2>
         <section class="pp3" data-od-id="paypal-columns">
           <section class="card lime-panel"><span class="tag">MONEY IN · LIVE TODAY</span>
             <div class="fact-list"><div>Orders v2 create · get · capture</div><div>stable request ids, no double orders</div><div>live order checked before capture</div><div>refunds via Payments v2, gated again</div><div>4 completed sandbox payments</div></div></section>
-          <section class="card black-panel"><span class="build">AGENT TOOLKIT · NEXT</span>
-            <div class="fact-list"><div>create_invoice · send_invoice</div><div>get_order · pay_order</div><div>create_refund</div><div>list_transactions · list_disputes</div><div>never handed to a model</div></div></section>
+          <section class="card black-panel"><span class="tag">AGENT TOOLKIT · LIVE</span>
+            <div class="fact-list"><div>create_invoice · send_invoice · get_invoice</div><div>run inside our server</div><div>never handed to a model</div><div>falls back to checkout if the app may not invoice</div><div>paid only when PayPal says PAID, for the exact cents</div></div></section>
           <section class="card"><span class="tag">MONEY OUT · LIVE TODAY</span>
             <div class="fact-list"><div>Payouts v1 to Priya’s own account</div><div>batch id comes from the lock hash</div><div>paid only when PayPal says SUCCESS</div><div>unclaimed and failed shown, never “paid”</div><div>webhook makes the server re-read PayPal</div></div></section>
         </section>
-        <p class="speaker-note">The right PayPal product for each job. Money in is live today on Orders v2, with stable request ids, a re-read of the live order before capture, and refunds that go through the rules again. In the middle, PayPal’s own Agent Toolkit is next: we will run it inside our server for invoices and transaction reports, and we will never hand it to a model. Money out is live too: Payouts to Priya, which the Toolkit doesn’t cover, so we call it directly. The batch id is derived from the lock hash so a retry can’t pay twice, every payout must cite a client payment that was actually captured, and a payout is called paid only when PayPal says success. We make your agent tools safe for a company to adopt.</p>
+        <p class="speaker-note">The right PayPal product for each job. Money in is live today on Orders v2, with stable request ids, a re-read of the live order before capture, and refunds that go through the rules again. In the middle, PayPal’s own Agent Toolkit: we run it inside our server to create, send and read invoices, and we never hand it to a model. If the PayPal app may not send invoices, we fall back to checkout and say so. Money out is live too: Payouts to Priya, which the Toolkit doesn’t cover, so we call it directly. The batch id is derived from the lock hash so a retry can’t pay twice, every payout must cite a client payment that was actually captured, and a payout is called paid only when PayPal says success. We make your agent tools safe for a company to adopt.</p>
       </article>
 
-      <article class="slide" data-slide="19" data-od-id="slide-ai-architecture">
+      <article class="slide" data-slide="20" data-od-id="slide-ai-architecture">
         <div class="eyebrow">Core AI · four roles, one rule: AI talks, code decides</div>
         <h2 class="h-tight">Small model. Zero authority. On purpose.</h2>
         <section class="tmpl" style="grid-template-columns:repeat(4,1fr)!important" data-od-id="ai-role-cards">
@@ -874,16 +886,16 @@
         <p class="speaker-note">Four AI roles. Northwind’s buyer agent and the studio’s sales agent negotiate. The clerk is Arun’s chat for payouts. The reader handles untrusted emails and evidence with no tools at all. All of them run on gpt-oss twenty-b, a free open-weights model on Ollama, through the Vercel AI SDK, and every one is an MCP client of Mandate. The AI does the fuzzy work: negotiating, reading, explaining. Code makes every decision. That’s why a small model is enough, and why you can swap it and the money stays safe.</p>
       </article>
 
-      <article class="slide" data-slide="20" data-od-id="slide-tech-stack">
+      <article class="slide" data-slide="21" data-od-id="slide-tech-stack">
         <div class="eyebrow">Tech stack</div>
         <h2 class="h-tight">Every layer has one job.</h2>
         <section class="stack" data-od-id="stack-layers">
           <div class="layer"><span class="lbl">AI agents</span><div class="boxes">
-            <div class="bx"><b>gpt-oss:20b</b><span>Ollama Cloud · local Ollama for evals · NEXT</span></div>
-            <div class="bx"><b>Vercel AI SDK</b><span>tool calls · structured output · MCP client · NEXT</span></div>
-            <div class="bx"><b>Zod</b><span>every model output re-checked · NEXT</span></div></div></div>
+            <div class="bx"><b>gpt-oss:20b</b><span>Ollama Cloud · local Ollama for evals</span></div>
+            <div class="bx"><b>Vercel AI SDK</b><span>tool calls · structured output · MCP client</span></div>
+            <div class="bx"><b>Zod</b><span>every model output re-checked</span></div></div></div>
           <div class="layer"><span class="lbl">One door</span><div class="boxes">
-            <div class="bx lime"><b>Mandate MCP server</b><span>@modelcontextprotocol/sdk · propose · list_ledger · explain · NEXT</span></div></div></div>
+            <div class="bx lime"><b>Mandate MCP server</b><span>@modelcontextprotocol/sdk · propose · list_ledger · explain</span></div></div></div>
           <div class="layer"><span class="lbl">Authority</span><div class="boxes">
             <div class="bx dark"><b>Rules gate</b><span>pure TypeScript</span></div>
             <div class="bx dark"><b>Deal check</b><span>both sides’ rules</span></div>
@@ -893,14 +905,14 @@
             <div class="bx"><b>Hono · SQLite</b><span>BEGIN IMMEDIATE · idempotency keys</span></div>
             <div class="bx"><b>OpenAPI 3.1</b><span>RFC 9457 errors · integer cents</span></div></div></div>
           <div class="layer"><span class="lbl">PayPal</span><div class="boxes">
-            <div class="bx"><b>@paypal/agent-toolkit</b><span>invoices · orders · refunds · reports — server-side only · NEXT</span></div>
+            <div class="bx"><b>@paypal/agent-toolkit</b><span>invoices · orders · refunds · reports — server-side only</span></div>
             <div class="bx"><b>REST client</b><span>Orders v2 · Payouts v1 · webhook re-read</span></div></div></div>
         </section>
         <div class="stack-foot"><span class="tag">React + Vite</span><span class="tag">AG Grid control room</span><span class="tag">Render hosting</span><span class="tag">Postman tests</span><span class="tag">APIMatic plugin + SDK</span></div>
-        <p class="speaker-note">The stack, layer by layer. Everything marked NEXT is not built yet; the rules gate, lock, server, console and the Orders and Payouts client are. Agents will run gpt-oss twenty-b on Ollama through the Vercel AI SDK, and every model output is re-checked with Zod. They all go through one door, our MCP server. Behind it sits the authority layer: the rules gate, the deal check, the lock and the owner’s approval. The server is Hono and SQLite with idempotency keys and an OpenAPI contract. PayPal is reached two ways: the official Agent Toolkit, server-side only, and our own REST client for Orders, Payouts and the webhook that re-reads PayPal. The Toolkit is the next step. The web app is React with an AG Grid ledger, hosted on Render.</p>
+        <p class="speaker-note">The stack, layer by layer, and all of it is built. Agents run gpt-oss twenty-b on Ollama through the Vercel AI SDK, and every model output is re-checked with Zod. They all go through one door, our MCP server. Behind it sits the authority layer: the rules gate, the deal check, the lock and the owner’s approval. The server is Hono and SQLite with idempotency keys and an OpenAPI contract. PayPal is reached two ways: the official Agent Toolkit, server-side only, and our own REST client for Orders, Payouts and the webhook that re-reads PayPal. The invoices go through the Toolkit. The web app is React with an AG Grid ledger, hosted on Render.</p>
       </article>
 
-      <article class="slide" data-slide="21" data-od-id="slide-sponsors">
+      <article class="slide" data-slide="22" data-od-id="slide-sponsors">
         <div class="eyebrow">Sponsor tools · each one does a real job</div>
         <h2 class="h-tight">Sponsor tools can read or propose. Only Mandate can pay.</h2>
         <section class="sp" style="grid-template-columns:repeat(4,1fr)" data-od-id="sponsor-cards">
@@ -913,7 +925,7 @@
         <p class="speaker-note">Every sponsor tool does a real job, and none of them can move money. AG Grid is the owner’s control room, and its only agent is read-only: show me what the rules refused. Render hosts the demo with a public address for PayPal webhooks. Postman lets a judge run our acceptance tests in one click, including lunch denied with no PayPal order. APIMatic gave our coding agent correct PayPal context and generates an SDK for Mandate. Sponsor tools can read or propose. Only Mandate can pay.</p>
       </article>
 
-      <article class="slide" data-slide="22" data-od-id="slide-templates">
+      <article class="slide" data-slide="23" data-od-id="slide-templates">
         <div class="eyebrow">Same engine, other owners · rules are data, not code</div>
         <h2 class="h-tight">Anyone whose money is moved by someone else.</h2>
         <section class="tmpl" data-od-id="template-cards">
@@ -926,7 +938,7 @@
         <p class="speaker-note">The rules are data, so the same engine works for anyone whose money is moved by someone else, or by someone else’s agent. A studio and its agents. A parent and a teen’s shopping agent. Friends at dinner, where a receipt-reading agent splits the bill and each person pays only their own items. A neighborhood pool that releases funds only when the goal is met and three of seven members sign. A nonprofit paying field partners against a report. We demo the studio deeply; these are templates, not separate products.</p>
       </article>
 
-      <article class="slide compare" data-slide="23" data-od-id="slide-close">
+      <article class="slide compare" data-slide="24" data-od-id="slide-close">
         <section data-od-id="close-audience-copy">
           <div class="eyebrow">Who it's for</div>
           <h2>Owner-run studios, agencies, consultancies.</h2>
@@ -970,7 +982,11 @@
         <li>A receiver with no PayPal account is unclaimed, not paid. A failed payout frees the reservation.</li>
         <li>A PayPal amount that differs from the lock is refused.</li>
         <li>A forged webhook cannot change a status: the batch is re-read from PayPal.</li>
-        <li>48 API tests and 18 end-to-end tests, desktop and phone, with an accessibility scan.</li>
+        <li>The deal check refuses $450 and $200 and agrees $300. Neither agent is ever shown the other’s limit.</li>
+        <li>A lock edited in the database, even with a recomputed hash, is refused at capture: the signature does not verify.</li>
+        <li>A tricked agent asks for the fake vendor payment and the rules refuse it. A boasting reply is replaced with the rules’ answer.</li>
+        <li>An invoice is settled only when PayPal says it was paid in full; part-paid, a different total or a cancelled invoice never count.</li>
+        <li>99 API tests, 30 end-to-end tests on desktop and phone with an accessibility scan, and 8 of 8 live-model cases.</li>
       </ol>
     </aside>
   </main>

@@ -319,7 +319,7 @@ test('a first-time visitor is walked through the console, and it stays out of th
 
 test('every screen has a guide that walks to its last step', async ({ page }) => {
   await unlock(page, OWNER)
-  const screens = ['/app/', '/app/new', '/app/jobs', '/app/ledger', '/app/rules', '/app/system']
+  const screens = ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/system']
   for (const path of screens) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
@@ -359,6 +359,94 @@ test('a receipt has a guide, and the open tour passes axe', async ({ page, reque
   const { default: AxeBuilder } = await import('@axe-core/playwright')
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
   expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
+})
+
+test('two agents negotiate a deal, it is signed, and billing a milestone follows it', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/deals')
+  await expect(page.getByText('Where a deal can exist')).toBeVisible()
+  await page.getByRole('button', { name: 'Let the agents negotiate' }).click()
+  const story = page.locator('.story')
+  await expect(story).toContainText('The negotiation, turn by turn', { timeout: 30_000 })
+  const turns = story.locator('.turn')
+  await expect(turns).toHaveCount(3)
+  await expect(turns.nth(0)).toContainText('$450.00')
+  await expect(turns.nth(0)).toContainText('deal.over_buyer_limit')
+  await expect(turns.nth(1)).toContainText('$200.00')
+  await expect(turns.nth(1)).toContainText('deal.under_seller_minimum')
+  await expect(turns.nth(2)).toContainText('$300.00')
+  await expect(turns.nth(2)).toContainText('Agreed')
+  // The client agent never saw the studio's floor, so nothing it said can contain it.
+  await expect(story).not.toContainText('$250')
+  await shots(page, '25-deal-negotiated')
+
+  const card = page.locator('.deal-card.is-agreed')
+  await expect(card).toContainText('Spring launch logo')
+  await card.getByRole('button', { name: 'Verify' }).click()
+  await expect(card.locator('.sig-result')).toContainText('Valid')
+
+  await card.getByLabel('Link to the work for the next milestone').fill('https://www.figma.com/file/northwind-logo')
+  await card.getByRole('button', { name: /Bill milestone 1/ }).click()
+  await expect(page).toHaveURL(/\/app\/p\//)
+  await expect(page.locator('.page-head')).toContainText('$150.00')
+  // Until the owner taps there is no lock, so there is nothing to sign.
+  await expect(page.locator('.panel-ink')).toContainText('no lock yet')
+  await page.goto('/app/')
+  const approval = page.locator('.approval').filter({ hasText: 'Bill Northwind' }).first()
+  await approval.getByRole('button', { name: /Approve \$150\.00/ }).click()
+  await approval.getByRole('link', { name: 'Settle →' }).click()
+  await expect(page.locator('.panel-ink')).toContainText('Server signature')
+  await page.locator('.panel-ink').getByRole('button', { name: 'Verify' }).click()
+  await expect(page.locator('.panel-ink .sig-result')).toContainText('Valid')
+  await shots(page, '26-lock-verified')
+
+  // Billing it twice, or billing anything else on this job, is refused by the gate.
+  await page.goto('/app/deals')
+  await expect(page.locator('.milestones').first()).toContainText('not billed')
+})
+
+test('the clerk asks the rules; a fooled clerk changes nothing', async ({ page, request }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/clerk')
+  await page.getByRole('button', { name: /FW: urgent, updated payout details/ }).click()
+  const bubble = page.locator('.bubble.clerk').last()
+  await expect(bubble).toContainText('not on the rules', { timeout: 30_000 })
+  await expect(bubble).toContainText('payee.unknown')
+  await expect(bubble).toContainText('$0 moved')
+  await expect(bubble.locator('.chip').first()).toHaveText('Refused')
+  await shots(page, '27-clerk-refused')
+  await bubble.getByRole('link', { name: 'Open receipt →' }).click()
+  await expect(page.locator('.agent-trace')).toContainText('Studio clerk')
+  await page.getByRole('button', { name: 'Show every step the agent took' }).click()
+  await expect(page.locator('.trace')).toContainText('propose')
+  await shots(page, '28-agent-trace')
+  const ledger = await (await request.get('/v1/proposals', { headers: { authorization: `Bearer ${OWNER}` } })).json()
+  expect(ledger.data.some((row: { payeeId: string | null; phase: string }) => row.payeeId === null && row.phase === 'denied')).toBe(true)
+})
+
+test('a client charge can be billed as a PayPal invoice and settles only when PayPal says it was paid', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  await request.post('/__fake/payouts/invoices-on', { headers })
+  const job = `job_invoice_${test.info().project.name}`
+  const asked = await (await request.post('/v1/proposals', {
+    headers: { ...headers, 'idempotency-key': `invoice-${job}-0001` },
+    data: { kind: 'charge', payee: 'Northwind', amountCents: 15000, currency: 'USD', category: 'design', description: 'Invoice milestone', evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job },
+  })).json()
+  await request.post(`/v1/proposals/${asked.id}/approve`, { headers })
+  await unlock(page, OWNER)
+  await page.goto(`/app/p/${asked.id}`)
+  await page.getByRole('button', { name: /Settle \$150\.00/ }).click()
+  const panel = page.locator('[data-tour="receipt-action"]')
+  await expect(panel).toContainText('PayPal sent Northwind an invoice for $150.00')
+  await expect(page.locator('.page-head .chip').first()).toHaveText('Invoice sent · waiting for the client')
+  await shots(page, '29-invoice-sent')
+  await panel.getByRole('button', { name: 'Check PayPal' }).click()
+  await expect(panel.locator('.still-waiting')).toContainText('$0 moved')
+  await request.post('/__fake/payouts/invoices-pay', { headers })
+  await panel.getByRole('button', { name: 'Check PayPal' }).click()
+  await expect(page.locator('.match-flag')).toHaveText('cents match ✓')
+  await expect(page.getByText('Invoice is')).toBeVisible()
+  await request.post('/__fake/payouts/invoices-off', { headers })
 })
 
 test('a proposer key can ask but never approve', async ({ page }) => {
@@ -412,7 +500,7 @@ test('installs as an app: manifest, icons, and a service worker scoped to /app/'
 test('every signed-in screen passes axe (WCAG 2.1 AA)', async ({ page }) => {
   const { default: AxeBuilder } = await import('@axe-core/playwright')
   await unlock(page, OWNER)
-  for (const path of ['/app/', '/app/new', '/app/jobs', '/app/ledger', '/app/rules', '/app/system']) {
+  for (const path of ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/system']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).exclude('.ag-root-wrapper').analyze()

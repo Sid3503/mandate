@@ -1,9 +1,13 @@
 import { serve } from '@hono/node-server'
 import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createApp } from './app'
 import { loadConfig } from './config'
 import { migrate, openDatabase, seed } from './db/database'
+import { loadSigner } from './domain/signing'
+import { createAgentModel } from './agents/model'
+import { createToolkitInvoices } from './paypal/invoices'
 import { createPayPalClient } from './paypal/client'
 
 const config = loadConfig(process.env)
@@ -13,13 +17,25 @@ const db = openDatabase(config.databasePath)
 migrate(db)
 seed(db, new Date())
 
+const signer = loadSigner({
+  pem: config.signingKey ?? undefined,
+  previousPublicPems: config.previousPublicKeys,
+  devKeyPath: config.databasePath === ':memory:' ? null : join(dirname(config.databasePath), 'signing-key.pem'),
+  production: config.nodeEnv === 'production',
+})
+
 const app = createApp({
   db,
+  signer,
+  invoices: config.invoices && config.paypal ? createToolkitInvoices({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox: !config.paypal.baseUrl.includes('api-m.paypal.com') }) : null,
+  model: createAgentModel({ apiKey: config.ollamaApiKey, baseUrl: config.ollamaBaseUrl, name: config.agentModel }),
   paypal: config.paypal ? createPayPalClient(config.paypal) : null,
   now: () => new Date(),
   config: {
     apiKey: config.apiKey,
     proposerKey: config.proposerKey,
+    buyerAgentKey: config.buyerAgentKey,
+    buyerAgentParty: config.buyerAgentParty,
     webDist,
     rateLimitPerMinute: config.rateLimitPerMinute,
     paypalConfigured: config.paypal !== null,

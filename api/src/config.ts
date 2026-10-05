@@ -11,6 +11,14 @@ const EnvSchema = z.object({
   DATABASE_PATH: z.string().min(1).default('./data/mandate.sqlite'),
   API_KEY: z.string().min(16).optional(),
   PROPOSER_KEY: z.string().min(16).optional(),
+  BUYER_AGENT_KEY: z.string().min(16).optional(),
+  BUYER_AGENT_PARTY: z.string().min(1).default('client_northwind'),
+  SIGNING_KEY: z.string().min(1).optional(),
+  INVOICES: z.enum(['auto', 'off']).default('auto'),
+  OLLAMA_API_KEY: z.string().min(1).optional(),
+  OLLAMA_BASE_URL: z.string().url().optional(),
+  AGENT_MODEL: z.string().min(1).optional(),
+  SIGNING_KEYS_PREVIOUS: z.string().optional(),
   WEB_DIST: z.string().min(1).optional(),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).max(10_000).default(120),
   PUBLIC_URL: z.string().min(1).optional(),
@@ -27,6 +35,14 @@ export type AppConfig = {
   databasePath: string
   apiKey: string
   proposerKey: string | null
+  buyerAgentKey: string | null
+  buyerAgentParty: string
+  signingKey: string | null
+  invoices: boolean
+  ollamaApiKey: string | undefined
+  ollamaBaseUrl: string | undefined
+  agentModel: string | undefined
+  previousPublicKeys: string[]
   webDist: string | null
   rateLimitPerMinute: number
   publicUrl: string
@@ -52,6 +68,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   if (value.NODE_ENV === 'production' && proposerKey === DEV_PROPOSER_KEY) {
     throw new Error('PROPOSER_KEY cannot be the development key in production')
   }
+  if (value.BUYER_AGENT_KEY && (value.BUYER_AGENT_KEY === apiKey || value.BUYER_AGENT_KEY === proposerKey)) {
+    throw new Error('BUYER_AGENT_KEY must differ from API_KEY and PROPOSER_KEY')
+  }
+  if (value.NODE_ENV === 'production' && !value.SIGNING_KEY) {
+    throw new Error('SIGNING_KEY (an Ed25519 private key in PKCS8 PEM) is required in production')
+  }
   const paypal = value.PAYPAL_CLIENT_ID && value.PAYPAL_CLIENT_SECRET
     ? { clientId: value.PAYPAL_CLIENT_ID, clientSecret: value.PAYPAL_CLIENT_SECRET, baseUrl: value.PAYPAL_API }
     : null
@@ -62,6 +84,14 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     databasePath: value.DATABASE_PATH,
     apiKey,
     proposerKey,
+    buyerAgentKey: value.BUYER_AGENT_KEY ?? null,
+    buyerAgentParty: value.BUYER_AGENT_PARTY,
+    signingKey: value.SIGNING_KEY ?? null,
+    invoices: value.INVOICES === 'auto' && Boolean(paypal),
+    ollamaApiKey: value.OLLAMA_API_KEY,
+    ollamaBaseUrl: value.OLLAMA_BASE_URL,
+    agentModel: value.AGENT_MODEL,
+    previousPublicKeys: (value.SIGNING_KEYS_PREVIOUS ?? '').split('|').map((item) => item.trim()).filter(Boolean),
     webDist: value.WEB_DIST ?? null,
     rateLimitPerMinute: value.RATE_LIMIT_PER_MINUTE,
     publicUrl: value.PUBLIC_URL ?? `http://${value.HOST}:${value.PORT}`,

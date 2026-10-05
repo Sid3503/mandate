@@ -62,8 +62,14 @@ export const ProposalCreateSchema = z.object({
   parentCaptureId: z.string().trim().min(1).max(64).optional(),
   jobId: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
   fundingCaptureId: z.string().trim().min(1).max(64).optional(),
+  /** Bill one milestone of an agreed deal. The amount must equal the milestone. */
+  dealId: z.uuid().optional(),
+  milestone: z.number().int().min(0).max(11).optional(),
   proposalId: z.uuid().optional(),
-}).strict()
+}).strict().refine((value) => (value.dealId === undefined) === (value.milestone === undefined), {
+  message: 'dealId and milestone go together',
+  path: ['milestone'],
+})
 
 export type ProposalCreate = z.infer<typeof ProposalCreateSchema>
 

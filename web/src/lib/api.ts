@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { Health, Job, LedgerEvent, Packet, Page, Proposal, ProposalInput, Session, Warrant } from './types'
+import type { AgentRun, ClerkReply, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -64,5 +64,17 @@ export const api = {
   capture: (id: string, claimedAmountCents?: number) =>
     request<Proposal>(`/v1/proposals/${id}/capture`, { method: 'POST', body: claimedAmountCents === undefined ? undefined : { claimedAmountCents } }),
   job: (jobId: string) => request<Job>(`/v1/jobs/${encodeURIComponent(jobId)}`),
+  verifyLock: (id: string) => request<LockCheck>(`/v1/proposals/${id}/verify`),
+  signingKeys: () => request<{ data: SigningKey[] }>('/.well-known/mandate-keys.json'),
+  deals: () => request<{ data: Deal[] }>('/v1/deals?limit=50'),
+  verifyDeal: (id: string) => request<DealCheck>(`/v1/deals/${id}/verify`),
+  offerDeal: (body: { buyer: string; as?: 'buyer' | 'seller'; threadId?: string; prompt?: string; terms: Record<string, unknown> }, idempotencyKey: string) =>
+    request<Deal>('/v1/deals/offers', { method: 'POST', body, idempotencyKey }),
+  billMilestone: (dealId: string, milestone: number, evidenceUrl: string) =>
+    request<Proposal>(`/v1/deals/${dealId}/milestones/${milestone}/bill`, { method: 'POST', body: { evidenceUrl } }),
+  partyRules: () => request<{ data: PartyRulesView[] }>('/v1/party-rules'),
+  negotiate: (body: { buyerBrief?: string; sellerBrief?: string } = {}) => request<Negotiation>('/v1/negotiations', { method: 'POST', body }),
+  clerk: (message: string, conversationId?: string) => request<ClerkReply>('/v1/clerk/messages', { method: 'POST', body: { message, conversationId } }),
+  agentRun: (id: string) => request<AgentRun>(`/v1/agent-runs/${id}`),
   ledger: (cursor?: string | null) => request<Page<LedgerEvent>>(`/v1/ledger?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
 }

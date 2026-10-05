@@ -32,6 +32,12 @@ npm run build           # api serves web/dist at /app/
 npm run dev             # http://localhost:5173/app/
 ```
 
+## New screens
+
+- **Deals** (`/app/deals`): "Let the agents negotiate" shows the negotiation turn by turn with the rule behind every refusal, a picture of where both companies' rules overlap (owner only), each agreed deal with a signature **Verify** button, and billing of the next milestone. You can also make an offer yourself.
+- **Clerk** (`/app/clerk`): chat with the studio clerk. Try the fake vendor email in the examples.
+- **Receipt**: the lock shows the Ed25519 signature with **Verify**; a request an agent asked for shows the chat behind it and, for the owner, every step the agent took; a charge billed by invoice shows the invoice.
+
 ## Guided tour
 
 The console teaches itself, because it is complex at first.

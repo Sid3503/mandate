@@ -1,5 +1,6 @@
 import { OpenApiGeneratorV31, OpenAPIRegistry } from '@asteasolutions/zod-to-openapi'
 import { z } from 'zod'
+import { BillMilestoneSchema, DealOfferSchema, PartyRulesSchema } from './domain/deal'
 import { CaptureSchema, ListQuerySchema, ProposalCreateSchema, WarrantBodySchema } from './domain/schemas'
 
 const HealthSchema = z.object({
@@ -55,6 +56,13 @@ const ProposalSchema = z.object({
   payoutStatus: z.string().nullable(),
   payoutTransactionId: z.string().nullable(),
   payoutFeeCents: z.number().int().nullable(),
+  dealId: z.string().nullable(),
+  milestone: z.number().int().nullable(),
+  lockSignature: z.string().nullable(),
+  lockKeyId: z.string().nullable(),
+  invoiceId: z.string().nullable(),
+  invoiceUrl: z.string().nullable(),
+  invoiceStatus: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 }).openapi('Proposal')
@@ -65,8 +73,49 @@ const WarrantViewSchema = WarrantBodySchema.extend({
   createdAt: z.string(),
 }).openapi('Warrant')
 
+const DealSchema = z.object({
+  id: z.uuid(),
+  threadId: z.uuid(),
+  buyerId: z.string(),
+  buyerName: z.string(),
+  sellerId: z.string(),
+  offeredBy: z.string(),
+  status: z.enum(['agreed', 'refused']),
+  jobId: z.string().nullable(),
+  terms: z.object({
+    scope: z.string(),
+    category: z.string(),
+    currency: z.string(),
+    totalCents: z.number().int(),
+    milestones: z.array(z.object({ title: z.string(), amountCents: z.number().int() })),
+    dueDate: z.string().optional(),
+    proofRequired: z.boolean(),
+  }),
+  termsHash: z.string(),
+  rulesVersions: z.object({ buyer: z.number().int(), seller: z.number().int() }),
+  signature: z.string().nullable(),
+  keyId: z.string().nullable(),
+  prompt: z.string().nullable(),
+  runId: z.string().nullable(),
+  createdAt: z.string(),
+  verdict: z.object({
+    verdict: z.enum(['ACCEPT', 'REFUSE']),
+    violations: z.array(z.object({ code: z.string(), side: z.string(), detail: z.string(), hint: z.string() })),
+    zone: z.object({ minCents: z.number().int(), maxCents: z.number().int() }).nullable().optional(),
+  }),
+  billing: z.object({
+    dealId: z.string(),
+    totalCents: z.number().int(),
+    scope: z.string(),
+    signatureValid: z.boolean(),
+    milestones: z.array(z.object({ index: z.number().int(), title: z.string(), amountCents: z.number().int(), chargeId: z.string().nullable(), phase: z.string().nullable(), attempts: z.number().int() })),
+  }).nullable(),
+}).openapi('Deal')
+
 const SessionSchema = z.object({
   role: z.enum(['owner', 'proposer']),
+  side: z.enum(['buyer', 'seller']).nullable(),
+  agents: z.object({ enabled: z.boolean(), model: z.string().nullable() }),
   version: z.string(),
   paypalConfigured: z.boolean(),
 }).openapi('Session')
@@ -215,6 +264,117 @@ export function buildOpenApi(publicUrl: string) {
     tags: ['proposals'],
     summary: 'PayPal payout webhook. No credential. The body only names a payout batch; the batch is re-read from PayPal, so a forged call cannot change a status.',
     responses: { 200: { description: 'Received. refreshed says whether a payout was re-read.' } },
+  })
+  const idParam = z.object({ id: z.uuid() })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/proposals/{id}/verify',
+    tags: ['proposals'],
+    security: bearer,
+    summary: 'Re-check a lock: the stored hash still recomputes from the row, and the Ed25519 signature verifies for exactly this id and hash.',
+    request: { params: idParam },
+    responses: { 200: { description: 'Verification' }, 401: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/.well-known/mandate-keys.json',
+    tags: ['ops'],
+    summary: 'Public keys the server signs locks and deals with, including retired ones, so old receipts stay verifiable. No credential.',
+    responses: { 200: { description: 'Keys' } },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/deals/offers',
+    tags: ['deals'],
+    security: bearer,
+    summary: 'Offer deal terms. Agreed only if the terms fit BOTH companies\' rules. Each side sees its own violations in full and the other side\'s only as a direction. Needs an Idempotency-Key.',
+    request: { body: { content: { 'application/json': { schema: DealOfferSchema } }, required: true } },
+    responses: { 201: { description: 'The offer and the verdict', content: { 'application/json': { schema: DealSchema } } }, 400: problem, 401: problem, 403: problem, 409: problem, 422: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/deals',
+    tags: ['deals'],
+    security: bearer,
+    summary: 'Recent offers and deals, newest first. A client agent sees only its own.',
+    responses: { 200: { description: 'Deals', content: { 'application/json': { schema: z.object({ data: z.array(DealSchema) }) } } }, 401: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/deals/{id}',
+    tags: ['deals'],
+    security: bearer,
+    request: { params: idParam },
+    responses: { 200: { description: 'Deal', content: { 'application/json': { schema: DealSchema } } }, 401: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/deals/{id}/verify',
+    tags: ['deals'],
+    security: bearer,
+    summary: 'Re-check an agreed deal\'s signature against its stored terms.',
+    request: { params: idParam },
+    responses: { 200: { description: 'Verification' }, 401: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/deals/{id}/milestones/{n}/bill',
+    tags: ['deals'],
+    security: bearer,
+    summary: 'Propose a client charge for one milestone of an agreed deal, for exactly its agreed amount. The gate still decides.',
+    request: { params: z.object({ id: z.uuid(), n: z.string() }), body: { content: { 'application/json': { schema: BillMilestoneSchema } }, required: true } },
+    responses: { 201: { description: 'The charge proposal', content: { 'application/json': { schema: ProposalSchema } } }, 401: problem, 403: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/party-rules',
+    tags: ['deals'],
+    security: bearer,
+    summary: 'Owner only. Both companies\' deal rules. These are private to each company.',
+    responses: { 200: { description: 'Rules' }, 401: problem, 403: problem },
+  })
+  registry.registerPath({
+    method: 'put',
+    path: '/v1/party-rules/{partyId}',
+    tags: ['deals'],
+    security: bearer,
+    summary: 'Owner only. Write the next version of one company\'s deal rules.',
+    request: { params: z.object({ partyId: z.string() }), body: { content: { 'application/json': { schema: PartyRulesSchema } }, required: true } },
+    responses: { 201: { description: 'New version' }, 401: problem, 403: problem, 404: problem, 422: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/clerk/messages',
+    tags: ['agents'],
+    security: bearer,
+    summary: 'Talk to the studio clerk. It turns the message into requests to the rules and reports their answer. It can only ask: it cannot approve or pay.',
+    request: { body: { content: { 'application/json': { schema: z.object({ message: z.string().max(4000), conversationId: z.uuid().optional() }) } }, required: true } },
+    responses: { 200: { description: 'The reply, the rules\' outcomes, and the tools used' }, 401: problem, 403: problem, 429: problem, 502: problem, 503: problem, 504: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/negotiations',
+    tags: ['agents'],
+    security: bearer,
+    summary: 'Owner only. Two agents, one per company, trade offers until the terms fit both companies\' rules or they run out of turns.',
+    responses: { 200: { description: 'The turns, each with the deal check\'s verdict' }, 401: problem, 403: problem, 503: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/agent-runs/{id}',
+    tags: ['agents'],
+    security: bearer,
+    summary: 'Owner only. The full trace of one agent run: every model turn, tool call and tool result.',
+    request: { params: idParam },
+    responses: { 200: { description: 'Run' }, 401: problem, 403: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/mcp',
+    tags: ['agents'],
+    security: bearer,
+    summary: 'Model Context Protocol server (Streamable HTTP, stateless). A studio key gets get_rules, get_jobs, propose, list_ledger, offer_deal and explain; a client agent key gets get_rules, offer_deal and explain. No tool can approve, capture, send or change rules.',
+    responses: { 200: { description: 'JSON-RPC response' }, 401: problem },
   })
   registry.registerPath({
     method: 'get',

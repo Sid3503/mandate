@@ -1,7 +1,11 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { DEMO_BUYER_RULES, DEMO_SELLER_RULES, PartyRulesSchema } from '../domain/deal'
 import { LINE_STUDIO_WARRANT, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
+
+/** Northwind, the demo client. Its deal rules are keyed by the client id on the warrant. */
+export const BUYER_PARTY_ID = 'client_northwind'
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS warrants (
@@ -43,6 +47,13 @@ CREATE TABLE IF NOT EXISTS proposals (
   payout_status TEXT,
   payout_txn_id TEXT,
   payout_fee_cents INTEGER,
+  deal_id TEXT,
+  milestone INTEGER,
+  lock_sig TEXT,
+  lock_key_id TEXT,
+  invoice_id TEXT,
+  invoice_url TEXT,
+  invoice_status TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -63,6 +74,59 @@ CREATE TABLE IF NOT EXISTS events (
 
 CREATE INDEX IF NOT EXISTS events_created ON events(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS events_proposal ON events(proposal_id, created_at);
+
+CREATE TABLE IF NOT EXISTS party_rules (
+  party_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  body_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (party_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS deals (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  buyer_id TEXT NOT NULL,
+  seller_id TEXT NOT NULL,
+  offered_by TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  status TEXT NOT NULL,
+  job_id TEXT,
+  terms_json TEXT NOT NULL,
+  verdict_json TEXT NOT NULL,
+  buyer_rules_version INTEGER NOT NULL,
+  seller_rules_version INTEGER NOT NULL,
+  terms_hash TEXT NOT NULL,
+  sig TEXT,
+  key_id TEXT,
+  run_id TEXT,
+  prompt TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS deals_thread ON deals(thread_id, created_at);
+CREATE INDEX IF NOT EXISTS deals_created ON deals(created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS signing_keys (
+  key_id TEXT PRIMARY KEY,
+  public_pem TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_runs (
+  id TEXT PRIMARY KEY,
+  agent TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  conversation_id TEXT,
+  model TEXT NOT NULL,
+  status TEXT NOT NULL,
+  input TEXT NOT NULL,
+  output TEXT,
+  trace_json TEXT NOT NULL,
+  error TEXT,
+  ms INTEGER,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS agent_runs_conversation ON agent_runs(conversation_id, created_at);
 
 CREATE TABLE IF NOT EXISTS idempotency (
   key TEXT PRIMARY KEY,
@@ -89,6 +153,11 @@ export function migrate(db: DatabaseSync): void {
   const columns = new Set((db.prepare('PRAGMA table_info(proposals)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!columns.has('job_id')) db.exec('ALTER TABLE proposals ADD COLUMN job_id TEXT')
   if (!columns.has('funding_capture_id')) db.exec('ALTER TABLE proposals ADD COLUMN funding_capture_id TEXT')
+  for (const [name, type] of [['deal_id', 'TEXT'], ['milestone', 'INTEGER'], ['lock_sig', 'TEXT'], ['lock_key_id', 'TEXT'], ['invoice_id', 'TEXT'], ['invoice_url', 'TEXT'], ['invoice_status', 'TEXT']] as const) {
+    if (!columns.has(name)) db.exec(`ALTER TABLE proposals ADD COLUMN ${name} ${type}`)
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS proposals_invoice ON proposals(invoice_id) WHERE invoice_id IS NOT NULL')
+  db.exec('CREATE INDEX IF NOT EXISTS proposals_deal ON proposals(deal_id, milestone)')
   for (const [name, type] of [['payout_batch_id', 'TEXT'], ['payout_item_id', 'TEXT'], ['payout_status', 'TEXT'], ['payout_txn_id', 'TEXT'], ['payout_fee_cents', 'INTEGER']] as const) {
     if (!columns.has(name)) db.exec(`ALTER TABLE proposals ADD COLUMN ${name} ${type}`)
   }
@@ -99,13 +168,18 @@ export function migrate(db: DatabaseSync): void {
 
 export function seed(db: DatabaseSync, now: Date): void {
   const existing = db.prepare('SELECT id FROM warrants LIMIT 1').get()
-  if (existing) return
-  const body = WarrantBodySchema.parse(LINE_STUDIO_WARRANT)
-  db.prepare('INSERT INTO warrants (id, version, body_json, created_at) VALUES (?, 1, ?, ?)').run(
-    WARRANT_ID,
-    JSON.stringify(body),
-    now.toISOString(),
-  )
+  if (!existing) {
+    const body = WarrantBodySchema.parse(LINE_STUDIO_WARRANT)
+    db.prepare('INSERT INTO warrants (id, version, body_json, created_at) VALUES (?, 1, ?, ?)').run(
+      WARRANT_ID,
+      JSON.stringify(body),
+      now.toISOString(),
+    )
+  }
+  // Each company's deal rules are versioned data too. Seeded once per party, never overwritten.
+  const seedRules = db.prepare('INSERT OR IGNORE INTO party_rules (party_id, version, body_json, created_at) VALUES (?, 1, ?, ?)')
+  seedRules.run(BUYER_PARTY_ID, JSON.stringify(PartyRulesSchema.parse(DEMO_BUYER_RULES)), now.toISOString())
+  seedRules.run(WARRANT_ID, JSON.stringify(PartyRulesSchema.parse(DEMO_SELLER_RULES)), now.toISOString())
 }
 
 export function databaseReady(db: DatabaseSync): boolean {
