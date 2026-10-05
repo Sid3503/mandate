@@ -28,6 +28,8 @@ export type RunInput = {
   timeoutMs?: number
   /** End the run as soon as this tool has been called, instead of waiting for the model to summarise. */
   stopAfter?: string
+  /** The person's words. Lets the door check that a request names who the person named. */
+  requestText?: string
 }
 
 export type RunOutput = {
@@ -52,7 +54,7 @@ const WRITE_TOOLS = new Set(['propose', 'offer_deal'])
  */
 export async function runAgent(input: RunInput): Promise<RunOutput> {
   const started = Date.now()
-  const server = createMandateMcpServer({ services: input.services, principal: input.principal, runId: input.runId, budget: { asks: input.asks ?? 3 } })
+  const server = createMandateMcpServer({ services: input.services, principal: input.principal, runId: input.runId, budget: { asks: input.asks ?? 3 }, requestText: input.requestText })
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
   await server.connect(serverSide)
   const mcp = await createMCPClient({ transport: clientSide as never })

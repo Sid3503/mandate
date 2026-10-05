@@ -48,7 +48,7 @@ Every agent holds **a wallet of authority, not a wallet of money**:
 
 ---
 
-## Try it in two minutes
+## Try the test server (not the product)
 
 You need **Node.js 22 or later** (24 recommended, because it ships `node:sqlite`) and Google Chrome, which the end-to-end tests use.
 
@@ -64,7 +64,7 @@ Open **http://127.0.0.1:8799/app/** and unlock with:
 | Owner | `owner-e2e-key-0123456789` | Everything: ask, approve, settle, change the rules |
 | Proposer (an agent's key) | `proposer-e2e-key-0123456789` | Ask and read only |
 
-Demo mode keeps everything in memory and uses a fake PayPal whose buyer approves at once, so a client charge's **Settle** completes immediately. A contractor payout goes through the fake Payouts instead, which pays at once; see [Money out](#money-out-through-paypal-payouts) for the real rail and its unpaid and failed states. Restarting `npm run demo` starts from an empty ledger. To use the real PayPal sandbox, see [Running against the PayPal sandbox](#running-against-the-paypal-sandbox).
+This is the test server: it keeps everything in memory and uses a fake PayPal whose buyer approves at once, so a client charge's **Settle** completes immediately. A contractor payout goes through the fake Payouts instead, which pays at once; see [Money out](#money-out-through-paypal-payouts) for the real rail and its unpaid and failed states. Restarting `npm run demo` starts from an empty ledger. To use the real PayPal sandbox, see [Running against the PayPal sandbox](#running-against-the-paypal-sandbox).
 
 ---
 

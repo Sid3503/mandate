@@ -91,7 +91,7 @@ export class AgentService {
     let run: RunOutput
     try {
       // The clerk acts as a studio proposer whoever is typing. The owner's own key does not make the clerk stronger.
-      run = await runAgent({ model, services: this.services, principal: STUDIO, runId, system: clerkSystem(warrant.body, this.now().toISOString().slice(0, 10)), messages, asks: 4, maxSteps: 8 })
+      run = await runAgent({ model, services: this.services, principal: STUDIO, runId, system: clerkSystem(warrant.body, this.now().toISOString().slice(0, 10)), messages, asks: 4, maxSteps: 8, requestText: messages.filter((item) => item.role === 'user').map((item) => (typeof item.content === 'string' ? item.content : '')).join('\n') })
     } catch (error) {
       this.record({ id: runId, agent: 'clerk', who, conversationId, model: model.name, input: input.message, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0 })
       throw error

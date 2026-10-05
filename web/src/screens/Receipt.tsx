@@ -192,7 +192,7 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
       </p>
       {pending || (p.phase === 'order_created' && approveUrl) ? (
         <div className="buyer" aria-live="polite">
-          <p><strong>Step 1 of 2 · the PayPal buyer approves.</strong> {p.kind === 'charge' ? `${names(p.payeeId)}’s account` : 'The buyer'} has to approve this ${dollars(p.amountCents)} order on PayPal. Mandate cannot do it for them.</p>
+          <p><strong>Step 1 of 2 · the PayPal buyer approves.</strong> {p.kind === 'charge' ? `${names(p.payeeId)}’s account` : 'The buyer'} has to approve this {dollars(p.amountCents)} order on PayPal. Mandate cannot do it for them.</p>
           <ol className="how">
             <li>Open PayPal with the button below (it opens a new tab).</li>
             <li>Sign in as the sandbox buyer and approve the order.</li>

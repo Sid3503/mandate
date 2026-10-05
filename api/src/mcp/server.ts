@@ -28,6 +28,18 @@ export type McpContext = {
   runId: string
   /** The most requests one connection may make. A runaway model stops here. */
   budget: { asks: number }
+  /**
+   * What the person actually wrote (an agent run only). When set, `propose` refuses a payee the person never named.
+   * A model that "helpfully" swaps an unknown name for a known one would otherwise put the wrong name on the ledger.
+   */
+  requestText?: string
+}
+
+/** True when some significant word of the payee appears in what the person wrote. */
+export function payeeIsGrounded(payee: string, requestText: string): boolean {
+  const words = (value: string) => value.toLowerCase().normalize('NFKD').replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((word) => word.length >= 3)
+  const text = new Set(words(requestText))
+  return words(payee).some((word) => text.has(word))
 }
 
 const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`
@@ -213,6 +225,9 @@ export function createMandateMcpServer(context: McpContext): McpServer {
       try {
         const args = cleanProposal(raw)
         const input = ProposalCreateSchema.parse(args)
+        if (context.requestText !== undefined && !payeeIsGrounded(input.payee, context.requestText)) {
+          return failure('payee.not_in_request', `The person never named "${input.payee}". Use the payee exactly as they wrote it, even if you do not recognise the name. Do not swap in someone you know.`)
+        }
         const over = spend(context)
         if (over) return over
         const result = services.mandate.propose(input, key(context, 'propose', args), 'proposer', context.runId)

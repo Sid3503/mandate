@@ -177,3 +177,15 @@ describe('the propose tool absorbs what small models get wrong', () => {
     expect((await use('propose', { ...payout, payee: 'P. Shah', amountCents: 48000 })).error).toBe(false)
   })
 })
+
+describe('grounding the payee in what the person wrote', () => {
+  it('matches on a significant word, ignores case and punctuation, and rejects a stranger', async () => {
+    const { payeeIsGrounded } = await import('../src/mcp/server')
+    expect(payeeIsGrounded('Priya', 'pay Priya her share')).toBe(true)
+    expect(payeeIsGrounded('Priya Shah', 'please pay PRIYA, thanks')).toBe(true)
+    expect(payeeIsGrounded('P. Shah', 'pay P. Shah $480')).toBe(true)
+    expect(payeeIsGrounded('Priya', 'pay P. Shah $480')).toBe(false)
+    expect(payeeIsGrounded('Cafe Lila', 'lunch at café lila')).toBe(true)
+    expect(payeeIsGrounded('Acme', 'pay Priya')).toBe(false)
+  })
+})

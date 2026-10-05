@@ -26,22 +26,22 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 
 Job totals for the live sandbox run: **$150 in, $90 out, $60 kept.**
 
-## Try it in two minutes
+## Run it (real PayPal sandbox, real AI model)
 
-Needs Node.js 22+ (24 recommended) and Chrome.
+Needs Node.js 22+ (24 recommended) and Chrome. Put your PayPal sandbox app credentials and an Ollama Cloud key in a repo-root `.env` (see [`api/.env.example`](api/.env.example)). It is gitignored; never commit it.
 
 ```bash
-npm run setup     # install api/ and web/
-npm run demo      # build the console, start an in-memory server with a fake PayPal
+npm run setup && npm run build
+cd api && node --env-file=../.env ./node_modules/tsx/dist/cli.mjs src/main.ts
 ```
 
-Open **http://127.0.0.1:8799/app/** and unlock with the owner key `owner-e2e-key-0123456789`. (The agent key `proposer-e2e-key-0123456789` can ask and read, never approve.)
+Open **http://127.0.0.1:8787/app/** and unlock with `dev-mandate-key-change-me`. A guided tour opens on first visit, and every screen has a **Guide** button.
 
-Or press **Deals → Let the agents negotiate** to watch two agents reach $300, then **Clerk** and paste the fake vendor email. (`npm run demo` uses a scripted stand-in for the AI so it works offline; set `OLLAMA_API_KEY` for the real model.)
+The route: **Deals → Let the agents negotiate** ($450 and $200 refused, $300 agreed and signed) → bill milestone 1 → approve → **Settle**, then approve the order in PayPal as the sandbox buyer and press **Check PayPal and settle** → **Clerk**: "pay Priya her share…" → approve → **Send $90.00** → **Jobs**: $150 in, $90 out, $60 kept. Then paste the fake vendor email into **Clerk** and watch the rules refuse it.
 
-Then follow the job: **New request** → Money in, $150, job `job_northwind_logo` → **Waiting for you** → Approve → Settle → ask for Priya's $90 funded by that payment → Approve → **Send $90.00 to Priya Shah**. Try the refusals from the table above in **New request**.
+Full walk-through with what you should see at each step: [docs/REFERENCE.md](docs/REFERENCE.md#running-against-the-paypal-sandbox).
 
-To run against the real PayPal sandbox, see [Setup](docs/REFERENCE.md#running-against-the-paypal-sandbox).
+> **About `npm run demo`.** It starts a *test server* on :8799 with a fake PayPal and a scripted stand-in for the AI, so the 30 browser tests are deterministic and free. It is for development, not for showing the product. The real thing is above.
 
 ## How it works
 
