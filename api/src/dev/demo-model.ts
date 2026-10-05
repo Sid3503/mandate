@@ -88,12 +88,11 @@ export function demoModel(): AgentModel {
         return say('Tell me what to pay and to whom, for example: pay Priya her share for the Northwind logo milestone 1.')
       }
       if (seen === 1 && result && Array.isArray(result.jobs)) {
-        const job = result.jobs.find((item: any) => item.clientPayments?.length > 0)
-        const payment = job?.clientPayments?.find((item: any) => item.canStillFundCents > 0) ?? job?.clientPayments?.[0]
+        const payment = result.payoutsPossibleFrom?.[0]
         return call('propose', {
           kind: 'payment', payee: 'Priya', amountCents: payment?.canStillFundCents ?? 9000, currency: 'USD', category: 'design',
           description: message.split('\n')[0]!.slice(0, 120), evidenceUrl: url(message), prompt: message.slice(0, 500),
-          jobId: job?.jobId, fundingCaptureId: payment?.captureId,
+          jobId: payment?.jobId, fundingCaptureId: payment?.captureId,
         })
       }
       // Say nothing, so the guard states the rules' answer in the rules' own words.

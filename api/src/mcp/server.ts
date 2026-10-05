@@ -164,15 +164,24 @@ export function createMandateMcpServer(context: McpContext): McpServer {
     server.registerTool('get_jobs', {
       title: 'Look up jobs',
       description: 'List jobs, or one job if you give jobId. Shows money in, money out, what is approved but not yet paid, the client payments that can fund a contractor payout (with their captureId and how much each can still fund), and the agreed deal. Use it to find the captureId a payout must cite. Read-only.',
-      inputSchema: { jobId: z.string().optional().describe('A job id such as job_northwind_logo. Leave out to list all jobs.') },
+      inputSchema: { jobId: z.string().optional().describe('Only if the person named a specific job id. Normally leave this out to see every job.') },
       annotations: { readOnlyHint: true, openWorldHint: false },
     }, async ({ jobId }) => {
       try {
-        const ids = jobId ? [jobId] : [...new Set(services.mandate.listProposals(100, null).data.map((row) => row.jobId).filter((id): id is string => Boolean(id)))].slice(0, 10)
+        const allIds = [...new Set(services.mandate.listProposals(100, null).data.map((row) => row.jobId).filter((id): id is string => Boolean(id)))].slice(0, 20)
+        const everyJob = allIds.map((id) => ({ id, job: services.mandate.job(id), deal: services.deals.summaryForJob(id) }))
+        // Asking about one job narrows the list, never the answer to "which payment can fund a payout?".
+        const loaded = jobId ? [{ id: jobId, job: services.mandate.job(jobId), deal: services.deals.summaryForJob(jobId) }] : everyJob
+        // Newest activity is a poor order: a refused payout attempt makes an exhausted job look newest. Jobs that can
+        // actually fund a contractor come first, so an agent that reads the top of the list picks the right payment.
+        const fundable = (entry: (typeof loaded)[number]) => entry.job.charges.some((row) => row.captureId && row.fundableCents > 0)
+        const ranked = [...loaded].sort((a, b) => Number(fundable(b)) - Number(fundable(a))).slice(0, 10)
         return json({
-          jobs: ids.map((id) => {
-            const job = services.mandate.job(id)
-            const deal = services.deals.summaryForJob(id)
+          payoutsPossibleFrom: everyJob.flatMap((entry) => entry.job.charges
+            .filter((row) => row.captureId && row.fundableCents > 0)
+            .map((row) => ({ jobId: entry.id, captureId: row.captureId, canStillFund: dollars(row.fundableCents), canStillFundCents: row.fundableCents }))),
+          note: 'To pay a contractor, use an entry of payoutsPossibleFrom. If it is empty, no client payment has settled with money left, so ask anyway and the rules will say so.',
+          jobs: ranked.map(({ id, job, deal }) => {
             return {
               jobId: id,
               client: job.client?.displayName ?? null,

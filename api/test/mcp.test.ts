@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { afterEach, describe, expect, it } from 'vitest'
-import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, JOB, OWNER_KEY, STUDIO_KEY, terms, type Requester } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY, terms, type Requester } from './support'
 
 afterEach(closeAll)
 
@@ -187,5 +187,32 @@ describe('grounding the payee in what the person wrote', () => {
     expect(payeeIsGrounded('Priya', 'pay P. Shah $480')).toBe(false)
     expect(payeeIsGrounded('Cafe Lila', 'lunch at café lila')).toBe(true)
     expect(payeeIsGrounded('Acme', 'pay Priya')).toBe(false)
+  })
+})
+
+describe('finding the client payment that can still fund a payout', () => {
+  it('lists only payments with money left, and ranks their job first even when an exhausted job has the newest activity', async () => {
+    const { app } = harness()
+    // Job A is paid in and its whole $90 share is already approved for Priya.
+    const a = await agree(app, { jobId: 'job_a_exhausted' })
+    const paidA = await collect(app, a.id, 0)
+    const payoutA = await call(app, 'POST', '/v1/proposals', { idem: idem(), body: { payee: 'Priya', amountCents: 9000, currency: 'USD', category: 'design', description: 'share A', evidenceUrl: EVIDENCE, jobId: 'job_a_exhausted', fundingCaptureId: paidA.captureId } })
+    await call(app, 'POST', `/v1/proposals/${payoutA.json.id}/approve`)
+    // Job B is paid in and untouched.
+    const b = await agree(app, { jobId: 'job_b_open' })
+    const paidB = await collect(app, b.id, 0)
+    // The newest thing to happen is a refused attempt on job A, which is what used to mislead the clerk.
+    const { use } = await connect(app, STUDIO_KEY)
+    const refused = await use('propose', { ...payout, jobId: 'job_a_exhausted', fundingCaptureId: paidA.captureId })
+    expect(refused.data).toMatchObject({ decision: 'DENY', ruleCode: 'funding.exceeds' })
+
+    const jobs = await use('get_jobs', {})
+    expect(jobs.data.payoutsPossibleFrom).toEqual([{ jobId: 'job_b_open', captureId: paidB.captureId, canStillFund: '$90.00', canStillFundCents: 9000 }])
+    expect(jobs.data.jobs[0].jobId).toBe('job_b_open')
+    expect(jobs.data.jobs.map((j: { jobId: string }) => j.jobId)).toContain('job_a_exhausted')
+    // Even when the model asks about the exhausted job only, the answer to "what can fund a payout" covers every job.
+    const narrowed = await use('get_jobs', { jobId: 'job_a_exhausted' })
+    expect(narrowed.data.jobs).toHaveLength(1)
+    expect(narrowed.data.payoutsPossibleFrom[0]).toMatchObject({ jobId: 'job_b_open' })
   })
 })
