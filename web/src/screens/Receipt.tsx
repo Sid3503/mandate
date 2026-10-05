@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState, type FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { Signature } from '../components/Signature'
 import { useToast } from '../components/Toast'
 import { Chip, GateChip, Hash, KV, Loading, Money, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
@@ -38,6 +38,14 @@ export function Receipt() {
             <p className="server-words"><span>Server · {p.clause}</span>{p.detail}</p>
             {p.gate === 'DENY' ? <NoMoneyMoved /> : null}
           </section>
+
+          {data.dispute ? (
+            <section className="panel panel-warn" role="alert">
+              <div className="row between"><h2 className="panel-title">Disputed at PayPal</h2><Chip tone="deny">{data.dispute.status.replaceAll('_', ' ').toLowerCase()}</Chip></div>
+              <p><strong>{isPayout(p) ? 'The client payment behind this payout is under dispute.' : 'The client has disputed this payment.'}</strong>{data.dispute.reason ? ` Reason: ${data.dispute.reason.replaceAll('_', ' ').toLowerCase()}.` : ''}</p>
+              <p className="fine">{isPayout(p) ? 'Mandate will not send money that may be taken back. The payout waits until PayPal resolves the dispute.' : 'Payouts that depend on this payment are held until PayPal resolves the dispute.'}</p>
+            </section>
+          ) : null}
 
           {isPayout(p) ? <PayoutPanel packet={data} warrant={warrant} names={names} /> : <Settle packet={data} warrant={warrant} names={names} />}
 
@@ -171,6 +179,16 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
     mutationFn: (cents: number) => api.capture(p.id, cents),
     onSettled: () => void refresh(),
   })
+  // PayPal sends the buyer back here after they approve. Settle at once, so nobody has to find the button.
+  const [params, setParams] = useSearchParams()
+  const returned = params.get('paypal')
+  const auto = useRef(false)
+  useEffect(() => {
+    if (returned !== 'return' || auto.current || !owner || p.phase !== 'order_created') return
+    auto.current = true
+    settle.mutate(undefined, { onSettled: () => setParams({}, { replace: true }) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returned, owner, p.phase])
   const settleable = p.phase === 'locked' || p.phase === 'order_created' || p.phase === 'invoice_draft' || p.phase === 'invoice_sent'
   if (!settleable) return null
   if (p.phase === 'invoice_draft' || p.phase === 'invoice_sent') return <InvoicePanel packet={packet} names={names} />
@@ -192,6 +210,9 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
         {p.kind === 'charge' ? <> from {names(p.payeeId)}</> : <> back to {names(p.payeeId)}</>}.
         The server reads the live PayPal order first and refuses if the amount, currency or reference differ from the lock.
       </p>
+      {returned === 'cancel' && p.phase === 'order_created' ? (
+        <div className="still-waiting" role="status"><Chip tone="need">Not approved</Chip><span>You left PayPal without approving, so <strong>nothing was captured and $0 moved</strong>. Open PayPal again when you are ready.</span></div>
+      ) : null}
       {pending || (p.phase === 'order_created' && approveUrl) ? (
         <div className="buyer" aria-live="polite">
           <p><strong>Step 1 of 2 · the PayPal buyer approves.</strong> {p.kind === 'charge' ? `${names(p.payeeId)}’s account` : 'The buyer'} has to approve this {dollars(p.amountCents)} order on PayPal. Mandate cannot do it for them.</p>
@@ -254,6 +275,7 @@ function PayoutPanel({ packet, warrant, names }: { packet: Packet; warrant: Warr
   const toast = useToast()
   const send = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Paid ${dollars(done.amountCents)}`, body: 'PayPal confirmed it reached the account.' }); else if (done.phase === 'payout_sent') toast({ title: 'Sent to PayPal', body: 'Not paid until PayPal says so.', tone: 'info' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
   const cancel = useMutation({ mutationFn: () => api.reject(p.id), onSuccess: () => toast({ title: 'Payout cancelled', body: 'Nothing was sent.', tone: 'info' }), onSettled: () => void refresh() })
+  const returnMoney = useMutation({ mutationFn: () => api.cancelPayout(p.id), onSuccess: () => toast({ title: 'Payout cancelled', body: 'PayPal returned the money. Nothing is counted as paid.', tone: 'info' }), onSettled: () => void refresh() })
   const tamper = useMutation({ mutationFn: (cents: number) => api.capture(p.id, cents), onSettled: () => void refresh() })
   const unsent = p.phase === 'locked' || p.phase === 'order_created' || p.phase === 'capture_inflight'
   const atPayPal = p.phase === 'payout_sent' || p.phase === 'payout_unclaimed'
@@ -332,6 +354,7 @@ function PayoutPanel({ packet, warrant, names }: { packet: Packet; warrant: Warr
             {send.isPending ? 'Asking PayPal…' : atPayPal ? 'Check PayPal' : `Send ${dollars(p.amountCents)} to ${who}`}
           </button>
           {unsent ? <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => cancel.mutate()}>{cancel.isPending ? 'Cancelling…' : 'Cancel this payout'}</button> : null}
+          {p.phase === 'payout_unclaimed' ? <button type="button" className="btn btn-ghost" disabled={disabled || returnMoney.isPending} onClick={() => returnMoney.mutate()}>{returnMoney.isPending ? 'Asking PayPal…' : 'Cancel and return the money'}</button> : null}
           {!owner ? <p className="fine">Only the owner key can send or cancel.</p> : null}
         </div>
       ) : (
@@ -382,6 +405,8 @@ function InvoicePanel({ packet, names }: { packet: Packet; names: Names }) {
   const toast = useToast()
   const check = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Paid ${dollars(done.amountCents)}`, body: 'PayPal says the client paid the invoice.' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
   const owner = useIsOwner()
+  const remind = useMutation({ mutationFn: () => api.remindInvoice(p.id), onSuccess: () => toast({ title: 'Reminder sent', body: 'PayPal emailed the client about the invoice.', tone: 'info' }), onSettled: () => void refresh() })
+  const voidIt = useMutation({ mutationFn: () => api.cancelInvoice(p.id), onSuccess: () => toast({ title: 'Invoice cancelled', body: 'It can no longer be paid. The milestone can be billed again.', tone: 'info' }), onSettled: () => void refresh() })
   const url = packet.invoice?.url ?? p.invoiceUrl
   return (
     <section className="panel panel-lime" data-tour="receipt-action" aria-live="polite">
@@ -391,11 +416,13 @@ function InvoicePanel({ packet, names }: { packet: Packet; names: Names }) {
       <div className="row gap-s wrap">
         {url ? <a className="btn btn-ink" href={url} target="_blank" rel="noreferrer noopener">Open the invoice ↗</a> : null}
         <button type="button" className="btn btn-ghost" disabled={!owner || !online || check.isPending} onClick={() => check.mutate()}>{check.isPending ? 'Asking PayPal…' : 'Check PayPal'}</button>
+        {p.phase === 'invoice_sent' ? <button type="button" className="btn btn-ghost" disabled={!owner || !online || remind.isPending} onClick={() => remind.mutate()}>{remind.isPending ? 'Sending…' : 'Send a reminder'}</button> : null}
+        {p.phase === 'invoice_sent' ? <button type="button" className="btn btn-ghost" disabled={!owner || !online || voidIt.isPending} onClick={() => voidIt.mutate()}>{voidIt.isPending ? 'Cancelling…' : 'Cancel this invoice'}</button> : null}
       </div>
       {checkedAt && check.isSuccess && !check.isPending && p.phase !== 'captured' ? (
         <div className="still-waiting" role="status"><Chip tone="need">Still waiting</Chip><span>Checked PayPal at {checkedAt.toLocaleTimeString('en-US')}. The invoice has not been paid in full, so <strong>nothing is settled and $0 moved</strong>.</span></div>
       ) : null}
-      <ProblemCard error={check.error} />
+      <ProblemCard error={check.error ?? remind.error ?? voidIt.error} />
     </section>
   )
 }

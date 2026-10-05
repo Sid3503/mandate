@@ -13,6 +13,7 @@ export function createPayPalClient(options: {
   const fetchImpl = options.fetch ?? fetch
   const baseUrl = options.baseUrl.replace(/\/$/, '')
   let token: Token | null = null
+  let scope: string[] = []
 
   async function accessToken(): Promise<string> {
     if (token && token.expiresAt > Date.now() + 60_000) return token.value
@@ -31,6 +32,7 @@ export function createPayPalClient(options: {
     }
     const expiresIn = typeof json.expires_in === 'number' ? json.expires_in : 300
     token = { value: json.access_token, expiresAt: Date.now() + expiresIn * 1000 }
+    scope = typeof json.scope === 'string' ? json.scope.split(' ').filter(Boolean) : []
     return token.value
   }
 
@@ -58,6 +60,8 @@ export function createPayPalClient(options: {
     currency: string
     description: string
     payeeEmail: string | null
+    returnUrl?: string
+    cancelUrl?: string
   }, attachPayee: boolean): Promise<CreatedOrder> {
     const unit: Record<string, unknown> = {
       custom_id: input.proposalId,
@@ -69,7 +73,18 @@ export function createPayPalClient(options: {
     const { json } = await call('/v2/checkout/orders', {
       method: 'POST',
       requestId: paypalRequestId(`${input.proposalId}:create`),
-      body: { intent: 'CAPTURE', purchase_units: [unit] },
+      body: {
+        intent: 'CAPTURE',
+        purchase_units: [unit],
+        // With a return URL the buyer lands back on the receipt after approving, instead of being stranded on PayPal.
+        ...(input.returnUrl ? { payment_source: { paypal: { experience_context: {
+          return_url: input.returnUrl,
+          cancel_url: input.cancelUrl ?? input.returnUrl,
+          user_action: 'PAY_NOW',
+          shipping_preference: 'NO_SHIPPING',
+          brand_name: 'Mandate',
+        } } } } : {}),
+      },
     })
     return {
       orderId: stringField(json, 'id'),
@@ -150,6 +165,30 @@ export function createPayPalClient(options: {
       })
       const header = asJson(json.batch_header)
       return { batchId: stringField(header, 'payout_batch_id'), status: stringField(header, 'batch_status') } satisfies SentPayout
+    },
+    async cancelPayoutItem(itemId) {
+      const { json } = await call(`/v1/payments/payouts-item/${encodeURIComponent(itemId)}/cancel`, { method: 'POST' })
+      return { status: stringField(json, 'transaction_status') }
+    },
+    async verifyWebhook({ webhookId, headers, event }) {
+      const { json } = await call('/v1/notifications/verify-webhook-signature', {
+        method: 'POST',
+        body: {
+          auth_algo: headers['paypal-auth-algo'],
+          cert_url: headers['paypal-cert-url'],
+          transmission_id: headers['paypal-transmission-id'],
+          transmission_sig: headers['paypal-transmission-sig'],
+          transmission_time: headers['paypal-transmission-time'],
+          webhook_id: webhookId,
+          webhook_event: event,
+        },
+      })
+      return json.verification_status === 'SUCCESS'
+    },
+    async scopes(fresh = false) {
+      if (fresh) token = null
+      await accessToken()
+      return scope
     },
     async getPayout(batchId) {
       const { json } = await call(`/v1/payments/payouts/${encodeURIComponent(batchId)}?page_size=1`, { method: 'GET' })

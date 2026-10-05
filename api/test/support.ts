@@ -2,6 +2,7 @@ import { createApp, type AppDeps } from '../src/app'
 import { migrate, openDatabase, seed } from '../src/db/database'
 import { Repo } from '../src/db/repo'
 import type { InvoicePort } from '../src/paypal/invoices'
+import type { WatchPort } from '../src/paypal/watch'
 import type { AgentModel } from '../src/agents/model'
 import { ephemeralSigner, type Signer } from '../src/domain/signing'
 import { FakePayPal } from '../src/paypal/fake'
@@ -21,7 +22,7 @@ export function closeAll() {
 
 export type Requester = { request: (input: string, init?: RequestInit) => Response | Promise<Response> }
 
-export function harness(options: { invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer } = {}) {
+export function harness(options: { invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null } = {}) {
   const db = openDatabase(':memory:')
   open.push(db)
   migrate(db)
@@ -33,6 +34,7 @@ export function harness(options: { invoices?: InvoicePort | null; model?: AgentM
     paypal,
     signer: useSigner,
     invoices: options.invoices,
+    watch: options.watch,
     model: options.model,
     now: () => NOW,
     config: {
@@ -45,6 +47,7 @@ export function harness(options: { invoices?: InvoicePort | null; model?: AgentM
       paypalConfigured: paypal !== null,
       log: false,
       publicUrl: 'http://127.0.0.1:8787',
+      webhookId: options.webhookId,
     },
   })
   const app = build()

@@ -844,6 +844,75 @@
           ]
         }
       ]
+    },
+    {
+      "name": "PayPal features, disputes and activity",
+      "item": [
+        {
+          "name": "Which PayPal features are on",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/paypal/features"
+          }
+        },
+        {
+          "name": "Check again (fresh token)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/v1/paypal/features/check"
+          }
+        },
+        {
+          "name": "Disputes: read from PayPal now",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/v1/paypal/disputes/sync"
+          }
+        },
+        {
+          "name": "Disputes: stored",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/paypal/disputes"
+          }
+        },
+        {
+          "name": "PayPal activity vs the ledger (Transaction search)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/paypal/activity"
+          }
+        },
+        {
+          "name": "Cancel an unclaimed payout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/v1/proposals/{{proposalId}}/cancel-payout"
+          }
+        },
+        {
+          "name": "Remind the client about an invoice",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/v1/proposals/{{chargeId}}/remind-invoice"
+          }
+        },
+        {
+          "name": "Cancel an invoice",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{baseUrl}}/v1/proposals/{{chargeId}}/cancel-invoice"
+          }
+        }
+      ]
     }
   ]
 }

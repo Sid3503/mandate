@@ -767,3 +767,11 @@ html { scroll-behavior: smooth; }
   html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* PayPal features and disputes */
+.panel-warn { background: var(--deny-wash); border: 2px solid var(--ink); box-shadow: var(--shadow); }
+.features { list-style: none; margin: 0; padding: 0; display: grid; }
+.features li { display: grid; gap: 6px; padding: 12px 0; border-top: 1px solid var(--line); }
+.features li:first-child { border-top: 0; }
+.features details summary { cursor: pointer; font-weight: 600; }
+.enable { display: grid; gap: 10px; padding-top: 10px; }

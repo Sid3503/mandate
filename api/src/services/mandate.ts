@@ -8,6 +8,9 @@ import type { ProposalCreate, WarrantBody } from '../domain/schemas'
 import { WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
 import { PayPalError, type LivePayout, type PayPalPort } from '../paypal/port'
+import type { LiveDispute, WatchPort } from '../paypal/watch'
+import { assessFeatures } from '../domain/paypalFeatures'
+import { reconcile } from '../domain/reconcile'
 import { Problem } from '../http/problem'
 import { runIdempotent } from './idempotency'
 
@@ -107,6 +110,9 @@ export function toView(row: ProposalRow): ProposalView {
   }
 }
 
+/** PayPal's reporting API wants 2026-10-05T10:00:00+0000, not the usual ISO with milliseconds and Z. */
+const payPalTime = (date: Date) => date.toISOString().replace(/\.\d+Z$/, '+0000')
+
 export class MandateService {
   constructor(
     private readonly repo: Repo,
@@ -115,6 +121,12 @@ export class MandateService {
     private readonly signer: Signer,
     /** Bill clients with PayPal invoices (the Agent Toolkit). Null means checkout only. */
     private readonly invoices: InvoicePort | null = null,
+    private readonly options: {
+      /** Where this server is reached. PayPal sends the buyer back here after they approve a checkout. */
+      publicUrl?: string
+      /** Read-only view of the PayPal account: disputes and transactions. */
+      watch?: WatchPort | null
+    } = {},
   ) {}
 
   /**
@@ -275,6 +287,7 @@ export class MandateService {
   }
 
   async capture(id: string, claimedAmountCents?: number): Promise<HttpResult> {
+    await this.freshenFundingDisputes(id)
     const started = this.repo.transaction(() => this.beginCapture(id, claimedAmountCents))
     if (started.result) return started.result
     const row = started.row
@@ -314,6 +327,10 @@ export class MandateService {
         description: current.description,
         // Contractor identity stays on the warrant. The placeholder email is not a PayPal account.
         payeeEmail: null,
+        ...(this.options.publicUrl ? {
+          returnUrl: `${this.options.publicUrl}/app/p/${current.id}?paypal=return`,
+          cancelUrl: `${this.options.publicUrl}/app/p/${current.id}?paypal=cancel`,
+        } : {}),
       })
       const now = this.iso()
       this.repo.transaction(() => {
@@ -354,6 +371,139 @@ export class MandateService {
   }
 
   /** Money out. Sends one PayPal Payouts item from the lock, then reads it back from PayPal and checks it. */
+  // ---------- what PayPal knows about the account ----------
+
+  /** Which PayPal features this app may use, read from its token scopes. `fresh` asks PayPal for a new token first. */
+  async features(fresh = false) {
+    if (!this.paypal) return { configured: false, checkedAt: this.iso(), features: assessFeatures([]) }
+    const scopes = await this.paypal.scopes(fresh)
+    return { configured: true, checkedAt: this.iso(), features: assessFeatures(scopes) }
+  }
+
+  /** PayPal's own list of what moved in the account, lined up against the ledger. Read-only. */
+  async activity(days = 30) {
+    const watch = this.options.watch
+    if (!watch) return { available: false as const, reason: 'PayPal is not configured.' }
+    const end = this.now()
+    const start = new Date(end.getTime() - Math.min(Math.max(days, 1), 31) * 86_400_000)
+    try {
+      const transactions = await watch.listTransactions({ start: payPalTime(start), end: payPalTime(end) })
+      return { available: true as const, from: start.toISOString(), to: end.toISOString(), ...reconcile(transactions, this.repo.knownPayPalIds()) }
+    } catch (error) {
+      if (error instanceof PayPalError && (error.httpStatus === 401 || error.httpStatus === 403)) {
+        return { available: false as const, reason: 'The PayPal app has no Transaction Search permission.' }
+      }
+      throw new Problem(502, 'paypal.upstream', 'PayPal could not list transactions', error instanceof PayPalError ? error.paypalName : 'unknown')
+    }
+  }
+
+  /** Reads disputes from PayPal, stores them, and records when one opens or closes. Returns how many are open. */
+  async syncDisputes(): Promise<{ checked: boolean; open: number; disputes: ReturnType<Repo['listDisputes']> }> {
+    const watch = this.options.watch
+    if (!watch) return { checked: false, open: 0, disputes: this.repo.listDisputes(50) }
+    for (const live of await watch.listDisputes()) this.recordDispute(live)
+    const disputes = this.repo.listDisputes(50)
+    return { checked: true, open: disputes.filter((item) => item.status !== 'RESOLVED').length, disputes }
+  }
+
+  private recordDispute(live: LiveDispute): void {
+    const txn = live.transactionIds[0]
+    if (!live.id || !txn) return
+    const previous = this.repo.disputeById(live.id)
+    const now = this.iso()
+    const wasOpen = previous !== null && previous.status !== 'RESOLVED'
+    const isOpen = live.status !== 'RESOLVED'
+    if (previous && previous.status === live.status) return
+    this.repo.transaction(() => {
+      this.repo.upsertDispute({ disputeId: live.id, transactionId: txn, status: live.status, reason: live.reason, amountCents: live.cents, currency: live.currency, openedAt: live.openedAt, updatedAt: now })
+      const charge = this.repo.paymentByCapture(txn)
+      if (!charge) return
+      if (isOpen && !wasOpen) {
+        this.repo.insertEvent(randomUUID(), charge.id, 'dispute.opened', Clause.fundingDisputed, { disputeId: live.id, reason: live.reason, status: live.status, amountCents: live.cents }, now)
+      } else if (!isOpen && wasOpen) {
+        this.repo.insertEvent(randomUUID(), charge.id, 'dispute.resolved', Clause.fundingDisputed, { disputeId: live.id, reason: live.reason }, now)
+      }
+    })
+  }
+
+  /**
+   * Before a payout leaves, ask PayPal whether the client payment that funds it is disputed. If PayPal says the app may
+   * not look (Disputes is off), payouts go on as before. If it may look and cannot answer, the payout waits: an answer
+   * nobody could check is not a yes.
+   */
+  private async freshenFundingDisputes(id: string): Promise<void> {
+    const watch = this.options.watch
+    if (!watch) return
+    const row = this.repo.proposal(id)
+    if (!row || row.kind !== 'payment' || !row.funding_capture_id || row.payout_batch_id) return
+    const funding = this.repo.paymentByCapture(row.funding_capture_id)
+    if (!funding?.capture_id) return
+    try {
+      for (const live of await watch.listDisputes({ transactionId: funding.capture_id })) this.recordDispute(live)
+    } catch (error) {
+      if (error instanceof PayPalError && (error.httpStatus === 401 || error.httpStatus === 403)) return
+      throw new Problem(503, 'funding.unverifiable', 'Could not check for disputes', 'PayPal did not answer whether the client payment is disputed, so the payout is waiting. Nothing was sent. Try again.', { proposalId: id })
+    }
+  }
+
+  /** An unclaimed payout is held by PayPal because nobody has that account. Cancelling returns the money to the sender. */
+  async cancelUnclaimedPayout(id: string): Promise<HttpResult> {
+    if (!this.paypal) throw new Problem(503, 'paypal.unconfigured', 'PayPal is not configured', 'Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET first.')
+    const row = this.require(id)
+    if (row.kind !== 'payment' || row.phase !== 'payout_unclaimed' || !row.payout_item_id || !row.payout_batch_id) {
+      throw new Problem(409, 'proposal.state', 'Only an unclaimed payout can be cancelled', `Phase is ${row.phase}. A payout PayPal has already delivered cannot be cancelled.`)
+    }
+    try {
+      await this.paypal.cancelPayoutItem(row.payout_item_id)
+    } catch (error) {
+      if (error instanceof PayPalError) throw new Problem(502, 'paypal.upstream', 'PayPal rejected the cancel', error.paypalName, { proposalId: id, debugId: error.debugId })
+      throw error
+    }
+    const now = this.iso()
+    this.repo.insertEvent(randomUUID(), row.id, 'payout.cancelled', row.clause, { batchId: row.payout_batch_id, itemId: row.payout_item_id, amountCents: row.amount_cents }, now)
+    return this.applyLivePayout(this.require(id), await this.paypal.getPayout(row.payout_batch_id))
+  }
+
+  /** Nudges the client about an invoice that is out and unpaid. */
+  async remindInvoice(id: string): Promise<HttpResult> {
+    const { row, invoices } = this.liveInvoice(id)
+    try {
+      await invoices.remind(row.invoice_id!, `Reminder: ${row.description}`)
+    } catch (error) {
+      if (error instanceof PayPalError) throw new Problem(502, 'paypal.upstream', 'PayPal rejected the reminder', error.paypalName, { proposalId: id, debugId: error.debugId })
+      throw error
+    }
+    this.repo.insertEvent(randomUUID(), row.id, 'invoice.reminded', row.clause, { invoiceId: row.invoice_id }, this.iso())
+    return { status: 200, body: toView(this.require(id)) }
+  }
+
+  /** Voids an invoice that is out and unpaid, so a wrong one cannot be paid later. */
+  async cancelInvoice(id: string): Promise<HttpResult> {
+    const { row, invoices } = this.liveInvoice(id)
+    try {
+      await invoices.cancel(row.invoice_id!, `Cancelled: ${row.description}`)
+    } catch (error) {
+      if (error instanceof PayPalError) throw new Problem(502, 'paypal.upstream', 'PayPal rejected the cancel', error.paypalName, { proposalId: id, debugId: error.debugId })
+      throw error
+    }
+    const now = this.iso()
+    this.repo.transaction(() => {
+      this.repo.setInvoiceStatus(row.id, 'CANCELLED', now)
+      this.repo.setPhase(row.id, 'invoice_cancelled', now)
+      this.repo.insertEvent(randomUUID(), row.id, 'invoice.cancelled', row.clause, { invoiceId: row.invoice_id }, now)
+    })
+    return { status: 200, body: toView(this.require(id)) }
+  }
+
+  private liveInvoice(id: string): { row: ProposalRow; invoices: InvoicePort } {
+    const row = this.require(id)
+    if (!this.invoices) throw new Problem(503, 'invoice.unavailable', 'Invoicing is not available', 'The PayPal app has no Invoicing permission.')
+    if (row.kind !== 'charge' || !row.invoice_id || !INVOICE_PHASES.includes(row.phase)) {
+      throw new Problem(409, 'proposal.state', 'No open invoice on this charge', `Phase is ${row.phase}. Only an invoice that is out and unpaid can be reminded or cancelled.`)
+    }
+    return { row, invoices: this.invoices }
+  }
+
   private async settlePayout(current: ProposalRow): Promise<HttpResult> {
     if (!this.paypal) throw new Problem(503, 'paypal.unconfigured', 'PayPal is not configured', 'Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET before capture.')
     let batchId = current.payout_batch_id
@@ -529,8 +679,8 @@ export class MandateService {
       })
     }
     if (live.status === 'CANCELLED') {
-      this.repo.setPhase(row.id, 'capture_refused', now)
-      this.repo.insertEvent(randomUUID(), row.id, 'capture.refused', row.clause, { invoiceId: live.invoiceId, reason: 'invoice cancelled' }, now)
+      this.repo.setPhase(row.id, 'invoice_cancelled', now)
+      this.repo.insertEvent(randomUUID(), row.id, 'invoice.cancelled', row.clause, { invoiceId: live.invoiceId, reason: 'cancelled at PayPal' }, now)
     } else if (paid) {
       // Paid, but not in full or not through PayPal: the money is not the locked cents, so it is not called settled.
       this.repo.insertEvent(randomUUID(), row.id, 'invoice.partial', row.clause, { invoiceId: live.invoiceId, paidCents: live.paidCents, lockedCents: row.amount_cents }, now)
@@ -633,6 +783,7 @@ export class MandateService {
         feeCents: row.payout_fee_cents,
         receiver: payee?.email ?? null,
       } : null,
+      dispute: this.disputeOn(row.kind === 'payment' ? row.funding_capture_id : row.capture_id),
       job: row.job_id,
       funding: row.funding_capture_id ? this.fundingSummary(row.funding_capture_id) : null,
       events,
@@ -647,6 +798,11 @@ export class MandateService {
     const run = this.repo.agentRun(runId)
     if (!run) return null
     return { id: run.id, agent: run.agent, model: run.model, status: run.status, input: run.input, output: run.output, createdAt: run.created_at }
+  }
+
+  private disputeOn(captureId: string | null) {
+    const open = captureId ? this.repo.openDisputeFor(captureId) : null
+    return open ? { id: open.disputeId, status: open.status, reason: open.reason, amountCents: open.amountCents } : null
   }
 
   private fundingSummary(captureId: string) {
@@ -847,6 +1003,13 @@ export class MandateService {
       const warrant = this.repo.warrant(row.warrant_id, row.warrant_version)
       const state = funding ? this.fundingState(funding) : null
       // This payout is already counted in payoutHeldCents, so a negative balance means the client money shrank.
+      if (state?.disputed) {
+        this.repo.insertEvent(randomUUID(), row.id, 'capture.refused', Clause.fundingDisputed, { fundingCaptureId: row.funding_capture_id }, now)
+        throw new Problem(409, Clause.fundingDisputed, 'Client payment is under dispute', `The client disputed capture ${row.funding_capture_id} with PayPal. The payout waits until the dispute is resolved. PayPal was not called.`, {
+          proposalId: row.id,
+          fundingCaptureId: row.funding_capture_id,
+        })
+      }
       const over = !state || state.phase !== 'captured' || !warrant
         || Math.floor((Math.max(0, state.capturedCents - state.refundHeldCents) * warrant.body.contractorShareBps) / 10_000) < state.payoutHeldCents
       if (over) {
@@ -945,6 +1108,7 @@ export class MandateService {
       capturedCents: row.captured_amount_cents ?? 0,
       refundHeldCents: row.capture_id ? this.repo.heldRefundCents(row.capture_id) : 0,
       payoutHeldCents: row.capture_id ? this.repo.heldPayoutCents(row.capture_id) : 0,
+      disputed: row.capture_id ? this.repo.openDisputeFor(row.capture_id) !== null : false,
     }
   }
 
@@ -954,7 +1118,9 @@ export class MandateService {
     if (!funding || funding.kind !== 'charge' || funding.phase !== 'captured') {
       return { clause: Clause.fundingMissing, detail: 'a contractor payout must cite a captured client payment' }
     }
-    const available = fundableCents(warrant, this.fundingState(funding))
+    const state = this.fundingState(funding)
+    if (state.disputed) return { clause: Clause.fundingDisputed, detail: `the client has an open PayPal dispute on ${row.funding_capture_id}` }
+    const available = fundableCents(warrant, state)
     if (row.amount_cents > available) {
       return { clause: Clause.fundingExceeds, detail: `client payment ${row.funding_capture_id} can fund ${available} more cents` }
     }

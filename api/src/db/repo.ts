@@ -84,12 +84,16 @@ export type AgentRunRow = {
   created_at: string
 }
 
+export type DisputeRow = { disputeId: string; transactionId: string; status: string; reason: string | null; amountCents: number | null; currency: string | null; openedAt: string | null; updatedAt: string }
+type DisputeRecord = { dispute_id: string; transaction_id: string; status: string; reason: string | null; amount_cents: number | null; currency: string | null; opened_at: string | null; updated_at: string }
+const disputeRow = (row: DisputeRecord): DisputeRow => ({ disputeId: row.dispute_id, transactionId: row.transaction_id, status: row.status, reason: row.reason, amountCents: row.amount_cents, currency: row.currency, openedAt: row.opened_at, updatedAt: row.updated_at })
+
 export type PartyRulesRecord = { partyId: string; version: number; body: PartyRules; createdAt: string }
 
 /** Phases in which a payout's money is spoken for: locked, sent to PayPal, or paid. */
 export const RESERVED_PHASES = ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured'] as const
 /** A billed milestone stays billed unless its charge was refused or thrown away. */
-const DEAD_PHASES = ['denied', 'rejected', 'capture_refused'] as const
+const DEAD_PHASES = ['denied', 'rejected', 'capture_refused', 'invoice_cancelled'] as const
 const RESERVED_SQL = RESERVED_PHASES.map((phase) => `'${phase}'`).join(', ')
 
 export type PayoutUpdate = {
@@ -422,6 +426,54 @@ export class Repo {
 
   agreedDealByJob(jobId: string): DealRow | null {
     return (this.db.prepare(`SELECT * FROM deals WHERE job_id = ? AND status = 'agreed' LIMIT 1`).get(jobId) as DealRow | undefined) ?? null
+  }
+
+  // ---------- PayPal disputes and reconciliation ----------
+
+  upsertDispute(row: DisputeRow): void {
+    this.db.prepare(`INSERT INTO paypal_disputes (dispute_id, transaction_id, status, reason, amount_cents, currency, opened_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(dispute_id) DO UPDATE SET transaction_id = excluded.transaction_id, status = excluded.status, reason = excluded.reason,
+        amount_cents = excluded.amount_cents, currency = excluded.currency, updated_at = excluded.updated_at`).run(
+      row.disputeId, row.transactionId, row.status, row.reason, row.amountCents, row.currency, row.openedAt, row.updatedAt,
+    )
+  }
+
+  /** True the first time an event id is seen. PayPal retries deliveries, and a retry must not be processed twice. */
+  claimWebhookEvent(eventId: string, eventType: string, now: string): boolean {
+    return this.db.prepare('INSERT OR IGNORE INTO webhook_events (event_id, event_type, received_at) VALUES (?, ?, ?)').run(eventId, eventType, now).changes > 0
+  }
+
+  releaseWebhookEvent(eventId: string): void {
+    this.db.prepare('DELETE FROM webhook_events WHERE event_id = ?').run(eventId)
+  }
+
+  disputeById(disputeId: string): DisputeRow | null {
+    const row = this.db.prepare('SELECT * FROM paypal_disputes WHERE dispute_id = ?').get(disputeId) as DisputeRecord | undefined
+    return row ? disputeRow(row) : null
+  }
+
+  openDisputeFor(transactionId: string): DisputeRow | null {
+    const row = this.db.prepare(`SELECT * FROM paypal_disputes WHERE transaction_id = ? AND status != 'RESOLVED' ORDER BY updated_at DESC LIMIT 1`).get(transactionId) as DisputeRecord | undefined
+    return row ? disputeRow(row) : null
+  }
+
+  listDisputes(limit: number): DisputeRow[] {
+    return (this.db.prepare('SELECT * FROM paypal_disputes ORDER BY updated_at DESC LIMIT ?').all(limit) as DisputeRecord[]).map(disputeRow)
+  }
+
+  /** Every PayPal id this ledger created or was told about. A PayPal transaction with none of these did not come from Mandate. */
+  knownPayPalIds(): Map<string, string> {
+    const map = new Map<string, string>()
+    const rows = this.db.prepare(`SELECT id, order_id, capture_id, refund_id, payout_batch_id, payout_item_id, payout_txn_id, invoice_id FROM proposals`).all() as Array<Record<string, string | null>>
+    for (const row of rows) {
+      map.set(row.id!, row.id!)
+      for (const key of ['order_id', 'capture_id', 'refund_id', 'payout_batch_id', 'payout_item_id', 'payout_txn_id', 'invoice_id']) {
+        const value = row[key]
+        if (value) map.set(value, row.id!)
+      }
+    }
+    return map
   }
 
   // ---------- agent runs ----------

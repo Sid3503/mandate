@@ -1,6 +1,6 @@
-import { PayPalAgentToolkit } from '@paypal/agent-toolkit/ai-sdk'
 import { centsToPayPal, payPalToCents } from '../domain/money'
 import { PayPalError } from './port'
+import { createToolkit, type Json } from './toolkit'
 
 export type InvoiceRequest = {
   proposalId: string
@@ -35,39 +35,26 @@ export type InvoicePort = {
   createDraft(input: InvoiceRequest): Promise<{ invoiceId: string }>
   send(invoiceId: string, note: string): Promise<{ payerUrl: string | null }>
   get(invoiceId: string): Promise<LiveInvoice>
+  /** Emails the client a reminder. No money moves. */
+  remind(invoiceId: string, note: string): Promise<void>
+  /** Cancels a sent invoice, so it can no longer be paid. */
+  cancel(invoiceId: string, note: string): Promise<void>
   /** Finds a draft this server made earlier (crash recovery). */
   findByNumber(invoiceNumber: string): Promise<{ invoiceId: string } | null>
 }
 
 export const invoiceNumberFor = (proposalId: string) => `MND-${proposalId.replaceAll('-', '').slice(0, 16).toUpperCase()}`
 
-type ToolLike = { execute?: (args: never, options: { toolCallId: string; messages: never[] }) => Promise<unknown> | unknown }
-type Json = Record<string, unknown>
-
 /**
- * PayPal's own Agent Toolkit, run inside our server. The toolkit's tools are built for a model to call; here no
- * model ever sees them. The server calls three of them (create, send, get) with values taken from a locked cart.
+ * PayPal's own Agent Toolkit, run inside our server, for everything about billing a client by invoice.
+ * The server calls these tools with values taken from a locked cart. No model ever sees them.
  */
 export function createToolkitInvoices(options: { clientId: string; clientSecret: string; sandbox: boolean }): InvoicePort {
-  const toolkit = new PayPalAgentToolkit({
-    clientId: options.clientId,
-    clientSecret: options.clientSecret,
-    configuration: { actions: { invoices: { create: true, send: true, get: true, list: true } }, context: { sandbox: options.sandbox } },
+  const toolkit = createToolkit({
+    ...options,
+    actions: { invoices: { create: true, send: true, get: true, list: true, sendReminder: true, cancel: true } },
   })
-  const tools = toolkit.getTools() as unknown as Record<string, ToolLike>
-
-  async function run(name: string, args: Json): Promise<Json> {
-    const tool = tools[name]
-    if (!tool?.execute) throw new PayPalError(500, 'toolkit_tool_missing', null, name)
-    const raw = await tool.execute(args as never, { toolCallId: `mandate-${name}`, messages: [] })
-    const value: unknown = typeof raw === 'string' ? safeParse(raw) : raw
-    const result = (value && typeof value === 'object' ? value : {}) as Json
-    if (result.ok === false) {
-      const status = typeof result.status === 'number' ? result.status : 502
-      throw new PayPalError(status, typeof result.code === 'string' ? result.code : 'paypal_error', null, String(result.message ?? ''))
-    }
-    return result
-  }
+  const run = toolkit.run
 
   return {
     async createDraft(input) {
@@ -92,6 +79,12 @@ export function createToolkitInvoices(options: { clientId: string; clientSecret:
     async get(invoiceId) {
       return parseInvoice(await run('get_invoice', { invoice_id: invoiceId }), invoiceId)
     },
+    async remind(invoiceId, note) {
+      await run('send_invoice_reminder', { invoice_id: invoiceId, subject: 'Reminder: your invoice is waiting', note: note.slice(0, 4000) })
+    },
+    async cancel(invoiceId, note) {
+      await run('cancel_sent_invoice', { invoice_id: invoiceId, note: note.slice(0, 4000), send_to_recipient: true })
+    },
     async findByNumber(invoiceNumber) {
       try {
         const result = await run('list_invoices', { page: 1, page_size: 100, total_required: false })
@@ -103,14 +96,6 @@ export function createToolkitInvoices(options: { clientId: string; clientSecret:
         return null
       }
     },
-  }
-}
-
-function safeParse(text: string): unknown {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return {}
   }
 }
 

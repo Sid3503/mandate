@@ -55,6 +55,9 @@ export type PayPalPort = {
     currency: string
     description: string
     payeeEmail: string | null
+    /** Where PayPal sends the buyer after they approve or cancel. */
+    returnUrl?: string
+    cancelUrl?: string
   }): Promise<CreatedOrder>
   getOrder(orderId: string): Promise<LiveOrder>
   captureOrder(orderId: string, proposalId: string): Promise<CapturedPayment>
@@ -75,6 +78,12 @@ export type PayPalPort = {
     note: string
   }): Promise<SentPayout>
   getPayout(batchId: string): Promise<LivePayout>
+  /** Cancels a payout item PayPal is holding because the receiver has no account. The money goes back to the sender. */
+  cancelPayoutItem(itemId: string): Promise<{ status: string }>
+  /** Asks PayPal whether a webhook really came from PayPal. True only when PayPal says SUCCESS. */
+  verifyWebhook(input: { webhookId: string; headers: Record<string, string>; event: unknown }): Promise<boolean>
+  /** The scopes on the app's access token, which say which PayPal features the app may use. `fresh` forces a new token. */
+  scopes(fresh?: boolean): Promise<string[]>
 }
 
 export class PayPalError extends Error {

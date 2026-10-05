@@ -12,11 +12,12 @@ import { onError, Problem, sendProblem, invalidRequest } from './http/problem'
 import { WEB_CSP, webAsset } from './http/web'
 import { buildOpenApi } from './openapi'
 import type { InvoicePort } from './paypal/invoices'
-import type { PayPalPort } from './paypal/port'
+import { PayPalError, type PayPalPort } from './paypal/port'
 import { handleMcp } from './mcp/http'
 import { AgentService } from './agents/service'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
+import type { WatchPort } from './paypal/watch'
 import { decodeCursor, type HttpResult } from './services/mandate'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from './services/principal'
 
@@ -28,6 +29,8 @@ export type AppDeps = {
   signer?: Signer
   /** Bills clients with PayPal invoices through the Agent Toolkit. Omit for checkout only. */
   invoices?: InvoicePort | null
+  /** Read-only view of the PayPal account: disputes and transactions. Omit and those features are off. */
+  watch?: WatchPort | null
   /** Pre-built services, for when another entry point (the MCP server, the agents) must share them. */
   services?: Services
   /** The language model behind the clerk and the negotiators. Without it the agents are off and everything else works. */
@@ -43,6 +46,8 @@ export type AppDeps = {
     paypalConfigured: boolean
     log: boolean
     publicUrl: string
+    /** PayPal's id for the registered webhook. When set, a webhook must carry a signature PayPal confirms. */
+    webhookId?: string | null
   }
 }
 
@@ -64,7 +69,9 @@ const OWNER_ONLY = [
   { method: 'PUT', pattern: /^\/v1\/party-rules\/[^/]+$/ },
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
-  { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture)$/ },
+  { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
+  { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes)$/ },
+  { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
 ]
 
 /** A client's agent may do only this. Everything else is the studio's business. */
@@ -79,7 +86,7 @@ function isWeb(path: string): boolean {
 
 export function createApp(deps: AppDeps) {
   const app = new Hono<{ Variables: { requestId: string; principal: Principal } }>()
-  const services = deps.services ?? buildServices(deps)
+  const services = deps.services ?? buildServices({ ...deps, publicUrl: deps.config.publicUrl })
   const { mandate: service, deals } = services
   const agents = new AgentService(services, deps.model ?? null, deps.now)
   const buckets = new Map<string, { count: number; reset: number }>()
@@ -240,6 +247,18 @@ export function createApp(deps: AppDeps) {
     await assertEmpty(c)
     return send(c, service.reject(c.req.param('id')))
   })
+  app.post('/v1/proposals/:id/cancel-payout', async (c) => {
+    await assertEmpty(c)
+    return send(c, await service.cancelUnclaimedPayout(c.req.param('id')))
+  })
+  app.post('/v1/proposals/:id/remind-invoice', async (c) => {
+    await assertEmpty(c)
+    return send(c, await service.remindInvoice(c.req.param('id')))
+  })
+  app.post('/v1/proposals/:id/cancel-invoice', async (c) => {
+    await assertEmpty(c)
+    return send(c, await service.cancelInvoice(c.req.param('id')))
+  })
   app.post('/v1/proposals/:id/capture', async (c) => {
     const text = (await c.req.text()).trim()
     let body: unknown = {}
@@ -258,26 +277,72 @@ export function createApp(deps: AppDeps) {
   // PayPal tells us a payout changed. The body is never trusted: it only names a batch, and the
   // batch is re-read from PayPal with our own credentials. A forged call can at worst cause a read.
   app.post('/v1/webhooks/paypal', async (c) => {
-    let batchId: string | null = null
-    let invoiceId: string | null = null
+    const raw = await c.req.text()
+    let event: { id?: unknown; event_type?: unknown; resource?: Record<string, unknown> } = {}
     try {
-      const event = JSON.parse(await c.req.text()) as { event_type?: unknown; resource?: Record<string, unknown> }
-      const resource = event.resource ?? {}
-      const header = resource.batch_header as Record<string, unknown> | undefined
-      const found = resource.payout_batch_id ?? header?.payout_batch_id
-      if (typeof found === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(found)) batchId = found
-      const invoice = (resource.invoice as Record<string, unknown> | undefined)?.id ?? (typeof resource.id === 'string' && resource.id.startsWith('INV') ? resource.id : undefined)
-      if (typeof invoice === 'string' && /^INV[A-Za-z0-9-]{3,64}$/.test(invoice)) invoiceId = invoice
-    } catch {
-      batchId = null
-    }
-    try {
-      if (batchId) return c.json({ received: true, ...(await service.refreshPayoutBatch(batchId)) })
-      if (invoiceId) return c.json({ received: true, ...(await service.refreshInvoice(invoiceId)) })
+      event = JSON.parse(raw) as typeof event
     } catch {
       return c.json({ received: true, refreshed: false })
     }
+    // With a webhook id, PayPal must vouch for the delivery. Without one the body is still never trusted:
+    // it only names something to re-read from PayPal.
+    if (deps.config.webhookId) {
+      const header = (name: string) => c.req.header(name) ?? ''
+      let genuine = false
+      try {
+        genuine = deps.paypal
+          ? await deps.paypal.verifyWebhook({
+              webhookId: deps.config.webhookId,
+              headers: Object.fromEntries(['paypal-auth-algo', 'paypal-cert-url', 'paypal-transmission-id', 'paypal-transmission-sig', 'paypal-transmission-time'].map((name) => [name, header(name)])),
+              event,
+            })
+          : false
+      } catch {
+        genuine = false
+      }
+      if (!genuine) return c.json({ received: false, error: 'webhook.signature_invalid' }, 401)
+    }
+    const eventId = typeof event.id === 'string' && event.id.length <= 128 ? event.id : null
+    const eventType = typeof event.event_type === 'string' ? event.event_type.slice(0, 80) : ''
+    // PayPal retries deliveries. A retry of an event already handled does nothing.
+    if (eventId && !services.repo.claimWebhookEvent(eventId, eventType, deps.now().toISOString())) {
+      return c.json({ received: true, duplicate: true, refreshed: false })
+    }
+    const resource = event.resource ?? {}
+    const header = resource.batch_header as Record<string, unknown> | undefined
+    const found = resource.payout_batch_id ?? header?.payout_batch_id
+    const batchId = typeof found === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(found) ? found : null
+    const invoice = (resource.invoice as Record<string, unknown> | undefined)?.id ?? (typeof resource.id === 'string' && resource.id.startsWith('INV') ? resource.id : undefined)
+    const invoiceId = typeof invoice === 'string' && /^INV[A-Za-z0-9-]{3,64}$/.test(invoice) ? invoice : null
+    try {
+      if (eventType.startsWith('CUSTOMER.DISPUTE.')) return c.json({ received: true, refreshed: (await service.syncDisputes()).checked })
+      if (batchId) return c.json({ received: true, ...(await service.refreshPayoutBatch(batchId)) })
+      if (invoiceId) return c.json({ received: true, ...(await service.refreshInvoice(invoiceId)) })
+    } catch {
+      if (eventId) services.repo.releaseWebhookEvent(eventId)
+      return c.json({ received: true, refreshed: false })
+    }
     return c.json({ received: true, refreshed: false })
+  })
+
+  // ---------- what PayPal knows about the account (owner only) ----------
+  app.get('/v1/paypal/features', async (c) => c.json(await service.features(false)))
+  app.post('/v1/paypal/features/check', async (c) => {
+    await assertEmpty(c)
+    return c.json(await service.features(true))
+  })
+  app.get('/v1/paypal/activity', async (c) => c.json(await service.activity(Number(c.req.query('days') ?? 30) || 30)))
+  app.get('/v1/paypal/disputes', (c) => c.json({ data: services.repo.listDisputes(50) }))
+  app.post('/v1/paypal/disputes/sync', async (c) => {
+    await assertEmpty(c)
+    try {
+      return c.json(await service.syncDisputes())
+    } catch (error) {
+      if (error instanceof PayPalError && (error.httpStatus === 401 || error.httpStatus === 403)) {
+        return c.json({ checked: false, open: 0, disputes: services.repo.listDisputes(50), reason: 'The PayPal app has no Disputes permission.' })
+      }
+      throw new Problem(502, 'paypal.upstream', 'PayPal could not list disputes', error instanceof PayPalError ? error.paypalName : 'unknown')
+    }
   })
 
   app.get('/v1/jobs/:jobId', (c) => c.json({ ...service.job(c.req.param('jobId')), deal: deals.summaryForJob(c.req.param('jobId')) }))

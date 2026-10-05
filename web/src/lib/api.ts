@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { AgentRun, ClerkReply, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
+import type { Activity, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -116,6 +116,13 @@ export const api = {
   propose: (input: ProposalInput, idempotencyKey: string) => request<Proposal>('/v1/proposals', { method: 'POST', body: input, idempotencyKey }),
   approve: (id: string) => request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST' }),
   reject: (id: string) => request<Proposal>(`/v1/proposals/${id}/reject`, { method: 'POST' }),
+  cancelPayout: (id: string) => request<Proposal>(`/v1/proposals/${id}/cancel-payout`, { method: 'POST' }),
+  remindInvoice: (id: string) => request<Proposal>(`/v1/proposals/${id}/remind-invoice`, { method: 'POST' }),
+  cancelInvoice: (id: string) => request<Proposal>(`/v1/proposals/${id}/cancel-invoice`, { method: 'POST' }),
+  features: () => request<Features>('/v1/paypal/features'),
+  checkFeatures: () => request<Features>('/v1/paypal/features/check', { method: 'POST' }),
+  activity: () => request<Activity>('/v1/paypal/activity'),
+  syncDisputes: () => request<{ checked: boolean; open: number }>('/v1/paypal/disputes/sync', { method: 'POST' }),
   capture: (id: string, claimedAmountCents?: number) =>
     request<Proposal>(`/v1/proposals/${id}/capture`, { method: 'POST', body: claimedAmountCents === undefined ? undefined : { claimedAmountCents } }),
   job: (jobId: string) => request<Job>(`/v1/jobs/${encodeURIComponent(jobId)}`),

@@ -36,6 +36,7 @@ export function explainClause(input: ExplainInput): string {
     case 'job.missing': return 'Money in has to name the job it pays for.'
     case 'funding.missing': return 'The client has not paid for this yet, so nothing funds the payout.'
     case 'funding.job_mismatch': return 'That client payment belongs to a different job.'
+    case 'funding.disputed': return 'The client has disputed that payment with PayPal, so it cannot fund a payout until the dispute is resolved.'
     case 'funding.exceeds': return `That client payment cannot fund this much at a ${share} contractor share.`
     case 'deal.required': return 'This job has an agreed deal, so a charge on it must bill one of the deal’s milestones.'
     case 'deal.unknown': return 'The deal this charge names does not exist or was never agreed.'
@@ -74,6 +75,7 @@ export function nextStep(input: { gate: string; phase: string; kind: string }): 
     case 'locked':
     case 'order_created': return kind === 'payment' ? 'Approved and locked. The owner sends the payout from the receipt.' : 'Approved and locked. The owner settles it, and the client pays through PayPal.'
     case 'invoice_sent': return 'A PayPal invoice was sent to the client. It settles when the client pays it.'
+    case 'invoice_cancelled': return 'The invoice was cancelled, so it can no longer be paid. The milestone can be billed again.'
     case 'payout_sent': return 'PayPal has the payout and is processing it. It is not paid until PayPal says so.'
     case 'payout_unclaimed': return 'Sent, but the receiver has no PayPal account yet, so it is not paid.'
     case 'payout_failed': return 'PayPal did not pay it. The reservation was released.'

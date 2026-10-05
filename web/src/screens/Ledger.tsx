@@ -1,14 +1,15 @@
-import { useInfiniteQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef, type ICellRendererParams } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { EnableSteps, useFeatures } from '../components/PayPalFeatures'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { shortId, when } from '../lib/format'
 import { useNames, useNarrow, useProposals, useWarrant } from '../lib/hooks'
 import { dollars } from '../lib/money'
-import type { LedgerEvent, Proposal } from '../lib/types'
+import type { ActivityRow, LedgerEvent, Proposal } from '../lib/types'
 import { EVENT, explain, GATE, KIND, phaseInfo } from '../lib/words'
 
 ModuleRegistry.registerModules([AllCommunityModule])
@@ -48,16 +49,17 @@ function Tone({ value, tone }: { value: string; tone: 'deny' | 'auto' | 'need' |
 }
 
 export function Ledger() {
-  const [tab, setTab] = useState<'requests' | 'events'>('requests')
+  const [tab, setTab] = useState<'requests' | 'events' | 'paypal'>('requests')
   return (
     <div className="page page-wide">
       <PageHead eyebrow="Append-only · every attempt, including the refused ones" title="Ledger">
         <div className="segmented small" role="tablist" data-tour="ledger-tabs">
           <button type="button" role="tab" aria-selected={tab === 'requests'} className={tab === 'requests' ? 'on' : ''} onClick={() => setTab('requests')}>Requests</button>
           <button type="button" role="tab" aria-selected={tab === 'events'} className={tab === 'events' ? 'on' : ''} onClick={() => setTab('events')}>Events</button>
+          <button type="button" role="tab" aria-selected={tab === 'paypal'} className={tab === 'paypal' ? 'on' : ''} onClick={() => setTab('paypal')}>PayPal activity</button>
         </div>
       </PageHead>
-      {tab === 'requests' ? <Requests /> : <Events />}
+      {tab === 'requests' ? <Requests /> : tab === 'events' ? <Events /> : <PayPalActivity />}
     </div>
   )
 }
@@ -185,6 +187,56 @@ function Events() {
         <span>{rows.length} events</span>
         {events.hasNextPage ? <button type="button" className="btn btn-ghost" onClick={() => void events.fetchNextPage()} disabled={events.isFetchingNextPage}>Load older</button> : <span>Start of the ledger</span>}
       </div>
+    </>
+  )
+}
+
+/** What PayPal says moved in the account over the last 30 days, lined up against this ledger. */
+function PayPalActivity() {
+  const navigate = useNavigate()
+  const features = useFeatures()
+  const activity = useQuery({ queryKey: ['paypal-activity'], queryFn: api.activity })
+  const columns = useMemo<ColDef<ActivityRow>[]>(() => [
+    { headerName: 'When', field: 'date', width: 160, sort: 'desc', valueFormatter: (params) => when(params.value as string) },
+    { headerName: 'Amount', field: 'cents', width: 120, cellClass: 'grid-mono', valueFormatter: (params) => dollars(params.value as number) },
+    { headerName: 'What PayPal calls it', flex: 1, minWidth: 220, valueGetter: (params) => params.data?.subject ?? params.data?.counterparty ?? params.data?.eventCode ?? '—' },
+    { headerName: 'PayPal id', field: 'id', width: 190, cellClass: 'grid-mono' },
+    {
+      headerName: 'In the ledger?', width: 190,
+      cellRenderer: (params: ICellRendererParams<ActivityRow>) => params.data?.proposalId ? <Chip tone="auto">Matched</Chip> : <Chip tone="deny">Not in Mandate</Chip>,
+    },
+  ], [])
+  if (activity.isLoading) return <Loading label="Asking PayPal" />
+  const data = activity.data
+  if (!data || !data.available) {
+    const feature = features.data?.features.find((item) => item.id === 'transactions')
+    return (
+      <section className="panel">
+        <h2 className="panel-title">PayPal activity is off</h2>
+        <p>{data?.reason ?? 'PayPal could not be read.'} When it is on, this tab lists everything PayPal shows in the account and flags money that moved without Mandate.</p>
+        {feature && !feature.enabled ? <EnableSteps feature={feature} /> : null}
+        <ProblemCard error={activity.error} />
+      </section>
+    )
+  }
+  return (
+    <>
+      <div className="grid-tools"><p className="fine">{data.matched} matched to a Mandate request · <strong>{data.unmatched}</strong> that Mandate has no record of ({dollars(data.unmatchedNetCents)} net) · last 30 days</p></div>
+      <div className="grid-wrap" style={{ height: Math.min(640, 140 + data.rows.length * 46) }}>
+        <AgGridReact<ActivityRow>
+          theme={theme}
+          rowData={data.rows}
+          columnDefs={columns}
+          getRowId={(params) => params.data.id}
+          rowClassRules={{ 'row-refused': (params) => params.data?.proposalId === null }}
+          onRowClicked={(event) => event.data?.proposalId && navigate(`/p/${event.data.proposalId}`)}
+          rowHeight={44}
+          headerHeight={40}
+          suppressCellFocus
+          overlayNoRowsTemplate="PayPal shows no activity in this window."
+        />
+      </div>
+      <p className="fine">Read-only. Nothing on this tab moves money. A row marked Not in Mandate is money PayPal shows that no Mandate request created or recorded.</p>
     </>
   )
 }

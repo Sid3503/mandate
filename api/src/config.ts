@@ -24,6 +24,7 @@ const EnvSchema = z.object({
   PUBLIC_URL: z.string().min(1).optional(),
   PAYPAL_CLIENT_ID: z.string().min(1).optional(),
   PAYPAL_CLIENT_SECRET: z.string().min(1).optional(),
+  PAYPAL_WEBHOOK_ID: z.string().min(1).optional(),
   PAYPAL_API: z.string().url().default('https://api-m.sandbox.paypal.com'),
   LOG: z.enum(['on', 'off']).default('on'),
 })
@@ -49,6 +50,8 @@ export type AppConfig = {
   log: boolean
   version: string
   paypal: { clientId: string; clientSecret: string; baseUrl: string } | null
+  /** The id PayPal gave the webhook when it was registered. With it, every webhook is checked against PayPal's signature. */
+  paypalWebhookId: string | null
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -97,6 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     publicUrl: value.PUBLIC_URL ?? `http://${value.HOST}:${value.PORT}`,
     log: value.LOG === 'on',
     version: VERSION,
+    paypalWebhookId: value.PAYPAL_WEBHOOK_ID ?? null,
     paypal,
   }
 }

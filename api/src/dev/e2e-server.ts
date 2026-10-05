@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { createApp } from '../app'
 import { migrate, openDatabase, seed } from '../db/database'
 import { createAgentModel } from '../agents/model'
-import { FakeInvoices, FakePayPal } from '../paypal/fake'
+import { FakeInvoices, FakePayPal, FakeWatch } from '../paypal/fake'
 import { demoModel } from './demo-model'
 
 const port = Number(process.env.PORT ?? 8799)
@@ -24,6 +24,7 @@ const app = createApp({
   db,
   paypal,
   invoices,
+  watch: new FakeWatch(),
   model,
   now: () => new Date(),
   config: {
@@ -45,6 +46,11 @@ app.post('/__fake/payouts/:outcome', (c) => {
   if (outcome === 'settle') paypal.settlePayouts('SUCCESS')
   else if (outcome === 'unregistered') paypal.unregistered.add('priya.shah@example.com')
   else if (outcome === 'registered') paypal.unregistered.delete('priya.shah@example.com')
+  else if (outcome === 'buyer-manual') paypal.autoApprove = false
+  else if (outcome === 'buyer-auto') paypal.autoApprove = true
+  else if (outcome === 'buyer-approve') paypal.approveAll()
+  else if (outcome === 'scopes-limited') paypal.scopeList = paypal.scopeList.filter((scope) => !scope.includes('invoicing') && !scope.includes('reporting'))
+  else if (outcome === 'scopes-full') paypal.scopeList = [...new Set([...paypal.scopeList, 'https://uri.paypal.com/services/invoicing', 'https://uri.paypal.com/services/reporting/search/read'])]
   else if (outcome === 'invoices-on') invoices.unauthorised = false
   else if (outcome === 'invoices-off') invoices.unauthorised = true
   else if (outcome === 'invoices-pay') {

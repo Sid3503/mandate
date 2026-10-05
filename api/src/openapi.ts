@@ -258,11 +258,28 @@ export function buildOpenApi(publicUrl: string) {
     },
     responses: { 200: { description: 'Captured or replayed' }, 401: problem, 403: problem, 409: problem, 502: problem, 503: problem },
   })
+  const ownerRoute = (method: 'get' | 'post', path: string, summary: string, withId = false) => registry.registerPath({
+    method,
+    path,
+    tags: ['paypal'],
+    security: bearer,
+    summary: `Owner only. ${summary}`,
+    ...(withId ? { request: { params: z.object({ id: z.uuid() }) } } : {}),
+    responses: { 200: { description: 'OK' }, 401: problem, 403: problem, 409: problem, 502: problem, 503: problem },
+  })
+  ownerRoute('post', '/v1/proposals/{id}/cancel-payout', 'Cancel a payout PayPal is holding as UNCLAIMED. PayPal returns the money and the reservation is released.', true)
+  ownerRoute('post', '/v1/proposals/{id}/remind-invoice', 'Send the client a PayPal reminder for an invoice that is out and unpaid.', true)
+  ownerRoute('post', '/v1/proposals/{id}/cancel-invoice', 'Cancel an invoice that is out and unpaid. The milestone can be billed again.', true)
+  ownerRoute('get', '/v1/paypal/features', 'Which PayPal features this app may use, from its token scopes, with the dashboard steps for any that are off.')
+  ownerRoute('post', '/v1/paypal/features/check', 'Same, after asking PayPal for a fresh token.')
+  ownerRoute('get', '/v1/paypal/activity', 'The last 30 days of PayPal activity (Transaction search) matched against the ledger. Read-only.')
+  ownerRoute('get', '/v1/paypal/disputes', 'Stored PayPal disputes.')
+  ownerRoute('post', '/v1/paypal/disputes/sync', 'Read disputes from PayPal now. A disputed client payment cannot fund a payout (funding.disputed).')
   registry.registerPath({
     method: 'post',
     path: '/v1/webhooks/paypal',
     tags: ['proposals'],
-    summary: 'PayPal payout webhook. No credential. The body only names a payout batch; the batch is re-read from PayPal, so a forged call cannot change a status.',
+    summary: 'PayPal webhook (payout, invoice, dispute events). No credential. The body only names something to re-read from PayPal, so a forged call cannot change a status. With PAYPAL_WEBHOOK_ID set the delivery must also carry a signature PayPal confirms (401 otherwise); repeated event ids are ignored.',
     responses: { 200: { description: 'Received. refreshed says whether a payout was re-read.' } },
   })
   const idParam = z.object({ id: z.uuid() })

@@ -41,6 +41,7 @@ export type Packet = {
     receiver: string | null
   } | null
   job: string | null
+  dispute?: { id: string; status: string; reason: string | null; amountCents: number | null } | null
   funding: {
     captureId: string
     proposalId: string | null
@@ -158,3 +159,32 @@ export type ProposalInput = {
   jobId?: string
   fundingCaptureId?: string
 }
+
+export type Feature = {
+  id: string
+  label: string
+  enabled: boolean
+  core: boolean
+  usedFor: string
+  without: string
+  steps: string[]
+}
+
+export type Features = { configured: boolean; checkedAt: string; features: Feature[] }
+
+export type ActivityRow = {
+  id: string
+  date: string
+  cents: number
+  currency: string
+  status: string
+  eventCode: string | null
+  subject: string | null
+  counterparty: string | null
+  proposalId: string | null
+  matchedBy: string | null
+}
+
+export type Activity =
+  | { available: false; reason: string }
+  | { available: true; from: string; to: string; rows: ActivityRow[]; matched: number; unmatched: number; unmatchedNetCents: number }

@@ -1,4 +1,5 @@
 import type { InvoicePort, InvoiceRequest, LiveInvoice } from './invoices'
+import type { LiveDispute, LiveTransaction, WatchPort } from './watch'
 import { PayPalError, type LivePayout, type PayPalPort } from './port'
 
 type StoredOrder = {
@@ -26,6 +27,7 @@ export class FakePayPal implements PayPalPort {
   /** The status a new payout settles to. Tests set 'PENDING' to simulate a slow batch. */
   payoutOutcome: 'SUCCESS' | 'PENDING' | 'FAILED' = 'SUCCESS'
   payoutCalls = 0
+  lastReturnUrl: string | null = null
 
   readonly orders = new Map<string, StoredOrder>()
   autoApprove = true
@@ -38,7 +40,10 @@ export class FakePayPal implements PayPalPort {
     currency: string
     description: string
     payeeEmail: string | null
+    returnUrl?: string
+    cancelUrl?: string
   }) {
+    this.lastReturnUrl = input.returnUrl ?? null
     const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}`
     const existing = this.orders.get(orderId)
     if (!existing) {
@@ -56,6 +61,11 @@ export class FakePayPal implements PayPalPort {
       approveUrl: `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
       payeeAttached: Boolean(input.payeeEmail),
     }
+  }
+
+  /** The buyer approves every open order in PayPal. */
+  approveAll() {
+    for (const order of this.orders.values()) if (order.status === 'CREATED') order.status = 'APPROVED'
   }
 
   async getOrder(orderId: string) {
@@ -103,6 +113,36 @@ export class FakePayPal implements PayPalPort {
       })
     }
     return { batchId, status: 'PENDING' }
+  }
+
+  /** Scopes the fake app has. Tests remove some to see Mandate cope with a feature that is off. */
+  scopeList: string[] = [
+    'https://uri.paypal.com/services/payments/refund', 'https://uri.paypal.com/payments/payouts', 'https://api.paypal.com/v1/payments/.*',
+    'https://uri.paypal.com/services/invoicing', 'https://uri.paypal.com/services/reporting/search/read',
+    'https://uri.paypal.com/services/disputes/read-seller', 'https://uri.paypal.com/services/applications/webhooks',
+  ]
+  scopeChecks = 0
+  async scopes(fresh = false) {
+    if (fresh) this.scopeChecks += 1
+    return this.scopeList
+  }
+
+  /** What the fake says when asked to verify a webhook signature. */
+  webhookValid = true
+  verifyCalls = 0
+  async verifyWebhook() {
+    this.verifyCalls += 1
+    return this.webhookValid
+  }
+
+  cancelCalls = 0
+  async cancelPayoutItem(itemId: string) {
+    this.cancelCalls += 1
+    const payout = [...this.payouts.values()].find((item) => item.itemId === itemId)
+    if (!payout) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', null, itemId)
+    if (payout.status !== 'UNCLAIMED') throw new PayPalError(422, 'INVALID_PAYOUT_ITEM_STATUS', null, payout.status)
+    payout.status = 'RETURNED'
+    return { status: 'RETURNED' }
   }
 
   async getPayout(batchId: string): Promise<LivePayout> {
@@ -194,6 +234,21 @@ export class FakeInvoices implements InvoicePort {
     }
   }
 
+  remindCalls: string[] = []
+  async remind(invoiceId: string) {
+    const invoice = this.invoices.get(invoiceId)
+    if (!invoice || invoice.status === 'DRAFT') throw new PayPalError(422, 'INVALID_INVOICE_STATE', null, 'only a sent invoice can be reminded')
+    if (invoice.status === 'PAID' || invoice.status === 'CANCELLED') throw new PayPalError(422, 'INVALID_INVOICE_STATE', null, invoice.status)
+    this.remindCalls.push(invoiceId)
+  }
+
+  async cancel(invoiceId: string) {
+    const invoice = this.invoices.get(invoiceId)
+    if (!invoice) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', null, invoiceId)
+    if (invoice.status === 'PAID') throw new PayPalError(422, 'INVALID_INVOICE_STATE', null, 'a paid invoice cannot be cancelled')
+    invoice.status = 'CANCELLED'
+  }
+
   async findByNumber(number: string) {
     const found = [...this.invoices.entries()].find(([, item]) => item.number === number)
     return found ? { invoiceId: found[0] } : null
@@ -215,5 +270,25 @@ export class FakeInvoices implements InvoicePort {
   /** Simulates PayPal reporting a different total than the one we asked for. */
   mutateTotal(invoiceId: string, cents: number) {
     this.invoices.get(invoiceId)!.totalCents = cents
+  }
+}
+
+export class FakeWatch implements WatchPort {
+  transactions: LiveTransaction[] = []
+  disputes: LiveDispute[] = []
+  calls = { transactions: 0, disputes: 0 }
+  /** HTTP status to fail with, or 0 for none. 403 is an app without the permission. */
+  failStatus = 0
+
+  async listTransactions() {
+    this.calls.transactions += 1
+    if (this.failStatus) throw new PayPalError(this.failStatus, 'UPSTREAM', null, 'down')
+    return this.transactions
+  }
+
+  async listDisputes(input?: { transactionId?: string }) {
+    this.calls.disputes += 1
+    if (this.failStatus) throw new PayPalError(this.failStatus, 'UPSTREAM', null, 'down')
+    return input?.transactionId ? this.disputes.filter((item) => item.transactionIds.includes(input.transactionId!)) : this.disputes
   }
 }

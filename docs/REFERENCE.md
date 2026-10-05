@@ -184,7 +184,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 110 API tests (Vitest), plus 34 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 128 API tests (Vitest), plus 38 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -340,6 +340,7 @@ npm run setup            # npm ci in api/ and web/, including dev dependencies
 | `OLLAMA_API_KEY` | unset | Turns the clerk and negotiating agents on. |
 | `AGENT_MODEL` | `gpt-oss:20b` | Any Ollama model that supports tool calls. |
 | `OLLAMA_BASE_URL` | `https://ollama.com` | Use `http://127.0.0.1:11434` for a local Ollama. |
+| `PAYPAL_WEBHOOK_ID` | unset | The id PayPal gives a registered webhook. When set, every call to `POST /v1/webhooks/paypal` must carry a signature PayPal confirms (`verify-webhook-signature`); otherwise it gets 401. Deliveries are de-duplicated by event id either way. |
 | `INVOICES` | `auto` | `auto` bills clients by PayPal invoice when the app may, else by checkout. `off` is checkout only. |
 | `LOG` | `on` | One JSON log line per request. |
 
@@ -725,6 +726,7 @@ Import `api/postman/Mandate.postman_collection.json` and `api/postman/Mandate.lo
 | `job.missing` | DENY | Money in must name its job. |
 | `funding.missing` | DENY or 409 | The client has not paid for this yet, so nothing funds the payout. |
 | `funding.job_mismatch` | DENY | That client payment belongs to a different job. |
+| `funding.disputed` | DENY or 409 | The client has an open PayPal dispute on that payment, so it cannot fund a payout until the dispute is resolved. At capture the server asks PayPal first; if PayPal cannot answer, the payout waits (`funding.unverifiable`, 503). |
 | `funding.exceeds` | DENY or 409 | That client payment cannot fund this much at the contractor share (or it was refunded). |
 | `deal.over_buyer_limit`, `deal.under_seller_minimum`, `deal.shape`, `deal.currency`, `deal.category_*`, `deal.milestone_too_large`, `deal.milestone_too_small`, `deal.too_many_milestones`, `deal.proof_required`, `deal.due_date_past`, `deal.job_taken`, `deal.thread_closed` | REFUSED offer | The deal check: terms outside one side's rules. |
 | `deal.required`, `deal.unknown`, `deal.job_mismatch`, `deal.party_mismatch`, `deal.milestone_unknown`, `deal.milestone_mismatch`, `deal.milestone_billed` | DENY | A charge on a job with an agreed deal must bill one of its milestones, exactly once, for exactly the agreed cents. |
@@ -737,6 +739,21 @@ HTTP problems that are not rule decisions: `auth.unauthorized` (401), `auth.forb
 ---
 
 ## PayPal integration
+
+### Features the app may use, and what Mandate does with each
+
+The PayPal developer dashboard has a tick box per feature on each app. Mandate reads the permissions on the app's access token (`GET /v1/paypal/features`, shown on the System screen with a **Check again** button) and says what each missing feature costs, with the dashboard steps to turn it on. Labels in the dashboard: **Invoicing**, **Transaction search**, **Customer disputes**, **Payouts** (an app made before a box was ticked may need a restart, or a new app with the box ticked before its first token).
+
+| Feature | What Mandate does with it | Routes | If it is off |
+| --- | --- | --- | --- |
+| Orders / Payments | Client pays by checkout. PayPal returns the buyer to the receipt (`?paypal=return`), which settles by itself. | `POST /v1/proposals/:id/capture` | Clients cannot be billed. |
+| Payouts | Pays the contractor. An **unclaimed** payout can be cancelled and the money returned. | `…/capture`, `POST …/cancel-payout` | Contractors cannot be paid. |
+| Invoicing (Agent Toolkit) | Bills with a real invoice; the owner can send a **reminder** or **cancel** a wrong one (the milestone can then be billed again). | `POST …/remind-invoice`, `POST …/cancel-invoice` | Billing falls back to checkout. |
+| Customer disputes | Watches for client disputes every minute, on demand, and on `CUSTOMER.DISPUTE.*` webhooks. A disputed client payment cannot fund a payout (`funding.disputed`). | `GET /v1/paypal/disputes`, `POST /v1/paypal/disputes/sync` | Payouts are not held for disputes. |
+| Transaction search | Lists the last 30 days of PayPal activity and matches it to the ledger; a transaction Mandate did not create is flagged **Not in Mandate**. Read-only. | `GET /v1/paypal/activity` | The Ledger's PayPal activity tab shows the enable steps. |
+| Webhooks | Payout, invoice and dispute events nudge a re-read. Optional signature verification and event-id de-duplication. | `POST /v1/webhooks/paypal` | The owner presses Check PayPal. |
+
+All of these routes are owner-only. The watch calls are read-only and go through PayPal's Agent Toolkit (`list_transactions`, `list_disputes`, `get_dispute`).
 
 | Job | PayPal product | Status |
 | --- | --- | --- |
@@ -770,8 +787,8 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 110 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 34 Playwright tests (desktop 1440×960 and Pixel 7)
+cd api && npm test && npm run typecheck        # 128 Vitest tests
+cd web && npm run typecheck && npm run e2e     # 38 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 
 **API tests (`api/test/`)** cover:

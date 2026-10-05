@@ -17,6 +17,7 @@ export const Clause = {
   fundingMissing: 'funding.missing',
   fundingJobMismatch: 'funding.job_mismatch',
   fundingExceeds: 'funding.exceeds',
+  fundingDisputed: 'funding.disputed',
   dealUnknown: 'deal.unknown',
   dealRequired: 'deal.required',
   dealJobMismatch: 'deal.job_mismatch',
@@ -53,6 +54,8 @@ export type FundingCharge = {
   capturedCents: number
   refundHeldCents: number
   payoutHeldCents: number
+  /** PayPal has an open dispute on this client payment. Money that may be taken back is not spent. */
+  disputed?: boolean
 }
 
 /** What the gate needs to know about the deal a charge bills, resolved by the service from the database. */
@@ -159,6 +162,9 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
     }
     if (funding.currency !== proposal.currency) {
       return deny(Clause.currencyMismatch, 'payout currency must match the client payment')
+    }
+    if (funding.disputed) {
+      return deny(Clause.fundingDisputed, `the client has an open PayPal dispute on payment ${proposal.fundingCaptureId}, so it cannot fund a payout until the dispute is resolved`)
     }
     const available = fundableCents(warrant, funding)
     if (proposal.amountCents > available) {

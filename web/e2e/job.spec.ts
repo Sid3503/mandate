@@ -262,6 +262,9 @@ test('a receiver PayPal cannot find is unclaimed, and a failed payout is release
   await expect(status.locator('.chip').first()).toHaveText('Sent · unclaimed')
   await expect(status).toContainText('Mandate does not count it as paid')
   await shots(page, '18-payout-unclaimed')
+  await status.getByRole('button', { name: 'Cancel and return the money' }).click()
+  await expect(status.locator('.chip').first()).toHaveText('Payout failed')
+  await expect(page.getByText('Unclaimed payout cancelled · money returned')).toBeVisible()
   await fake(request, 'registered')
 
   await fake(request, 'FAILED')
@@ -272,6 +275,43 @@ test('a receiver PayPal cannot find is unclaimed, and a failed payout is release
   await expect(status).toContainText('PayPal did not pay Priya Shah')
   await shots(page, '19-payout-failed')
   await fake(request, 'SUCCESS')
+})
+
+test('the PayPal features panel says what is on, what is off, and how to turn it on', async ({ page, request }) => {
+  await fake(request, 'scopes-limited')
+  await unlock(page, OWNER)
+  await page.goto('/app/system')
+  const panel = page.locator('[data-tour="system-features"]')
+  const invoicing = panel.locator('.features li').filter({ has: page.getByText('Invoicing', { exact: true }) })
+  await expect(invoicing.locator('.chip')).toHaveText('Off')
+  await expect(panel.locator('.features li').filter({ has: page.getByText('Payouts', { exact: true }) }).locator('.chip')).toHaveText('On')
+  await invoicing.getByText('How to turn it on').click()
+  await expect(invoicing).toContainText('tick Invoicing')
+  await shots(page, '31-paypal-features')
+  await fake(request, 'scopes-full')
+  await panel.getByRole('button', { name: 'Check again' }).first().click()
+  await expect(invoicing.locator('.chip')).toHaveText('On')
+})
+
+test('PayPal sends the buyer back to the receipt, which settles by itself', async ({ page, request }) => {
+  await fake(request, 'buyer-manual')
+  const headers = { authorization: `Bearer ${OWNER}` }
+  const job = `job_return_${test.info().project.name}`
+  const asked = await (await request.post('/v1/proposals', {
+    headers: { ...headers, 'idempotency-key': `return-${job}-0001` },
+    data: { kind: 'charge', payee: 'Northwind', amountCents: 15000, currency: 'USD', category: 'design', description: 'Return milestone', evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job },
+  })).json()
+  await request.post(`/v1/proposals/${asked.id}/approve`, { headers })
+  await unlock(page, OWNER)
+  await page.goto(`/app/p/${asked.id}`)
+  await page.getByRole('button', { name: /Settle \$150\.00/ }).click()
+  await expect(page.locator('.buyer')).toContainText('the PayPal buyer approves')
+  // The buyer approves on PayPal, and PayPal sends them back here.
+  await fake(request, 'buyer-approve')
+  await page.goto(`/app/p/${asked.id}?paypal=return`)
+  await expect(page.locator('.match-flag')).toHaveText('cents match ✓')
+  await expect(page).not.toHaveURL(/paypal=return/)
+  await fake(request, 'buyer-auto')
 })
 
 test('an owner can cancel a locked payout before it is sent', async ({ page, request }) => {

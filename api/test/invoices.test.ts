@@ -85,7 +85,7 @@ describe('billing a client with a PayPal invoice', () => {
     const sent = (await call(app, 'POST', `/v1/proposals/${id}/capture`)).json
     invoices.setStatus(sent.invoiceId, 'CANCELLED')
     const result = await call(app, 'POST', `/v1/proposals/${id}/capture`)
-    expect(result.json.phase).toBe('capture_refused')
+    expect(result.json.phase).toBe('invoice_cancelled')
   })
 
   it('falls back to checkout when the PayPal app may not send invoices', async () => {

@@ -25,6 +25,7 @@ export const PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
   capture_refused: { label: 'Refused at PayPal', tone: 'deny' },
   invoice_draft: { label: 'Invoice drafted', tone: 'need' },
   invoice_sent: { label: 'Invoice sent · waiting for the client', tone: 'need' },
+  invoice_cancelled: { label: 'Invoice cancelled', tone: 'muted' },
   payout_sent: { label: 'Sent · PayPal processing', tone: 'need' },
   payout_unclaimed: { label: 'Sent · unclaimed', tone: 'need' },
   payout_failed: { label: 'Payout failed', tone: 'deny' },
@@ -72,6 +73,11 @@ export const EVENT: Record<string, string> = {
   'payout.completed': 'Paid by PayPal',
   'payout.unclaimed': 'Sent · receiver has no PayPal account yet',
   'payout.failed': 'PayPal failed the payout',
+  'payout.cancelled': 'Unclaimed payout cancelled · money returned',
+  'invoice.reminded': 'Reminder sent to the client',
+  'invoice.cancelled': 'Invoice cancelled',
+  'dispute.opened': 'Client opened a PayPal dispute',
+  'dispute.resolved': 'PayPal dispute resolved',
 }
 
 export type Names = (id: string | null | undefined) => string
@@ -110,6 +116,7 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
     case 'job.missing': return 'Money in has to name the job it pays for.'
     case 'funding.missing': return 'The client has not paid for this yet, so nothing funds the payout.'
     case 'funding.job_mismatch': return 'That client payment belongs to a different job.'
+    case 'funding.disputed': return 'The client has disputed that payment with PayPal, so it cannot fund a payout until the dispute is resolved.'
     case 'funding.exceeds': return `That client payment cannot fund this much at a ${share} contractor share.`
     case 'deal.required': return 'This job has an agreed deal, so a charge on it must bill one of the deal’s milestones.'
     case 'deal.unknown': return 'The deal this charge names does not exist or was never agreed.'

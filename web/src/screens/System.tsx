@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useGuide } from '../components/GuidedTour'
+import { FeaturePanel } from '../components/PayPalFeatures'
 import { Chip, KV, Loading, PageHead } from '../components/ui'
 import { api } from '../lib/api'
 import { when } from '../lib/format'
@@ -26,6 +27,7 @@ export function System() {
         <button type="button" className="btn btn-ghost" onClick={() => guide.start('welcome')}>Take the full tour</button>
         <button type="button" className="btn btn-ghost" onClick={lock}>Lock console</button>
       </PageHead>
+      <FeaturePanel />
       <div className="rules-grid">
         <section className="panel" data-tour="system-checks">
           <h2 className="panel-title">Checks</h2>

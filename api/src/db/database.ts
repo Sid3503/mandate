@@ -106,6 +106,24 @@ CREATE TABLE IF NOT EXISTS deals (
 CREATE INDEX IF NOT EXISTS deals_thread ON deals(thread_id, created_at);
 CREATE INDEX IF NOT EXISTS deals_created ON deals(created_at DESC, id DESC);
 
+CREATE TABLE IF NOT EXISTS webhook_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  received_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS paypal_disputes (
+  dispute_id TEXT PRIMARY KEY,
+  transaction_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reason TEXT,
+  amount_cents INTEGER,
+  currency TEXT,
+  opened_at TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS paypal_disputes_txn ON paypal_disputes(transaction_id);
+
 CREATE TABLE IF NOT EXISTS signing_keys (
   key_id TEXT PRIMARY KEY,
   public_pem TEXT NOT NULL,
