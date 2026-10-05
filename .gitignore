@@ -1,5 +1,6 @@
 .env
 .opencode.firecrawl_key
+cookies.txt
 node_modules/
 api/data/
 *.sqlite

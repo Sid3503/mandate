@@ -574,7 +574,7 @@
             <p class="small">The deal, both rule sets, every approval, every PayPal id, cents that match.</p></article>
         </section>
         <div class="job-foot"><span class="chip deny">Rule</span><p>The studio never pays Priya with money it hasn’t received, unless Meera’s rules say it can.</p></div>
-        <p class="speaker-note">Here’s the product as one job. Northwind’s AI agent and the studio’s AI agent negotiate a three-hundred-dollar logo in plain language, two milestones of one-fifty, and the deal is only accepted because it fits inside both owners’ rules. The studio bills milestone one, Meera taps, and Northwind pays through PayPal Orders; that part is live in the sandbox. Invoices through PayPal’s Agent Toolkit are next. Priya delivers the Figma file. That captured one-fifty unlocks Priya’s ninety-dollar share; Meera taps once and PayPal Payouts sends it to her own account, live in the sandbox. One receipt covers the whole job.</p>
+        <p class="speaker-note">Here’s the product as one job. Northwind’s AI agent and the studio’s AI agent negotiate a three-hundred-dollar logo in plain language, two milestones of one-fifty, and the deal is only accepted because it fits inside both owners’ rules. The studio bills milestone one, Meera taps, and Northwind pays through PayPal Orders; that part is live in the sandbox. Billing by invoice through PayPal’s Agent Toolkit is built, but this sandbox app lacks the Invoicing permission, so it falls back to checkout. Priya delivers the Figma file. That captured one-fifty unlocks Priya’s ninety-dollar share; Meera taps once and PayPal Payouts sends it to her own account, live in the sandbox. One receipt covers the whole job.</p>
       </article>
 
       <article class="slide" data-slide="7" data-od-id="slide-negotiation">
@@ -603,7 +603,7 @@
             <span class="tag">Deal check + invoices · built</span>
           </aside>
         </section>
-        <p class="speaker-note">This is what the negotiation looks like. Both agents run on a free open-weights model and talk in plain language. Every offer goes through Mandate first. The studio agent’s four-fifty is refused because it’s over Northwind’s limit. Northwind’s two hundred is refused because it’s under the studio’s minimum. Three hundred in two milestones is accepted, and the terms are locked into one hash. Then Mandate, not the agent, calls PayPal’s Agent Toolkit to create and send the invoice. The agents talk; the rules decide.</p>
+        <p class="speaker-note">This is what the negotiation looks like. Both agents run on a free open-weights model and talk in plain language. Every offer goes through Mandate first. The studio agent’s four-fifty is refused because it’s over Northwind’s limit. Northwind’s two hundred is refused because it’s under the studio’s minimum. Three hundred in two milestones is accepted, and the terms are locked into one hash. Then Mandate, not the agent, bills the client: through PayPal’s Agent Toolkit invoice tools where the app is allowed to invoice, and through checkout where it is not. The agents talk; the rules decide.</p>
       </article>
 
       <article class="slide" data-slide="8" data-od-id="slide-deal">
@@ -662,7 +662,7 @@
           <div class="node"><strong>Receipt</strong><span class="micro">every dollar explained</span></div>
           <div class="no-path">LOCKED: no agent holds the PayPal token</div>
         </section>
-        <p class="speaker-note">The whole system in one line. Agents, ours or anyone’s, connect only to Mandate’s MCP server, which has six tools to read and ask. Nothing that pays. Every proposal hits a rules gate written in plain code, checked against both sides’ rules, with three possible answers. If the owner needs to approve, her tap makes the server sign a lock with Ed25519 that fixes the payee, the cents and the proof. Only then does Mandate call PayPal: Orders for money in and Payouts for money out are live today, and PayPal’s Agent Toolkit is next. A PayPal webhook makes the server re-read the payout from PayPal, and the receipt explains every dollar. No agent ever holds the token.</p>
+        <p class="speaker-note">The whole system in one line. Agents, ours or anyone’s, connect only to Mandate’s MCP server, which has six tools to read and ask. Nothing that pays. Every proposal hits a rules gate written in plain code, checked against both sides’ rules, with three possible answers. If the owner needs to approve, her tap makes the server sign a lock with Ed25519 that fixes the payee, the cents and the proof. Only then does Mandate call PayPal: Orders for money in and Payouts for money out are live today, and invoices through PayPal’s Agent Toolkit are built, with checkout as the fallback. A PayPal webhook makes the server re-read the payout from PayPal, and the receipt explains every dollar. No agent ever holds the token.</p>
       </article>
 
       
@@ -895,8 +895,8 @@
         <section class="pp3" data-od-id="paypal-columns">
           <section class="card lime-panel"><span class="tag">MONEY IN · LIVE TODAY</span>
             <div class="fact-list"><div>Orders v2 create · get · capture</div><div>stable request ids, no double orders</div><div>live order checked before capture</div><div>refunds via Payments v2, gated again</div><div>4 completed sandbox payments</div></div></section>
-          <section class="card black-panel"><span class="tag">AGENT TOOLKIT · LIVE</span>
-            <div class="fact-list"><div>create_invoice · send_invoice · get_invoice</div><div>run inside our server</div><div>never handed to a model</div><div>falls back to checkout if the app may not invoice</div><div>paid only when PayPal says PAID, for the exact cents</div></div></section>
+          <section class="card black-panel"><span class="tag">AGENT TOOLKIT · BUILT</span>
+            <div class="fact-list"><div>create_invoice · send_invoice · get_invoice</div><div>run inside our server</div><div>never handed to a model</div><div>sandbox app lacks the permission today, so it falls back to checkout</div><div>paid only when PayPal says PAID, for the exact cents</div></div></section>
           <section class="card"><span class="tag">MONEY OUT · LIVE TODAY</span>
             <div class="fact-list"><div>Payouts v1 to Priya’s own account</div><div>batch id comes from the lock hash</div><div>paid only when PayPal says SUCCESS</div><div>unclaimed and failed shown, never “paid”</div><div>webhook makes the server re-read PayPal</div></div></section>
         </section>
@@ -949,7 +949,7 @@
         <div class="eyebrow">Sponsor tools · each one does a real job</div>
         <h2 class="h-tight">Sponsor tools can read or propose. Only Mandate can pay.</h2>
         <section class="sp" style="grid-template-columns:repeat(4,1fr)" data-od-id="sponsor-cards">
-          <article class="card lime-panel"><span class="micro">AG Grid · deep</span><h3>Owner’s control room</h3><p class="job">Ledger, refusals, money in vs out per job, money moved outside Mandate. A read-only agent that builds views from plain words is next.</p><span class="tag mode">read-only</span></article>
+          <article class="card lime-panel"><span class="micro">AG Grid · deep</span><h3>Owner’s control room</h3><p class="job">Ledger, refusals, money in vs out per job. A read-only agent that builds views from plain words is next.</p><span class="tag mode">read-only</span></article>
           <article class="card"><span class="micro">Render</span><h3>Hosting judges can use</h3><p class="job">Public HTTPS for PayPal webhooks. Blueprint ready, demo data reseeded on every boot.</p><span class="tag mode">infrastructure</span></article>
           <article class="card"><span class="micro">Postman</span><h3>One-click proof</h3><p class="job">The acceptance cases run as tests: “lunch denied, no order”. Public workspace next.</p><span class="tag mode">calls the API</span></article>
           <article class="card"><span class="micro">APIMatic</span><h3>Correct PayPal code</h3><p class="job">Context Plugin and an SDK generated from our OpenAPI. Next.</p><span class="tag mode">build time</span></article>
