@@ -627,7 +627,7 @@ ol.tour-list { padding-left: 22px; }
 .land-shots figure:first-child { grid-row: span 2; }
 .land-shots img { width: 100%; height: auto; border: 2px solid var(--ink); box-shadow: var(--shadow-s); background: var(--surface); }
 .land-shots figcaption { font-size: 14px; line-height: 1.45; max-width: 60ch; }
-.land-table-wrap { overflow-x: auto; border: 2px solid var(--ink); background: var(--surface); }
+.land-table-wrap { overflow-x: auto; overflow-y: hidden; border: 2px solid var(--ink); background: var(--surface); }
 .land-table { width: 100%; border-collapse: collapse; font-size: 16px; }
 .land-table th { text-align: left; background: var(--ink); color: var(--paper); font: 700 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; padding: 14px 16px; }
 .land-table td { padding: 14px 16px; border-top: 1px solid var(--line); vertical-align: top; }
@@ -671,6 +671,99 @@ ol.tour-list { padding-left: 22px; }
   .land-steps li, .land-facts li { border-right: 0; }
   .land-table th:nth-child(3), .land-table td:nth-child(3) { display: none; }
 }
+
+/* ---------- motion ---------- */
+:root { --ease: cubic-bezier(0.2, 0.7, 0.2, 1); }
+html { scroll-behavior: smooth; }
+[id] { scroll-margin-top: 76px; }
+@keyframes enter { from { opacity: 0; transform: translateY(14px); } }
+@keyframes pop { 0% { opacity: 0; transform: scale(0.6); } 60% { transform: scale(1.12); } 100% { opacity: 1; transform: none; } }
+@keyframes card-in { from { opacity: 0; transform: translateY(44px) rotate(6deg); } }
+
+/* Each screen arrives in order: heading, then the blocks under it. */
+.page > * { animation: enter 0.55s var(--ease) both; }
+.page > :nth-child(1) { animation-delay: 30ms; } .page > :nth-child(2) { animation-delay: 90ms; } .page > :nth-child(3) { animation-delay: 150ms; }
+.page > :nth-child(4) { animation-delay: 210ms; } .page > :nth-child(5) { animation-delay: 270ms; } .page > :nth-child(6) { animation-delay: 330ms; }
+.page > :nth-child(n + 7) { animation-delay: 380ms; }
+.approvals > *, .list > *, .job-cards > *, .refusals > *, .deal-list > *, .payouts > li, .totals > *, .receipt-grid > div > * { animation: enter 0.5s var(--ease) both; }
+.approvals > :nth-child(2), .list > :nth-child(2), .job-cards > :nth-child(2), .refusals > :nth-child(2), .deal-list > :nth-child(2), .totals > :nth-child(2), .receipt-grid > div > :nth-child(2) { animation-delay: 70ms; }
+.approvals > :nth-child(3), .list > :nth-child(3), .job-cards > :nth-child(3), .refusals > :nth-child(3), .deal-list > :nth-child(3), .totals > :nth-child(3), .receipt-grid > div > :nth-child(3) { animation-delay: 140ms; }
+.approvals > :nth-child(n + 4), .list > :nth-child(n + 4), .job-cards > :nth-child(n + 4), .refusals > :nth-child(n + 4), .deal-list > :nth-child(n + 4), .totals > :nth-child(n + 4), .receipt-grid > div > :nth-child(n + 4) { animation-delay: 200ms; }
+.answer, .problem, .approval-locked, .refused-claim, .still-waiting, .sig-result, .editor { animation: enter 0.4s var(--ease) both; }
+.chip-pop { animation: pop 0.38s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+
+/* Things that respond to a hand. */
+.approval { transition: box-shadow 0.25s ease, transform 0.25s ease, background-color 0.4s ease; }
+.approval.is-locked { background: var(--lime-soft); }
+.list-row { transition: background-color 0.15s ease, padding-left 0.18s var(--ease); }
+.list-row:hover { padding-left: 22px; }
+.list-go { transition: transform 0.18s var(--ease); display: inline-block; }
+.list-row:hover .list-go { transform: translateX(5px); }
+.refusal { transition: box-shadow 0.18s ease, transform 0.18s ease; }
+.refusal:hover { transform: translate(-1px, -1px); }
+.filter, .segmented button, .segmented label, .example, .chip { transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease; }
+.field input, .field select, .field textarea, .search, .dollar-input { transition: box-shadow 0.15s ease, border-color 0.15s ease; }
+.link { transition: opacity 0.15s ease; } .link:hover { opacity: 0.6; }
+.panel { transition: box-shadow 0.2s ease; }
+.deal-card { transition: box-shadow 0.25s ease, background-color 0.4s ease; }
+.milestones li, .offers li, .steps-list li, .trace li { transition: background-color 0.25s ease; }
+.bar i { transition: width 0.8s var(--ease); }
+
+/* The navigation marks where you are, and the mark slides there. */
+.rail-link, .tab { position: relative; transition: color 0.15s ease, border-color 0.15s ease; }
+.rail-link.active { background: transparent; border-color: transparent; color: var(--ink); }
+.pill { position: absolute; inset: 0; background: var(--lime); z-index: 0; }
+.rail-link > :not(.pill):not(.badge), .tab > :not(.pill):not(.badge) { position: relative; z-index: 1; }
+.rail-link > .badge, .tab > .badge { z-index: 1; }
+.rail-link > .badge { position: relative; }
+@media (max-width: 860px) { .tab.active { background: transparent; } }
+
+/* Loading holds the shape of the page. */
+.loading { display: grid; gap: 12px; padding: 8px 0 20px; }
+.loading-head { display: flex; align-items: center; gap: 12px; }
+.skel { display: block; height: 16px; background: linear-gradient(90deg, var(--stone) 25%, var(--paper) 50%, var(--stone) 75%); background-size: 200% 100%; animation: shimmer 1.3s linear infinite; }
+.skel-title { height: 44px; width: 42%; } .skel-line { width: 100%; } .skel-line.short { width: 62%; } .skel-block { height: 120px; width: 100%; }
+
+/* A short confirmation. It never holds information you need later. */
+.toasts { position: fixed; right: 20px; bottom: 20px; z-index: 900; display: grid; gap: 10px; width: min(380px, calc(100vw - 32px)); pointer-events: none; }
+.toast { pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; border: 2px solid var(--ink); background: var(--surface); box-shadow: var(--shadow-s); padding: 12px 12px 12px 14px; }
+.toast-good { background: var(--lime); }
+.toast-bad { background: var(--ink); color: var(--lime); border-color: var(--lime); }
+.toast-mark { flex: none; width: 24px; height: 24px; display: grid; place-items: center; background: var(--ink); color: var(--lime); }
+.toast-info .toast-mark { background: var(--ink); color: var(--paper); }
+.toast-text { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.toast-text strong { font-size: 15px; } .toast-text span { font-size: 13px; line-height: 1.4; }
+.toast-x { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border: 0; background: transparent; cursor: pointer; color: inherit; }
+.toast-x:hover { background: rgba(5,5,5,0.12); }
+@media (max-width: 860px) { .toasts { left: 16px; right: 16px; width: auto; bottom: calc(var(--tab) + 14px + env(safe-area-inset-bottom)); } }
+
+/* The front door and the unlock screen arrive, they do not appear. */
+.land-hero-copy > * { animation: enter 0.7s var(--ease) both; }
+.land-hero-copy > :nth-child(1) { animation-delay: 60ms; } .land-hero-copy > :nth-child(2) { animation-delay: 140ms; } .land-hero-copy > :nth-child(3) { animation-delay: 240ms; }
+.land-hero-copy > :nth-child(4) { animation-delay: 330ms; } .land-hero-copy > :nth-child(5) { animation-delay: 400ms; }
+.land-card { animation: card-in 1s cubic-bezier(0.2, 0.9, 0.3, 1.05) 0.25s both; }
+.land-figure figcaption { animation: enter 0.6s var(--ease) 0.9s both; }
+.land-nav { animation: enter 0.5s var(--ease) both; }
+.unlock-hero > * { animation: enter 0.7s var(--ease) both; }
+.unlock-hero > :nth-child(1) { animation-delay: 40ms; } .unlock-hero > :nth-child(2) { animation-delay: 120ms; } .unlock-hero > :nth-child(3) { animation-delay: 220ms; } .unlock-hero > :nth-child(4) { animation-delay: 320ms; }
+.unlock-card > * { animation: enter 0.6s var(--ease) both; }
+.unlock-card > :nth-child(1) { animation-delay: 160ms; } .unlock-card > :nth-child(2) { animation-delay: 240ms; } .unlock-card > :nth-child(3) { animation-delay: 320ms; } .unlock-card > :nth-child(4) { animation-delay: 380ms; }
+
+/* Landing sections arrive as they scroll into view. */
+.reveal-ready [data-reveal] { opacity: 0; transform: translateY(34px); transition: opacity 0.8s ease, transform 0.8s var(--ease); }
+.reveal-ready [data-reveal].is-in { opacity: 1; transform: none; }
+.reveal-ready [data-reveal] tr[data-reveal-item] { transform: none; }
+.reveal-ready [data-reveal] [data-reveal-item] { opacity: 0; transform: translateY(24px) scale(0.985); transition: opacity 0.6s ease, transform 0.65s var(--ease); transition-delay: calc(min(var(--i, 0), 8) * 85ms + 140ms); }
+.reveal-ready [data-reveal].is-in [data-reveal-item] { opacity: 1; transform: none; }
+.land-zero { transition: letter-spacing 1.2s var(--ease); }
+.reveal-ready .land-zero { letter-spacing: 0.08em; }
+.reveal-ready .is-in .land-zero { letter-spacing: 0; }
+.land-links a { transition: border-color 0.15s ease; }
+.land-steps li, .land-flow li:not(.arrow) { transition: transform 0.2s var(--ease), box-shadow 0.2s ease; }
+.land-steps li:hover, .land-flow li:not(.arrow):hover { transform: translateY(-4px); box-shadow: var(--shadow-s); }
+.land-shots img { transition: transform 0.3s var(--ease), box-shadow 0.3s ease; }
+.land-shots img:hover { transform: translate(-3px, -3px); box-shadow: var(--shadow); }
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

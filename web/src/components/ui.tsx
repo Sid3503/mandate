@@ -4,8 +4,8 @@ import { dollars } from '../lib/money'
 import { GATE, phaseInfo, problemWords } from '../lib/words'
 import type { Gate, Proposal } from '../lib/types'
 
-export function Chip({ tone = 'ink', children, title }: { tone?: 'deny' | 'auto' | 'need' | 'ink' | 'muted' | 'build'; children: ReactNode; title?: string }) {
-  return <span className={`chip chip-${tone}`} title={title}>{children}</span>
+export function Chip({ tone = 'ink', children, title, pop = false }: { tone?: 'deny' | 'auto' | 'need' | 'ink' | 'muted' | 'build'; children: ReactNode; title?: string; pop?: boolean }) {
+  return <span className={`chip chip-${tone}${pop ? ' chip-pop' : ''}`} title={title}>{children}</span>
 }
 
 export function GateChip({ gate }: { gate: Gate }) {
@@ -15,7 +15,8 @@ export function GateChip({ gate }: { gate: Gate }) {
 
 export function PhaseChip({ phase, kind }: { phase: string; kind?: Proposal['kind'] }) {
   const info = phaseInfo(phase, kind)
-  return <Chip tone={info.tone}>{info.label}</Chip>
+  // Keyed by the phase, so the chip pops each time the request moves on.
+  return <Chip key={phase} tone={info.tone} pop>{info.label}</Chip>
 }
 
 export function Money({ cents, size = 'md', currency }: { cents: number | null | undefined; size?: 'sm' | 'md' | 'lg' | 'xl'; currency?: string }) {
@@ -88,8 +89,17 @@ export function Empty({ title, children }: { title: string; children?: ReactNode
   )
 }
 
+/** A skeleton in the shape of a page, so the screen holds its layout while it loads instead of jumping. */
 export function Loading({ label = 'Loading' }: { label?: string }) {
-  return <div className="loading" role="status"><span className="loading-bar" />{label}</div>
+  return (
+    <div className="loading" role="status">
+      <span className="loading-head"><span className="loading-bar" />{label}</span>
+      <span className="skel skel-title" aria-hidden="true" />
+      <span className="skel skel-line" aria-hidden="true" />
+      <span className="skel skel-line short" aria-hidden="true" />
+      <span className="skel skel-block" aria-hidden="true" />
+    </div>
+  )
 }
 
 /** Shows a server problem exactly: plain words, the code, and the server's own sentence. */

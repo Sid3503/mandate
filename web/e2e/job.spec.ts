@@ -550,12 +550,16 @@ test('every signed-in screen passes axe (WCAG 2.1 AA)', async ({ page }) => {
   const { default: AxeBuilder } = await import('@axe-core/playwright')
   await page.goto('/app/welcome')
   await page.waitForLoadState('networkidle')
+  await page.locator('.land').evaluate((el) => el.scrollIntoView())
+  await page.evaluate(async () => { for (let y = 0; y < document.body.scrollHeight; y += 500) { window.scrollTo(0, y); await new Promise((r) => setTimeout(r, 40)) } window.scrollTo(0, 0) })
+  await page.waitForTimeout(1600) // let every entrance finish: axe measures what is on screen right now
   const landing = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
   expect(landing.violations.map((v) => `/app/welcome ${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
   await unlock(page, OWNER)
   for (const path of ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/system']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
+    await page.waitForTimeout(1000)
     const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).exclude('.ag-root-wrapper').analyze()
     expect(results.violations.map((v) => `${path} ${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
   }

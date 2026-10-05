@@ -1,4 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
+import { useToast } from '../components/Toast'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
@@ -105,8 +106,9 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   const owner = useIsOwner()
   const online = useOnline()
   const refresh = useRefreshMoney()
-  const approve = useMutation({ mutationFn: () => api.approve(proposal.id), onSuccess: (locked) => { onLocked(locked); void refresh() } })
-  const reject = useMutation({ mutationFn: () => api.reject(proposal.id), onSuccess: () => void refresh() })
+  const toast = useToast()
+  const approve = useMutation({ mutationFn: () => api.approve(proposal.id), onSuccess: (locked) => { onLocked(locked); toast({ title: `Approved ${dollars(locked.amountCents)}`, body: 'Locked and signed. Nothing has moved yet.' }); void refresh() } })
+  const reject = useMutation({ mutationFn: () => api.reject(proposal.id), onSuccess: () => { toast({ title: 'Rejected', body: 'Nothing moved.', tone: 'info' }); void refresh() } })
   const locked = proposal.phase !== 'pending_approval'
   const kind = KIND[proposal.kind]
   const disabled = !owner || !online || approve.isPending || reject.isPending

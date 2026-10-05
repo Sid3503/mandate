@@ -32,6 +32,19 @@ npm run build           # api serves web/dist at /app/
 npm run dev             # http://localhost:5173/app/
 ```
 
+## Motion
+
+One system, used everywhere, and switched off by `prefers-reduced-motion`.
+
+- **Between screens:** the old screen fades up and out (about 180 ms), the new one rises in, and the page scrolls to the top (`PageTransition`, framer-motion).
+- **Within a screen:** the heading arrives first, then each block in order. Lists, cards and totals stagger. A request's status chip pops when it changes. All pure CSS (`.page > *`, `@keyframes enter`), so it costs no JavaScript.
+- **Navigation:** a lime pill slides between the sidebar items, and between the tabs on a phone (shared `layoutId`).
+- **Numbers:** a job's four totals count up to their value (`CountMoney`), with the final value announced at once to screen readers.
+- **Feedback:** short toasts confirm approve, reject, settle, pay, cancel and bill. They never carry information you need later.
+- **Loading:** a skeleton in the shape of a page replaces the bare "Loading" text, so the layout does not jump.
+- **Landing page:** the hero types in, the example card drops and settles, and each section and item reveals as it scrolls into view (`useReveal`). Nothing is hidden until the script has run.
+- **Tests wait for entrances** before scanning for contrast, because a half-faded element is not what a person sees.
+
 ## The landing page
 
 `/app/welcome` is the public front door. A visitor with no key who opens `/app/` sees it instead of a bare unlock form, and the server's address (`/`) sends a browser there. It explains the product in the same visual language as the console and the pitch deck: the hero with an example approval card, the five steps, the $300 job as $150 in, $90 out, $60 kept, real screenshots, six things that fail, and the six agent tools. "Open the console" goes to Unlock, or straight into the console once a key is held. Deep links such as `/app/jobs` still go to Unlock. The screenshots live in `public/landing/` and are left out of the offline cache.

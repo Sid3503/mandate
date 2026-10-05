@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useToast } from '../components/Toast'
 import { NegotiationStage } from '../components/NegotiationStage'
 import { Signature } from '../components/Signature'
 import { Chip, Empty, Loading, Money, PageHead, PhaseChip, ProblemCard } from '../components/ui'
@@ -143,9 +144,10 @@ function Agreed({ deal, owner }: { deal: Deal; owner: boolean }) {
   const online = useOnline()
   const navigate = useNavigate()
   const [proof, setProof] = useState('')
+  const toast = useToast()
   const bill = useMutation({
     mutationFn: (milestone: number) => api.billMilestone(deal.id, milestone, proof.trim()),
-    onSuccess: (proposal) => { void refresh(); navigate(`/p/${proposal.id}`) },
+    onSuccess: (proposal) => { toast({ title: `Milestone billed · ${dollars(proposal.amountCents)}`, body: proposal.gate === 'DENY' ? 'The rules refused it.' : 'Approve it on the Waiting page.', tone: proposal.gate === 'DENY' ? 'bad' : 'good' }); void refresh(); navigate(`/p/${proposal.id}`) },
   })
   const milestones = deal.billing?.milestones ?? []
   return (

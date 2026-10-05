@@ -1,4 +1,6 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { motion } from 'framer-motion'
+import { NavLink, useNavigate } from 'react-router-dom'
+import { PageTransition } from './PageTransition'
 import { useQueryClient } from '@tanstack/react-query'
 import { useOnline, useProposals, useSession } from '../lib/hooks'
 import { session } from '../lib/session'
@@ -64,9 +66,14 @@ function ShellFrame() {
         <nav className="rail-nav">
           {NAV.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.end} className="rail-link" data-tour={item.tour}>
-              <Icon path={item.icon} />
-              <span>{item.label === 'Ask' ? 'New request' : item.label === 'Waiting' ? 'Waiting for you' : item.label}</span>
-              {item.to === '/' && waiting > 0 ? <span className="badge">{waiting}</span> : null}
+              {({ isActive }) => (
+                <>
+                  {isActive ? <motion.span layoutId="rail-pill" className="pill" transition={{ type: 'spring', stiffness: 520, damping: 40 }} /> : null}
+                  <Icon path={item.icon} />
+                  <span>{item.label === 'Ask' ? 'New request' : item.label === 'Waiting' ? 'Waiting for you' : item.label}</span>
+                  {item.to === '/' && waiting > 0 ? <span className="badge">{waiting}</span> : null}
+                </>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -97,16 +104,21 @@ function ShellFrame() {
           </div>
         ) : null}
         <main id="main" className="main" tabIndex={-1}>
-          <Outlet />
+          <PageTransition />
         </main>
       </div>
 
       <nav className="tabbar" aria-label="Main">
         {NAV.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.end} className="tab" data-tour={item.tour}>
-            <Icon path={item.icon} />
-            <span>{item.label}</span>
-            {item.to === '/' && waiting > 0 ? <span className="badge">{waiting}</span> : null}
+            {({ isActive }) => (
+              <>
+                {isActive ? <motion.span layoutId="tab-pill" className="pill" transition={{ type: 'spring', stiffness: 520, damping: 40 }} /> : null}
+                <Icon path={item.icon} />
+                <span>{item.label}</span>
+                {item.to === '/' && waiting > 0 ? <span className="badge">{waiting}</span> : null}
+              </>
+            )}
           </NavLink>
         ))}
       </nav>

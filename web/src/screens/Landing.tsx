@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { useReveal } from '../components/Motion'
 import { Mark } from '../components/Shell'
 import { session } from '../lib/session'
 
@@ -26,10 +27,11 @@ const TOOLS = [
 ] as const
 
 export function Landing() {
+  const root = useReveal()
   const unlocked = Boolean(session.get())
   const cta = unlocked ? '/' : '/unlock'
   return (
-    <div className="land">
+    <div className="land" ref={root}>
       <a className="skip" href="#land-main">Skip to content</a>
       <header className="land-nav">
         <div className="brand"><Mark size={30} /><span>Mandate</span></div>
@@ -71,16 +73,16 @@ export function Landing() {
           </figure>
         </section>
 
-        <section className="land-strip" aria-label="The problem">
+        <section className="land-strip" aria-label="The problem" data-reveal>
           <p><b>Two bad choices.</b> Give everyone the PayPal password and hope. Or approve every $12 font licence yourself and never build anything. Mandate is the third option.</p>
         </section>
 
-        <section id="how" className="land-section">
+        <section id="how" className="land-section" data-reveal>
           <span className="eyebrow">How a payment moves</span>
           <h2>Ask. Check. Tap. Pay. Prove.</h2>
           <ol className="land-steps">
             {STEPS.map((step) => (
-              <li key={step.n}>
+              <li key={step.n} data-reveal-item>
                 <span className="mono">{step.n}</span>
                 <h3>{step.title}</h3>
                 <p>{step.body}</p>
@@ -89,51 +91,51 @@ export function Landing() {
           </ol>
         </section>
 
-        <section id="job" className="land-section land-ink">
+        <section id="job" className="land-section land-ink" data-reveal>
           <span className="eyebrow">One job, first offer to last cent</span>
           <h2>Client money in releases contractor money out.</h2>
           <p className="lede">Northwind hires Line Studio for a logo. Two AI agents agree the price inside both companies’ rules. The client pays. Only then can the designer be paid her share.</p>
           <ol className="land-flow" aria-label="The money, step by step">
-            <li><span className="eyebrow">Agreed</span><b>$300</b><small>2 milestones of $150, signed</small></li>
+            <li data-reveal-item><span className="eyebrow">Agreed</span><b>$300</b><small>2 milestones of $150, signed</small></li>
             <li className="arrow" aria-hidden="true">→</li>
-            <li className="in"><span className="eyebrow">Money in</span><b>$150</b><small>Northwind pays milestone 1</small></li>
+            <li className="in" data-reveal-item><span className="eyebrow">Money in</span><b>$150</b><small>Northwind pays milestone 1</small></li>
             <li className="arrow" aria-hidden="true">→</li>
-            <li><span className="eyebrow">Money out</span><b>$90</b><small>60% to Priya, paid by PayPal</small></li>
+            <li data-reveal-item><span className="eyebrow">Money out</span><b>$90</b><small>60% to Priya, paid by PayPal</small></li>
             <li className="arrow" aria-hidden="true">→</li>
-            <li className="kept"><span className="eyebrow">Kept</span><b>$60</b><small>what the studio keeps</small></li>
+            <li className="kept" data-reveal-item><span className="eyebrow">Kept</span><b>$60</b><small>what the studio keeps</small></li>
           </ol>
           <p className="fine">Two agents negotiate: $450 is refused as too high, $200 as too low, $300 is agreed. Neither agent is ever told the other’s limit.</p>
         </section>
 
-        <section className="land-section" aria-label="The product">
+        <section className="land-section" aria-label="The product" data-reveal>
           <span className="eyebrow">The product</span>
           <h2>Built to be understood in a minute.</h2>
           <div className="land-shots">
-            <figure>
+            <figure data-reveal-item>
               <img src="/app/landing/receipt.png" alt="The receipt for Priya's $90 payout, marked paid, with the lock, its signature and PayPal's ids" width="1192" height="1048" loading="lazy" />
               <figcaption><b>The receipt.</b> One record answers “why did we pay Priya $90?” The signature verifies with one click.</figcaption>
             </figure>
-            <figure>
+            <figure data-reveal-item>
               <img src="/app/landing/deal.png" alt="A signed deal: $450 and $200 refused by the rules, $300 agreed" width="1112" height="612" loading="lazy" />
               <figcaption><b>The deal.</b> $450 and $200 refused, $300 agreed. Each company’s limits stay private.</figcaption>
             </figure>
-            <figure>
+            <figure data-reveal-item>
               <img src="/app/landing/clerk.png" alt="The clerk refusing a fake vendor email, with zero dollars moved" width="670" height="459" loading="lazy" />
               <figcaption><b>The clerk.</b> Fooled by an email, it asks. The rules say no. $0 moved.</figcaption>
             </figure>
           </div>
         </section>
 
-        <section id="break" className="land-section">
+        <section id="break" className="land-section" data-reveal>
           <span className="eyebrow">Try to break it</span>
           <h2>Six attempts. Same answer.</h2>
-          <div className="land-table-wrap">
+          <div className="land-table-wrap" role="region" aria-label="Things that go wrong and what the server does" tabIndex={0}>
             <table className="land-table">
               <caption className="sr-only">Things that go wrong and what the server does</caption>
               <thead><tr><th scope="col">Attempt</th><th scope="col">Result</th><th scope="col">Why</th></tr></thead>
               <tbody>
                 {ATTEMPTS.map((row) => (
-                  <tr key={row.attempt}><td>{row.attempt}</td><td><span className="chip chip-deny">{row.answer}</span></td><td>{row.why}</td></tr>
+                  <tr key={row.attempt} data-reveal-item><td>{row.attempt}</td><td><span className="chip chip-deny">{row.answer}</span></td><td>{row.why}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -141,7 +143,7 @@ export function Landing() {
           <p className="land-zero">$0 moved</p>
         </section>
 
-        <section id="agents" className="land-section land-split">
+        <section id="agents" className="land-section land-split" data-reveal>
           <div>
             <span className="eyebrow">AI, with no authority on purpose</span>
             <h2>The model can be fooled. It doesn’t matter.</h2>
@@ -149,21 +151,21 @@ export function Landing() {
             <p>Agents reach Mandate through one door, an MCP server with six tools. Four read. Two ask. <b>None can approve, send money, or change the rules.</b></p>
           </div>
           <ul className="land-tools" aria-label="The six agent tools">
-            {TOOLS.map(([name, kind]) => <li key={name}><code>{name}</code><span className={`chip ${kind === 'ask' ? 'chip-need' : 'chip-muted'}`}>{kind === 'ask' ? 'asks' : 'reads'}</span></li>)}
+            {TOOLS.map(([name, kind]) => <li key={name} data-reveal-item><code>{name}</code><span className={`chip ${kind === 'ask' ? 'chip-need' : 'chip-muted'}`}>{kind === 'ask' ? 'asks' : 'reads'}</span></li>)}
             <li className="none"><code>approve · capture · send</code><span className="chip chip-deny">no such tool</span></li>
           </ul>
         </section>
 
-        <section className="land-section land-facts" aria-label="What it is built on">
+        <section className="land-section land-facts" aria-label="What it is built on" data-reveal>
           <ul>
-            <li><b>PayPal</b><span>Orders and Invoicing in, Payouts out. Paid only when PayPal says so.</span></li>
-            <li><b>Ed25519</b><span>The server signs every lock and deal. Anyone can verify with a public key.</span></li>
-            <li><b>MCP</b><span>An open standard door for agents, ours or anyone’s.</span></li>
-            <li><b>AG Grid</b><span>Every attempt, including the refused ones, in one filterable ledger.</span></li>
+            <li data-reveal-item><b>PayPal</b><span>Orders and Invoicing in, Payouts out. Paid only when PayPal says so.</span></li>
+            <li data-reveal-item><b>Ed25519</b><span>The server signs every lock and deal. Anyone can verify with a public key.</span></li>
+            <li data-reveal-item><b>MCP</b><span>An open standard door for agents, ours or anyone’s.</span></li>
+            <li data-reveal-item><b>AG Grid</b><span>Every attempt, including the refused ones, in one filterable ledger.</span></li>
           </ul>
         </section>
 
-        <section className="land-cta">
+        <section className="land-cta" data-reveal>
           <h2>See it decide.</h2>
           <p>Open the console, let two agents negotiate a price, and try to make the rules pay something they shouldn’t.</p>
           <Link className="btn btn-lime btn-big" to={cta}>Open the console</Link>

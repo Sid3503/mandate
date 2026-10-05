@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Signature } from '../components/Signature'
+import { useToast } from '../components/Toast'
 import { Chip, GateChip, Hash, KV, Loading, Money, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
 import { api, ApiError } from '../lib/api'
 import { when } from '../lib/format'
@@ -164,7 +165,8 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
   const refresh = useRefreshMoney()
   const [claim, setClaim] = useState('')
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
-  const settle = useMutation({ mutationFn: () => api.capture(p.id), onSettled: () => { setCheckedAt(new Date()); void refresh() } })
+  const toast = useToast()
+  const settle = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Settled ${dollars(done.amountCents)}`, body: 'PayPal confirmed it. The cents match the lock.' }); else if (done.phase === 'invoice_sent') toast({ title: 'Invoice sent', body: 'It settles when the client pays it.', tone: 'info' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
   const tamper = useMutation({
     mutationFn: (cents: number) => api.capture(p.id, cents),
     onSettled: () => void refresh(),
@@ -249,8 +251,9 @@ function PayoutPanel({ packet, warrant, names }: { packet: Packet; warrant: Warr
   const refresh = useRefreshMoney()
   const [claim, setClaim] = useState('')
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
-  const send = useMutation({ mutationFn: () => api.capture(p.id), onSettled: () => { setCheckedAt(new Date()); void refresh() } })
-  const cancel = useMutation({ mutationFn: () => api.reject(p.id), onSettled: () => void refresh() })
+  const toast = useToast()
+  const send = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Paid ${dollars(done.amountCents)}`, body: 'PayPal confirmed it reached the account.' }); else if (done.phase === 'payout_sent') toast({ title: 'Sent to PayPal', body: 'Not paid until PayPal says so.', tone: 'info' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
+  const cancel = useMutation({ mutationFn: () => api.reject(p.id), onSuccess: () => toast({ title: 'Payout cancelled', body: 'Nothing was sent.', tone: 'info' }), onSettled: () => void refresh() })
   const tamper = useMutation({ mutationFn: (cents: number) => api.capture(p.id, cents), onSettled: () => void refresh() })
   const unsent = p.phase === 'locked' || p.phase === 'order_created' || p.phase === 'capture_inflight'
   const atPayPal = p.phase === 'payout_sent' || p.phase === 'payout_unclaimed'
@@ -376,7 +379,8 @@ function InvoicePanel({ packet, names }: { packet: Packet; names: Names }) {
   const online = useOnline()
   const refresh = useRefreshMoney()
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
-  const check = useMutation({ mutationFn: () => api.capture(p.id), onSettled: () => { setCheckedAt(new Date()); void refresh() } })
+  const toast = useToast()
+  const check = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Paid ${dollars(done.amountCents)}`, body: 'PayPal says the client paid the invoice.' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
   const owner = useIsOwner()
   const url = packet.invoice?.url ?? p.invoiceUrl
   return (

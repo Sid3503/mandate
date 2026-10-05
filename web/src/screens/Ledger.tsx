@@ -135,7 +135,7 @@ function Requests() {
           onRowClicked={(event) => event.data && navigate(`/p/${event.data.id}`)}
           rowHeight={narrow ? 64 : 46}
           headerHeight={40}
-          animateRows={false}
+          animateRows
           tooltipShowDelay={300}
           suppressCellFocus
           overlayNoRowsTemplate="Nothing here yet."

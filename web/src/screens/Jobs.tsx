@@ -1,5 +1,6 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
+import { CountMoney } from '../components/Motion'
 import { Empty, Loading, Money, PageHead, PhaseChip, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { useIsOwner, useNames, useProposals } from '../lib/hooks'
@@ -69,10 +70,10 @@ export function JobScreen() {
 
       {data.deal ? <DealStrip deal={data.deal} jobId={data.jobId} /> : null}
       <section className="totals" data-tour="job-totals">
-        <div className="total total-in"><span>Money in</span><Money cents={data.totals.inCents} size="xl" /></div>
-        <div className="total total-out"><span>Money out</span><Money cents={data.totals.outCents} size="xl" /></div>
-        <div className="total"><span>Approved · not yet paid</span><Money cents={data.totals.heldCents} size="xl" /></div>
-        <div className="total total-kept"><span>Kept by the studio</span><Money cents={data.totals.keptCents} size="xl" /></div>
+        <div className="total total-in"><span>Money in</span><CountMoney cents={data.totals.inCents} size="xl" /></div>
+        <div className="total total-out"><span>Money out</span><CountMoney cents={data.totals.outCents} size="xl" /></div>
+        <div className="total"><span>Approved · not yet paid</span><CountMoney cents={data.totals.heldCents} size="xl" /></div>
+        <div className="total total-kept"><span>Kept by the studio</span><CountMoney cents={data.totals.keptCents} size="xl" /></div>
       </section>
       <Flow totals={data.totals} />
       <p className="fine">Contractors are paid only from a client payment that settled on this job, up to {share} of it.</p>

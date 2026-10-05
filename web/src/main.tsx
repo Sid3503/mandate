@@ -10,6 +10,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { Shell } from './components/Shell'
+import { ToastProvider } from './components/Toast'
 import { ApiError } from './lib/api'
 import { session } from './lib/session'
 import { Inbox } from './screens/Inbox'
@@ -54,6 +55,7 @@ function RequireKey({ children }: { children: ReactNode }) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
+      <ToastProvider>
       <BrowserRouter basename="/app">
         <Routes>
           <Route path="/welcome" element={<Landing />} />
@@ -73,6 +75,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
+      </ToastProvider>
     </QueryClientProvider>
   </StrictMode>,
 )
