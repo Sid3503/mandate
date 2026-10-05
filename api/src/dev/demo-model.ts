@@ -18,9 +18,12 @@ function lastToolJson(prompt: Message[]): Record<string, any> | null {
   if (!tool || !Array.isArray(tool.content)) return null
   const part = (tool.content as Part[]).find((item) => item.type === 'tool-result')
   const output = (part?.output ?? part?.result) as { value?: unknown } | undefined
-  const raw = (output && typeof output === 'object' && 'value' in output ? output.value : output) as { structuredContent?: unknown; content?: Array<{ text?: string }> } | undefined
-  if (raw?.structuredContent) return raw.structuredContent as Record<string, any>
-  const body = raw?.content?.find((item) => item.text)?.text
+  const raw = (output && typeof output === 'object' && 'value' in output ? output.value : output) as unknown
+  // The AI SDK hands MCP results back as a list of content parts; older shapes carry structuredContent directly.
+  const parts = Array.isArray(raw) ? (raw as Array<{ text?: string }>) : ((raw as { content?: Array<{ text?: string }> } | undefined)?.content ?? [])
+  const structured = (raw as { structuredContent?: unknown } | undefined)?.structuredContent
+  if (structured) return structured as Record<string, any>
+  const body = parts.find((item) => item.text)?.text
   try {
     return body ? (JSON.parse(body) as Record<string, any>) : null
   } catch {

@@ -25,7 +25,7 @@ export function Receipt() {
 
   return (
     <div className="page receipt">
-      <PageHead eyebrow={`Receipt · ${kind.label} · rules v${p.warrantVersion}`} title={<>{dollars(p.amountCents, p.currency)} <span className="title-sub">{verb} {names(p.payeeId)}</span></>}>
+      <PageHead eyebrow={`Receipt · ${kind.label} · rules v${p.warrantVersion}`} title={<>{dollars(p.amountCents, p.currency)} <span className="title-sub">{p.payeeId ? `${verb} ${names(p.payeeId)}` : 'to an account not on the rules'}</span></>}>
         <PhaseChip phase={p.phase} kind={p.kind} />
       </PageHead>
 
