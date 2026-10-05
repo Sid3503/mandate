@@ -31,6 +31,16 @@ export type NegotiationInput = {
   maxOffers?: number
 }
 
+/** What a watcher of a negotiation is told as it happens. Owner-only: it carries both companies' private verdicts. */
+export type NegotiationEvent =
+  | { type: 'start'; threadId: string; model: string; maxOffers: number; studio: string; client: string }
+  | { type: 'turn_start'; turn: number; side: Side; company: string }
+  | { type: 'turn'; turn: number; side: Side; runId: string; ms: number; deal: unknown }
+  | { type: 'turn_error'; turn: number; side: Side; runId: string; error: string }
+  | { type: 'done'; threadId: string; agreed: boolean; dealId: string | null; stopped: boolean }
+
+export type NegotiationHooks = { onEvent?: (event: NegotiationEvent) => void | Promise<void>; signal?: AbortSignal }
+
 export const DEFAULT_TASK = 'a spring-launch logo, delivered in two milestones (concepts, then final files), with a Figma link at each milestone'
 export const DEFAULT_SELLER_BRIEF = 'Open at $450.00 in two milestones. If that is refused, your fair price is $300.00 in two equal milestones: offer that next.'
 export const DEFAULT_BUYER_BRIEF = 'Open at $200.00 in two milestones. If that is refused as too low, raise your offer toward $300.00.'
@@ -132,9 +142,9 @@ export class AgentService {
    * turns. The orchestration is plain code: who speaks, what they may see, when to stop. The only thing a model
    * chooses is the next offer, and the deal check decides whether it stands.
    */
-  async negotiate(input: NegotiationInput, who: Principal) {
+  async negotiate(input: NegotiationInput, who: Principal, hooks: NegotiationHooks = {}) {
     const model = this.need()
-    if (who.role !== 'owner') throw new Problem(403, 'auth.forbidden', 'Owner key required', 'Only the owner starts a negotiation.')
+    this.assertCanNegotiate(who)
     this.limit(who, 'negotiate', 3)
     const warrant = this.services.repo.latestWarrant()
     const buyer = warrant ? resolveClient(warrant.body, input.buyer ?? warrant.body.clients[0]?.id ?? '') : null
@@ -144,13 +154,22 @@ export class AgentService {
     const task = input.task?.slice(0, 300) || DEFAULT_TASK
     const turns: Array<Record<string, unknown>> = []
     let agreedDealId: string | null = null
+    let stopped = false
+    const emit = async (event: NegotiationEvent) => { await hooks.onEvent?.(event) }
+    const studioName = this.services.repo.partyRules(WARRANT_ID)?.body.displayName ?? 'the studio'
+    await emit({ type: 'start', threadId, model: model.name, maxOffers, studio: studioName, client: buyer.displayName })
 
     for (let turn = 0; turn < maxOffers && !agreedDealId; turn += 1) {
+      if (hooks.signal?.aborted) {
+        stopped = true
+        break
+      }
       const side: Side = turn % 2 === 0 ? 'seller' : 'buyer'
       const principal = side === 'seller' ? STUDIO : buyerPrincipal(buyer.id)
       const rules = this.services.repo.partyRules(side === 'seller' ? WARRANT_ID : buyer.id)
       if (!rules) throw new Problem(409, 'deal.rules_missing', 'Deal rules are missing', 'Both companies need deal rules first.')
       const runId = randomUUID()
+      await emit({ type: 'turn_start', turn: turn + 1, side, company: side === 'seller' ? studioName : buyer.displayName })
       const system = negotiatorSystem({
         side,
         company: side === 'seller' ? rules.body.displayName : buyer.displayName,
@@ -163,23 +182,39 @@ export class AgentService {
       const prompt = `${this.transcript(threadId, principal, buyer.displayName)}\n\nIt is your turn. Make your offer now with offer_deal.`
       let run: RunOutput
       try {
-        run = await runAgent({ model, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'offer_deal', timeoutMs: 45_000 })
+        // A model service can hiccup. One quiet retry, with the same run id and a fresh connection, saves a live demo.
+        // Only the model call is retried: an offer that reached the rules is never sent twice (its key is the run id).
+        try {
+          run = await runAgent({ model, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'offer_deal', timeoutMs: 45_000, signal: hooks.signal })
+        } catch (first) {
+          if (!(first instanceof Problem) || first.code !== 'agent.model_error' || hooks.signal?.aborted) throw first
+          run = await runAgent({ model, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'offer_deal', timeoutMs: 45_000, signal: hooks.signal })
+        }
       } catch (error) {
+        if (hooks.signal?.aborted) {
+          stopped = true
+          break
+        }
         this.record({ id: runId, agent: `negotiator:${side}`, who, conversationId: threadId, model: model.name, input: prompt, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0 })
         turns.push({ turn: turn + 1, side, runId, error: error instanceof Problem ? error.code : 'agent.model_error' })
+        await emit({ type: 'turn_error', turn: turn + 1, side, runId, error: error instanceof Problem ? error.code : 'agent.model_error' })
         break
       }
       const offer = run.outcomes.find((item) => item.tool === 'offer_deal')
       this.record({ id: runId, agent: `negotiator:${side}`, who, conversationId: threadId, model: model.name, input: prompt, output: offer ? JSON.stringify(offer.data) : run.text, steps: run.steps, status: offer?.ok ? 'ok' : 'error', error: offer?.ok ? null : 'no_offer', ms: run.ms })
       if (!offer || !offer.ok) {
-        turns.push({ turn: turn + 1, side, runId, error: offer ? String((offer.data.error as { code?: string } | undefined)?.code ?? 'offer_failed') : 'no_offer' })
+        const code = offer ? String((offer.data.error as { code?: string } | undefined)?.code ?? 'offer_failed') : 'no_offer'
+        turns.push({ turn: turn + 1, side, runId, error: code })
+        await emit({ type: 'turn_error', turn: turn + 1, side, runId, error: code })
         break
       }
       const dealId = String(offer.data.dealId)
       const deal = this.services.deals.get(dealId, OWNER)
       turns.push({ turn: turn + 1, side, runId, deal, ms: run.ms })
+      await emit({ type: 'turn', turn: turn + 1, side, runId, ms: run.ms, deal })
       if (offer.data.result === 'AGREED') agreedDealId = dealId
     }
+    await emit({ type: 'done', threadId, agreed: agreedDealId !== null, dealId: agreedDealId, stopped })
 
     return {
       threadId,
@@ -188,6 +223,12 @@ export class AgentService {
       dealId: agreedDealId,
       turns,
     }
+  }
+
+  /** Checks that fail fast with a normal error, before a stream is opened. */
+  assertCanNegotiate(who: Principal): void {
+    this.need()
+    if (who.role !== 'owner') throw new Problem(403, 'auth.forbidden', 'Owner key required', 'Only the owner starts a negotiation.')
   }
 
   /** What one side has seen so far in a negotiation: terms, verdicts as that side may see them, and the notes. */

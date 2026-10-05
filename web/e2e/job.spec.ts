@@ -366,18 +366,30 @@ test('two agents negotiate a deal, it is signed, and billing a milestone follows
   await page.goto('/app/deals')
   await expect(page.getByText('Where a deal can exist')).toBeVisible()
   await page.getByRole('button', { name: 'Let the agents negotiate' }).click()
-  const story = page.locator('.story')
+  const story = page.locator('.stage')
+  // The screen comes alive at once: a running state, the studio's agent thinking, a Stop button.
+  await expect(story).toContainText('Live negotiation')
+  await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible()
+  await expect(story.locator('.seat-seller')).toContainText('Thinking')
+  await expect(story.locator('.turn.is-thinking')).toBeVisible()
+  await shots(page, '25a-negotiation-thinking')
+  // Then offers arrive one at a time, and pins land on the price line.
+  await expect(story.locator('.turn.is-in')).toHaveCount(1, { timeout: 30_000 })
+  await expect(story.locator('.seat-buyer')).toContainText('Thinking', { timeout: 1500 })
+  await shots(page, '25b-negotiation-midway')
   await expect(story).toContainText('The negotiation, turn by turn', { timeout: 30_000 })
-  const turns = story.locator('.turn')
+  const turns = story.locator('.turn.is-in')
   await expect(turns).toHaveCount(3)
+  await expect(story.locator('.pin')).toHaveCount(3)
   await expect(turns.nth(0)).toContainText('$450.00')
   await expect(turns.nth(0)).toContainText('deal.over_buyer_limit')
   await expect(turns.nth(1)).toContainText('$200.00')
   await expect(turns.nth(1)).toContainText('deal.under_seller_minimum')
   await expect(turns.nth(2)).toContainText('$300.00')
   await expect(turns.nth(2)).toContainText('Agreed')
+  await expect(story).toContainText('Agreed in 3 offers')
   // The client agent never saw the studio's floor, so nothing it said can contain it.
-  await expect(story).not.toContainText('$250')
+  await expect(story.locator('.turn-buyer')).not.toContainText('$250')
   await shots(page, '25-deal-negotiated')
 
   const card = page.locator('.deal-card.is-agreed')
@@ -403,6 +415,17 @@ test('two agents negotiate a deal, it is signed, and billing a milestone follows
   // Billing it twice, or billing anything else on this job, is refused by the gate.
   await page.goto('/app/deals')
   await expect(page.locator('.milestones').first()).toContainText('not billed')
+})
+
+test('pressing Stop ends a running negotiation and keeps what was offered', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/deals')
+  await page.getByRole('button', { name: 'Let the agents negotiate' }).click()
+  await expect(page.locator('.stage .turn.is-in')).toHaveCount(1, { timeout: 30_000 })
+  await page.getByRole('button', { name: 'Stop' }).click()
+  await expect(page.locator('.stage')).toContainText('Stopped')
+  await expect(page.getByRole('button', { name: 'Let the agents negotiate' })).toBeEnabled()
+  await shots(page, '25c-negotiation-stopped')
 })
 
 test('the clerk asks the rules; a fooled clerk changes nothing', async ({ page, request }) => {

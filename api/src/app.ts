@@ -1,5 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { Hono } from 'hono'
+import { streamSSE } from 'hono/streaming'
 import type { DatabaseSync } from 'node:sqlite'
 import { VERSION } from './config'
 import { databaseReady } from './db/database'
@@ -61,7 +62,7 @@ const OWNER_ONLY = [
   { method: 'PUT', pattern: /^\/v1\/warrant$/ },
   { method: 'GET', pattern: /^\/v1\/party-rules$/ },
   { method: 'PUT', pattern: /^\/v1\/party-rules\/[^/]+$/ },
-  { method: 'POST', pattern: /^\/v1\/negotiations$/ },
+  { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture)$/ },
 ]
@@ -293,6 +294,27 @@ export function createApp(deps: AppDeps) {
     const parsed = NegotiationSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
     return c.json(await agents.negotiate(parsed.data, c.get('principal')))
+  })
+  // The same negotiation, told as it happens: who is thinking, each offer, the rules' verdict, the end.
+  // Server-sent events over a POST (a browser EventSource cannot carry the key). Owner only.
+  app.post('/v1/negotiations/stream', async (c) => {
+    assertJson(c)
+    const parsed = NegotiationSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const principal = c.get('principal')
+    agents.assertCanNegotiate(principal)
+    const abort = new AbortController()
+    c.req.raw.signal.addEventListener('abort', () => abort.abort())
+    return streamSSE(c, async (stream) => {
+      stream.onAbort(() => abort.abort())
+      const send = (event: { type: string }) => stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+      try {
+        await agents.negotiate(parsed.data, principal, { onEvent: send, signal: abort.signal })
+      } catch (error) {
+        const problem = error instanceof Problem ? error : null
+        await send({ type: 'error', code: problem?.code ?? 'internal', message: problem?.detail ?? 'The negotiation failed. Nothing was sent to PayPal.' } as { type: string })
+      }
+    })
   })
   app.get('/v1/agent-runs', (c) => c.json(agents.recentRuns(30)))
   app.get('/v1/agent-runs/:id', (c) => c.json(agents.run(c.req.param('id'))))

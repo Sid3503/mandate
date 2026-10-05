@@ -233,3 +233,80 @@ describe('the negotiators', () => {
     expect((await call(app, 'POST', '/v1/negotiations', { key: BUYER_KEY, body: {} })).status).toBe(403)
   })
 })
+
+describe('watching a negotiation live', () => {
+  const threadOf = (system: string) => /threadId "([0-9a-f-]{36})"/.exec(system)![1]!
+  const offer = (total: number, note: string, threadId: string) => ({ tool: 'offer_deal', input: { buyer: 'Northwind', threadId, prompt: note, terms: terms(total) } })
+  // $450 from the studio, $200 from the client, then $300 from the studio.
+  let turnNo = 0
+  const script = (delayMs = 0) => scriptedModel(({ system, round }) => {
+    if (round > 0) return { text: 'offered' }
+    turnNo += 1
+    const total = turnNo === 1 ? 45_000 : system.includes('the seller') ? 30_000 : 20_000
+    return offer(total, 'offer', threadOf(system))
+  }, { delayMs })
+
+  const events = (text: string) => text.split('\n\n').filter(Boolean).map((block) => {
+    const name = /^event: (.*)$/m.exec(block)?.[1] ?? ''
+    const data = /^data: (.*)$/m.exec(block)?.[1]
+    return { name, data: data ? JSON.parse(data) : null }
+  })
+
+  it('tells the watcher who is thinking, then each offer with the rules\' verdict, then the result', async () => {
+    turnNo = 0
+    const { app } = harness({ model: script() })
+    const response = await app.request('http://mandate.test/v1/negotiations/stream', { method: 'POST', headers: { authorization: 'Bearer test-mandate-key-32chars', 'content-type': 'application/json' }, body: '{}' })
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+    const seen = events(await response.text())
+    expect(seen.map((e) => e.name)).toEqual(['start', 'turn_start', 'turn', 'turn_start', 'turn', 'turn_start', 'turn', 'done'])
+    expect(seen[0]!.data).toMatchObject({ studio: 'Line Studio', client: 'Northwind', model: 'scripted-model', maxOffers: 4 })
+    expect(seen[1]!.data).toMatchObject({ turn: 1, side: 'seller', company: 'Line Studio' })
+    expect(seen[3]!.data).toMatchObject({ turn: 2, side: 'buyer', company: 'Northwind' })
+    expect(seen[2]!.data.deal).toMatchObject({ status: 'refused', terms: { totalCents: 45_000 } })
+    expect(seen[2]!.data.deal.verdict.violations[0].code).toBe('deal.over_buyer_limit')
+    expect(seen.at(-1)!.data).toMatchObject({ agreed: true, stopped: false })
+  })
+
+  it('is for the owner only, and fails as a normal error when agents are off', async () => {
+    turnNo = 0
+    const { app } = harness({ model: script() })
+    const studio = await app.request('http://mandate.test/v1/negotiations/stream', { method: 'POST', headers: { authorization: 'Bearer test-proposer-key-32chars', 'content-type': 'application/json' }, body: '{}' })
+    expect(studio.status).toBe(403)
+    const off = harness({ model: null })
+    const none = await off.app.request('http://mandate.test/v1/negotiations/stream', { method: 'POST', headers: { authorization: 'Bearer test-mandate-key-32chars', 'content-type': 'application/json' }, body: '{}' })
+    expect(none.status).toBe(503)
+    expect((await none.json()).code).toBe('agents.unconfigured')
+  })
+
+  it('stops when the watcher presses Stop: no more offers are made', async () => {
+    turnNo = 0
+    const { app, repo } = harness({ model: script(120) })
+    const controller = new AbortController()
+    const response = await app.request(new Request('http://mandate.test/v1/negotiations/stream', { method: 'POST', headers: { authorization: 'Bearer test-mandate-key-32chars', 'content-type': 'application/json' }, body: '{}', signal: controller.signal }))
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    let text = ''
+    while (!text.includes('event: turn\n')) text += decoder.decode((await reader.read()).value)
+    controller.abort()
+    await reader.cancel().catch(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(repo.listDeals(10).length).toBe(1)
+  })
+})
+
+describe('a model hiccup during a negotiation', () => {
+  it('is retried once, and the negotiation carries on', async () => {
+    let calls = 0
+    const model = scriptedModel(({ system, round }) => {
+      calls += 1
+      if (calls === 1) return { fail: true }
+      if (round > 0) return { text: 'offered' }
+      const threadId = /threadId "([0-9a-f-]{36})"/.exec(system)![1]!
+      return { tool: 'offer_deal', input: { buyer: 'Northwind', threadId, terms: terms(system.includes('the seller') ? 30_000 : 20_000) } }
+    })
+    const { app } = harness({ model })
+    const run = await call(app, 'POST', '/v1/negotiations', { body: {} })
+    expect(run.json.turns[0]).toMatchObject({ side: 'seller', deal: { terms: { totalCents: 30_000 } } })
+    expect(run.json.agreed).toBe(true)
+  })
+})

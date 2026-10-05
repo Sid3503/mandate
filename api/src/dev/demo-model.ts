@@ -38,7 +38,7 @@ const dollarsIn = (message: string): number | null => {
 
 const url = (message: string) => /https:\/\/\S+/.exec(message)?.[0]
 
-export function demoModel(): AgentModel {
+export function demoModel(options: { delayMs?: number } = {}): AgentModel {
   let counter = 0
   const usage = { inputTokens: { total: 1 }, outputTokens: { total: 1 } }
   const call = (name: string, input: Record<string, unknown>) => ({
@@ -48,8 +48,10 @@ export function demoModel(): AgentModel {
   const say = (words: string) => ({ content: [{ type: 'text', text: words }], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] })
 
   const model = new MockLanguageModelV4({
-    doGenerate: (async (options: { prompt: Message[] }) => {
-      const prompt = options.prompt
+    doGenerate: (async (call_: { prompt: Message[] }) => {
+      // A real model takes seconds. A little delay keeps the console's "thinking" states visible and testable.
+      if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs))
+      const prompt = call_.prompt
       const system = prompt.filter((message) => message.role === 'system').map((message) => text(message.content)).join('\n')
       const user = [...prompt].reverse().find((message) => message.role === 'user')
       const message = text(user?.content)

@@ -48,7 +48,62 @@ async function request<T>(path: string, options: Options = {}): Promise<T> {
   return body as T
 }
 
+export type NegotiationEvent =
+  | { type: 'start'; threadId: string; model: string; maxOffers: number; studio: string; client: string }
+  | { type: 'turn_start'; turn: number; side: 'buyer' | 'seller'; company: string }
+  | { type: 'turn'; turn: number; side: 'buyer' | 'seller'; runId: string; ms: number; deal: import('./types').Deal }
+  | { type: 'turn_error'; turn: number; side: 'buyer' | 'seller'; runId: string; error: string }
+  | { type: 'done'; threadId: string; agreed: boolean; dealId: string | null; stopped: boolean }
+  | { type: 'error'; code: string; message: string }
+
+/**
+ * Watches a negotiation as it happens (server-sent events over a POST, because an EventSource cannot carry the key).
+ * Resolves when the stream ends. Pressing Stop aborts the request, which also cancels the model call on the server.
+ */
+async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, signal: AbortSignal): Promise<void> {
+  const key = session.get()
+  let response: Response
+  try {
+    response = await fetch('/v1/negotiations/stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      body: '{}',
+      cache: 'no-store',
+      signal,
+    })
+  } catch (error) {
+    if (signal.aborted) return
+    throw new ApiError(0, 'network.offline', 'No connection', 'The server could not be reached. Nothing was sent.', {})
+  }
+  if (!response.ok || !response.body) {
+    const text = await response.text()
+    const body = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+    throw new ApiError(response.status, String(body.code ?? 'http.error'), String(body.title ?? response.statusText), String(body.detail ?? ''), body)
+  }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      let split = buffer.indexOf('\n\n')
+      while (split !== -1) {
+        const block = buffer.slice(0, split)
+        buffer = buffer.slice(split + 2)
+        const data = /^data: (.*)$/m.exec(block)?.[1]
+        if (data) onEvent(JSON.parse(data) as NegotiationEvent)
+        split = buffer.indexOf('\n\n')
+      }
+    }
+  } catch (error) {
+    if (!signal.aborted) throw error
+  }
+}
+
 export const api = {
+  streamNegotiation,
   health: () => request<Health>('/health'),
   ready: () => request<Health>('/ready'),
   session: (key?: string) => request<Session>('/v1/session', { key }),

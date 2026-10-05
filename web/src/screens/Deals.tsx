@@ -1,13 +1,15 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { NegotiationStage } from '../components/NegotiationStage'
 import { Signature } from '../components/Signature'
 import { Chip, Empty, Loading, Money, PageHead, PhaseChip, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { when } from '../lib/format'
 import { useAgentsOn, useDeals, useIsOwner, useOnline, useRefreshDeals } from '../lib/hooks'
 import { dollars, parseCents } from '../lib/money'
-import type { Deal, Negotiation, PartyRulesView } from '../lib/types'
+import type { Deal, PartyRulesView } from '../lib/types'
+import { useNegotiation } from '../lib/useNegotiation'
 import { DEAL_RULE } from '../lib/words'
 
 const newKey = () => `web-deal-${crypto.randomUUID()}`
@@ -18,9 +20,23 @@ export function Deals() {
   const agents = useAgentsOn()
   const online = useOnline()
   const refresh = useRefreshDeals()
-  const [run, setRun] = useState<Negotiation | null>(null)
-  const negotiate = useMutation({ mutationFn: () => api.negotiate(), onSuccess: (result) => { setRun(result); void refresh() } })
+  const live = useNegotiation(() => void refresh())
+  const [highlight, setHighlight] = useState<string | null>(null)
   const rules = useQuery({ queryKey: ['party-rules'], queryFn: api.partyRules, enabled: owner })
+  const running = live.state.phase === 'running'
+  const buyerMax = rules.data?.data.find((item) => item.role === 'buyer')?.maxTotalCents
+  const sellerMin = rules.data?.data.find((item) => item.role === 'seller')?.minTotalCents
+  const jump = () => {
+    setHighlight(live.state.agreedDealId)
+    document.getElementById(`deal-${live.state.agreedDealId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  // When the agreed deal appears in the list, bring it into view once.
+  useEffect(() => {
+    if (live.state.phase === 'done' && live.state.agreedDealId) {
+      const timer = window.setTimeout(jump, 600)
+      return () => window.clearTimeout(timer)
+    }
+  }, [live.state.phase, live.state.agreedDealId])
   const rows = deals.data?.data ?? []
   const threads = groupThreads(rows)
 
@@ -28,26 +44,26 @@ export function Deals() {
     <div className="page">
       <PageHead eyebrow="Two companies agree before any money exists" title="Deals">
         {owner ? (
-          <button type="button" className="btn btn-lime" data-tour="deal-negotiate" disabled={!agents || !online || negotiate.isPending} onClick={() => negotiate.mutate()} title={agents ? 'Two AI agents negotiate inside both companies’ rules' : 'Set OLLAMA_API_KEY to turn the agents on'}>
-            {negotiate.isPending ? 'Agents are negotiating…' : 'Let the agents negotiate'}
+          <button type="button" className="btn btn-lime" data-tour="deal-negotiate" disabled={!agents || !online || running} onClick={() => void live.start()} title={agents ? 'Two AI agents negotiate inside both companies’ rules' : 'Set OLLAMA_API_KEY to turn the agents on'}>
+            {running ? 'Agents are negotiating…' : 'Let the agents negotiate'}
           </button>
         ) : null}
       </PageHead>
 
       <p className="lede deals-lede">A deal only exists where the studio’s rules and the client’s rules overlap. Agents can say anything to each other. The rules decide what stands.</p>
-      <ProblemCard error={negotiate.error} />
-      {run ? <NegotiationStory run={run} /> : null}
+      <ProblemCard error={live.state.phase === 'failed' ? live.state.error : null} />
+      {live.state.phase !== 'idle' ? <NegotiationStage state={live.state} buyerMax={buyerMax} sellerMin={sellerMin} onStop={live.stop} onReset={live.reset} onJump={jump} /> : null}
 
-      {owner && rules.data ? <RuleBand rules={rules.data.data} /> : null}
+      {owner && rules.data && live.state.phase === 'idle' ? <RuleBand rules={rules.data.data} /> : null}
 
       {deals.isLoading ? <Loading /> : null}
       <ProblemCard error={deals.error} />
-      {deals.data && rows.length === 0 ? (
+      {deals.data && rows.length === 0 && live.state.phase === 'idle' ? (
         <div data-tour="empty"><Empty title="No deals yet">{agents ? 'Press “Let the agents negotiate” to watch two agents reach a price, or make an offer yourself below.' : 'Make an offer below. The agents can negotiate for you once a language model is configured.'}</Empty></div>
       ) : null}
 
       <div className="stack-l deal-list">
-        {threads.map((thread) => <Thread key={thread.id} deals={thread.deals} owner={owner} />)}
+        {threads.map((thread) => <Thread key={thread.id} deals={thread.deals} owner={owner} highlight={highlight} />)}
       </div>
 
       {owner ? <OfferForm /> : null}
@@ -89,39 +105,11 @@ function RuleBand({ rules }: { rules: PartyRulesView[] }) {
   )
 }
 
-function NegotiationStory({ run }: { run: Negotiation }) {
-  return (
-    <section className="panel story" aria-live="polite" data-tour="deal-story">
-      <div className="row between wrap gap-s">
-        <h2 className="panel-title">The negotiation, turn by turn</h2>
-        <Chip tone={run.agreed ? 'auto' : 'deny'}>{run.agreed ? 'agreed' : 'no deal'}</Chip>
-      </div>
-      <ol className="turns">
-        {run.turns.map((turn) => (
-          <li key={turn.turn} className={`turn turn-${turn.side}`}>
-            <span className="turn-who">{turn.side === 'seller' ? 'Studio agent' : 'Client agent'}</span>
-            {turn.deal ? (
-              <>
-                <div className="row between gap-s wrap"><Money cents={turn.deal.terms.totalCents} size="lg" /><Chip tone={turn.deal.status === 'agreed' ? 'auto' : 'deny'}>{turn.deal.status === 'agreed' ? 'Agreed' : 'Refused'}</Chip></div>
-                {turn.deal.prompt ? <p className="quote">“{turn.deal.prompt}”</p> : null}
-                {turn.deal.verdict.violations.map((violation) => (
-                  <p key={violation.code} className="turn-why"><code>{violation.code}</code> {DEAL_RULE[violation.code] ?? violation.code}. <span className="muted">{violation.detail}</span></p>
-                ))}
-              </>
-            ) : <p className="turn-why">Stopped: <code>{turn.error}</code></p>}
-          </li>
-        ))}
-      </ol>
-      <p className="fine">Model: <span className="mono">{run.model}</span>. The agents chose the offers. The rules decided every verdict above.</p>
-    </section>
-  )
-}
-
-function Thread({ deals, owner }: { deals: Deal[]; owner: boolean }) {
+function Thread({ deals, owner, highlight }: { deals: Deal[]; owner: boolean; highlight: string | null }) {
   const final = deals[deals.length - 1]!
   const agreed = deals.find((deal) => deal.status === 'agreed')
   return (
-    <article className={`deal-card${agreed ? ' is-agreed' : ''}`} data-tour={agreed ? 'deal-agreed' : undefined}>
+    <article id={agreed ? `deal-${agreed.id}` : undefined} className={`deal-card${agreed ? ' is-agreed' : ''}${agreed && agreed.id === highlight ? ' flash' : ''}`} data-tour={agreed ? 'deal-agreed' : undefined}>
       <header className="deal-head">
         <div>
           <span className="eyebrow">{final.buyerName} · {when(final.createdAt)}</span>

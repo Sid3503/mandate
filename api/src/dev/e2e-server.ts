@@ -17,7 +17,7 @@ const paypal = new FakePayPal()
 // billing falls back to checkout. That lets one server show both paths.
 const invoices = new FakeInvoices()
 invoices.unauthorised = true
-const model = createAgentModel({ apiKey: process.env.OLLAMA_API_KEY, name: process.env.AGENT_MODEL }) ?? demoModel()
+const model = createAgentModel({ apiKey: process.env.OLLAMA_API_KEY, name: process.env.AGENT_MODEL }) ?? demoModel({ delayMs: Number(process.env.DEMO_MODEL_DELAY_MS ?? 0) })
 paypal.autoApprove = process.env.FAKE_BUYER !== 'manual'
 
 const app = createApp({

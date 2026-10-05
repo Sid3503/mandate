@@ -19,20 +19,22 @@ export type ScriptContext = {
  * A language model that follows a script, so agent behaviour can be tested without a network and without luck.
  * It records every prompt it receives, which is how the tests prove what each agent was and was not allowed to see.
  */
-export function scriptedModel(decide: (context: ScriptContext) => ScriptedStep): AgentModel & { prompts: string[]; calls: () => number } {
+export function scriptedModel(decide: (context: ScriptContext) => ScriptedStep, options: { delayMs?: number } = {}): AgentModel & { prompts: string[]; calls: () => number } {
   let calls = 0
   const prompts: string[] = []
   const model = new MockLanguageModelV4({
-    doGenerate: async (options: { prompt: Array<{ role: string; content: unknown }> }) => {
+    doGenerate: async (call: { prompt: Array<{ role: string; content: unknown }> }) => {
+      if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs))
+      const options_ = call
       calls += 1
-      const system = options.prompt.filter((message) => message.role === 'system').map((message) => String(message.content)).join('\n')
-      const users = options.prompt.filter((message) => message.role === 'user')
+      const system = options_.prompt.filter((message) => message.role === 'system').map((message) => String(message.content)).join('\n')
+      const users = options_.prompt.filter((message) => message.role === 'user')
       const lastUser = users[users.length - 1]
       const user = Array.isArray(lastUser?.content) ? (lastUser!.content as Array<{ text?: string }>).map((part) => part.text ?? '').join('') : String(lastUser?.content ?? '')
-      const toolMessages = options.prompt.filter((message) => message.role === 'tool')
+      const toolMessages = options_.prompt.filter((message) => message.role === 'tool')
       const lastTool = toolMessages[toolMessages.length - 1]
       const lastResult = lastTool ? JSON.stringify(lastTool.content) : null
-      prompts.push(`${system}\n---\n${options.prompt.filter((m) => m.role !== 'system').map((m) => JSON.stringify(m.content)).join('\n')}`)
+      prompts.push(`${system}\n---\n${options_.prompt.filter((m) => m.role !== 'system').map((m) => JSON.stringify(m.content)).join('\n')}`)
       const step = decide({ system, user, round: toolMessages.length, lastResult, call: calls })
       if ('fail' in step) throw new Error('model unavailable')
       const usage = { inputTokens: { total: 10 }, outputTokens: { total: 5 } }

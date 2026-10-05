@@ -30,6 +30,8 @@ export type RunInput = {
   stopAfter?: string
   /** The person's words. Lets the door check that a request names who the person named. */
   requestText?: string
+  /** Cancels the model call, for a person who pressed Stop. */
+  signal?: AbortSignal
 }
 
 export type RunOutput = {
@@ -67,7 +69,7 @@ export async function runAgent(input: RunInput): Promise<RunOutput> {
       tools,
       temperature: 0,
       maxRetries: 2,
-      abortSignal: AbortSignal.timeout(input.timeoutMs ?? 60_000),
+      abortSignal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs ?? 60_000)]) : AbortSignal.timeout(input.timeoutMs ?? 60_000),
       stopWhen: input.stopAfter ? [stepCountIs(input.maxSteps ?? 8), hasToolCall(input.stopAfter)] : stepCountIs(input.maxSteps ?? 8),
     })
     const steps: TraceStep[] = result.steps.map((step) => ({
@@ -91,6 +93,7 @@ export async function runAgent(input: RunInput): Promise<RunOutput> {
     }
   } catch (error) {
     const name = (error as Error)?.name ?? ''
+    if (input.signal?.aborted) throw new Problem(499, 'agent.stopped', 'Stopped', 'The run was stopped before it finished. Nothing was sent to PayPal.')
     if (name === 'TimeoutError' || name === 'AbortError') {
       throw new Problem(504, 'agent.timeout', 'The agent took too long', 'The model did not finish in time. Nothing was sent to PayPal.')
     }

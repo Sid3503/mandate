@@ -184,7 +184,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 99 API tests (Vitest), plus 30 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 109 API tests (Vitest), plus 32 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -583,7 +583,7 @@ A hash can be recomputed by anyone who can write the database. So the lock is al
 `gpt-oss:20b` on Ollama Cloud, through the Vercel AI SDK, as an MCP client of the door above. Nothing is wired around the door: the agents hold a proposer's tools and nothing else.
 
 - **The clerk** (`POST /v1/clerk/messages`, the **Clerk** screen). Staff write in plain words; it looks up the job and the client payment (`get_jobs`) and calls `propose`. Three guards sit around it: the rules decide, whatever it says; a reply that claims money moved when no capture happened is replaced with the rules' own answer; and each run is bounded (8 steps, 4 asks, 60 seconds, temperature 0).
-- **The negotiators** (`POST /v1/negotiations`, owner only). Two agents, one per company, trade offers through `offer_deal`. The orchestration is plain code (who speaks, what they may see, when to stop). A model only chooses the next offer. Each is told its own limits and the other side's verdicts as hints, never as numbers.
+- **The negotiators** (`POST /v1/negotiations`, owner only). The console watches them live through `POST /v1/negotiations/stream` (server-sent events: `start`, `turn_start`, `turn`, `turn_error`, `done`), with a Stop button that also cancels the model call. A failed model call is retried once. Two agents, one per company, trade offers through `offer_deal`. The orchestration is plain code (who speaks, what they may see, when to stop). A model only chooses the next offer. Each is told its own limits and the other side's verdicts as hints, never as numbers.
 - **The record.** Every run is stored with its full trace (`GET /v1/agent-runs/:id`, owner only): every model turn, tool call and result. A request an agent asked for links back to it, so the receipt shows the chat behind it.
 - **Without a model** (`OLLAMA_API_KEY` unset) the agents answer `503 agents.unconfigured` and nothing else changes. `npm run demo` ships a deterministic stand-in (`demo-script`) so the whole flow works offline; it is a script, not an AI, and says so on the System screen.
 - **Evaluation.** `npm run eval:agents` (in `api/`) runs eight cases against the real model: pay Priya her share, refuse the $18 lunch, be fooled by the vendor email, refuse before the client has paid, answer a question without asking, refuse "the owner already agreed", refuse a huge amount, and the full negotiation. A case passes when the **rules'** outcome is right. The model is allowed to be wrong; the design makes that harmless. Last run: 8 of 8.
@@ -770,8 +770,8 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 99 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 30 Playwright tests (desktop 1440×960 and Pixel 7)
+cd api && npm test && npm run typecheck        # 109 Vitest tests
+cd web && npm run typecheck && npm run e2e     # 32 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 
 **API tests (`api/test/`)** cover:

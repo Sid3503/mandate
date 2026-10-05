@@ -463,13 +463,13 @@ export const TOURS: Record<TourId, TourStep[]> = {
       target: '[data-tour="deal-negotiate"]',
       title: 'Let the agents negotiate',
       placement: 'bottom',
-      content: p('Two AI agents, one per company, trade offers. Each is told only its own limits. A refusal tells an agent which way to move, never the other side’s number. You can read every turn afterwards.'),
+      content: p('Two AI agents, one per company, trade offers, and you watch it happen. Each is told only its own limits. A refusal tells an agent which way to move, never the other side’s number. You can press Stop at any time.'),
     },
     {
       target: '[data-tour="deal-story"]',
-      title: 'Turn by turn',
+      title: 'The live stage',
       placement: 'auto',
-      content: p('Each offer, who made it, and the rule that decided it. A refusal names what to fix. The agents chose the offers, but the rules decided every verdict.'),
+      content: p('Each agent takes a seat and shows when it is thinking. Every offer lands as a pin on the price line, studio above and client below, next to the green zone where a deal can exist. A refusal names the rule and which way to move. The agents chose the offers; the rules decided every verdict.'),
     },
     {
       target: '[data-tour="deal-band"]',

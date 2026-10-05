@@ -5,7 +5,7 @@ const server = (port: number) => ({
   command: 'node ../api/node_modules/tsx/dist/cli.mjs ../api/src/dev/e2e-server.ts',
   url: `http://127.0.0.1:${port}/health`,
   reuseExistingServer: false,
-  env: { PORT: String(port) },
+  env: { PORT: String(port), DEMO_MODEL_DELAY_MS: '1200' },
 })
 
 export default defineConfig({

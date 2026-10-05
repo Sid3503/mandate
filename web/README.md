@@ -34,7 +34,7 @@ npm run dev             # http://localhost:5173/app/
 
 ## New screens
 
-- **Deals** (`/app/deals`): "Let the agents negotiate" shows the negotiation turn by turn with the rule behind every refusal, a picture of where both companies' rules overlap (owner only), each agreed deal with a signature **Verify** button, and billing of the next milestone. You can also make an offer yourself.
+- **Deals** (`/app/deals`): "Let the agents negotiate" is a live stage: each agent takes a seat and shows when it is thinking, every offer lands as a pin on the price line, and the rule behind each refusal appears as it happens. A Stop button ends it. Afterwards it shows the negotiation turn by turn, a picture of where both companies' rules overlap (owner only), each agreed deal with a signature **Verify** button, and billing of the next milestone. You can also make an offer yourself.
 - **Clerk** (`/app/clerk`): chat with the studio clerk. Try the fake vendor email in the examples.
 - **Receipt**: the lock shows the Ed25519 signature with **Verify**; a request an agent asked for shows the chat behind it and, for the owner, every step the agent took; a charge billed by invoice shows the invoice.
 
