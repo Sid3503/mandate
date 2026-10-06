@@ -428,6 +428,15 @@ export class Repo {
     return (this.db.prepare(`SELECT * FROM deals WHERE job_id = ? AND status = 'agreed' LIMIT 1`).get(jobId) as DealRow | undefined) ?? null
   }
 
+  /** PayPal batches still processing, and invoices still out. The server asks PayPal about these on a timer, so nobody has to press Check. */
+  openPayoutBatches(): string[] {
+    return (this.db.prepare(`SELECT payout_batch_id FROM proposals WHERE phase = 'payout_sent' AND payout_batch_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ payout_batch_id: string }>).map((row) => row.payout_batch_id)
+  }
+
+  openInvoices(): string[] {
+    return (this.db.prepare(`SELECT invoice_id FROM proposals WHERE phase IN ('invoice_draft', 'invoice_sent') AND invoice_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ invoice_id: string }>).map((row) => row.invoice_id)
+  }
+
   /** Payouts a standing rule approved that have not reached PayPal. */
   lockedStandingPayouts(): ProposalRow[] {
     return this.db.prepare(`SELECT * FROM proposals WHERE kind = 'payment' AND clause = 'standing.matched' AND phase IN ('locked', 'order_created') AND payout_batch_id IS NULL ORDER BY created_at LIMIT 20`).all() as ProposalRow[]

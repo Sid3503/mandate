@@ -266,6 +266,19 @@ export class MandateService {
     return toView(this.require(id))
   }
 
+  /**
+   * The server's own once-a-minute look at money in flight: payouts PayPal is still processing and invoices still
+   * out. It re-reads PayPal (the same read the Check PayPal button does), so a payout or an invoice settles without
+   * anyone pressing anything, and without needing a webhook. One failing item never stops the others.
+   */
+  async sweepPending(): Promise<{ payouts: number; invoices: number }> {
+    const payouts = this.repo.openPayoutBatches()
+    const invoices = this.invoices ? this.repo.openInvoices() : []
+    for (const batch of payouts) await this.refreshPayoutBatch(batch).catch(() => undefined)
+    for (const invoice of invoices) await this.refreshInvoice(invoice).catch(() => undefined)
+    return { payouts: payouts.length, invoices: invoices.length }
+  }
+
   /** Looks for standing-rule payouts that are approved but not yet sent (PayPal was down, or a dispute held them) and sends them. */
   async sweepStanding(): Promise<number> {
     const stuck = this.repo.lockedStandingPayouts()

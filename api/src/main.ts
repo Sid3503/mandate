@@ -61,7 +61,7 @@ const server = serve({ fetch: app.fetch, hostname: config.host, port: config.por
 
 // A client dispute is news that can arrive between taps. Look for it every minute so a payout never leaves on stale news.
 // A standing-rule payout that PayPal could not take, or a dispute held, is sent as soon as it can be.
-const standingTimer = setInterval(() => { void services.mandate.sweepStanding().catch(() => undefined) }, 60_000)
+const standingTimer = setInterval(() => { void services.mandate.sweepStanding().then(() => services.mandate.sweepPending()).catch(() => undefined) }, 60_000)
 standingTimer.unref()
 
 const disputeTimer = watch ? setInterval(() => { void services.mandate.syncDisputes().catch(() => undefined) }, 60_000) : null

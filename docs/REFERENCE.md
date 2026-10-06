@@ -186,7 +186,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 192 API tests (Vitest), including a 42-case red team, plus 40 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 194 API tests (Vitest), including a 42-case red team, plus 40 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -507,6 +507,7 @@ Meaning: *Priya is paid, with no tap, from settled Northwind payments that came 
 - **Validation at publish:** the payee and clients must be on the rules, ids must be unique, and "payouts need client money first" must be on. Anything else is refused with 400.
 - **The lock is still signed** at the moment of the ask, and the payout is sent by the same settle path the owner's Send button uses. That path re-checks the signature, the funding and the dispute status.
 - **The server sends it.** A matching payout is sent as soon as it is asked (`POST /v1/proposals`, and the MCP `propose` tool). If PayPal cannot be reached, or a dispute check cannot be answered, it stays locked with a `standing.waiting` event and a once-a-minute sweep sends it when it can. If the lock, the funding or the state is wrong it is refused for good (`capture.refused`), so a broken payout never holds the money or clogs the sweep.
+- **It finishes by itself.** Once a minute the server also re-reads PayPal for payouts still processing and invoices still out (the read the **Check PayPal** button does), so a payout or an invoice settles without anyone pressing anything and without needing a webhook. PayPal's word is still the only thing that marks it paid.
 - **What an agent sees:** the same six MCP tools. `propose` now answers `AUTO` / `standing.matched`, and `moneyMoved` shows only what PayPal has confirmed.
 - **Bounds that stay:** an attack that asks for one dollar over the share, a different payee, no proof, a foreign currency, no client payment, a different job or lunch is refused exactly as without the rule. See the [red team](#testing-and-quality).
 
@@ -849,7 +850,7 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 192 Vitest tests
+cd api && npm test && npm run typecheck        # 194 Vitest tests
 cd web && npm run typecheck && npm run e2e     # 40 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 

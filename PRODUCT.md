@@ -65,7 +65,7 @@ One frozen scenario drives every test, screenshot and demo. Nothing in the repo 
 - **Money in**: client charges settled through a PayPal **invoice** (Agent Toolkit) or, where the app lacks the permission, PayPal **Orders** checkout.
 - **Money out**: contractor **Payouts** (never Orders, which would charge a buyer). The batch id derives from the lock hash so a retry can never pay twice. Pending, unclaimed and failed payouts are shown as such and never counted as paid.
 - **Funding**: a payout must cite a captured client payment on the same job and stays within the 60% share. Checked at propose, approve and capture.
-- **Standing rules**: part of a published rules version (so versioned, diffed and owner-only). A matching payout is `AUTO` with the code `standing.matched`, is sent by the server through the same settle path the Send button uses, and is held if PayPal cannot be reached or a dispute is open. It skips only the tap: proof, funding, share, cap and dispute checks all still run. A payout that cannot be sent waits and retries; one that is broken is refused for good.
+- **Standing rules**: part of a published rules version (so versioned, diffed and owner-only). A matching payout is `AUTO` with the code `standing.matched`, is sent by the server through the same settle path the Send button uses, and is held if PayPal cannot be reached or a dispute is open. It skips only the tap: proof, funding, share, cap and dispute checks all still run. A payout that cannot be sent waits and retries; one that is broken is refused for good. The server also re-reads PayPal once a minute for payouts still processing and invoices still out, so they settle with nobody pressing anything.
 - **Refunds**: a new proposal against a capture id, through the same gate and the same settle route.
 - **Receipts**: one per payment (`/packet`) and one per job, with request, rule, approval, lock, PayPal ids and whether the cents match.
 
@@ -130,7 +130,7 @@ An installable React app served at `/app/`.
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 192 API tests (42 of them a red team) and 40 browser tests on desktop and phone, with an accessibility scan on every screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 194 API tests (42 of them a red team) and 40 browser tests on desktop and phone, with an accessibility scan on every screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -219,7 +219,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 10. Proof
 
-- **192 API tests** (Vitest; 42 are the red team) and **40 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
+- **194 API tests** (Vitest; 42 are the red team) and **40 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation) and compared on four models. No miss on any model moved money.
 - **The whole frozen job has run on the real PayPal sandbox:** agents negotiated and signed $300; Northwind paid a real $150 invoice; the lock verified; a real $90 payout reached Priya's sandbox account (`SUCCESS`, $0.25 fee); the job reads $150 in, $90 out, $60 kept; and cancelling an unclaimed payout returned the money.
 

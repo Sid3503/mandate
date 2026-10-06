@@ -76,7 +76,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-192 API tests (including a 42-case red team), 40 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
+194 API tests (including a 42-case red team), 40 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
 
 ## Where to read next
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { FakePayPal, FakeWatch } from '../src/paypal/fake'
+import { FakeInvoices, FakePayPal, FakeWatch } from '../src/paypal/fake'
 import { agree, call, closeAll, collect, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
@@ -177,5 +177,38 @@ describe('writing a standing rule', () => {
     expect((await publishStanding(h.app, [{ ...RULE, clientIds: ['client_ghost'] }])).status).toBe(400)
     expect((await publishStanding(h.app, [RULE], { fundingRequired: false })).status).toBe(400)
     expect((await publishStanding(h.app, [RULE, RULE])).status).toBe(400)
+  })
+})
+
+describe('finishing without anyone pressing Check', () => {
+  it('settles a payout PayPal was still processing, on the server\'s own look', async () => {
+    const paypal = new FakePayPal()
+    paypal.payoutOutcome = 'PENDING'
+    const h = await funded({ paypal })
+    await publishStanding(h.app, [RULE])
+    const asked = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: payout(h.captureId) })
+    expect(asked.json).toMatchObject({ clause: 'standing.matched', phase: 'payout_sent', payoutStatus: 'PENDING' })
+    // Still processing: the look changes nothing.
+    expect(await h.services.mandate.sweepPending()).toEqual({ payouts: 1, invoices: 0 })
+    expect((await call(h.app, 'GET', `/v1/proposals/${asked.json.id}`)).json.phase).toBe('payout_sent')
+    paypal.settlePayouts('SUCCESS')
+    await h.services.mandate.sweepPending()
+    expect((await call(h.app, 'GET', `/v1/proposals/${asked.json.id}`)).json).toMatchObject({ phase: 'captured', payoutStatus: 'SUCCESS', capturedAmountCents: 9_000 })
+    expect(paypal.payoutCalls).toBe(1)
+    expect(await h.services.mandate.sweepPending()).toEqual({ payouts: 0, invoices: 0 })
+  })
+
+  it('settles an invoice the client has paid, and never settles one they have not', async () => {
+    const invoices = new FakeInvoices()
+    const h = harness({ invoices })
+    const deal = await agree(h.app)
+    const bill = await call(h.app, 'POST', `/v1/deals/${deal.id}/milestones/0/bill`, { body: { evidenceUrl: EVIDENCE } })
+    await call(h.app, 'POST', `/v1/proposals/${bill.json.id}/approve`)
+    expect((await call(h.app, 'POST', `/v1/proposals/${bill.json.id}/capture`)).json.phase).toBe('invoice_sent')
+    await h.services.mandate.sweepPending()
+    expect((await call(h.app, 'GET', `/v1/proposals/${bill.json.id}`)).json.phase).toBe('invoice_sent')
+    invoices.pay([...invoices.invoices.keys()][0]!)
+    await h.services.mandate.sweepPending()
+    expect((await call(h.app, 'GET', `/v1/proposals/${bill.json.id}`)).json).toMatchObject({ phase: 'captured', capturedAmountCents: 15_000 })
   })
 })
