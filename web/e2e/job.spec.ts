@@ -604,3 +604,50 @@ test('every signed-in screen passes axe (WCAG 2.1 AA)', async ({ page }) => {
     expect(results.violations.map((v) => `${path} ${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
   }
 })
+
+// Last on purpose: a published standing rule changes how every later payout is decided.
+test('the owner signs a standing rule once, and the payout it covers is sent with no tap', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  await widerCap(request)
+  const job = `job_standing_${test.info().project.name}`
+  const post = async (path: string, data?: unknown, key?: string, as = OWNER) =>
+    (await request.post(path, { headers: { authorization: `Bearer ${as}`, ...(key ? { 'idempotency-key': key } : {}) }, data })).json()
+  const charge = await post('/v1/proposals', { kind: 'charge', payee: 'Northwind', amountCents: 15000, currency: 'USD', category: 'design', description: `Invoice ${job}`, evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job }, `charge-${job}-0001`)
+  await post(`/v1/proposals/${charge.id}/approve`)
+  const paid = await post(`/v1/proposals/${charge.id}/capture`)
+
+  // Before the rule: the same ask waits for a tap.
+  const before = await post('/v1/proposals', { payee: 'Priya', amountCents: 9000, currency: 'USD', category: 'design', description: `Share ${job}`, evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job, fundingCaptureId: paid.captureId }, `before-${job}-0001`, PROPOSER)
+  expect(before).toMatchObject({ gate: 'NEEDS_APPROVAL', phase: 'pending_approval' })
+  await post(`/v1/proposals/${before.id}/reject`)
+
+  await unlock(page, OWNER)
+  await page.goto('/app/rules')
+  await page.getByRole('button', { name: /Write version/ }).click()
+  const standing = page.locator('fieldset.standing')
+  await standing.getByRole('button', { name: '+ Add a standing rule' }).click()
+  await standing.getByLabel('Only money that came through a signed deal').uncheck()
+  await shots(page, '32-standing-rule-editor')
+  const { default: AxeBuilder } = await import('@axe-core/playwright')
+  const scan = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).include('.editor').analyze()
+  expect(scan.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
+  await page.getByRole('button', { name: 'Review changes' }).click()
+  await expect(page.locator('.editor table.diff')).toContainText('Standing rules (no tap)')
+  await expect(page.locator('.editor table.diff')).toContainText('Priya Shah from Northwind')
+  await page.getByRole('button', { name: /Publish version/ }).click()
+  await expect(page.getByText(/Standing rule: Priya Shah is paid, with no tap/)).toBeVisible()
+
+  // After the rule: an agent's ask is sent by the server, and PayPal's answer is on the receipt.
+  const after = await post('/v1/proposals', { payee: 'Priya', amountCents: 9000, currency: 'USD', category: 'design', description: `Share ${job} again`, evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job, fundingCaptureId: paid.captureId }, `after-${job}-0001`, PROPOSER)
+  expect(after).toMatchObject({ gate: 'AUTO', clause: 'standing.matched', phase: 'captured', capturedAmountCents: 9000 })
+  await page.goto(`/app/p/${after.id}`)
+  await expect(page.locator('.page-head .chip').first()).toHaveText('Paid')
+  await expect(page.locator('.decision-words')).toContainText('standing rule you signed')
+  await expect(page.locator('.match-flag')).toHaveText('cents match ✓')
+  await shots(page, '33-standing-paid')
+
+  // Put the rules back for anything that runs after.
+  const current = await (await request.get('/v1/warrant', { headers })).json()
+  const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
+  await request.put('/v1/warrant', { headers, data: { ...body, standing: [] } })
+})

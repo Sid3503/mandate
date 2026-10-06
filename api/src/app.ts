@@ -18,6 +18,7 @@ import { AgentService } from './agents/service'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
 import type { WatchPort } from './paypal/watch'
+import { toolSummary } from './paypal/tiers'
 import { decodeCursor, type HttpResult } from './services/mandate'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from './services/principal'
 
@@ -70,7 +71,7 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
-  { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes)$/ },
+  { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
   { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
 ]
 
@@ -226,7 +227,7 @@ export function createApp(deps: AppDeps) {
     if (!key.success) throw new Problem(400, 'idempotency.missing', 'Idempotency-Key is missing', 'POST /v1/proposals requires an Idempotency-Key of 8 to 255 token characters.')
     const parsed = ProposalCreateSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
-    return send(c, service.propose(parsed.data, key.data, c.get('principal').role))
+    return send(c, await service.proposeAndDispatch(parsed.data, key.data, c.get('principal').role))
   })
 
   app.get('/v1/proposals', (c) => {
@@ -331,6 +332,8 @@ export function createApp(deps: AppDeps) {
     await assertEmpty(c)
     return c.json(await service.features(true))
   })
+  app.get('/v1/paypal/balance', async (c) => c.json(await service.balance()))
+  app.get('/v1/paypal/tools', (c) => c.json(toolSummary()))
   app.get('/v1/paypal/activity', async (c) => c.json(await service.activity(Number(c.req.query('days') ?? 30) || 30)))
   app.get('/v1/paypal/disputes', (c) => c.json({ data: services.repo.listDisputes(50) }))
   app.post('/v1/paypal/disputes/sync', async (c) => {

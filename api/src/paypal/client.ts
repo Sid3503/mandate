@@ -1,5 +1,6 @@
 import { centsToPayPal, payPalToCents } from '../domain/money'
 import { paypalRequestId } from '../domain/hash'
+import { arr, obj, str } from './toolkit'
 import { PayPalError, type CapturedPayment, type CreatedOrder, type LiveOrder, type LivePayout, type PayPalPort, type RefundedPayment, type SentPayout } from './port'
 
 type Token = { value: string; expiresAt: number }
@@ -169,6 +170,15 @@ export function createPayPalClient(options: {
     async cancelPayoutItem(itemId) {
       const { json } = await call(`/v1/payments/payouts-item/${encodeURIComponent(itemId)}/cancel`, { method: 'POST' })
       return { status: stringField(json, 'transaction_status') }
+    },
+    async balance(currency) {
+      const { json } = await call(`/v1/reporting/balances?currency_code=${encodeURIComponent(currency)}`, { method: 'GET' })
+      const entry = arr(json.balances).find((item) => str(item.currency) === currency) ?? arr(json.balances)[0]
+      const cents = (field: string) => {
+        const value = obj(entry?.[field]).value
+        return typeof value === 'string' ? payPalToCents(value) : 0
+      }
+      return { availableCents: cents('available_balance'), withheldCents: cents('withheld_balance'), asOf: str(json.as_of_time) }
     },
     async verifyWebhook({ webhookId, headers, event }) {
       const { json } = await call('/v1/notifications/verify-webhook-signature', {

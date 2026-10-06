@@ -11,6 +11,9 @@ import { useQueryClient } from '@tanstack/react-query'
 
 type Body = Omit<Warrant, 'id' | 'version' | 'createdAt'>
 type Change = { field: string; before: string; after: string }
+type Standing = NonNullable<Warrant['standing']>[number]
+
+const nameOf = (b: Body, id: string) => [...b.payees, ...(b.clients ?? [])].find((party) => party.id === id)?.displayName ?? id
 
 function body(warrant: Warrant): Body {
   const { id: _id, version: _version, createdAt: _createdAt, ...rest } = warrant
@@ -27,8 +30,9 @@ const LABELS: Array<{ key: keyof Body; label: string; show: (body: Body) => stri
   { key: 'currency', label: 'Currency', show: (b) => b.currency },
   { key: 'timezone', label: 'Month boundary', show: (b) => b.timezone },
   { key: 'categories', label: 'Allowed work', show: (b) => b.categories.join(', ') },
-  { key: 'payees', label: 'Who can be paid', show: (b) => b.payees.map((p) => `${p.displayName} (${p.id})`).join(', ') },
-  { key: 'clients', label: 'Who can be billed', show: (b) => (b.clients ?? []).map((p) => `${p.displayName} (${p.id})`).join(', ') || 'nobody' },
+  { key: 'payees', label: 'Who can be paid', show: (b) => b.payees.map((p) => `${p.displayName} (${p.id}) · ${p.email}`).join(', ') },
+  { key: 'standing', label: 'Standing rules (no tap)', show: (b) => (b.standing ?? []).map((r) => `${nameOf(b, r.payeeId)} from ${r.clientIds.map((id) => nameOf(b, id)).join(' or ')}${r.requireDeal ? ', signed deal only' : ''}`).join('; ') || 'none' },
+  { key: 'clients', label: 'Who can be billed', show: (b) => (b.clients ?? []).map((p) => `${p.displayName} (${p.id}) · ${p.email}`).join(', ') || 'nobody' },
 ]
 
 export function diff(before: Body | null, after: Body): Change[] {
@@ -126,6 +130,7 @@ function Editor({ current, onDone }: { current: Warrant; onDone: (version: numbe
   const [categories, setCategories] = useState(start.categories.join(', '))
   const [payees, setPayees] = useState<Party[]>(start.payees)
   const [clients, setClients] = useState<Party[]>(start.clients ?? [])
+  const [standing, setStanding] = useState<Standing[]>(start.standing ?? [])
   const [review, setReview] = useState(false)
 
   const draft: Body | null = (() => {
@@ -145,6 +150,7 @@ function Editor({ current, onDone }: { current: Warrant; onDone: (version: numbe
       categories: categories.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean),
       payees,
       clients,
+      standing: funding ? standing : [],
     }
   })()
   const changes = draft ? diff(start, draft) : []
@@ -174,6 +180,7 @@ function Editor({ current, onDone }: { current: Warrant; onDone: (version: numbe
           <label className="field"><span>Allowed work, comma separated</span><input value={categories} onChange={(e) => setCategories(e.target.value)} /></label>
           <Parties title="Who can be paid" prefix="payee_" list={payees} onChange={setPayees} />
           <Parties title="Who can be billed" prefix="client_" list={clients} onChange={setClients} />
+          <StandingRules list={standing} payees={payees} clients={clients} enabled={funding} onChange={setStanding} />
           <div className="row between wrap gap-s">
             <span className="muted">{draft ? `${changes.length} change${changes.length === 1 ? '' : 's'}` : 'Some amounts are not valid money'}</span>
             <button type="button" className="btn btn-ink" disabled={!draft || changes.length === 0} onClick={() => setReview(true)}>Review changes</button>
@@ -193,6 +200,40 @@ function Editor({ current, onDone }: { current: Warrant; onDone: (version: numbe
         </div>
       )}
     </section>
+  )
+}
+
+/** The owner says yes once to a kind of payout. A payout that matches needs no tap; every other rule still applies. */
+function StandingRules({ list, payees, clients, enabled, onChange }: { list: Standing[]; payees: Party[]; clients: Party[]; enabled: boolean; onChange: (next: Standing[]) => void }) {
+  const update = (index: number, patch: Partial<Standing>) => onChange(list.map((item, i) => (i === index ? { ...item, ...patch } : item)))
+  const add = () => onChange([...list, { id: `standing_${list.length + 1}`, payeeId: payees[0]?.id ?? '', clientIds: clients[0] ? [clients[0].id] : [], requireDeal: true }])
+  return (
+    <fieldset className="parties standing" data-tour="rules-standing">
+      <legend>Standing rules · say yes once</legend>
+      <p className="fine">A payout that matches a standing rule is sent without asking you. It must still be funded by settled client money, stay inside the contractor share and the monthly cap, have proof, and pass the dispute check. Anything that does not match waits for your tap, as before.</p>
+      {!enabled ? <p className="fine"><strong>Switch on “Payouts need client money first” to use standing rules.</strong></p> : null}
+      {list.map((rule, index) => (
+        <div key={index} className="standing-row">
+          <label className="field"><span>Pay</span>
+            <select value={rule.payeeId} onChange={(e) => update(index, { payeeId: e.target.value })}>
+              {payees.map((party) => <option key={party.id} value={party.id}>{party.displayName || party.id}</option>)}
+            </select>
+          </label>
+          <div className="field"><span>From settled payments by</span>
+            <div className="chips-row">
+              {clients.map((client) => (
+                <label key={client.id} className="check">
+                  <input type="checkbox" checked={rule.clientIds.includes(client.id)} onChange={(e) => update(index, { clientIds: e.target.checked ? [...rule.clientIds, client.id] : rule.clientIds.filter((id) => id !== client.id) })} /> {client.displayName || client.id}
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="check"><input type="checkbox" checked={rule.requireDeal} onChange={(e) => update(index, { requireDeal: e.target.checked })} /> Only money that came through a signed deal</label>
+          <button type="button" className="link" onClick={() => onChange(list.filter((_, i) => i !== index))} aria-label="Remove standing rule">Remove</button>
+        </div>
+      ))}
+      <button type="button" className="link" disabled={!enabled || payees.length === 0 || clients.length === 0} onClick={add}>+ Add a standing rule</button>
+    </fieldset>
   )
 }
 

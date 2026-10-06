@@ -428,6 +428,11 @@ export class Repo {
     return (this.db.prepare(`SELECT * FROM deals WHERE job_id = ? AND status = 'agreed' LIMIT 1`).get(jobId) as DealRow | undefined) ?? null
   }
 
+  /** Payouts a standing rule approved that have not reached PayPal. */
+  lockedStandingPayouts(): ProposalRow[] {
+    return this.db.prepare(`SELECT * FROM proposals WHERE kind = 'payment' AND clause = 'standing.matched' AND phase IN ('locked', 'order_created') AND payout_batch_id IS NULL ORDER BY created_at LIMIT 20`).all() as ProposalRow[]
+  }
+
   // ---------- PayPal disputes and reconciliation ----------
 
   upsertDispute(row: DisputeRow): void {

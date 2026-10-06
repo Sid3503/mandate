@@ -80,6 +80,8 @@ export type PayPalPort = {
   getPayout(batchId: string): Promise<LivePayout>
   /** Cancels a payout item PayPal is holding because the receiver has no account. The money goes back to the sender. */
   cancelPayoutItem(itemId: string): Promise<{ status: string }>
+  /** The account's balance. PayPal's report refreshes every few hours, so `asOf` matters: this is advice, never a guarantee. */
+  balance(currency: string): Promise<{ availableCents: number; withheldCents: number; asOf: string | null }>
   /** Asks PayPal whether a webhook really came from PayPal. True only when PayPal says SUCCESS. */
   verifyWebhook(input: { webhookId: string; headers: Record<string, string>; event: unknown }): Promise<boolean>
   /** The scopes on the app's access token, which say which PayPal features the app may use. `fresh` forces a new token. */

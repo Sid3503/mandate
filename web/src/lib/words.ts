@@ -73,6 +73,7 @@ export const EVENT: Record<string, string> = {
   'payout.completed': 'Paid by PayPal',
   'payout.unclaimed': 'Sent · receiver has no PayPal account yet',
   'payout.failed': 'PayPal failed the payout',
+  'standing.waiting': 'Standing rule: held, will retry',
   'payout.cancelled': 'Unclaimed payout cancelled · money returned',
   'invoice.reminded': 'Reminder sent to the client',
   'invoice.cancelled': 'Invoice cancelled',
@@ -104,6 +105,7 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
   const share = warrant?.contractorShareBps !== undefined ? `${warrant.contractorShareBps / 100}%` : 'the contractor share'
   switch (clause) {
     case 'amount.needs_approval': return `${who} is on the rules, but ${amount} is at or above ${line}, so the owner has to tap.`
+    case 'standing.matched': return `${who} is covered by a standing rule you signed, so ${amount} goes to PayPal without a tap. Every other rule still had to pass.`
     case 'amount.auto': return `${who} is on the rules and ${amount} is under ${line}, so it settles without a tap.`
     case 'payee.unknown': return proposal?.kind === 'charge' ? 'That client is not on the rules. Nobody new can be billed.' : 'That account is not on the rules. Being under the line never adds a new payee.'
     case 'category.missing': return `“${proposal?.category ?? 'That'}” is not an allowed kind of work.`
@@ -152,6 +154,11 @@ export function problemWords(code: string): string {
   }
 }
 
+export function standingSentences(warrant: Warrant): string[] {
+  const name = (id: string) => [...warrant.payees, ...(warrant.clients ?? [])].find((party) => party.id === id)?.displayName ?? id
+  return (warrant.standing ?? []).map((rule) => `Standing rule: ${name(rule.payeeId)} is paid, with no tap, from settled ${rule.clientIds.map(name).join(' or ')} payments${rule.requireDeal ? ' on a signed deal' : ''}, up to the contractor share and inside the monthly cap.`)
+}
+
 /** The rules as sentences, for the Rules screen. */
 export function ruleSentences(warrant: Warrant): string[] {
   const payees = warrant.payees.map((party) => party.displayName).join(', ')
@@ -160,7 +167,8 @@ export function ruleSentences(warrant: Warrant): string[] {
     `Only ${payees || 'nobody'} can be paid. Anyone else is refused, whatever the amount.`,
     clients ? `Only ${clients} can be billed.` : 'No clients can be billed yet.',
     `Allowed work: ${warrant.categories.join(', ')}. Anything else is refused.`,
-    `Under ${dollars(warrant.autoSettleUnderCents)} settles automatically. ${dollars(warrant.autoSettleUnderCents)} and above waits for the owner.`,
+    ...standingSentences(warrant),
+    `Under ${dollars(warrant.autoSettleUnderCents)} settles automatically. ${dollars(warrant.autoSettleUnderCents)} and above waits for the owner, unless a standing rule covers it.`,
     `Contractor payouts stop at ${dollars(warrant.monthlyCapCents)} a month (${warrant.timezone}).`,
     `No single payment above ${dollars(warrant.perPaymentCeilingCents)}.`,
     warrant.evidenceRequired ? 'Every request needs an https link to the work.' : 'Evidence links are optional.',

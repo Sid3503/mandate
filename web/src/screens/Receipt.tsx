@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { BalanceNote } from '../components/PayPalFeatures'
 import { Signature } from '../components/Signature'
 import { useToast } from '../components/Toast'
 import { Chip, GateChip, Hash, KV, Loading, Money, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
@@ -277,6 +278,7 @@ function PayoutPanel({ packet, warrant, names }: { packet: Packet; warrant: Warr
   const cancel = useMutation({ mutationFn: () => api.reject(p.id), onSuccess: () => toast({ title: 'Payout cancelled', body: 'Nothing was sent.', tone: 'info' }), onSettled: () => void refresh() })
   const returnMoney = useMutation({ mutationFn: () => api.cancelPayout(p.id), onSuccess: () => toast({ title: 'Payout cancelled', body: 'PayPal returned the money. Nothing is counted as paid.', tone: 'info' }), onSettled: () => void refresh() })
   const tamper = useMutation({ mutationFn: (cents: number) => api.capture(p.id, cents), onSettled: () => void refresh() })
+  const viaStanding = p.clause === 'standing.matched'
   const unsent = p.phase === 'locked' || p.phase === 'order_created' || p.phase === 'capture_inflight'
   const atPayPal = p.phase === 'payout_sent' || p.phase === 'payout_unclaimed'
   if (!unsent && !atPayPal && p.phase !== 'payout_failed' && p.phase !== 'captured') return null
@@ -295,12 +297,13 @@ function PayoutPanel({ packet, warrant, names }: { packet: Packet; warrant: Warr
     : p.phase === 'payout_sent' ? { tone: 'need' as const, label: 'Sent · PayPal processing' }
     : { tone: 'ink' as const, label: 'Ready to send' }
   const sent = Boolean(p.payoutBatchId)
+  const waitingNote = viaStanding && unsent ? [...packet.events].reverse().find((event) => event.type === 'standing.waiting') : undefined
   const paid = p.phase === 'captured'
   const steps: Array<{ state: 'done' | 'now' | 'todo'; title: string; body: string }> = [
     { state: 'done', title: 'Asked', body: packet.events[0]?.payload.actor === 'proposer' ? 'An agent’s key proposed this.' : 'Proposed with the owner key.' },
-    { state: 'done', title: 'Rules checked', body: `${who} is on the rules, and ${dollars(p.amountCents)} is at or above the automatic line.` },
+    { state: 'done', title: 'Rules checked', body: viaStanding ? `${who} is covered by a standing rule you signed, and every other rule passed.` : `${who} is on the rules, and ${dollars(p.amountCents)} is at or above the automatic line.` },
     { state: funded && funded.phase === 'captured' ? 'done' : 'todo', title: 'Funded by the client', body: funded ? `${names(funded.clientId)}’s ${dollars(funded.capturedCents)} payment settled, so this payout is covered.` : 'No client payment is cited.' },
-    { state: 'done', title: 'Approved and locked', body: `Payee, ${dollars(p.amountCents)}, category, proof, job and funding are fixed in the lock.` },
+    { state: 'done', title: viaStanding ? 'Locked under your standing rule · no tap' : 'Approved and locked', body: `Payee, ${dollars(p.amountCents)}, category, proof, job and funding are fixed in the lock.` },
     { state: sent ? 'done' : 'now', title: `Sent to ${who} through PayPal Payouts`, body: sent ? `PayPal batch ${p.payoutBatchId}.` : `Not sent yet. Press send below${receiver ? ` to pay ${receiver}` : ''}.` },
     { state: paid ? 'done' : sent && p.phase !== 'payout_failed' ? 'now' : 'todo', title: 'Paid and receipted', body: paid ? `PayPal says SUCCESS. Transaction ${p.payoutTransactionId ?? '—'}, and the cents match the lock.` : p.phase === 'payout_failed' ? `PayPal did not pay it (${reason}).` : 'Appears here when PayPal confirms the money reached the account.' },
   ]
@@ -328,6 +331,11 @@ function PayoutPanel({ packet, warrant, names }: { packet: Packet; warrant: Warr
       ) : (
         <>
           <p className="payout-lead"><strong>Send exactly {dollars(p.amountCents, p.currency)} to {who}{receiver ? `’s PayPal account (${receiver})` : ''}.</strong></p>
+          {viaStanding ? (
+            <p className="standing-note" role="status">
+              <Chip tone="auto">Standing rule</Chip> Mandate sends this itself, without a tap{waitingNote ? <>, but it is held for now: <strong>{String(waitingNote.payload.code ?? 'waiting')}</strong>. It tries again every minute</> : null}. You can also send it now.
+            </p>
+          ) : null}
           <p>
             This uses PayPal Payouts, which pays {who}’s own account. PayPal checkout is for taking money <em>in</em>: a buyer approving it would pay the studio, so Mandate never uses it for a contractor.
             The server sends the locked cents and reads the result back from PayPal before it says paid.
@@ -348,6 +356,7 @@ function PayoutPanel({ packet, warrant, names }: { packet: Packet; warrant: Warr
           <p className="mono small">Order {p.orderId}</p>
         </div>
       ) : null}
+      {unsent ? <BalanceNote needCents={p.amountCents} /> : null}
       {unsent || atPayPal ? (
         <div className="row gap-s wrap">
           <button type="button" className="btn btn-ink btn-big" disabled={disabled} onClick={() => send.mutate()}>

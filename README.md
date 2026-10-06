@@ -1,11 +1,12 @@
 # Mandate
 
-**Agents and staff can ask to spend. Rules decide. The owner taps. PayPal moves exactly the locked cents.**
+**Agents and staff can ask to spend. Rules decide. The owner says yes to a rule once, and taps for the exceptions. PayPal moves exactly the locked cents.**
 
 Mandate is a spend-authority layer in front of PayPal, built for the [PayPal AI Hackathon 2026](https://paypalaihackathon.devpost.com/). Nobody who asks for a payment, human or AI, ever holds the PayPal token. PayPal sandbox only; nothing here moves real money.
 
 - The owner writes **rules** once. They are versioned data, not a prompt.
 - A pure function answers each request: **refused**, **automatic**, or **needs the owner**.
+- The owner can sign a **standing rule** ("Priya is paid from settled Northwind payments, up to her 60% share"). A payout that matches needs no tap; everything else still does.
 - When the owner taps, the exact payment is locked into one **hash**. PayPal may then move that and nothing else.
 - A contractor is paid only from **client money that already settled** on the same job.
 - Every dollar that moved, and every one that was refused, has a **receipt**.
@@ -22,7 +23,8 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 | Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | built |
 | Deal | The two companies' agents agree $300 in two milestones. $450 and $200 are refused by a pure function that checks **both** companies' rules. The agreed deal is signed. | built |
 | Agents | A clerk Arun can talk to, and two negotiators, on `gpt-oss:20b` through an MCP server whose six tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
-| Invoices | A client charge can be billed as a PayPal invoice through the Agent Toolkit. Falls back to checkout where the app lacks the permission. | built |
+| Standing rules | The owner signs one rule for Priya's share. The $90 is then sent with no tap, after the same checks: funding, share, cap, proof, dispute hold, signed lock. Anything that does not match still waits. | built, red-teamed, real Payouts call verified |
+| Invoices | A client charge is billed as a PayPal invoice through the Agent Toolkit, and settled only when PayPal says it was paid. Falls back to checkout where the app lacks the permission. | built, live in sandbox |
 
 Job totals for the live sandbox run: **$150 in, $90 out, $60 kept.**
 
@@ -66,6 +68,7 @@ Full walk-through with what you should see at each step: [docs/REFERENCE.md](doc
 | `api/` | Rules server, PayPal client and fake, tests, Postman collection |
 | `web/` | Owner console and Playwright end-to-end tests |
 | `pitch/` | Deck and demo video script |
+| `PRODUCT.md` | The product story: the problem, what Mandate is, what is built, how it works, what is proven and what is not |
 | `docs/REFERENCE.md` | Everything else: architecture, every screen, rules, the lock, HTTP API, rule codes, tests, security, Render deploy, troubleshooting |
 | `KT.md` | Handover notes and the sandbox accounts |
 
@@ -73,7 +76,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-128 API tests, 38 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
+192 API tests (including a 42-case red team), 40 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
 
 ## Where to read next
 

@@ -911,6 +911,36 @@
             "header": [],
             "url": "{{baseUrl}}/v1/proposals/{{chargeId}}/cancel-invoice"
           }
+        },
+        {
+          "name": "Account balance (advice only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/paypal/balance"
+          }
+        },
+        {
+          "name": "Which PayPal tools an agent can reach (tiers)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/paypal/tools"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('an agent can call none of them', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().agentCanCallDirectly).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

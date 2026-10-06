@@ -775,3 +775,8 @@ html { scroll-behavior: smooth; }
 .features li:first-child { border-top: 0; }
 .features details summary { cursor: pointer; font-weight: 600; }
 .enable { display: grid; gap: 10px; padding-top: 10px; }
+
+/* Standing rules */
+.standing-row { display: grid; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line); }
+.standing-row:first-of-type { border-top: 0; }
+.standing-note { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }

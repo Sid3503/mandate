@@ -18,6 +18,7 @@ export const Clause = {
   fundingJobMismatch: 'funding.job_mismatch',
   fundingExceeds: 'funding.exceeds',
   fundingDisputed: 'funding.disputed',
+  standingMatched: 'standing.matched',
   dealUnknown: 'deal.unknown',
   dealRequired: 'deal.required',
   dealJobMismatch: 'deal.job_mismatch',
@@ -54,6 +55,9 @@ export type FundingCharge = {
   capturedCents: number
   refundHeldCents: number
   payoutHeldCents: number
+  /** The client whose payment this is, and the signed deal it belongs to, if any. Standing rules match on these. */
+  clientId?: string | null
+  dealId?: string | null
   /** PayPal has an open dispute on this client payment. Money that may be taken back is not spent. */
   disputed?: boolean
 }
@@ -187,6 +191,14 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
       `monthly cap is ${warrant.monthlyCapCents} cents; already reserved ${context.reservedCents} cents; prior captures: ${cited}`,
     )
   }
+  const standing = matchStanding(warrant, proposal)
+  if (standing) {
+    return {
+      gate: 'AUTO',
+      clause: Clause.standingMatched,
+      detail: `covered by the owner's standing rule ${standing.id}: paid from settled ${standing.requireDeal ? 'signed-deal ' : ''}client money, within the contractor share and the monthly cap, so no tap is needed`,
+    }
+  }
   if (proposal.amountCents < warrant.autoSettleUnderCents) {
     return {
       gate: 'AUTO',
@@ -199,6 +211,18 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
     clause: Clause.amountNeedsApproval,
     detail: `at or above ${warrant.autoSettleUnderCents} cents, so the owner has to tap`,
   }
+}
+
+/** The standing rule that covers this payout, or null. The other checks have already passed by the time this is asked. */
+export function matchStanding(warrant: WarrantBody, proposal: GateProposal) {
+  if (proposal.kind !== 'payment' || !warrant.fundingRequired || !proposal.payeeId) return null
+  const funding = proposal.funding
+  if (!funding || !funding.clientId) return null
+  return warrant.standing.find((rule) =>
+    rule.payeeId === proposal.payeeId
+    && rule.clientIds.includes(funding.clientId!)
+    && (!rule.requireDeal || Boolean(funding.dealId)),
+  ) ?? null
 }
 
 export function resolvePayee(warrant: WarrantBody, raw: string) {

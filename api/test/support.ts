@@ -6,6 +6,7 @@ import type { WatchPort } from '../src/paypal/watch'
 import type { AgentModel } from '../src/agents/model'
 import { ephemeralSigner, type Signer } from '../src/domain/signing'
 import { FakePayPal } from '../src/paypal/fake'
+import { buildServices, type Services } from '../src/services/container'
 
 export const NOW = new Date('2026-10-03T12:00:00.000Z')
 export const OWNER_KEY = 'test-mandate-key-32chars'
@@ -29,6 +30,7 @@ export function harness(options: { invoices?: InvoicePort | null; model?: AgentM
   seed(db, NOW)
   const paypal = options.paypal === undefined ? new FakePayPal() : options.paypal
   const signer = options.signer ?? ephemeralSigner()
+  let services!: Services
   const build = (useSigner: Signer = signer) => createApp({
     db,
     paypal,
@@ -36,6 +38,7 @@ export function harness(options: { invoices?: InvoicePort | null; model?: AgentM
     invoices: options.invoices,
     watch: options.watch,
     model: options.model,
+    services: (services = buildServices({ db, paypal, invoices: options.invoices, watch: options.watch, publicUrl: 'http://127.0.0.1:8787', now: () => NOW, signer: useSigner })),
     now: () => NOW,
     config: {
       apiKey: OWNER_KEY,
@@ -51,7 +54,7 @@ export function harness(options: { invoices?: InvoicePort | null; model?: AgentM
     },
   })
   const app = build()
-  return { app, db, repo: new Repo(db), paypal, signer, rebuild: build }
+  return { app, db, repo: new Repo(db), paypal, signer, rebuild: build, get services() { return services } }
 }
 
 export const bearer = (key: string = OWNER_KEY): HeadersInit => ({ authorization: `Bearer ${key}` })

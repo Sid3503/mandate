@@ -239,3 +239,59 @@ describe('webhooks', () => {
     expect((await call(h.app, 'GET', '/v1/paypal/disputes')).json.data).toHaveLength(1)
   })
 })
+
+describe('the account balance', () => {
+  it('reports what PayPal says and when, and says so plainly when the app may not look', async () => {
+    const h = harness()
+    h.paypal!.balanceCents = 534_124
+    expect((await call(h.app, 'GET', '/v1/paypal/balance')).json).toMatchObject({ available: true, availableCents: 534_124, currency: 'USD', asOf: '2026-10-03T06:00:00Z' })
+    h.paypal!.balanceFails = 403
+    expect((await call(h.app, 'GET', '/v1/paypal/balance')).json).toMatchObject({ available: false })
+    expect((await call(h.app, 'GET', '/v1/paypal/balance', { key: STUDIO_KEY })).status).toBe(403)
+  })
+})
+
+describe('reading PayPal\'s own shapes', () => {
+  it('parses a transaction the way PayPal\'s reporting API returns it, with signs and cents exact', async () => {
+    const { parseTransaction } = await import('../src/paypal/watch')
+    const income = parseTransaction({ transaction_info: { transaction_id: '116217535A663733R', transaction_event_code: 'T0006', transaction_initiation_date: '2026-10-05T07:00:03+0000', transaction_amount: { currency_code: 'USD', value: '150.00' }, transaction_status: 'S', invoice_id: 'MND-801E5B4ED2CF4E35' }, payer_info: { email_address: 'sb-jxwz553178202@personal.example.com', payer_name: { alternate_full_name: 'John Doe' } } })
+    expect(income).toMatchObject({ id: '116217535A663733R', cents: 15_000, currency: 'USD', status: 'S', eventCode: 'T0006', invoiceId: 'MND-801E5B4ED2CF4E35', counterparty: 'sb-jxwz553178202@personal.example.com' })
+    const payout = parseTransaction({ transaction_info: { transaction_id: '6LD8478255700282K', transaction_amount: { currency_code: 'USD', value: '-90.25' }, transaction_status: 'S' } })
+    expect(payout).toMatchObject({ cents: -9_025, counterparty: null })
+    expect(parseTransaction({ transaction_info: {} })).toBeNull()
+  })
+
+  it('parses a dispute and the payment it is on', async () => {
+    const { parseDispute } = await import('../src/paypal/watch')
+    const dispute = parseDispute({ dispute_id: 'PP-D-27803', create_time: '2026-10-06T09:00:00.000Z', update_time: '2026-10-06T09:05:00.000Z', status: 'WAITING_FOR_SELLER_RESPONSE', reason: 'MERCHANDISE_OR_SERVICE_NOT_RECEIVED', dispute_state: 'REQUIRED_ACTION', dispute_amount: { currency_code: 'USD', value: '150.00' } }, ['63168379KF7336631'])
+    expect(dispute).toMatchObject({ id: 'PP-D-27803', status: 'WAITING_FOR_SELLER_RESPONSE', cents: 15_000, transactionIds: ['63168379KF7336631'] })
+  })
+
+  it('treats any status but RESOLVED as a dispute that still holds the payout', async () => {
+    const watch = new FakeWatch()
+    const h = await funded({ watch })
+    for (const status of ['OPEN', 'WAITING_FOR_BUYER_RESPONSE', 'WAITING_FOR_SELLER_RESPONSE', 'UNDER_REVIEW', 'OTHER']) {
+      watch.disputes = [dispute(h.captureId, status)]
+      await call(h.app, 'POST', '/v1/paypal/disputes/sync')
+      expect((h.repo.openDisputeFor(h.captureId))?.status, status).toBe(status)
+    }
+    watch.disputes = [dispute(h.captureId, 'RESOLVED')]
+    await call(h.app, 'POST', '/v1/paypal/disputes/sync')
+    expect(h.repo.openDisputeFor(h.captureId)).toBeNull()
+  })
+})
+
+describe('cancelling before PayPal has finished the batch', () => {
+  it('explains the wait instead of failing, and changes nothing', async () => {
+    const paypal = new FakePayPal()
+    paypal.unregistered.add('priya.shah@example.com')
+    const h = await funded({ paypal })
+    const payout = await approvedPayout(h)
+    await call(h.app, 'POST', `/v1/proposals/${payout.id}/capture`)
+    paypal.cancelPayoutItem = async () => { throw new (await import('../src/paypal/port')).PayPalError(400, 'BATCH_NOT_COMPLETED', null, 'Only item belonging to a batch in Processed status can be cancelled.') }
+    const early = await call(h.app, 'POST', `/v1/proposals/${payout.id}/cancel-payout`)
+    expect(early.status).toBe(409)
+    expect(early.json.code).toBe('payout.batch_processing')
+    expect((await call(h.app, 'GET', `/v1/proposals/${payout.id}`)).json.phase).toBe('payout_unclaimed')
+  })
+})

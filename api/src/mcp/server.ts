@@ -105,9 +105,10 @@ function outcome(view: ProposalView, names: (id: string | null) => string, warra
     inPlainWords: explainClause({ clause: view.clause, kind: view.kind, amountCents: view.amountCents, category: view.category, payeeName: view.payeeId ? names(view.payeeId) : null, warrant }),
     serverSaid: view.detail,
     phase: view.phase,
-    nextStep: nextStep({ gate: view.gate, phase: view.phase, kind: view.kind }),
+    nextStep: nextStep({ gate: view.gate, phase: view.phase, kind: view.kind, clause: view.clause }),
     amount: dollars(view.amountCents),
-    moneyMoved: '$0.00',
+    // Only what PayPal has confirmed. An agent that can only ask must not say more than this.
+    moneyMoved: view.phase === 'captured' ? dollars(view.capturedAmountCents ?? 0) : '$0.00',
   }
 }
 
@@ -209,7 +210,7 @@ export function createMandateMcpServer(context: McpContext): McpServer {
       title: 'Ask to move money',
       description: [
         'Ask Mandate to bill a client (kind "charge"), pay a contractor (kind "payment") or refund a settled payment (kind "refund").',
-        'This only ASKS. It never moves money. The rules answer DENY, AUTO or NEEDS_APPROVAL; a human owner taps to approve and PayPal moves the money later.',
+        'This only ASKS. You never move money. The rules answer DENY, AUTO or NEEDS_APPROVAL. A human owner taps to approve, or, for a payout the owner pre-approved with a standing rule, the rules answer AUTO and Mandate itself sends it. Either way PayPal moves the money, not you.',
         'A payout needs fundingCaptureId from get_jobs (the client payment that pays for it). A charge needs jobId, and a charge on a job with an agreed deal must give dealId and milestone. Every request needs an https evidenceUrl.',
         'amountCents is whole cents: $90.00 is 9000. Leave out any field you do not need: never send empty strings, 0, or an id you made up. If the request names someone you cannot find in get_rules, ask anyway: the rules will refuse, and that is the correct outcome.',
         'Report the decision exactly as returned. Do not say money was paid.',
@@ -239,7 +240,7 @@ export function createMandateMcpServer(context: McpContext): McpServer {
         }
         const over = spend(context)
         if (over) return over
-        const result = services.mandate.propose(input, key(context, 'propose', args), 'proposer', context.runId)
+        const result = await services.mandate.proposeAndDispatch(input, key(context, 'propose', args), 'proposer', context.runId)
         const view = result.body as ProposalView
         const { warrant, names } = nameLookup(services)
         return json(outcome(view, names, warrant))

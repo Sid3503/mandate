@@ -188,3 +188,17 @@ export type ActivityRow = {
 export type Activity =
   | { available: false; reason: string }
   | { available: true; from: string; to: string; rows: ActivityRow[]; matched: number; unmatched: number; unmatchedNetCents: number }
+
+export type ToolSummary = {
+  total: number
+  read: number
+  propose: number
+  outOfScope: number
+  usedByMandate: number
+  agentCanCallDirectly: number
+  tools: Array<{ name: string; area: string; tier: 'read' | 'propose' | 'out_of_scope'; usedByMandate: boolean; note: string }>
+}
+
+export type Balance =
+  | { available: false; reason: string }
+  | { available: true; availableCents: number; withheldCents: number; asOf: string | null; currency: string }

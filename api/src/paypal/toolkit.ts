@@ -1,5 +1,6 @@
 import { PayPalAgentToolkit } from '@paypal/agent-toolkit/ai-sdk'
 import { PayPalError } from './port'
+import { TOOL_TIERS } from './tiers'
 
 type ToolLike = { execute?: (args: never, options: { toolCallId: string; messages: never[] }) => Promise<unknown> | unknown }
 export type Json = Record<string, unknown>
@@ -25,6 +26,8 @@ export function createToolkit(options: {
   const tools = toolkit.getTools() as unknown as Record<string, ToolLike>
   return {
     async run(name, args) {
+      // Only the tools written down as the server's own. A tool that moves money or is out of scope cannot be run from here.
+      if (!TOOL_TIERS[name]?.usedByMandate) throw new PayPalError(500, 'toolkit_tool_not_allowed', null, name)
       const tool = tools[name]
       if (!tool?.execute) throw new PayPalError(500, 'toolkit_tool_missing', null, name)
       const raw = await tool.execute(args as never, { toolCallId: `mandate-${name}`, messages: [] })

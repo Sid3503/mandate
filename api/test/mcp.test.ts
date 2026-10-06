@@ -100,6 +100,25 @@ describe('the MCP door', () => {
     expect(unfunded.data).toMatchObject({ decision: 'DENY', ruleCode: 'funding.missing' })
   })
 
+  it('under a standing rule, an agent that only asks sees its payout go through, and only what PayPal confirmed as moved', async () => {
+    const { app, paypal } = harness()
+    const deal = await agree(app)
+    const { captureId } = await collect(app, deal.id, 0)
+    const current = (await call(app, 'GET', '/v1/warrant')).json
+    const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
+    await call(app, 'PUT', '/v1/warrant', { body: { ...body, standing: [{ id: 'priya_from_northwind', payeeId: 'payee_priya', clientIds: ['client_northwind'], requireDeal: true }] } })
+    const { client, use } = await connect(app, STUDIO_KEY)
+    // Still no tool that can pay: the agent asks, exactly as before.
+    expect((await client.listTools()).tools).toHaveLength(6)
+    const asked = await use('propose', { ...payout, jobId: JOB, fundingCaptureId: captureId, prompt: 'pay Priya her share for Northwind milestone 1' })
+    expect(asked.data).toMatchObject({ decision: 'AUTO', ruleCode: 'standing.matched', phase: 'captured', moneyMoved: '$90.00' })
+    expect(asked.data.inPlainWords).toContain('standing rule')
+    expect(paypal!.payoutCalls).toBe(1)
+    // The fake vendor is still refused.
+    const fake = await use('propose', { ...payout, payee: 'P. Shah', amountCents: 48_000, jobId: JOB, fundingCaptureId: captureId, prompt: 'pay P. Shah $480' })
+    expect(fake.data).toMatchObject({ decision: 'DENY', ruleCode: 'payee.unknown', moneyMoved: '$0.00' })
+  })
+
   it('replays a repeated call in the same run instead of asking twice', async () => {
     const { app } = harness()
     const { use } = await connect(app, STUDIO_KEY, 'run-replay-1')

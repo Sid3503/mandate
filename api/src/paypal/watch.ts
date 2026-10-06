@@ -39,8 +39,15 @@ export function createToolkitWatch(options: { clientId: string; clientSecret: st
   const toolkit = createToolkit({ ...options, actions: { transactions: { list: true }, disputes: { list: true, get: true } } })
   return {
     async listTransactions({ start, end }) {
-      const result = await toolkit.run('list_transactions', { start_date: start, end_date: end, page_size: 100 })
-      return arr(result.transaction_details).map(parseTransaction).filter((item): item is LiveTransaction => item !== null)
+      const out: LiveTransaction[] = []
+      // PayPal pages this report. Read every page (bounded), or "not in Mandate" would include what was simply on page two.
+      for (let page = 1; page <= 10; page += 1) {
+        const result = await toolkit.run('list_transactions', { start_date: start, end_date: end, page_size: 100, page })
+        out.push(...arr(result.transaction_details).map(parseTransaction).filter((item): item is LiveTransaction => item !== null))
+        const pages = typeof result.total_pages === 'number' ? result.total_pages : 1
+        if (page >= pages) break
+      }
+      return out
     },
     async listDisputes(input) {
       const list = await toolkit.run('list_disputes', { ...(input?.transactionId ? { disputed_transaction_id: input.transactionId } : {}), page_size: 20 })

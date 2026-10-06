@@ -272,6 +272,8 @@ export function buildOpenApi(publicUrl: string) {
   ownerRoute('post', '/v1/proposals/{id}/cancel-invoice', 'Cancel an invoice that is out and unpaid. The milestone can be billed again.', true)
   ownerRoute('get', '/v1/paypal/features', 'Which PayPal features this app may use, from its token scopes, with the dashboard steps for any that are off.')
   ownerRoute('post', '/v1/paypal/features/check', 'Same, after asking PayPal for a fresh token.')
+  ownerRoute('get', '/v1/paypal/balance', 'What PayPal says the account holds, with the time of its last report. Advice only: PayPal\'s report lags by hours.')
+  ownerRoute('get', '/v1/paypal/tools', 'Every PayPal Agent Toolkit tool, its tier (read, propose, out of scope) and whether the server itself uses it. Agents can call none of them directly.')
   ownerRoute('get', '/v1/paypal/activity', 'The last 30 days of PayPal activity (Transaction search) matched against the ledger. Read-only.')
   ownerRoute('get', '/v1/paypal/disputes', 'Stored PayPal disputes.')
   ownerRoute('post', '/v1/paypal/disputes/sync', 'Read disputes from PayPal now. A disputed client payment cannot fund a payout (funding.disputed).')

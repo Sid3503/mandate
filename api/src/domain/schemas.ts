@@ -10,6 +10,19 @@ export const PayeeSchema = z.object({
   aliases: z.array(z.string().trim().min(1).max(120)).max(10).default([]),
 }).strict()
 
+/**
+ * A standing rule: the owner says yes once to a whole kind of payout. A contractor payout that matches it needs no
+ * tap. It still has to pass every other rule (funding, share, cap, proof, dispute hold), and the lock is still signed.
+ */
+export const StandingRuleSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+  payeeId: z.string().min(1).max(64),
+  /** The client payments that may fund it. */
+  clientIds: z.array(z.string().min(1).max(64)).min(1).max(20),
+  /** Only client money that came through a signed deal. */
+  requireDeal: z.boolean().default(true),
+}).strict()
+
 export const WarrantBodySchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
   autoSettleUnderCents: z.number().int().positive().max(100_000_000),
@@ -22,6 +35,7 @@ export const WarrantBodySchema = z.object({
   clients: z.array(PayeeSchema).max(100).default([]),
   fundingRequired: z.boolean().default(false),
   contractorShareBps: z.number().int().min(0).max(10_000).default(10_000),
+  standing: z.array(StandingRuleSchema).max(20).default([]),
 }).strict().superRefine((warrant, ctx) => {
   if (warrant.autoSettleUnderCents > warrant.perPaymentCeilingCents) {
     ctx.addIssue({ code: 'custom', path: ['autoSettleUnderCents'], message: 'auto settle must be at or under the per-payment ceiling' })
@@ -39,6 +53,16 @@ export const WarrantBodySchema = z.object({
   warrant.clients.forEach((client, index) => {
     if (payeeIds.has(client.id)) ctx.addIssue({ code: 'custom', path: ['clients', index, 'id'], message: 'duplicate party id' })
     payeeIds.add(client.id)
+  })
+  const standingIds = new Set<string>()
+  warrant.standing.forEach((rule, index) => {
+    if (standingIds.has(rule.id)) ctx.addIssue({ code: 'custom', path: ['standing', index, 'id'], message: 'duplicate standing rule id' })
+    standingIds.add(rule.id)
+    if (!warrant.payees.some((payee) => payee.id === rule.payeeId)) ctx.addIssue({ code: 'custom', path: ['standing', index, 'payeeId'], message: 'a standing rule must name a payee on the rules' })
+    rule.clientIds.forEach((clientId, at) => {
+      if (!warrant.clients.some((client) => client.id === clientId)) ctx.addIssue({ code: 'custom', path: ['standing', index, 'clientIds', at], message: 'a standing rule must name clients on the rules' })
+    })
+    if (!warrant.fundingRequired) ctx.addIssue({ code: 'custom', path: ['standing', index], message: 'standing rules need "payouts need client money first" switched on' })
   })
   const categories = new Set<string>()
   warrant.categories.forEach((category, index) => {
@@ -104,6 +128,7 @@ export const LINE_STUDIO_WARRANT: WarrantBody = {
     email: 'ap@northwind.example',
     aliases: ['Northwind', 'northwind'],
   }],
+  standing: [],
   fundingRequired: true,
   contractorShareBps: 6000,
 }

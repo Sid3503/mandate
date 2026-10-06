@@ -24,6 +24,7 @@ export function explainClause(input: ExplainInput): string {
   const share = input.warrant ? `${input.warrant.contractorShareBps / 100}%` : 'the contractor share'
   switch (input.clause) {
     case 'amount.needs_approval': return `${who} is on the rules, but ${amount} is at or above ${line}, so the owner has to tap.`
+    case 'standing.matched': return `${who} is covered by a standing rule the owner signed, so ${amount} goes to PayPal without a tap. Every other rule still had to pass.`
     case 'amount.auto': return `${who} is on the rules and ${amount} is under ${line}, so it goes through without a tap.`
     case 'payee.unknown': return input.kind === 'charge' ? 'That client is not on the rules. Nobody new can be billed.' : 'That account is not on the rules. Being under the line never adds a new payee.'
     case 'category.missing': return `“${input.category ?? 'That'}” is not an allowed kind of work.`
@@ -66,14 +67,16 @@ export function explainClause(input: ExplainInput): string {
 }
 
 /** What happens next, for a proposal in a given state. Agents repeat this instead of guessing. */
-export function nextStep(input: { gate: string; phase: string; kind: string }): string {
-  const { gate, phase, kind } = input
+export function nextStep(input: { gate: string; phase: string; kind: string; clause?: string }): string {
+  const { gate, phase, kind, clause } = input
+  const standing = clause === 'standing.matched'
   if (gate === 'DENY' || phase === 'denied') return 'Nothing moved and PayPal was not called. Change the request, or ask the owner to change the rules.'
   switch (phase) {
     case 'pending_approval': return 'Waiting for the owner to tap Approve. Agents cannot approve.'
     case 'rejected': return 'The owner rejected it. Nothing moved.'
     case 'locked':
-    case 'order_created': return kind === 'payment' ? 'Approved and locked. The owner sends the payout from the receipt.' : 'Approved and locked. The owner settles it, and the client pays through PayPal.'
+    case 'order_created': if (standing) return 'The owner\'s standing rule covers it, so Mandate sends it to PayPal itself. If it is still locked, PayPal could not be reached or a dispute is holding it, and Mandate will retry. It is not paid until PayPal says so.'
+      return kind === 'payment' ? 'Approved and locked. The owner sends the payout from the receipt.' : 'Approved and locked. The owner settles it, and the client pays through PayPal.'
     case 'invoice_sent': return 'A PayPal invoice was sent to the client. It settles when the client pays it.'
     case 'invoice_cancelled': return 'The invoice was cancelled, so it can no longer be paid. The milestone can be billed again.'
     case 'payout_sent': return 'PayPal has the payout and is processing it. It is not paid until PayPal says so.'

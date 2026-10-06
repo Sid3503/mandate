@@ -127,6 +127,14 @@ export class FakePayPal implements PayPalPort {
     return this.scopeList
   }
 
+  /** What the fake's account holds. Tests lower it to see Mandate warn. */
+  balanceCents = 500_000
+  balanceFails = 0
+  async balance(_currency: string) {
+    if (this.balanceFails) throw new PayPalError(this.balanceFails, 'UPSTREAM', null, 'balance')
+    return { availableCents: this.balanceCents, withheldCents: 0, asOf: '2026-10-03T06:00:00Z' }
+  }
+
   /** What the fake says when asked to verify a webhook signature. */
   webhookValid = true
   verifyCalls = 0

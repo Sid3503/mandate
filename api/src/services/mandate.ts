@@ -23,6 +23,8 @@ const INVOICE_PHASES = ['invoice_draft', 'invoice_sent']
 /** Payout phases where PayPal already holds the batch, so money may already have left. */
 const PAYOUT_LIVE_PHASES = ['payout_sent', 'payout_unclaimed']
 const INFLIGHT_MS = 30_000
+/** Reasons a standing-rule payout may wait rather than die: the trouble is outside Mandate and may pass. */
+const STANDING_WAITS = new Set(['funding.disputed', 'funding.unverifiable', 'paypal.upstream', 'paypal.unconfigured', 'capture.inflight'])
 
 export type ProposalView = {
   id: string
@@ -222,6 +224,55 @@ export class MandateService {
     return runIdempotent(this.repo, idempotencyKey, hash, now, () => this.proposeNew(input, now, actor, runId))
   }
 
+  /**
+   * Ask, and if the owner's standing rule covers it, send. A payout that matches a standing rule is already locked
+   * and signed when it is proposed. Nothing in the rule lets it skip a check: the server runs the same settle path
+   * the owner's Send button runs, and that path re-checks funding, disputes and the lock. If PayPal cannot be
+   * reached, the payout stays locked and the next sweep tries again.
+   */
+  async proposeAndDispatch(input: ProposalCreate, idempotencyKey: string, actor: Role = 'owner', runId: string | null = null): Promise<HttpResult> {
+    // Look for a client dispute first, so a disputed payment is refused at the gate instead of waiting at the door.
+    if (input.kind === 'payment' && input.fundingCaptureId) await this.refreshDisputesFor(input.fundingCaptureId).catch(() => undefined)
+    const result = this.propose(input, idempotencyKey, actor, runId)
+    const body = result.body as { id?: string } | null
+    if (!body?.id || (result.status !== 201 && result.status !== 200)) return result
+    const sent = await this.dispatchStanding(body.id)
+    return sent ? { status: result.status, body: sent } : result
+  }
+
+  /** Sends a locked payout that a standing rule approved. Returns the fresh view, or null if it is not such a payout. */
+  async dispatchStanding(id: string): Promise<ProposalView | null> {
+    const row = this.repo.proposal(id)
+    if (!row || row.kind !== 'payment' || row.clause !== Clause.standingMatched || !['locked', 'order_created'].includes(row.phase)) return null
+    try {
+      await this.capture(id)
+    } catch (error) {
+      if (!(error instanceof Problem)) throw error
+      const now = this.iso()
+      if (STANDING_WAITS.has(error.code)) {
+        // Something outside Mandate is in the way. Say so once, keep the payout locked, and let the sweep try again.
+        const last = [...this.repo.eventsFor(id)].reverse().find((event) => event.type === 'standing.waiting')
+        if (!last || (JSON.parse(last.payload_json) as { code?: string }).code !== error.code) {
+          this.repo.insertEvent(randomUUID(), id, 'standing.waiting', Clause.standingMatched, { code: error.code, detail: error.detail }, now)
+        }
+      } else if (this.require(id).phase !== 'capture_refused') {
+        // The lock, the funding or the state is wrong. Retrying cannot fix that, and it must not hold the money forever.
+        this.repo.transaction(() => {
+          this.repo.setPhase(id, 'capture_refused', now)
+          this.repo.insertEvent(randomUUID(), id, 'capture.refused', error.code, { detail: error.detail, via: 'standing rule' }, now)
+        })
+      }
+    }
+    return toView(this.require(id))
+  }
+
+  /** Looks for standing-rule payouts that are approved but not yet sent (PayPal was down, or a dispute held them) and sends them. */
+  async sweepStanding(): Promise<number> {
+    const stuck = this.repo.lockedStandingPayouts()
+    for (const row of stuck) await this.dispatchStanding(row.id)
+    return stuck.length
+  }
+
   approve(id: string): HttpResult {
     const now = this.iso()
     return this.repo.transaction(() => {
@@ -380,6 +431,19 @@ export class MandateService {
     return { configured: true, checkedAt: this.iso(), features: assessFeatures(scopes) }
   }
 
+  /** What PayPal says the account holds. Advice for the owner, never a gate: the report lags by hours, and PayPal fails a payout it cannot fund. */
+  async balance() {
+    if (!this.paypal) return { available: false as const, reason: 'PayPal is not configured.' }
+    try {
+      const warrant = this.repo.latestWarrant()
+      const found = await this.paypal.balance(warrant?.body.currency ?? 'USD')
+      return { available: true as const, ...found, currency: warrant?.body.currency ?? 'USD' }
+    } catch (error) {
+      if (error instanceof PayPalError && (error.httpStatus === 401 || error.httpStatus === 403)) return { available: false as const, reason: 'The PayPal app has no permission to read the balance (Transaction search).' }
+      throw new Problem(502, 'paypal.upstream', 'PayPal could not report the balance', error instanceof PayPalError ? error.paypalName : 'unknown')
+    }
+  }
+
   /** PayPal's own list of what moved in the account, lined up against the ledger. Read-only. */
   async activity(days = 30) {
     const watch = this.options.watch
@@ -431,6 +495,12 @@ export class MandateService {
    * not look (Disputes is off), payouts go on as before. If it may look and cannot answer, the payout waits: an answer
    * nobody could check is not a yes.
    */
+  private async refreshDisputesFor(captureId: string): Promise<void> {
+    const watch = this.options.watch
+    if (!watch) return
+    for (const live of await watch.listDisputes({ transactionId: captureId })) this.recordDispute(live)
+  }
+
   private async freshenFundingDisputes(id: string): Promise<void> {
     const watch = this.options.watch
     if (!watch) return
@@ -456,6 +526,10 @@ export class MandateService {
     try {
       await this.paypal.cancelPayoutItem(row.payout_item_id)
     } catch (error) {
+      // Found on the real sandbox: PayPal reports the item UNCLAIMED a little before the batch is finished, and will not cancel until it is.
+      if (error instanceof PayPalError && error.paypalName === 'BATCH_NOT_COMPLETED') {
+        throw new Problem(409, 'payout.batch_processing', 'PayPal is still finishing this payout', 'PayPal only cancels an unclaimed payout once its batch has finished processing. Wait a minute, press Check PayPal, then try again. Nothing was changed.', { proposalId: id })
+      }
       if (error instanceof PayPalError) throw new Problem(502, 'paypal.upstream', 'PayPal rejected the cancel', error.paypalName, { proposalId: id, debugId: error.debugId })
       throw error
     }
@@ -1108,6 +1182,8 @@ export class MandateService {
       capturedCents: row.captured_amount_cents ?? 0,
       refundHeldCents: row.capture_id ? this.repo.heldRefundCents(row.capture_id) : 0,
       payoutHeldCents: row.capture_id ? this.repo.heldPayoutCents(row.capture_id) : 0,
+      clientId: row.payee_id,
+      dealId: row.deal_id,
       disputed: row.capture_id ? this.repo.openDisputeFor(row.capture_id) !== null : false,
     }
   }
@@ -1233,6 +1309,7 @@ function emptyWarrant(): WarrantBody {
     payees: [],
     categories: [],
     clients: [],
+    standing: [],
     fundingRequired: false,
     contractorShareBps: 10_000,
   }
