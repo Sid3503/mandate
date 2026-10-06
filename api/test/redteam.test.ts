@@ -3,6 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { afterEach, describe, expect, it } from 'vitest'
 import { claimsMoneyMoved, composeReply } from '../src/agents/guard'
 import { payeeIsGrounded } from '../src/mcp/server'
+import { FakeInvoices } from '../src/paypal/fake'
 import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
@@ -223,5 +224,88 @@ describe('red team: a standing rule widens nothing', () => {
     const job = (await call(w.app, 'GET', `/v1/jobs/${JOB}`)).json
     expect(job.totals.outCents).toBeLessThanOrEqual(9_000)
     await client.close()
+  })
+})
+
+describe('red team: autopilot widens nothing', () => {
+  async function autopilotWorld() {
+    const invoices = new FakeInvoices()
+    const h = harness({ invoices })
+    const deal = await agree(h.app)
+    const current = (await call(h.app, 'GET', '/v1/warrant')).json
+    const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
+    await call(h.app, 'PUT', '/v1/warrant', { body: { ...body, standing: [{ id: 'priya_from_northwind', payeeId: 'payee_priya', clientIds: ['client_northwind'], requireDeal: true }], automation: { billSignedDeals: true, payOnSettle: true, remindUnpaidAfterDays: 3, maxReminders: 2 } } })
+    const charge = { kind: 'charge', payee: 'Northwind', amountCents: 15_000, currency: 'USD', category: 'design', description: 'Spring launch logo: Concepts', evidenceUrl: EVIDENCE, jobId: deal.jobId, dealId: deal.id, milestone: 0 }
+    return { ...h, deal, invoices, charge }
+  }
+
+  it.each([
+    ['a bigger amount than the milestone', { amountCents: 15_001 }, 'deal.milestone_mismatch'],
+    ['a smaller amount than the milestone', { amountCents: 1_500 }, 'deal.milestone_mismatch'],
+    ['a milestone the deal does not have', { milestone: 7 }, 'deal.milestone_unknown'],
+    ['a deal that does not exist', { dealId: '00000000-0000-4000-8000-000000000000' }, 'deal.unknown'],
+    ['a different client than the one who agreed', { payee: 'P. Shah' }, 'payee.unknown'],
+    ['no proof of the work', { evidenceUrl: undefined }, 'evidence.missing'],
+    ['a proof link that is not https', { evidenceUrl: 'http://example.com/work' }, 'evidence.missing'],
+    ['a different job than the deal is for', { jobId: 'job_elsewhere' }, 'deal.job_mismatch'],
+    ['foreign currency', { currency: 'EUR' }, 'currency.mismatch'],
+    ['a kind of work that is not allowed', { category: 'lunch' }, 'category.missing'],
+  ])('bills nothing for %s, however the rules are switched on', async (_name, patch, clause) => {
+    const w = await autopilotWorld()
+    const { use, client } = await connect(w.app, STUDIO_KEY)
+    const asked = await use('propose', { ...w.charge, ...patch })
+    expect(asked.data).toMatchObject({ decision: 'DENY', ruleCode: clause })
+    expect(w.invoices.createCalls).toBe(0)
+    expect(w.paypal!.orders.size).toBe(0)
+    await client.close()
+  })
+
+  it('bills the real milestone once, and will not bill it twice or bill the next one for the wrong amount', async () => {
+    const w = await autopilotWorld()
+    const { use, client } = await connect(w.app, STUDIO_KEY)
+    const first = await use('propose', w.charge)
+    expect(first.data).toMatchObject({ decision: 'AUTO', ruleCode: 'standing.billing' })
+    expect(w.invoices.createCalls).toBe(1)
+    const again = await use('propose', { ...w.charge, description: 'the same milestone, asked again' })
+    expect(again.data).toMatchObject({ decision: 'DENY', ruleCode: 'deal.milestone_billed' })
+    const second = await use('propose', { ...w.charge, milestone: 1, amountCents: 30_000, description: 'milestone two, at double' })
+    expect(second.data).toMatchObject({ decision: 'DENY', ruleCode: 'deal.milestone_mismatch' })
+    expect(w.invoices.createCalls).toBe(1)
+    await client.close()
+  })
+
+  it('does not let a charge with no deal ride the billing rule, nor pay a contractor from money that did not come through a deal', async () => {
+    const w = await autopilotWorld()
+    const { use, client } = await connect(w.app, STUDIO_KEY)
+    const adHoc = await use('propose', { ...w.charge, dealId: undefined, milestone: undefined, jobId: 'job_no_deal', description: 'Extra work' })
+    expect(adHoc.data.decision).toBe('NEEDS_APPROVAL')
+    expect(w.invoices.createCalls).toBe(0)
+    await client.close()
+  })
+
+  it('never pays a contractor more than the share when the client pays, even if an agent also asks', async () => {
+    const w = await autopilotWorld()
+    const billed = await call(w.app, 'POST', `/v1/deals/${w.deal.id}/milestones/0/bill`, { key: STUDIO_KEY, body: { evidenceUrl: EVIDENCE } })
+    w.invoices.pay(billed.json.invoiceId)
+    await w.services.mandate.sweepPending()
+    expect(w.paypal!.payoutCalls).toBe(1)
+    const { use, client } = await connect(w.app, STUDIO_KEY)
+    const captureId = (await call(w.app, 'GET', `/v1/proposals/${billed.json.id}`)).json.captureId
+    const greedy = await use('propose', { kind: 'payment', payee: 'Priya', amountCents: 9_000, currency: 'USD', category: 'design', description: 'a second share', evidenceUrl: EVIDENCE, jobId: w.deal.jobId, fundingCaptureId: captureId })
+    expect(greedy.data).toMatchObject({ decision: 'DENY', ruleCode: 'funding.exceeds', moneyMoved: '$0.00' })
+    expect(w.paypal!.payoutCalls).toBe(1)
+    const job = (await call(w.app, 'GET', `/v1/jobs/${w.deal.jobId}`)).json
+    expect(job.totals.outCents).toBe(9_000)
+    await client.close()
+  })
+
+  it('leaves the audit green after all of it', async () => {
+    const w = await autopilotWorld()
+    const billed = await call(w.app, 'POST', `/v1/deals/${w.deal.id}/milestones/0/bill`, { key: STUDIO_KEY, body: { evidenceUrl: EVIDENCE } })
+    w.invoices.pay(billed.json.invoiceId)
+    await w.services.mandate.sweepPending()
+    const report = (await call(w.app, 'GET', '/v1/audit')).json
+    expect(report.checks.filter((check: { status: string }) => check.status === 'fail')).toEqual([])
+    expect(report.ok).toBe(true)
   })
 })

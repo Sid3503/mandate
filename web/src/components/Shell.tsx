@@ -2,19 +2,21 @@ import { motion } from 'framer-motion'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { PageTransition } from './PageTransition'
 import { useQueryClient } from '@tanstack/react-query'
-import { useOnline, useProposals, useSession } from '../lib/hooks'
+import { useOnline, useSession, useToday } from '../lib/hooks'
+import { AskProvider, useAsk } from './Ask'
 import { session } from '../lib/session'
 import { GuideButton, GuideProvider, useGuide } from './GuidedTour'
 import { Chip } from './ui'
 
 const NAV = [
-  { to: '/', label: 'Waiting', tour: 'nav-waiting', icon: 'M4 5h16v14H4z M4 9h16', end: true },
+  { to: '/', label: 'Today', tour: 'nav-waiting', icon: 'M4 5h16v14H4z M4 9h16', end: true },
   { to: '/jobs', label: 'Jobs', tour: 'nav-jobs', icon: 'M4 7h16v12H4z M9 7V4h6v3' },
   { to: '/deals', label: 'Deals', tour: 'nav-deals', icon: 'M3 12h7 M14 12h7 M9 7l3 5-3 5 M15 7l-3 5 3 5' },
   { to: '/clerk', label: 'Clerk', tour: 'nav-clerk', icon: 'M4 5h16v11H9l-5 4z M8 9h8 M8 12h5' },
   { to: '/new', label: 'Ask', tour: 'nav-new', icon: 'M12 5v14 M5 12h14' },
   { to: '/ledger', label: 'Ledger', tour: 'nav-ledger', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16' },
   { to: '/rules', label: 'Rules', tour: 'nav-rules', icon: 'M6 4h12v16H6z M9 9h6 M9 13h6 M9 17h3' },
+  { to: '/proof', label: 'Proof', tour: 'nav-proof', icon: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z M8.5 12l2.5 2.5 4.5-5' },
 ]
 
 function Icon({ path }: { path: string }) {
@@ -40,7 +42,9 @@ export function Mark({ size = 28 }: { size?: number }) {
 export function Shell() {
   return (
     <GuideProvider>
-      <ShellFrame />
+      <AskProvider>
+        <ShellFrame />
+      </AskProvider>
     </GuideProvider>
   )
 }
@@ -49,10 +53,11 @@ function ShellFrame() {
   const guide = useGuide()
   const online = useOnline()
   const me = useSession()
-  const proposals = useProposals()
+  const today = useToday()
+  const ask = useAsk()
   const navigate = useNavigate()
   const client = useQueryClient()
-  const waiting = (proposals.data?.data ?? []).filter((item) => item.phase === 'pending_approval').length
+  const waiting = today.data?.waiting.length ?? 0
   const lock = () => {
     session.clear()
     client.clear()
@@ -70,7 +75,7 @@ function ShellFrame() {
                 <>
                   {isActive ? <motion.span layoutId="rail-pill" className="pill" transition={{ type: 'spring', stiffness: 520, damping: 40 }} /> : null}
                   <Icon path={item.icon} />
-                  <span>{item.label === 'Ask' ? 'New request' : item.label === 'Waiting' ? 'Waiting for you' : item.label}</span>
+                  <span>{item.label === 'Ask' ? 'New request' : item.label}</span>
                   {item.to === '/' && waiting > 0 ? <span className="badge">{waiting}</span> : null}
                 </>
               )}
@@ -92,6 +97,7 @@ function ShellFrame() {
         <header className="topbar">
           <div className="brand brand-mobile"><Mark size={24} /><span>Mandate</span></div>
           <div className="topbar-status">
+            <button type="button" className="btn btn-ghost btn-small ask-top" onClick={() => ask.open()} disabled={!me.data?.agents.enabled} title="Ask the clerk (Cmd or Ctrl + K)">Ask <kbd aria-hidden="true">⌘K</kbd></button>
             <GuideButton />
             {me.data?.role === 'proposer' ? <Chip tone="need">Proposer · can ask, not approve</Chip> : null}
             {me.data ? <Chip tone={me.data.paypalConfigured ? 'auto' : 'muted'}>{me.data.paypalConfigured ? 'PayPal sandbox' : 'PayPal not set'}</Chip> : null}

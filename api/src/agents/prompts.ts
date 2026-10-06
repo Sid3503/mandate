@@ -11,10 +11,14 @@ const money = (cents: number, currency = 'USD') => `${currency === 'USD' ? '$' :
 
 /** The owner's standing rules, in words, so the clerk can say why a payout needed no tap. It never decides from this: the rules do. */
 function standingLine(warrant: WarrantBody): string {
-  if (warrant.standing.length === 0) return ''
   const name = (id: string) => [...warrant.payees, ...warrant.clients].find((party) => party.id === id)?.displayName ?? id
-  const rules = warrant.standing.map((rule) => `${name(rule.payeeId)} from settled ${rule.clientIds.map(name).join(' or ')} payments${rule.requireDeal ? ' on a signed deal' : ''}`)
-  return `, except payouts the owner pre-approved with a standing rule (${rules.join('; ')}), which the rules send without a tap`
+  const pre: string[] = []
+  if (warrant.standing.length > 0) {
+    const rules = warrant.standing.map((rule) => `${name(rule.payeeId)} from settled ${rule.clientIds.map(name).join(' or ')} payments${rule.requireDeal ? ' on a signed deal' : ''}`)
+    pre.push(`payouts the owner pre-approved with a standing rule (${rules.join('; ')}), which the rules send without a tap`)
+  }
+  if (warrant.automation.billSignedDeals) pre.push('milestones of a signed deal, which the rules bill without a tap once proof of the work is attached')
+  return pre.length > 0 ? `, except ${pre.join(', and ')}` : ''
 }
 
 export function clerkSystem(warrant: WarrantBody, today: string): string {

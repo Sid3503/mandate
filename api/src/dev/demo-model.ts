@@ -58,6 +58,18 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
       const seen = prompt.filter((item) => item.role === 'tool').length
       const result = lastToolJson(prompt)
 
+      // The rules drafter: a few phrases, turned into the same patch a real model would write.
+      if (system.includes('rules drafter for Mandate')) {
+        if (seen > 0) return say('Drafted.')
+        const lower = message.toLowerCase()
+        if (/automatic|no tap|without a tap|paid when/.test(lower) && /priya/.test(lower)) {
+          return call('propose_rules', { summary: 'Priya will be paid from Northwind\'s signed-deal payments with no tap, as soon as the client pays.', standingRules: [{ payee: 'Priya Shah', clients: ['Northwind'] }], autopilot: { payOnSettle: true, billSignedDeals: true, remindUnpaidAfterDays: 3, maxReminders: 2 } })
+        }
+        const cap = /cap[^$]*\$\s?([\d,]+)/.exec(message)
+        if (cap) return call('propose_rules', { summary: `The monthly cap becomes $${cap[1]}.`, monthlyCapDollars: Number(cap[1]!.replaceAll(',', '')) })
+        return call('propose_rules', { summary: 'That request is not about the rules, so nothing changes.' })
+      }
+
       // Negotiators: the studio opens high, the client opens low, the studio settles at a fair price.
       if (system.includes('You negotiate for')) {
         const threadId = /threadId "([0-9a-f-]{36})"/.exec(system)?.[1]

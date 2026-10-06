@@ -19,6 +19,7 @@ export const Clause = {
   fundingExceeds: 'funding.exceeds',
   fundingDisputed: 'funding.disputed',
   standingMatched: 'standing.matched',
+  standingBilling: 'standing.billing',
   dealUnknown: 'deal.unknown',
   dealRequired: 'deal.required',
   dealJobMismatch: 'deal.job_mismatch',
@@ -58,6 +59,8 @@ export type FundingCharge = {
   /** The client whose payment this is, and the signed deal it belongs to, if any. Standing rules match on these. */
   clientId?: string | null
   dealId?: string | null
+  /** Cents of this client payment already promised to the payee now being paid. A standing rule with its own share checks this. */
+  payeeHeldCents?: number
   /** PayPal has an open dispute on this client payment. Money that may be taken back is not spent. */
   disputed?: boolean
 }
@@ -191,6 +194,14 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
       `monthly cap is ${warrant.monthlyCapCents} cents; already reserved ${context.reservedCents} cents; prior captures: ${cited}`,
     )
   }
+  const billing = matchBilling(warrant, proposal)
+  if (billing) {
+    return {
+      gate: 'AUTO',
+      clause: Clause.standingBilling,
+      detail: 'covered by the owner\'s rule to bill signed-deal milestones when proof is attached: the client, the amount and the milestone are exactly what the deal says, and it has not been billed before, so no tap is needed',
+    }
+  }
   const standing = matchStanding(warrant, proposal)
   if (standing) {
     return {
@@ -218,11 +229,30 @@ export function matchStanding(warrant: WarrantBody, proposal: GateProposal) {
   if (proposal.kind !== 'payment' || !warrant.fundingRequired || !proposal.payeeId) return null
   const funding = proposal.funding
   if (!funding || !funding.clientId) return null
-  return warrant.standing.find((rule) =>
-    rule.payeeId === proposal.payeeId
-    && rule.clientIds.includes(funding.clientId!)
-    && (!rule.requireDeal || Boolean(funding.dealId)),
-  ) ?? null
+  return warrant.standing.find((rule) => {
+    if (rule.payeeId !== proposal.payeeId || !rule.clientIds.includes(funding.clientId!)) return false
+    if (rule.requireDeal && !funding.dealId) return false
+    // A rule with its own share covers only that share of the client payment, less what this payee was already promised.
+    if (rule.shareBps !== undefined) {
+      const net = Math.max(0, funding.capturedCents - funding.refundHeldCents)
+      const left = Math.floor((net * rule.shareBps) / 10_000) - (funding.payeeHeldCents ?? 0)
+      if (proposal.amountCents > left) return false
+    }
+    return true
+  }) ?? null
+}
+
+/**
+ * A charge that bills a milestone of a signed deal. By the time this is asked the deal checks have already passed:
+ * the deal exists and was agreed, the client is the deal's client, the amount is exactly the milestone's, and the
+ * milestone has not been billed. All the owner's switch adds is "no tap".
+ */
+export function matchBilling(warrant: WarrantBody, proposal: GateProposal): boolean {
+  return proposal.kind === 'charge'
+    && warrant.automation.billSignedDeals
+    && Boolean(proposal.dealId)
+    && proposal.milestone !== null && proposal.milestone !== undefined
+    && Boolean(proposal.deal?.agreed)
 }
 
 export function resolvePayee(warrant: WarrantBody, raw: string) {

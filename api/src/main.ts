@@ -38,6 +38,8 @@ const app = createApp({
   services,
   invoices,
   model: createAgentModel({ apiKey: config.ollamaApiKey, baseUrl: config.ollamaBaseUrl, name: config.agentModel }),
+  // Drafting rules is the one job where a wrong field is costly, and measured on the real models gemma4:31b did it best and fastest.
+  drafterModel: createAgentModel({ apiKey: config.ollamaApiKey, baseUrl: config.ollamaBaseUrl, name: config.drafterModel ?? 'gemma4:31b' }),
   watch,
   paypal,
   now: () => new Date(),

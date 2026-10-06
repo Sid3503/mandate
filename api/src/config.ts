@@ -18,6 +18,7 @@ const EnvSchema = z.object({
   OLLAMA_API_KEY: z.string().min(1).optional(),
   OLLAMA_BASE_URL: z.string().url().optional(),
   AGENT_MODEL: z.string().min(1).optional(),
+  DRAFTER_MODEL: z.string().min(1).optional(),
   SIGNING_KEYS_PREVIOUS: z.string().optional(),
   WEB_DIST: z.string().min(1).optional(),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).max(10_000).default(120),
@@ -43,6 +44,7 @@ export type AppConfig = {
   ollamaApiKey: string | undefined
   ollamaBaseUrl: string | undefined
   agentModel: string | undefined
+  drafterModel: string | undefined
   previousPublicKeys: string[]
   webDist: string | null
   rateLimitPerMinute: number
@@ -94,6 +96,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     ollamaApiKey: value.OLLAMA_API_KEY,
     ollamaBaseUrl: value.OLLAMA_BASE_URL,
     agentModel: value.AGENT_MODEL,
+    drafterModel: value.DRAFTER_MODEL,
     previousPublicKeys: (value.SIGNING_KEYS_PREVIOUS ?? '').split('|').map((item) => item.trim()).filter(Boolean),
     webDist: value.WEB_DIST ?? null,
     rateLimitPerMinute: value.RATE_LIMIT_PER_MINUTE,

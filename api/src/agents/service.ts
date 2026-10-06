@@ -6,6 +6,7 @@ import { WARRANT_ID } from '../domain/schemas'
 import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from '../services/principal'
+import { draftRules, type RulesDraft } from './drafter'
 import { composeReply, type Outcome } from './guard'
 import type { AgentModel } from './model'
 import { clerkSystem, negotiatorSystem } from './prompts'
@@ -57,6 +58,7 @@ export class AgentService {
     private readonly services: Services,
     private readonly model: AgentModel | null,
     private readonly now: () => Date,
+    private readonly drafterModel: AgentModel | null = null,
   ) {}
 
   get enabled(): boolean {
@@ -117,6 +119,25 @@ export class AgentService {
       tools: run.steps.flatMap((step) => step.toolResults.map((item) => ({ tool: item.tool, ok: item.ok }))),
       model: model.name,
       ms: run.ms,
+    }
+  }
+
+  // ---------- the rules drafter ----------
+
+  /** A draft of new rules from the owner's own words. It is a draft only: nothing is published, and the owner reads a diff first. */
+  async draftRules(instruction: string, who: Principal): Promise<RulesDraft & { runId: string }> {
+    const model = this.drafterModel ?? this.need()
+    this.limit(who, 'drafter', 8)
+    const warrant = this.services.repo.latestWarrant()
+    if (!warrant) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+    const runId = randomUUID()
+    try {
+      const draft = await draftRules({ model, current: warrant.body, instruction })
+      this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: model.name, input: instruction, output: draft.summary, steps: [], status: 'ok', error: null, ms: draft.ms })
+      return { ...draft, runId }
+    } catch (error) {
+      this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: model.name, input: instruction, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0 })
+      throw error
     }
   }
 

@@ -36,6 +36,8 @@ export type AppDeps = {
   services?: Services
   /** The language model behind the clerk and the negotiators. Without it the agents are off and everything else works. */
   model?: AgentModel | null
+  /** A separate model for drafting rules. Falls back to `model`. */
+  drafterModel?: AgentModel | null
   config: {
     apiKey: string
     proposerKey?: string | null
@@ -53,6 +55,7 @@ export type AppDeps = {
 }
 
 const ClerkMessageSchema = z.object({ message: z.string().trim().min(1).max(4000), conversationId: z.uuid().optional() }).strict()
+const DraftRulesSchema = z.object({ instruction: z.string().trim().min(3).max(1000) }).strict()
 const NegotiationSchema = z.object({
   buyer: z.string().trim().max(200).optional(),
   task: z.string().trim().max(300).optional(),
@@ -69,8 +72,10 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/party-rules$/ },
   { method: 'PUT', pattern: /^\/v1\/party-rules\/[^/]+$/ },
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
+  { method: 'POST', pattern: /^\/v1\/rules\/draft$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
+  { method: 'GET', pattern: /^\/v1\/(today|audit)$/ },
   { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
   { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
 ]
@@ -89,7 +94,7 @@ export function createApp(deps: AppDeps) {
   const app = new Hono<{ Variables: { requestId: string; principal: Principal } }>()
   const services = deps.services ?? buildServices({ ...deps, publicUrl: deps.config.publicUrl })
   const { mandate: service, deals } = services
-  const agents = new AgentService(services, deps.model ?? null, deps.now)
+  const agents = new AgentService(services, deps.model ?? null, deps.now, deps.drafterModel ?? null)
   const buckets = new Map<string, { count: number; reset: number }>()
   const openapi = buildOpenApi(deps.config.publicUrl)
 
@@ -332,6 +337,8 @@ export function createApp(deps: AppDeps) {
     await assertEmpty(c)
     return c.json(await service.features(true))
   })
+  app.get('/v1/today', (c) => c.json(services.today.build()))
+  app.get('/v1/audit', async (c) => c.json(await services.audit.run({ paypal: c.req.query('paypal') === '1' })))
   app.get('/v1/paypal/balance', async (c) => c.json(await service.balance()))
   app.get('/v1/paypal/tools', (c) => c.json(toolSummary()))
   app.get('/v1/paypal/activity', async (c) => c.json(await service.activity(Number(c.req.query('days') ?? 30) || 30)))
@@ -359,6 +366,12 @@ export function createApp(deps: AppDeps) {
     const parsed = ClerkMessageSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
     return c.json(await agents.clerk(parsed.data, c.get('principal')))
+  })
+  app.post('/v1/rules/draft', async (c) => {
+    assertJson(c)
+    const parsed = DraftRulesSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return c.json(await agents.draftRules(parsed.data.instruction, c.get('principal')))
   })
   app.get('/v1/clerk/conversations/:id', (c) => c.json(agents.conversation(c.req.param('id'))))
   app.post('/v1/negotiations', async (c) => {
@@ -416,7 +429,7 @@ export function createApp(deps: AppDeps) {
     if (!Number.isInteger(milestone) || milestone < 0 || milestone > 11) throw new Problem(404, 'deal.milestone_unknown', 'No such milestone', 'Milestones are numbered from 0.')
     const parsed = BillMilestoneSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
-    return send(c, deals.bill(c.req.param('id'), milestone, parsed.data, c.get('principal')))
+    return send(c, await deals.bill(c.req.param('id'), milestone, parsed.data, c.get('principal')))
   })
   app.get('/v1/party-rules', (c) => c.json(deals.rules()))
   app.get('/v1/party-rules/mine', (c) => c.json(deals.rulesFor(c.get('principal'))))

@@ -3,15 +3,20 @@ import { useEffect, useMemo, useState } from 'react'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { when } from '../lib/format'
-import { useIsOwner, useOnline, useVersions } from '../lib/hooks'
+import { useAgentsOn, useIsOwner, useOnline, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
-import type { Party, Warrant } from '../lib/types'
+import type { Party, RulesDraft, Warrant } from '../lib/types'
 import { ruleSentences } from '../lib/words'
 import { useQueryClient } from '@tanstack/react-query'
 
 type Body = Omit<Warrant, 'id' | 'version' | 'createdAt'>
 type Change = { field: string; before: string; after: string }
 type Standing = NonNullable<Warrant['standing']>[number]
+
+const automationWords = (a: Body['automation'] | undefined) => {
+  const on = [a?.billSignedDeals ? 'bill signed-deal milestones on delivery' : null, a?.payOnSettle ? 'pay contractors when the client pays' : null, a?.remindUnpaidAfterDays ? `remind after ${a.remindUnpaidAfterDays} days (max ${a.maxReminders})` : null].filter(Boolean)
+  return on.length > 0 ? on.join(', ') : 'off'
+}
 
 const nameOf = (b: Body, id: string) => [...b.payees, ...(b.clients ?? [])].find((party) => party.id === id)?.displayName ?? id
 
@@ -31,7 +36,8 @@ const LABELS: Array<{ key: keyof Body; label: string; show: (body: Body) => stri
   { key: 'timezone', label: 'Month boundary', show: (b) => b.timezone },
   { key: 'categories', label: 'Allowed work', show: (b) => b.categories.join(', ') },
   { key: 'payees', label: 'Who can be paid', show: (b) => b.payees.map((p) => `${p.displayName} (${p.id}) · ${p.email}`).join(', ') },
-  { key: 'standing', label: 'Standing rules (no tap)', show: (b) => (b.standing ?? []).map((r) => `${nameOf(b, r.payeeId)} from ${r.clientIds.map((id) => nameOf(b, id)).join(' or ')}${r.requireDeal ? ', signed deal only' : ''}`).join('; ') || 'none' },
+  { key: 'standing', label: 'Standing rules (no tap)', show: (b) => (b.standing ?? []).map((r) => `${nameOf(b, r.payeeId)} from ${r.clientIds.map((id) => nameOf(b, id)).join(' or ')}${r.requireDeal ? ', signed deal only' : ''}${r.shareBps ? `, ${r.shareBps / 100}% share` : ''}`).join('; ') || 'none' },
+  { key: 'automation', label: 'Autopilot', show: (b) => automationWords(b.automation) },
   { key: 'clients', label: 'Who can be billed', show: (b) => (b.clients ?? []).map((p) => `${p.displayName} (${p.id}) · ${p.email}`).join(', ') || 'nobody' },
 ]
 
@@ -46,6 +52,7 @@ export function Rules() {
   const list = versions.data?.data ?? []
   const [selected, setSelected] = useState<number | null>(null)
   const [editing, setEditing] = useState(false)
+  const [seed, setSeed] = useState<RulesDraft | null>(null)
   useEffect(() => {
     if (selected === null && list[0]) setSelected(list[0].version)
   }, [list, selected])
@@ -58,10 +65,11 @@ export function Rules() {
   return (
     <div className="page">
       <PageHead eyebrow={`Rules · version ${current.version} is live`} title="The rules">
-        {owner && !editing ? <button type="button" className="btn btn-ink" data-tour="rules-write" onClick={() => setEditing(true)}>Write version {current.version + 1}</button> : null}
+        {owner && !editing ? <button type="button" className="btn btn-ink" data-tour="rules-write" onClick={() => { setSeed(null); setEditing(true) }}>Write version {current.version + 1}</button> : null}
       </PageHead>
 
-      {editing ? <Editor current={current} onDone={(version) => { setEditing(false); if (version) setSelected(version) }} /> : null}
+      {owner && !editing ? <DraftBox onUse={(result) => { setSeed(result); setEditing(true) }} /> : null}
+      {editing ? <Editor key={seed?.runId ?? 'blank'} current={current} seed={seed} onDone={(version) => { setEditing(false); setSeed(null); if (version) setSelected(version) }} /> : null}
 
       <div className="rules-grid">
         <section className="panel" data-tour="rules-words">
@@ -117,20 +125,25 @@ function Changes({ changes, first = false }: { changes: Change[]; first?: boolea
   )
 }
 
-function Editor({ current, onDone }: { current: Warrant; onDone: (version: number | null) => void }) {
+function Editor({ current, seed, onDone }: { current: Warrant; seed: RulesDraft | null; onDone: (version: number | null) => void }) {
   const client = useQueryClient()
   const online = useOnline()
   const start = useMemo(() => body(current), [current])
-  const [auto, setAuto] = useState(centsInput(start.autoSettleUnderCents))
-  const [cap, setCap] = useState(centsInput(start.monthlyCapCents))
-  const [ceiling, setCeiling] = useState(centsInput(start.perPaymentCeilingCents))
-  const [share, setShare] = useState(String((start.contractorShareBps ?? 10000) / 100))
-  const [funding, setFunding] = useState(Boolean(start.fundingRequired))
-  const [evidence, setEvidence] = useState(start.evidenceRequired)
-  const [categories, setCategories] = useState(start.categories.join(', '))
-  const [payees, setPayees] = useState<Party[]>(start.payees)
-  const [clients, setClients] = useState<Party[]>(start.clients ?? [])
-  const [standing, setStanding] = useState<Standing[]>(start.standing ?? [])
+  const from: Body = seed?.draft ?? start
+  const [auto, setAuto] = useState(centsInput(from.autoSettleUnderCents))
+  const [cap, setCap] = useState(centsInput(from.monthlyCapCents))
+  const [ceiling, setCeiling] = useState(centsInput(from.perPaymentCeilingCents))
+  const [share, setShare] = useState(String((from.contractorShareBps ?? 10000) / 100))
+  const [funding, setFunding] = useState(Boolean(from.fundingRequired))
+  const [evidence, setEvidence] = useState(from.evidenceRequired)
+  const [categories, setCategories] = useState(from.categories.join(', '))
+  const [payees, setPayees] = useState<Party[]>(from.payees)
+  const [clients, setClients] = useState<Party[]>(from.clients ?? [])
+  const [standing, setStanding] = useState<Standing[]>(from.standing ?? [])
+  const [billSigned, setBillSigned] = useState(from.automation?.billSignedDeals ?? false)
+  const [paySettle, setPaySettle] = useState(from.automation?.payOnSettle ?? false)
+  const [remindDays, setRemindDays] = useState(from.automation?.remindUnpaidAfterDays ? String(from.automation.remindUnpaidAfterDays) : '')
+  const [maxReminders, setMaxReminders] = useState(String(from.automation?.maxReminders ?? 2))
   const [review, setReview] = useState(false)
 
   const draft: Body | null = (() => {
@@ -151,8 +164,15 @@ function Editor({ current, onDone }: { current: Warrant; onDone: (version: numbe
       payees,
       clients,
       standing: funding ? standing : [],
+      automation: {
+        billSignedDeals: billSigned,
+        payOnSettle: paySettle,
+        remindUnpaidAfterDays: remindDays.trim() === '' ? null : Math.max(1, Math.min(60, Math.round(Number(remindDays)) || 1)),
+        maxReminders: Math.max(0, Math.min(5, Math.round(Number(maxReminders)) || 0)),
+      },
     }
   })()
+  const problem = draft && draft.automation?.payOnSettle && draft.standing.length === 0 ? 'Paying when the client pays needs at least one standing rule, to say whom to pay.' : null
   const changes = draft ? diff(start, draft) : []
   const publish = useMutation({
     mutationFn: (next: Body) => api.publishWarrant(next),
@@ -165,6 +185,7 @@ function Editor({ current, onDone }: { current: Warrant; onDone: (version: numbe
   return (
     <section className="panel panel-lime editor">
       <div className="row between"><h2 className="panel-title">Write version {current.version + 1}</h2><button type="button" className="link" onClick={() => onDone(null)}>Cancel</button></div>
+      {seed ? <DraftNote result={seed} /> : null}
       {!review ? (
         <div className="stack">
           <div className="field-row three">
@@ -181,9 +202,20 @@ function Editor({ current, onDone }: { current: Warrant; onDone: (version: numbe
           <Parties title="Who can be paid" prefix="payee_" list={payees} onChange={setPayees} />
           <Parties title="Who can be billed" prefix="client_" list={clients} onChange={setClients} />
           <StandingRules list={standing} payees={payees} clients={clients} enabled={funding} onChange={setStanding} />
+          <fieldset className="parties autopilot" data-tour="rules-autopilot">
+            <legend>Autopilot · what runs without you</legend>
+            <p className="fine">Each switch only removes a tap or sends a nudge. None of them lets a payment be bigger, go to someone new, or skip proof, the cap, or the dispute check.</p>
+            <label className="check"><input type="checkbox" checked={billSigned} onChange={(e) => setBillSigned(e.target.checked)} /> Bill a milestone of a signed deal, and send the invoice, as soon as proof of the work is attached</label>
+            <label className="check"><input type="checkbox" checked={paySettle} onChange={(e) => setPaySettle(e.target.checked)} /> When a client payment settles, pay each contractor whose standing rule covers it</label>
+            <div className="field-row three">
+              <label className="field"><span>Remind unpaid invoices after (days)</span><input inputMode="numeric" value={remindDays} placeholder="off" onChange={(e) => setRemindDays(e.target.value)} /></label>
+              <label className="field"><span>At most this many reminders</span><input inputMode="numeric" value={maxReminders} onChange={(e) => setMaxReminders(e.target.value)} /></label>
+            </div>
+            {problem ? <p className="fine" role="alert"><strong>{problem}</strong></p> : null}
+          </fieldset>
           <div className="row between wrap gap-s">
             <span className="muted">{draft ? `${changes.length} change${changes.length === 1 ? '' : 's'}` : 'Some amounts are not valid money'}</span>
-            <button type="button" className="btn btn-ink" disabled={!draft || changes.length === 0} onClick={() => setReview(true)}>Review changes</button>
+            <button type="button" className="btn btn-ink" disabled={!draft || changes.length === 0 || Boolean(problem)} onClick={() => setReview(true)}>Review changes</button>
           </div>
         </div>
       ) : (
@@ -229,6 +261,7 @@ function StandingRules({ list, payees, clients, enabled, onChange }: { list: Sta
             </div>
           </div>
           <label className="check"><input type="checkbox" checked={rule.requireDeal} onChange={(e) => update(index, { requireDeal: e.target.checked })} /> Only money that came through a signed deal</label>
+          <label className="field share-field"><span>This person’s share of each payment (%), blank for the whole contractor share</span><input inputMode="decimal" value={rule.shareBps ? String(rule.shareBps / 100) : ''} placeholder="all" onChange={(e) => { const n = Number(e.target.value); update(index, { shareBps: e.target.value.trim() === '' || !Number.isFinite(n) || n <= 0 ? undefined : Math.min(100, Math.round(n * 100)) }) }} /></label>
           <button type="button" className="link" onClick={() => onChange(list.filter((_, i) => i !== index))} aria-label="Remove standing rule">Remove</button>
         </div>
       ))}
@@ -253,5 +286,57 @@ function Parties({ title, prefix, list, onChange }: { title: string; prefix: str
       ))}
       <button type="button" className="link" onClick={() => onChange([...list, { id: prefix, displayName: '', email: '', aliases: [] }])}>+ Add</button>
     </fieldset>
+  )
+}
+
+/** Describe a change in your own words. A model drafts it; you read the before-and-after and publish it yourself. */
+function DraftBox({ onUse }: { onUse: (result: RulesDraft) => void }) {
+  const agents = useAgentsOn()
+  const online = useOnline()
+  const [text, setText] = useState('')
+  const make = useMutation({ mutationFn: (instruction: string) => api.draftRules(instruction) })
+  if (!agents) return null
+  const result = make.data
+  return (
+    <section className="panel draft-box" data-tour="rules-draft" aria-labelledby="h-draft">
+      <h2 className="panel-title" id="h-draft">Say it in your own words</h2>
+      <form className="draft-form" onSubmit={(event) => { event.preventDefault(); if (text.trim().length >= 3) make.mutate(text.trim()) }}>
+        <label className="sr-only" htmlFor="draft-text">Describe the change you want to the rules</label>
+        <textarea id="draft-text" rows={2} maxLength={1000} value={text} placeholder="e.g. let Priya be paid automatically from Northwind as soon as the client pays" onChange={(event) => setText(event.target.value)} />
+        <button type="submit" className="btn btn-ink" disabled={!online || text.trim().length < 3 || make.isPending}>{make.isPending ? 'Drafting…' : 'Draft it'}</button>
+      </form>
+      <p className="fine">A model drafts the change. It cannot publish: you read exactly what differs, and what it would let happen without you, and then you publish.</p>
+      <ProblemCard error={make.error} />
+      {result ? (
+        <div className="draft-result" role="status">
+          <DraftNote result={result} />
+          {result.changed ? <button type="button" className="btn btn-lime" onClick={() => onUse(result)}>Review this draft</button> : null}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+/** What a draft would change, said by code. The model's own summary is shown second, because only the code can be trusted to be complete. */
+function DraftNote({ result }: { result: RulesDraft }) {
+  return (
+    <div className="draft-note">
+      <span className="eyebrow">Drafted by {result.model} · {(result.ms / 1000).toFixed(1)}s · nothing is published</span>
+      {!result.changed ? <p>That request did not change any rule.</p> : null}
+      {result.loosens.length > 0 ? (
+        <div className="draft-loosens">
+          <strong>This lets more happen without you:</strong>
+          <ul>{result.loosens.map((line) => <li key={line}>{line}</li>)}</ul>
+        </div>
+      ) : null}
+      {result.tightens.length > 0 ? (
+        <div className="draft-tightens">
+          <strong>This narrows what can happen:</strong>
+          <ul>{result.tightens.map((line) => <li key={line}>{line}</li>)}</ul>
+        </div>
+      ) : null}
+      {result.notes.length > 0 ? <ul className="draft-notes">{result.notes.map((line) => <li key={line}>{line}</li>)}</ul> : null}
+      <p className="fine">The model’s summary: “{result.summary}”</p>
+    </div>
   )
 }

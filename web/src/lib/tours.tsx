@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react'
 import type { TourStep } from '../components/ui/product-tour'
 
-export type TourId = 'welcome' | 'inbox' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk'
+export type TourId = 'welcome' | 'inbox' | 'proof' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk'
 
 const p = (children: ReactNode) => <p>{children}</p>
 
 export const TOUR_LABEL: Record<TourId, string> = {
   welcome: 'the console',
-  inbox: 'Waiting for you',
+  inbox: 'Today',
+  proof: 'Proof',
   new: 'New request',
   jobs: 'Jobs',
   job: 'this job',
@@ -30,6 +31,7 @@ export function tourFor(pathname: string): TourId {
   if (pathname.startsWith('/ledger')) return 'ledger'
   if (pathname.startsWith('/rules')) return 'rules'
   if (pathname.startsWith('/system')) return 'system'
+  if (pathname.startsWith('/proof')) return 'proof'
   return 'inbox'
 }
 
@@ -65,13 +67,13 @@ export const TOURS: Record<TourId, TourStep[]> = {
     FLOW,
     {
       target: '[data-tour="nav-waiting"]',
-      title: 'Waiting for you',
+      title: 'Today',
       placement: 'right',
       mobilePlacement: 'top',
       content: (
         <>
-          {p('Your inbox. A request lands here when it is at or above your automatic line, or when the rules say you must decide.')}
-          {p('Each card shows who, how much, what for, the proof link, and which client payment funds it. Approve locks it. Reject throws it away.')}
+          {p('Where you land. What is waiting for you, what is in flight, what was done for you and how, and the month in money.')}
+          {p('A request lands under Waiting for you when it is at or above your automatic line, or when the rules say you must decide. Approve locks it. Reject throws it away.')}
         </>
       ),
     },
@@ -133,6 +135,13 @@ export const TOURS: Record<TourId, TourStep[]> = {
       content: p('Your limits in plain words: who can be paid, which kinds of work are allowed, the automatic line, the monthly cap and the client-money rule. Changing them makes a new version. Old requests keep the rules they were asked under.'),
     },
     {
+      target: '[data-tour="nav-proof"]',
+      title: 'Proof',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: p('One button re-verifies the whole ledger: every lock, every yes, every amount to the cent. It is how you check the product’s promise instead of believing it.'),
+    },
+    {
       target: '[data-tour="keys"]',
       title: 'Your key',
       placement: 'right',
@@ -160,16 +169,39 @@ export const TOURS: Record<TourId, TourStep[]> = {
   inbox: [
     {
       target: '[data-tour="page-head"]',
+      title: 'Today',
+      placement: 'bottom',
+      content: p('One page for what matters now. The lime number counts what needs you. Nothing on it has moved money unless it says Done.'),
+    },
+    {
+      target: '[data-tour="today-month"]',
+      title: 'The month in money',
+      placement: 'bottom',
+      content: p('What came in, went out and was kept this month, taken from what PayPal confirmed. The bar is the monthly contractor cap, and the line below says how much ran without a tap and whether autopilot is on.'),
+    },
+    {
+      target: '[data-tour="today-ask"]',
+      title: 'Ask Mandate',
+      placement: 'bottom',
+      content: p('Say what you want in a sentence, from any screen (Cmd or Ctrl + K). The clerk turns it into a request and the rules answer. It can ask, never pay.'),
+    },
+    {
+      target: '[data-tour="today-setup"]',
+      title: 'Get set up',
+      placement: 'bottom',
+      content: p('Six steps from a fresh install to a job that runs itself. Each links to where you do it. This disappears when they are all done.'),
+    },
+    {
+      target: '[data-tour="today-waiting"]',
       title: 'Waiting for you',
       placement: 'bottom',
-      content: p('Requests that need your decision. The lime number next to the title counts them. Nothing here has moved any money yet.'),
+      content: p('Only what needs a decision or a nudge: an approval, a payout to send, one on hold, an unclaimed payout, an overdue invoice, something autopilot could not do, or a client dispute. Buttons sit right on each row.'),
     },
-    FLOW,
     {
       target: '[data-tour="empty"]',
       title: 'Nothing to decide right now',
       placement: 'bottom',
-      content: p('Requests at or above the automatic line will appear here. Smaller ones that fit the rules go through on their own, and anything not on the rules is refused.'),
+      content: p('When the rules and autopilot have it covered, this is what you see. Smaller requests go through on their own, and anything not on the rules is refused.'),
     },
     {
       target: '[data-tour="approval"]',
@@ -195,14 +227,26 @@ export const TOURS: Record<TourId, TourStep[]> = {
       ),
     },
     {
-      target: '[data-tour="ready"]',
-      title: 'Approved, now what?',
+      target: '[data-tour="today-bill"]',
+      title: 'Ready to bill',
       placement: 'top',
-      content: p('Locked requests wait here for the next step. A client charge is settled once the buyer approves it in PayPal. A contractor payout is sent with PayPal Payouts, straight to their own account.'),
+      content: p('The next milestone of each signed deal. When the work is delivered, paste the proof link and press the button. With autopilot on, the invoice goes to the client straight away.'),
+    },
+    {
+      target: '[data-tour="ready"]',
+      title: 'In flight',
+      placement: 'top',
+      content: p('Invoices waiting for a client, payouts PayPal is processing, and things Mandate is sending. The server asks PayPal about these every minute, so they finish on their own. You can also check or nudge from here.'),
+    },
+    {
+      target: '[data-tour="today-done"]',
+      title: 'Done for you',
+      placement: 'top',
+      content: p('What settled in the last week and how it was approved: your tap, a standing rule, a billing rule, autopilot, or the automatic line. Every row opens its receipt.'),
     },
     {
       target: '[data-tour="refused"]',
-      title: 'Refused by the rules',
+      title: 'Stopped by the rules',
       placement: 'top',
       content: p('Requests the rules said no to. They are stored, PayPal was never called, and $0 moved. Being under the automatic line never makes a request allowed.'),
     },
@@ -395,6 +439,33 @@ export const TOURS: Record<TourId, TourStep[]> = {
       title: 'Change the rules',
       placement: 'bottom',
       content: p('Owner only. You edit, review every difference, then publish. Publishing creates the next version. Nothing changes until you confirm.'),
+    },
+  ],
+
+  proof: [
+    {
+      target: '[data-tour="page-head"]',
+      title: 'Proof, on demand',
+      placement: 'bottom',
+      content: p('The server re-verifies its own ledger from scratch whenever you press Check again. It trusts no field it did not recompute.'),
+    },
+    {
+      target: '[data-tour="proof-verdict"]',
+      title: 'The verdict',
+      placement: 'bottom',
+      content: p('Green means every check below passed over every request. One failure turns it red and names the request.'),
+    },
+    {
+      target: '[data-tour="proof-checks"]',
+      title: 'What was checked',
+      placement: 'top',
+      content: p('Every lock is intact and signed. Every payment had your tap or a rule you signed. Amounts match to the cent. Contractors were paid from money that had arrived. The cap held. No job paid out more than came in. Signed deals were followed.'),
+    },
+    {
+      target: '[data-tour="proof-reach"]',
+      title: 'What an agent can reach',
+      placement: 'top',
+      content: p('Of PayPal’s agent tools, zero can be called by an agent. The server runs a handful, and refuses the rest.'),
     },
   ],
 

@@ -73,7 +73,8 @@ export const EVENT: Record<string, string> = {
   'payout.completed': 'Paid by PayPal',
   'payout.unclaimed': 'Sent · receiver has no PayPal account yet',
   'payout.failed': 'PayPal failed the payout',
-  'standing.waiting': 'Standing rule: held, will retry',
+  'standing.waiting': 'Held for now · Mandate will retry',
+  'autopilot.payout_asked': 'Autopilot asked to pay the contractor',
   'payout.cancelled': 'Unclaimed payout cancelled · money returned',
   'invoice.reminded': 'Reminder sent to the client',
   'invoice.cancelled': 'Invoice cancelled',
@@ -105,6 +106,7 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
   const share = warrant?.contractorShareBps !== undefined ? `${warrant.contractorShareBps / 100}%` : 'the contractor share'
   switch (clause) {
     case 'amount.needs_approval': return `${who} is on the rules, but ${amount} is at or above ${line}, so the owner has to tap.`
+    case 'standing.billing': return `${who}’s milestone is exactly what the signed deal says, and you switched on billing signed deals when proof is attached, so the invoice goes out without a tap.`
     case 'standing.matched': return `${who} is covered by a standing rule you signed, so ${amount} goes to PayPal without a tap. Every other rule still had to pass.`
     case 'amount.auto': return `${who} is on the rules and ${amount} is under ${line}, so it settles without a tap.`
     case 'payee.unknown': return proposal?.kind === 'charge' ? 'That client is not on the rules. Nobody new can be billed.' : 'That account is not on the rules. Being under the line never adds a new payee.'
@@ -156,10 +158,20 @@ export function problemWords(code: string): string {
 
 export function standingSentences(warrant: Warrant): string[] {
   const name = (id: string) => [...warrant.payees, ...(warrant.clients ?? [])].find((party) => party.id === id)?.displayName ?? id
-  return (warrant.standing ?? []).map((rule) => `Standing rule: ${name(rule.payeeId)} is paid, with no tap, from settled ${rule.clientIds.map(name).join(' or ')} payments${rule.requireDeal ? ' on a signed deal' : ''}, up to the contractor share and inside the monthly cap.`)
+  return (warrant.standing ?? []).map((rule) => `Standing rule: ${name(rule.payeeId)} is paid, with no tap, from settled ${rule.clientIds.map(name).join(' or ')} payments${rule.requireDeal ? ' on a signed deal' : ''}, ${rule.shareBps ? `${rule.shareBps / 100}% of each` : 'up to the contractor share'} and inside the monthly cap.`)
 }
 
 /** The rules as sentences, for the Rules screen. */
+export function automationSentences(warrant: Warrant): string[] {
+  const a = warrant.automation
+  if (!a) return []
+  return [
+    a.billSignedDeals ? 'Autopilot bills a milestone of a signed deal, and sends the invoice, as soon as proof of the work is attached.' : null,
+    a.payOnSettle ? 'Autopilot asks to pay each contractor with a standing rule the moment a client payment settles.' : null,
+    a.remindUnpaidAfterDays ? `Autopilot reminds a client about an invoice that is still unpaid after ${a.remindUnpaidAfterDays} days, at most ${a.maxReminders} times.` : null,
+  ].filter((line): line is string => line !== null)
+}
+
 export function ruleSentences(warrant: Warrant): string[] {
   const payees = warrant.payees.map((party) => party.displayName).join(', ')
   const clients = (warrant.clients ?? []).map((party) => party.displayName).join(', ')
@@ -168,6 +180,7 @@ export function ruleSentences(warrant: Warrant): string[] {
     clients ? `Only ${clients} can be billed.` : 'No clients can be billed yet.',
     `Allowed work: ${warrant.categories.join(', ')}. Anything else is refused.`,
     ...standingSentences(warrant),
+    ...automationSentences(warrant),
     `Under ${dollars(warrant.autoSettleUnderCents)} settles automatically. ${dollars(warrant.autoSettleUnderCents)} and above waits for the owner, unless a standing rule covers it.`,
     `Contractor payouts stop at ${dollars(warrant.monthlyCapCents)} a month (${warrant.timezone}).`,
     `No single payment above ${dollars(warrant.perPaymentCeilingCents)}.`,

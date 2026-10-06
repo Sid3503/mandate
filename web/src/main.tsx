@@ -13,7 +13,8 @@ import { Shell } from './components/Shell'
 import { ToastProvider } from './components/Toast'
 import { ApiError } from './lib/api'
 import { session } from './lib/session'
-import { Inbox } from './screens/Inbox'
+import { Today } from './screens/Today'
+import { Proof } from './screens/Proof'
 import { Landing } from './screens/Landing'
 import { Clerk } from './screens/Clerk'
 import { Deals } from './screens/Deals'
@@ -61,7 +62,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/welcome" element={<Landing />} />
           <Route path="/unlock" element={<Unlock />} />
           <Route element={<RequireKey><Shell /></RequireKey>}>
-            <Route index element={<Inbox />} />
+            <Route index element={<Today />} />
             <Route path="p/:id" element={<Receipt />} />
             <Route path="jobs" element={<Jobs />} />
             <Route path="jobs/:jobId" element={<JobScreen />} />
@@ -70,6 +71,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="new" element={<NewRequest />} />
             <Route path="ledger" element={<Suspense fallback={<div className="page"><Loading label="Opening ledger" /></div>}><Ledger /></Suspense>} />
             <Route path="rules" element={<Rules />} />
+            <Route path="proof" element={<Proof />} />
             <Route path="system" element={<System />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

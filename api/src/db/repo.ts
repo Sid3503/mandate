@@ -437,9 +437,68 @@ export class Repo {
     return (this.db.prepare(`SELECT invoice_id FROM proposals WHERE phase IN ('invoice_draft', 'invoice_sent') AND invoice_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ invoice_id: string }>).map((row) => row.invoice_id)
   }
 
-  /** Payouts a standing rule approved that have not reached PayPal. */
-  lockedStandingPayouts(): ProposalRow[] {
-    return this.db.prepare(`SELECT * FROM proposals WHERE kind = 'payment' AND clause = 'standing.matched' AND phase IN ('locked', 'order_created') AND payout_batch_id IS NULL ORDER BY created_at LIMIT 20`).all() as ProposalRow[]
+  /** Payouts and bills a standing rule approved that have not reached PayPal yet. */
+  lockedStandingItems(): ProposalRow[] {
+    return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE clause IN ('standing.matched', 'standing.billing') AND kind IN ('payment', 'charge') AND phase IN ('locked', 'order_created') AND payout_batch_id IS NULL ORDER BY created_at LIMIT 20`).all() as ProposalRow[]
+  }
+
+  /** Invoices that are out, with their proposal, for the reminder schedule. */
+  invoicesOut(): ProposalRow[] {
+    return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE kind = 'charge' AND phase = 'invoice_sent' AND invoice_id IS NOT NULL ORDER BY created_at LIMIT 50`).all() as ProposalRow[]
+  }
+
+  /** What one payee has been promised out of one client payment: locked, sent or paid. */
+  heldPayoutCentsFor(fundingCaptureId: string, payeeId: string): number {
+    const rows = this.db.prepare(
+      `SELECT amount_cents AS amountCents, capture_id AS captureId FROM proposals
+       WHERE kind = 'payment' AND funding_capture_id = ? AND payee_id = ?
+         AND phase IN (${RESERVED_SQL})`,
+    ).all(fundingCaptureId, payeeId) as Array<{ amountCents: number; captureId: string | null }>
+    return rows.reduce((sum, row) => sum + Math.max(0, row.amountCents - (row.captureId ? this.refundedCents(row.captureId) : 0)), 0)
+  }
+
+  /** Requests made since a moment, newest first. */
+  proposalsSince(sinceIso: string, limit: number): ProposalRow[] {
+    return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE created_at >= ? ORDER BY created_at DESC, id DESC LIMIT ?`).all(sinceIso, limit) as ProposalRow[]
+  }
+
+  /** Everything that is not finished: waiting, locked, sent, out, or unclaimed. */
+  openProposals(limit: number): ProposalRow[] {
+    return this.db.prepare(
+      `SELECT ${PROPOSAL_COLUMNS} FROM proposals
+       WHERE phase IN ('pending_approval', 'locked', 'order_created', 'capture_inflight', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed')
+       ORDER BY updated_at DESC, id DESC LIMIT ?`,
+    ).all(limit) as ProposalRow[]
+  }
+
+  /** Settled and refunded requests, newest activity first. */
+  settledProposals(sinceIso: string, limit: number): ProposalRow[] {
+    return this.db.prepare(
+      `SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE phase IN ('captured', 'refunded') AND updated_at >= ? ORDER BY updated_at DESC, id DESC LIMIT ?`,
+    ).all(sinceIso, limit) as ProposalRow[]
+  }
+
+  /** Every request, oldest first. The audit reads all of them. */
+  allProposals(): ProposalRow[] {
+    return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals ORDER BY created_at ASC, id ASC`).all() as ProposalRow[]
+  }
+
+  allEvents(): EventRow[] {
+    return this.db.prepare('SELECT id, proposal_id, type, clause, payload_json, created_at FROM events ORDER BY created_at ASC, rowid ASC').all() as EventRow[]
+  }
+
+  /** Events of some types inside a window, for the month's totals. */
+  eventsOfTypes(types: string[], start: string, end: string): EventRow[] {
+    const marks = types.map(() => '?').join(', ')
+    return this.db.prepare(`SELECT id, proposal_id, type, clause, payload_json, created_at FROM events WHERE type IN (${marks}) AND created_at >= ? AND created_at < ? ORDER BY created_at ASC, rowid ASC`).all(...types, start, end) as EventRow[]
+  }
+
+  countAgreedDeals(): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM deals WHERE status = 'agreed'`).get() as { n: number }).n
+  }
+
+  agreedDeals(): DealRow[] {
+    return this.db.prepare(`SELECT * FROM deals WHERE status = 'agreed' ORDER BY created_at ASC`).all() as DealRow[]
   }
 
   // ---------- PayPal disputes and reconciliation ----------

@@ -186,7 +186,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 194 API tests (Vitest), including a 42-case red team, plus 40 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 247 API tests (Vitest), including a 56-case red team, plus 46 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -341,6 +341,7 @@ npm run setup            # npm ci in api/ and web/, including dev dependencies
 | `SIGNING_KEYS_PREVIOUS` | unset | Retired public PEMs separated by `\|`. Old keys are also remembered in the ledger. |
 | `OLLAMA_API_KEY` | unset | Turns the clerk and negotiating agents on. |
 | `AGENT_MODEL` | `gpt-oss:20b` | Any Ollama model that supports tool calls. |
+| `DRAFTER_MODEL` | `gemma4:31b` | The model that drafts rules from plain words. |
 | `OLLAMA_BASE_URL` | `https://ollama.com` | Use `http://127.0.0.1:11434` for a local Ollama. |
 | `PAYPAL_WEBHOOK_ID` | unset | The id PayPal gives a registered webhook. When set, every call to `POST /v1/webhooks/paypal` must carry a signature PayPal confirms (`verify-webhook-signature`); otherwise it gets 401. Deliveries are de-duplicated by event id either way. |
 | `INVOICES` | `auto` | `auto` bills clients by PayPal invoice when the app may, else by checkout. `off` is checkout only. |
@@ -390,12 +391,13 @@ An installable web app (PWA) for the owner, built only on the existing API. It h
 | Screen | Path | What it shows and does | API |
 | --- | --- | --- | --- |
 | **Unlock** | `/app/unlock` | Ledger and PayPal readiness. Enter an owner or proposer key. | `GET /ready`, `GET /v1/session` |
-| **Waiting for you** | `/app/` | Approval cards: who, how much, for what, the proof link, **which client payment funds it**, and **why it needs you**. **Approve $90.00** shows the lock hash being set. Below are approved requests and what happens next (settle a client charge, or see a payout's status), and recent refusals with "$0 moved". | `GET /v1/proposals`, `POST …/approve`, `POST …/reject` |
+| **Today** | `/app/` | The landing page, worked out from the ledger alone: the month in money (in, out, kept, and the contractor cap), how much ran without a tap, a setup checklist until six steps are done, **Waiting for you** (approval cards and anything else that needs a decision, with the buttons on the row), **Ready to bill** (paste the proof link for the next milestone of each signed deal), **In flight**, **Done for you** (last 7 days, and how each was approved) and **Stopped by the rules**. **Ask Mandate** (Cmd or Ctrl + K) opens the clerk from anywhere. The approval cards: who, how much, for what, the proof link, **which client payment funds it**, and **why it needs you**. **Approve $90.00** shows the lock hash being set. Below are approved requests and what happens next (settle a client charge, or see a payout's status), and recent refusals with "$0 moved". | `GET /v1/proposals`, `POST …/approve`, `POST …/reject` |
 | **Receipt** | `/app/p/:id` | The decision in plain words and the server's words, the full lock hash, approved vs settled cents ("cents match ✓"), funded by, PayPal ids, a timeline, and a JSON download. For a client charge, **Settle** walks the PayPal buyer step and answers "Still waiting" with the time it checked when the buyer has not approved. For a contractor payout, a **Send the payout** panel replaces Settle and follows the payout from ready to sent to paid, unclaimed or failed, with a **Cancel this payout** button until it is sent. The **integrity check** sends a different claimed amount and shows the refusal. | `GET …/packet`, `POST …/capture` |
 | **Jobs** | `/app/jobs`, `/app/jobs/:jobId` | Money in, out, held and kept, with bars. Each client payment with what it can still fund and the payouts under it. Shortcuts to bill the next milestone or pay a contractor from a payment. | `GET /v1/jobs/:jobId` |
 | **New request** | `/app/new` | Money in, money out or refund. People and categories come from the rules. The funding picker lists only settled client payments, with what each can still fund. You can deliberately pick "not funded yet", "someone not on the rules" or another kind of work to see refusals. The answer card is always the server's decision; the screen never predicts it. | `GET /v1/warrant`, `POST /v1/proposals` |
 | **Ledger** | `/app/ledger` | An AG Grid Community table of every request, with filters (everything, refused, waiting, settled, money in, money out), search, refusals highlighted, and a compact phone layout. An events tab lists every event, with paging. | `GET /v1/proposals`, `GET /v1/ledger` |
-| **Rules** | `/app/rules` | The live rules as numbered sentences, the version history, and what changed per version. **Write version N+1** → edit → **Review changes** (a diff) → **Publish**. | `GET /v1/warrant/versions`, `PUT /v1/warrant` |
+| **Rules** | `/app/rules` | The live rules as numbered sentences, the version history, and what changed per version. **Say it in your own words** drafts a change with a model (see [the rules drafter](#the-rules-drafter)). **Write version N+1** → edit (including standing rules and autopilot) → **Review changes** (a diff) → **Publish**. | `GET /v1/warrant/versions`, `PUT /v1/warrant`, `POST /v1/rules/draft` |
+| **Proof** | `/app/proof` | One button re-verifies the whole ledger in the server and lists every check with what it looked at and, if any fail, the exact requests. Also what an agent can reach in PayPal (none). | `GET /v1/audit` |
 | **System** | `/app/system` | Process and readiness checks, which key you hold, the API version, and a link to the OpenAPI document. **Lock console**. | `GET /health`, `GET /ready` |
 
 ### Design
@@ -510,6 +512,70 @@ Meaning: *Priya is paid, with no tap, from settled Northwind payments that came 
 - **It finishes by itself.** Once a minute the server also re-reads PayPal for payouts still processing and invoices still out (the read the **Check PayPal** button does), so a payout or an invoice settles without anyone pressing anything and without needing a webhook. PayPal's word is still the only thing that marks it paid.
 - **What an agent sees:** the same six MCP tools. `propose` now answers `AUTO` / `standing.matched`, and `moneyMoved` shows only what PayPal has confirmed.
 - **Bounds that stay:** an attack that asks for one dollar over the share, a different payee, no proof, a foreign currency, no client payment, a different job or lunch is refused exactly as without the rule. See the [red team](#testing-and-quality).
+
+### Autopilot: the whole job, under rules you signed
+
+A standing rule removes the tap from one step. **Autopilot** removes the person from the rest of the chain, with the same guarantee: each switch is a field on a rules version, so it is signed by publishing, diffed before it goes live, and off by default.
+
+```
+deal signed → work delivered → client billed → client reminded → client pays → contractor paid → done
+  (agents)     (proof link)    billSignedDeals   remindUnpaid…     (PayPal)      payOnSettle
+```
+
+| Switch (`automation`) | What the server does | What it cannot do |
+| --- | --- | --- |
+| `billSignedDeals` | A charge that bills a milestone of a **signed deal** is `AUTO` (`standing.billing`) and the invoice is sent at once, as soon as proof is attached. | Bill a different amount, a different client, a milestone twice, or anything not on a deal. The deal checks already ran. |
+| `payOnSettle` | When a client payment is **confirmed settled by PayPal**, the server asks to pay each contractor whose standing rule covers it, for `floor(payment × share) − already promised`. The ask is an ordinary proposal (recorded as made by `autopilot`), so the gate answers it like any other. | Pay before the client has paid, pay more than the share, pay for a charge that settled before the switch was on, pay twice (the ask is idempotent per charge and rule). |
+| `remindUnpaidAfterDays` + `maxReminders` | Once a minute the server sends PayPal's own reminder for an invoice that is still unpaid N days after it was sent (or after the last reminder), up to the maximum. | Cancel an invoice, change its amount, or chase a paid one. |
+
+- **Per-contractor shares.** A standing rule may carry `shareBps`. Two contractors on one client are paid, for example, 40% and 20% of each payment. Publishing is refused if the shares promised for one client add up to more than the contractor share. A rule with its own share covers only that share, less what that person was already promised.
+- **It finishes by itself.** The server re-reads PayPal once a minute for invoices still out and payouts still processing (the read the **Check PayPal** button does). An invoice the client pays, or a payout that clears, settles with nobody pressing anything, and `payOnSettle` follows. No webhook is needed, though one speeds it up.
+- **Checkout fallback.** If the app cannot invoice, a billed milestone opens a PayPal checkout, waits for the client to approve it, and settles on its own once they do.
+- **When something stops it,** it says so instead of guessing. A payout autopilot asked for and the rules refused (the cap, a dispute, no funding) is stored as a refused request made by `autopilot` and shown under **Waiting for you** on Today. A payout PayPal cannot be reached for stays locked and is retried; a payout with a broken lock is refused for good.
+- **The honest trade.** Turning on `billSignedDeals` means a producer or an agent who attaches *any* https link to a milestone sends the client a real invoice, for exactly the agreed amount. The owner can cancel an unpaid invoice from Today, and the milestone can then be billed again. If proof must be real before a client is billed, leave the switch off.
+
+### Today
+
+`GET /v1/today` (owner only) returns everything the landing page shows, from the ledger alone (no PayPal call, so it is fast and always answers):
+
+- `waiting`: what needs the owner, each item with the buttons that act on it (`approve`, `reject`, `settle`, `check`, `remind`, `cancel_payout`, `open`). Kinds: `approval`, `ready` (approved and locked, waiting to be sent), `unclaimed`, `held` (a standing payout waiting on PayPal or a dispute, with the reason in words), `overdue`, `autopilot_blocked`, `dispute`.
+- `inFlight`: nothing for the owner to do (an invoice out, a payout processing, Mandate sending, a checkout waiting for the client).
+- `done`: settled in the last 7 days with `how` it was approved: `tap`, `standing`, `billing`, `autopilot` or `auto`.
+- `stopped`: requests the rules refused in the last 30 days, with the count and the total that was kept safe.
+- `month`: in, out, kept and the contractor cap, taken from the settle **events** PayPal confirmed, not from requests.
+- `readyToBill`: the next milestone of each agreed deal that has no live charge.
+- `stats`: the share of the last 30 days' decisions that needed no tap.
+- `setup`: six steps (connect PayPal, add people, agree a deal, sign a standing rule, switch on autopilot, get a first payment through) and whether all are done.
+
+**Ask Mandate** is the same studio clerk as the Clerk screen, opened over any screen with Cmd or Ctrl + K. It has the same powers: it can ask, and the rules answer.
+
+### Proof: the audit
+
+`GET /v1/audit` (owner only; add `?paypal=1` to compare with PayPal's own history) is a stranger's checklist run by the server over its own ledger. It trusts no field it did not recompute, and every failure names the request:
+
+| Check | What it proves |
+| --- | --- |
+| `locks.valid` | Every lock is the hash of the stored request and carries this server's signature. |
+| `moved.authorised` | Every request that moved money has a signed lock **and** either the owner's tap on that exact hash or a rule the owner signed (automatic line, standing rule, billing rule). |
+| `amounts.match` | What PayPal settled equals what was locked, to the cent. |
+| `payouts.funded` | Every payout cites a settled client payment on the same job, in the same currency, and the total promised out of one payment never passes the contractor share. |
+| `cap.respected` | In no month do the payouts still standing pass the cap that was in force when they were made. |
+| `jobs.in_covers_out` | No job paid out more than came in, after refunds. |
+| `history.complete` | Every request has its "asked" event and every settlement has the event that recorded PayPal confirming it. |
+| `deals.signed` | Every agreed deal's signature verifies, and every charge on a deal is for exactly its milestone, to the client who agreed. |
+| `agents.no_reach` | Of PayPal's 47 agent tools, 0 are callable by an agent. |
+| `paypal.agrees` (optional) | Every settled payment appears in PayPal's transaction report. Payments newer than a day are noted, not failed, because the report refreshes every few hours. |
+
+The tests change the database by hand (an amount, a settled amount, a deleted approval, a removed signature, an over-share payout, a lowered cap, a deleted settle event, an edited deal) and check that the right check turns red.
+
+### The rules drafter
+
+`POST /v1/rules/draft` (owner only) takes `{ "instruction": "let Priya be paid automatically from Northwind" }` and returns a **draft**: the new rules, a one-line summary, and `loosens`, `tightens` and `notes`.
+
+- A model gets one tool, `propose_rules`, that takes a small patch in plain units (dollars, percent, names), not the rules. The server merges it into the current rules and validates the result with the **same schema the owner's own edits must pass**. If the merge is invalid (for example, shares that add up to more than 100%), the model is told why and tries again, up to twice.
+- **What a draft loosens is decided by code, not by the model.** A deterministic comparison lists every change that lets more happen without the owner (a higher cap or line, a new payee or client, a standing rule, an autopilot switch, proof or funding no longer required) and every change that narrows it. The model's own summary is shown second, and the test suite includes a hostile draft whose summary says "nothing risky" while the code lists five loosenings.
+- **It cannot publish.** The draft opens in the editor as a before-and-after; publishing is `PUT /v1/warrant` with the owner key. A test publishes a draft and then shows the gate following it.
+- `DRAFTER_MODEL` chooses the model (default `gemma4:31b`). On the real models, on four compound requests, `gemma4:31b` got 4 of 4 in about a second each, `gpt-oss:120b` 3 of 4, `nemotron-3-nano:30b` 3 of 4 and `gpt-oss:20b` 2 of 6 tries, so the drafter has its own model.
 
 ---
 
@@ -690,6 +756,9 @@ The base URL is `http://127.0.0.1:8787` locally. Everything under `/v1` needs a 
 | `GET /v1/agent-runs`, `GET /v1/agent-runs/:id` | owner | Every agent run, with its full trace |
 | `GET /v1/jobs/:jobId` | any key | Job receipt, with the agreed deal |
 | `POST /v1/proposals/:id/cancel-payout`, `…/remind-invoice`, `…/cancel-invoice` | owner | Return an unclaimed payout; remind a client; void an unpaid invoice |
+| `GET /v1/today` | owner | The landing page's data: waiting, in flight, done, stopped, the month, ready to bill, setup |
+| `GET /v1/audit` | owner | Re-verify the whole ledger (add `?paypal=1` to compare with PayPal) |
+| `POST /v1/rules/draft` | owner | Draft a change to the rules from plain words. Never publishes. |
 | `GET /v1/paypal/features`, `POST /v1/paypal/features/check` | owner | Which PayPal features the app may use, read from its token scopes |
 | `GET /v1/paypal/tools` | owner | Every PayPal Agent Toolkit tool, its tier, and whether the server uses it |
 | `GET /v1/paypal/balance` | owner | The account balance PayPal reports, with its age. Advice only. |
@@ -754,6 +823,7 @@ Import `api/postman/Mandate.postman_collection.json` and `api/postman/Mandate.lo
 | `job.missing` | DENY | Money in must name its job. |
 | `funding.missing` | DENY or 409 | The client has not paid for this yet, so nothing funds the payout. |
 | `funding.job_mismatch` | DENY | That client payment belongs to a different job. |
+| `standing.billing` | AUTO | The owner switched on billing signed deals when proof is attached, and this is exactly a milestone of one, so the invoice goes out without a tap. |
 | `standing.matched` | AUTO | A standing rule the owner signed covers this payout, so it goes to PayPal without a tap. Every other rule still passed. |
 | `funding.disputed` | DENY or 409 | The client has an open PayPal dispute on that payment, so it cannot fund a payout until the dispute is resolved. At capture the server asks PayPal first; if PayPal cannot answer, the payout waits (`funding.unverifiable`, 503). |
 | `funding.exceeds` | DENY or 409 | That client payment cannot fund this much at the contractor share (or it was refunded). |
@@ -850,8 +920,8 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 194 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 40 Playwright tests (desktop 1440×960 and Pixel 7)
+cd api && npm test && npm run typecheck        # 247 Vitest tests
+cd web && npm run typecheck && npm run e2e     # 46 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 
 **API tests (`api/test/`)** cover:
@@ -889,7 +959,11 @@ cd web && npm run typecheck && npm run e2e     # 40 Playwright tests (desktop 14
 - **Standing rules:** Priya is paid with no tap and the lock is signed; nothing changes until the rule is published; one dollar over the share, no proof, and a spent client payment are still refused; a rule that names someone else does not cover her; `requireDeal`; a dispute refuses at the gate and holds an already-approved payout until it is resolved; PayPal unreachable leaves the payout locked and the sweep sends it; a tampered lock is refused for good; only the owner can publish; bad rules are rejected.
 - **PayPal depth:** feature readiness from token scopes, cancel-and-return of an unclaimed payout (and the wait when PayPal's batch is unfinished), the return URL, invoice reminder and cancel, dispute hold with fail-closed, reconciliation, balance, webhook signature and de-duplication, and PayPal's own payload shapes.
 - **Tool tiers:** every one of the Agent Toolkit's 47 tools has a tier, so a new tool cannot arrive unreviewed; anything that moves money is never "read"; the server's runner refuses any tool not written down as its own, even with every action switched on; the agent door exposes none of them.
-- **Red team (42 cases):** a *fully compromised* model calls `propose` with hostile arguments and the invariant is that PayPal is never asked and nothing reads as paid. The cases cover lookalike and smuggling payees, zero, negative, fractional and string amounts, euros, four kinds of bad proof link, SQL in strings, instructions hidden in the description and prompt, extra fields that try to set the decision, and a refund to the contractor. Also: a guessed-tool sweep (14 names) against the agent door, the owner key downgraded there, every money route closed to the studio and client-agent keys, and the output guard against six ways of boasting that money moved. A final block repeats the attacks with a standing rule in force.
+- **Autopilot:** billing a signed deal with no tap (and still needing one until the switch is on, for ad hoc charges, and for a wrong amount, a milestone twice or no proof); checkout fallback that settles when the client approves; the whole job with nobody touching it; two contractors split by their shares; refusing shares that add up to too much; a refusal recorded instead of a payout when the cap or a dispute is in the way; no payout for a charge that settled before the switch; reminders on the owner's schedule, capped, and never for a paid invoice (with a controllable clock).
+- **Today:** owner only; the setup checklist; waiting, ready-to-bill, in flight, done (with how), stopped, overdue, autopilot-blocked, held and disputed items; the month in money from PayPal-confirmed events.
+- **The audit:** passes on an empty ledger and on the whole frozen job; and turns the right check red for each of eight kinds of tampering.
+- **The rules drafter (scripted model):** a draft that is valid rules and lists what it loosens; a tightening; a hostile draft whose summary hides what the code reveals; unknown people, invalid rules, no model, no usable draft; owner only; a draft that is then published and followed by the gate.
+- **Red team (56 cases):** a *fully compromised* model calls `propose` with hostile arguments and the invariant is that PayPal is never asked and nothing reads as paid. The cases cover lookalike and smuggling payees, zero, negative, fractional and string amounts, euros, four kinds of bad proof link, SQL in strings, instructions hidden in the description and prompt, extra fields that try to set the decision, and a refund to the contractor. Also: a guessed-tool sweep (14 names) against the agent door, the owner key downgraded there, every money route closed to the studio and client-agent keys, and the output guard against six ways of boasting that money moved. A block repeats the attacks with a standing rule in force, and another with autopilot on (wrong amount, missing milestone, unknown deal, wrong client, no or insecure proof, other job, other currency, forbidden work; a milestone cannot be billed twice; a second payout out of a spent payment is refused; the audit is green afterwards).
 
 **Live agent evaluation (`npm run eval:agents`)** runs 14 clerk cases and the two-agent negotiation against the real model, on an in-memory ledger and a fake PayPal, so it costs tokens and nothing else. A case passes when the *rules'* outcome is right, which is what matters: the model may be wrong, and the design makes being wrong harmless. The cases include the fake-vendor email, "the owner already approved", a payee that uses a Cyrillic letter, an instruction hidden in a pasted invoice, "split it into five $18 payments", a stranger with a convincing story, a request to approve, and two cases under a standing rule. Set `AGENT_MODEL=<name>` to compare models, `EVAL_OUT=file.json` to save a result and `EVAL_ONLY="text"` to run cases whose name contains it.
 
@@ -923,6 +997,9 @@ Every miss was behavioural (a wrong tool, a refusal in words that leaves no reco
 14. PayPal sends the buyer back to the receipt, which settles by itself
 15. the owner signs a standing rule in the console (with an axe scan of the editor), and the payout it covers is sent with no tap and shown as Paid
 16. the guided tour: a first-time visitor sees the welcome tour, leaving it is remembered, every screen's guide reaches its last step with a lit spotlight on every target, and a receipt with the tour open passes axe
+17. Today's full chain: the owner signs the rules once, pastes a proof link, the invoice goes out, the client pays, the server's own look finds it, the contractor is paid, and the Done-for-you list, the job totals and the Proof page all agree, with no tap after the rules
+18. Ask Mandate opens with Cmd/Ctrl + K from any screen, answers, passes axe, and closes
+19. the owner says a change in words, reads what it loosens, reviews the diff and publishes it
 
 Screenshots are written to `web/e2e/shots/`.
 

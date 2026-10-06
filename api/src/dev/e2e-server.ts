@@ -3,6 +3,7 @@
 import { serve } from '@hono/node-server'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../app'
+import { buildServices } from '../services/container'
 import { migrate, openDatabase, seed } from '../db/database'
 import { createAgentModel } from '../agents/model'
 import { FakeInvoices, FakePayPal, FakeWatch } from '../paypal/fake'
@@ -20,11 +21,14 @@ invoices.unauthorised = true
 const model = createAgentModel({ apiKey: process.env.OLLAMA_API_KEY, name: process.env.AGENT_MODEL }) ?? demoModel({ delayMs: Number(process.env.DEMO_MODEL_DELAY_MS ?? 0) })
 paypal.autoApprove = process.env.FAKE_BUYER !== 'manual'
 
+const watch = new FakeWatch()
+const services = buildServices({ db, paypal, invoices, watch, publicUrl: `http://127.0.0.1:${port}`, now: () => new Date() })
 const app = createApp({
   db,
   paypal,
   invoices,
-  watch: new FakeWatch(),
+  watch,
+  services,
   model,
   now: () => new Date(),
   config: {
@@ -41,11 +45,12 @@ const app = createApp({
 })
 
 // Test-only controls for how the fake PayPal answers a payout. They need the owner key like everything else.
-app.post('/__fake/payouts/:outcome', (c) => {
+app.post('/__fake/payouts/:outcome', async (c) => {
   const outcome = c.req.param('outcome')
   if (outcome === 'settle') paypal.settlePayouts('SUCCESS')
   else if (outcome === 'unregistered') paypal.unregistered.add('priya.shah@example.com')
   else if (outcome === 'registered') paypal.unregistered.delete('priya.shah@example.com')
+  else if (outcome === 'sweep') await services.mandate.sweepStanding().then(() => services.mandate.sweepPending())
   else if (outcome === 'buyer-manual') paypal.autoApprove = false
   else if (outcome === 'buyer-auto') paypal.autoApprove = true
   else if (outcome === 'buyer-approve') paypal.approveAll()

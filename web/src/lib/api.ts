@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { Activity, Balance, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
+import type { Activity, AuditReport, Balance, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -121,6 +121,9 @@ export const api = {
   cancelInvoice: (id: string) => request<Proposal>(`/v1/proposals/${id}/cancel-invoice`, { method: 'POST' }),
   features: () => request<Features>('/v1/paypal/features'),
   checkFeatures: () => request<Features>('/v1/paypal/features/check', { method: 'POST' }),
+  today: () => request<Today>('/v1/today'),
+  audit: (paypal = false) => request<AuditReport>(`/v1/audit${paypal ? '?paypal=1' : ''}`),
+  draftRules: (instruction: string) => request<RulesDraft>('/v1/rules/draft', { method: 'POST', body: { instruction } }),
   balance: () => request<Balance>('/v1/paypal/balance'),
   tools: () => request<ToolSummary>('/v1/paypal/tools'),
   activity: () => request<Activity>('/v1/paypal/activity'),

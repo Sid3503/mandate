@@ -5,7 +5,7 @@ import { cartHash, stableHash, type CartFields } from '../domain/hash'
 import { lockMessage, type Signer } from '../domain/signing'
 import { monthWindow } from '../domain/period'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
-import { WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
+import { NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
 import { PayPalError, type LivePayout, type PayPalPort } from '../paypal/port'
 import type { LiveDispute, WatchPort } from '../paypal/watch'
@@ -15,7 +15,8 @@ import { Problem } from '../http/problem'
 import { runIdempotent } from './idempotency'
 
 export type HttpResult = { status: number; body: unknown }
-export type Role = 'owner' | 'proposer'
+/** Who asked. `autopilot` is the server itself, acting under a rule the owner signed. */
+export type Role = 'owner' | 'proposer' | 'autopilot'
 
 const RESUME_PHASES = new Set(['locked', 'order_created', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'])
 /** Charge phases where a PayPal invoice exists. The client may already have paid it. */
@@ -24,7 +25,8 @@ const INVOICE_PHASES = ['invoice_draft', 'invoice_sent']
 const PAYOUT_LIVE_PHASES = ['payout_sent', 'payout_unclaimed']
 const INFLIGHT_MS = 30_000
 /** Reasons a standing-rule payout may wait rather than die: the trouble is outside Mandate and may pass. */
-const STANDING_WAITS = new Set(['funding.disputed', 'funding.unverifiable', 'paypal.upstream', 'paypal.unconfigured', 'capture.inflight'])
+const STANDING_WAITS = new Set(['funding.disputed', 'funding.unverifiable', 'paypal.upstream', 'paypal.unconfigured', 'capture.inflight', 'paypal.buyer_pending'])
+const STANDING_CLAUSES: string[] = [Clause.standingMatched, Clause.standingBilling]
 
 export type ProposalView = {
   id: string
@@ -240,10 +242,10 @@ export class MandateService {
     return sent ? { status: result.status, body: sent } : result
   }
 
-  /** Sends a locked payout that a standing rule approved. Returns the fresh view, or null if it is not such a payout. */
+  /** Sends a locked payout, or an invoice, that a standing rule approved. Returns the fresh view, or null if it is not such a request. */
   async dispatchStanding(id: string): Promise<ProposalView | null> {
     const row = this.repo.proposal(id)
-    if (!row || row.kind !== 'payment' || row.clause !== Clause.standingMatched || !['locked', 'order_created'].includes(row.phase)) return null
+    if (!row || !['payment', 'charge'].includes(row.kind) || !STANDING_CLAUSES.includes(row.clause) || !['locked', 'order_created'].includes(row.phase)) return null
     try {
       await this.capture(id)
     } catch (error) {
@@ -271,17 +273,38 @@ export class MandateService {
    * out. It re-reads PayPal (the same read the Check PayPal button does), so a payout or an invoice settles without
    * anyone pressing anything, and without needing a webhook. One failing item never stops the others.
    */
-  async sweepPending(): Promise<{ payouts: number; invoices: number }> {
+  async sweepPending(): Promise<{ payouts: number; invoices: number; reminded: number }> {
     const payouts = this.repo.openPayoutBatches()
     const invoices = this.invoices ? this.repo.openInvoices() : []
     for (const batch of payouts) await this.refreshPayoutBatch(batch).catch(() => undefined)
     for (const invoice of invoices) await this.refreshInvoice(invoice).catch(() => undefined)
-    return { payouts: payouts.length, invoices: invoices.length }
+    const reminded = await this.remindOverdueInvoices().catch(() => 0)
+    return { payouts: payouts.length, invoices: invoices.length, reminded }
+  }
+
+  /**
+   * The owner's chase schedule. An invoice still unpaid N days after it was sent (or after the last reminder) gets
+   * PayPal's own reminder, up to a maximum. It never cancels, never changes the amount, and stops at the maximum.
+   */
+  private async remindOverdueInvoices(): Promise<number> {
+    const automation = this.repo.latestWarrant()?.body.automation
+    if (!this.invoices || !automation?.remindUnpaidAfterDays || automation.maxReminders < 1) return 0
+    let sent = 0
+    for (const row of this.repo.invoicesOut()) {
+      const events = this.repo.eventsFor(row.id)
+      const reminders = events.filter((event) => event.type === 'invoice.reminded')
+      const since = reminders.at(-1)?.created_at ?? events.find((event) => event.type === 'invoice.sent')?.created_at
+      if (!since || reminders.length >= automation.maxReminders) continue
+      if (this.now().getTime() - Date.parse(since) < automation.remindUnpaidAfterDays * 86_400_000) continue
+      await this.remindInvoice(row.id, 'autopilot')
+      sent += 1
+    }
+    return sent
   }
 
   /** Looks for standing-rule payouts that are approved but not yet sent (PayPal was down, or a dispute held them) and sends them. */
   async sweepStanding(): Promise<number> {
-    const stuck = this.repo.lockedStandingPayouts()
+    const stuck = this.repo.lockedStandingItems()
     for (const row of stuck) await this.dispatchStanding(row.id)
     return stuck.length
   }
@@ -351,6 +374,14 @@ export class MandateService {
   }
 
   async capture(id: string, claimedAmountCents?: number): Promise<HttpResult> {
+    const before = this.repo.proposal(id)?.phase
+    const result = await this.captureCore(id, claimedAmountCents)
+    // A client payment that has just settled may owe a contractor their share. Only a settling counts, not a re-read.
+    if (before && before !== 'captured') await this.afterMoney(id).catch(() => undefined)
+    return result
+  }
+
+  private async captureCore(id: string, claimedAmountCents?: number): Promise<HttpResult> {
     await this.freshenFundingDisputes(id)
     const started = this.repo.transaction(() => this.beginCapture(id, claimedAmountCents))
     if (started.result) return started.result
@@ -552,7 +583,7 @@ export class MandateService {
   }
 
   /** Nudges the client about an invoice that is out and unpaid. */
-  async remindInvoice(id: string): Promise<HttpResult> {
+  async remindInvoice(id: string, via: 'owner' | 'autopilot' = 'owner'): Promise<HttpResult> {
     const { row, invoices } = this.liveInvoice(id)
     try {
       await invoices.remind(row.invoice_id!, `Reminder: ${row.description}`)
@@ -560,7 +591,7 @@ export class MandateService {
       if (error instanceof PayPalError) throw new Problem(502, 'paypal.upstream', 'PayPal rejected the reminder', error.paypalName, { proposalId: id, debugId: error.debugId })
       throw error
     }
-    this.repo.insertEvent(randomUUID(), row.id, 'invoice.reminded', row.clause, { invoiceId: row.invoice_id }, this.iso())
+    this.repo.insertEvent(randomUUID(), row.id, 'invoice.reminded', row.clause, { invoiceId: row.invoice_id, via }, this.iso())
     return { status: 200, body: toView(this.require(id)) }
   }
 
@@ -781,7 +812,45 @@ export class MandateService {
     const row = this.repo.proposalByInvoice(invoiceId)
     if (!row || !INVOICE_PHASES.includes(row.phase)) return { refreshed: false }
     this.applyLiveInvoice(row, await this.invoices.get(invoiceId))
+    if (this.repo.proposal(row.id)?.phase === 'captured') await this.afterMoney(row.id).catch(() => undefined)
     return { refreshed: true }
+  }
+
+  /**
+   * What follows a client payment that has just settled. If the owner has switched on "pay when the client pays", the
+   * server asks to pay each contractor whose standing rule covers it. It only asks: the gate answers exactly as it would
+   * for anyone else, and the same settle path sends it.
+   */
+  private async afterMoney(id: string): Promise<void> {
+    const charge = this.repo.proposal(id)
+    if (!charge || charge.kind !== 'charge' || charge.phase !== 'captured' || !charge.capture_id) return
+    const warrant = this.repo.latestWarrant()
+    if (!warrant?.body.automation.payOnSettle) return
+    const body = warrant.body
+    const already = this.repo.eventsFor(charge.id).filter((event) => event.type === 'autopilot.payout_asked').map((event) => (JSON.parse(event.payload_json) as { ruleId?: string }).ruleId)
+    for (const rule of body.standing) {
+      if (already.includes(rule.id)) continue
+      if (!rule.clientIds.includes(charge.payee_id ?? '') || (rule.requireDeal && !charge.deal_id)) continue
+      const net = Math.max(0, (charge.captured_amount_cents ?? 0) - this.repo.heldRefundCents(charge.capture_id))
+      const owed = Math.floor((net * (rule.shareBps ?? body.contractorShareBps)) / 10_000) - this.repo.heldPayoutCentsFor(charge.capture_id, rule.payeeId)
+      if (owed <= 0 || !charge.category || !charge.evidence_url) continue
+      const payee = body.payees.find((item) => item.id === rule.payeeId)
+      const input = ProposalCreateSchema.parse({
+        kind: 'payment',
+        payee: rule.payeeId,
+        amountCents: owed,
+        currency: charge.currency,
+        category: charge.category,
+        description: `Share of ${charge.description}`.slice(0, 500),
+        evidenceUrl: charge.evidence_url,
+        prompt: `Autopilot: ${payee?.displayName ?? rule.payeeId} is owed their share now that the client has paid (standing rule ${rule.id})`,
+        jobId: charge.job_id ?? undefined,
+        fundingCaptureId: charge.capture_id,
+      })
+      const sent = await this.proposeAndDispatch(input, `autopay-${charge.id}-${rule.id}`, 'autopilot')
+      const view = sent.body as { id?: string; gate?: string; clause?: string }
+      this.repo.insertEvent(randomUUID(), charge.id, 'autopilot.payout_asked', view.clause ?? Clause.standingMatched, { ruleId: rule.id, payoutId: view.id ?? null, gate: view.gate ?? null, amountCents: owed }, this.iso())
+    }
   }
 
   private async settleRefund(current: ProposalRow): Promise<HttpResult> {
@@ -943,7 +1012,7 @@ export class MandateService {
       } : null,
       jobId,
       fundingCaptureId,
-      funding: fundingRow ? this.fundingState(fundingRow) : null,
+      funding: fundingRow ? this.fundingState(fundingRow, payee?.id ?? null) : null,
       dealId,
       milestone,
       deal,
@@ -1186,7 +1255,7 @@ export class MandateService {
     }
   }
 
-  private fundingState(row: ProposalRow): FundingCharge {
+  private fundingState(row: ProposalRow, payeeId: string | null = null): FundingCharge {
     return {
       kind: row.kind,
       phase: row.phase,
@@ -1197,6 +1266,7 @@ export class MandateService {
       payoutHeldCents: row.capture_id ? this.repo.heldPayoutCents(row.capture_id) : 0,
       clientId: row.payee_id,
       dealId: row.deal_id,
+      payeeHeldCents: row.capture_id && payeeId ? this.repo.heldPayoutCentsFor(row.capture_id, payeeId) : 0,
       disputed: row.capture_id ? this.repo.openDisputeFor(row.capture_id) !== null : false,
     }
   }
@@ -1323,6 +1393,7 @@ function emptyWarrant(): WarrantBody {
     categories: [],
     clients: [],
     standing: [],
+    automation: NO_AUTOMATION,
     fundingRequired: false,
     contractorShareBps: 10_000,
   }

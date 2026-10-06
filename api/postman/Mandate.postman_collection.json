@@ -941,6 +941,63 @@
               }
             }
           ]
+        },
+        {
+          "name": "Today: what waits for the owner",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/today"
+          }
+        },
+        {
+          "name": "Proof: re-verify the whole ledger",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/audit"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('every check passes', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "  const report = pm.response.json();",
+                  "  pm.expect(report.ok).to.eql(true);",
+                  "  pm.expect(report.agentReach.agentCanCallDirectly).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Proof: also compare with PayPal",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/audit?paypal=1"
+          }
+        },
+        {
+          "name": "Draft a change to the rules (never publishes)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"instruction\":\"let Priya be paid automatically from Northwind once the client pays\"}"
+            },
+            "url": "{{baseUrl}}/v1/rules/draft"
+          }
         }
       ]
     }

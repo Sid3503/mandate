@@ -30,6 +30,8 @@ export function harness(options: { invoices?: InvoicePort | null; model?: AgentM
   seed(db, NOW)
   const paypal = options.paypal === undefined ? new FakePayPal() : options.paypal
   const signer = options.signer ?? ephemeralSigner()
+  // Tests that need time to pass (reminders) move this clock.
+  let clock = NOW
   let services!: Services
   const build = (useSigner: Signer = signer) => createApp({
     db,
@@ -38,8 +40,8 @@ export function harness(options: { invoices?: InvoicePort | null; model?: AgentM
     invoices: options.invoices,
     watch: options.watch,
     model: options.model,
-    services: (services = buildServices({ db, paypal, invoices: options.invoices, watch: options.watch, publicUrl: 'http://127.0.0.1:8787', now: () => NOW, signer: useSigner })),
-    now: () => NOW,
+    services: (services = buildServices({ db, paypal, invoices: options.invoices, watch: options.watch, publicUrl: 'http://127.0.0.1:8787', now: () => clock, signer: useSigner })),
+    now: () => clock,
     config: {
       apiKey: OWNER_KEY,
       proposerKey: STUDIO_KEY,
@@ -54,7 +56,7 @@ export function harness(options: { invoices?: InvoicePort | null; model?: AgentM
     },
   })
   const app = build()
-  return { app, db, repo: new Repo(db), paypal, signer, rebuild: build, get services() { return services } }
+  return { app, db, repo: new Repo(db), paypal, signer, rebuild: build, get services() { return services }, setNow: (date: Date) => { clock = date } }
 }
 
 export const bearer = (key: string = OWNER_KEY): HeadersInit => ({ authorization: `Bearer ${key}` })

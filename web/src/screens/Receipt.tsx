@@ -206,6 +206,7 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
   return (
     <section className="panel panel-lime" data-tour="receipt-action">
       <div className="row between"><h2 className="panel-title">Settle with PayPal</h2><Chip tone="ink">{p.kind === 'refund' ? 'Payments v2 refund' : 'Orders v2 · money in'}</Chip></div>
+      {p.clause === 'standing.billing' ? <p className="standing-note" role="status"><Chip tone="auto">Billing rule</Chip> Your rule for signed-deal milestones covers this, so Mandate sends the invoice itself. If it is still here, PayPal could not be reached or the client has not approved the checkout, and it retries every minute.</p> : null}
       <p>
         PayPal will be asked for exactly <strong>{dollars(p.amountCents, p.currency)}</strong>
         {p.kind === 'charge' ? <> from {names(p.payeeId)}</> : <> back to {names(p.payeeId)}</>}.
@@ -300,7 +301,7 @@ function PayoutPanel({ packet, warrant, names }: { packet: Packet; warrant: Warr
   const waitingNote = viaStanding && unsent ? [...packet.events].reverse().find((event) => event.type === 'standing.waiting') : undefined
   const paid = p.phase === 'captured'
   const steps: Array<{ state: 'done' | 'now' | 'todo'; title: string; body: string }> = [
-    { state: 'done', title: 'Asked', body: packet.events[0]?.payload.actor === 'proposer' ? 'An agent’s key proposed this.' : 'Proposed with the owner key.' },
+    { state: 'done', title: 'Asked', body: packet.events[0]?.payload.actor === 'autopilot' ? 'Autopilot asked, because the client’s payment settled and your standing rule covers this payout.' : packet.events[0]?.payload.actor === 'proposer' ? 'An agent’s key proposed this.' : 'Proposed with the owner key.' },
     { state: 'done', title: 'Rules checked', body: viaStanding ? `${who} is covered by a standing rule you signed, and every other rule passed.` : `${who} is on the rules, and ${dollars(p.amountCents)} is at or above the automatic line.` },
     { state: funded && funded.phase === 'captured' ? 'done' : 'todo', title: 'Funded by the client', body: funded ? `${names(funded.clientId)}’s ${dollars(funded.capturedCents)} payment settled, so this payout is covered.` : 'No client payment is cited.' },
     { state: 'done', title: viaStanding ? 'Locked under your standing rule · no tap' : 'Approved and locked', body: `Payee, ${dollars(p.amountCents)}, category, proof, job and funding are fixed in the lock.` },

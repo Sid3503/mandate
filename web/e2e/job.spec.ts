@@ -339,7 +339,7 @@ test('a first-time visitor is walked through the console, and it stays out of th
   await page.keyboard.press('ArrowRight')
   await expect(tour).toContainText('How one payment moves')
   await page.keyboard.press('ArrowRight')
-  await expect(tour).toContainText('Waiting for you')
+  await expect(tour).toContainText('Today')
   await expect(page.locator('.tour-spot')).toBeVisible()
   await shots(page, '21-tour-spotlight')
 
@@ -356,13 +356,13 @@ test('a first-time visitor is walked through the console, and it stays out of th
 
   // It can always be reopened, from the Guide button or the full tour.
   await page.getByRole('button', { name: /Guide/ }).click()
-  await expect(page.getByRole('dialog')).toContainText('Waiting for you')
+  await expect(page.getByRole('dialog')).toContainText('Today')
   await page.keyboard.press('Escape')
 })
 
 test('every screen has a guide that walks to its last step', async ({ page }) => {
   await unlock(page, OWNER)
-  const screens = ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/system']
+  const screens = ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/proof', '/app/system']
   for (const path of screens) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
@@ -598,7 +598,7 @@ test('every signed-in screen passes axe (WCAG 2.1 AA)', async ({ page }) => {
   const landing = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
   expect(landing.violations.map((v) => `/app/welcome ${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
   await unlock(page, OWNER)
-  for (const path of ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/system']) {
+  for (const path of ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/proof', '/app/system']) {
     await page.goto(path)
     await page.waitForLoadState('networkidle')
     await page.waitForTimeout(1000)
@@ -652,4 +652,114 @@ test('the owner signs a standing rule once, and the payout it covers is sent wit
   const current = await (await request.get('/v1/warrant', { headers })).json()
   const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
   await request.put('/v1/warrant', { headers, data: { ...body, standing: [] } })
+})
+
+
+async function publishRules(request: APIRequestContext, patch: Record<string, unknown>) {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  const current = await (await request.get('/v1/warrant', { headers })).json()
+  const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
+  const saved = await request.put('/v1/warrant', { headers, data: { ...body, ...patch } })
+  expect(saved.status()).toBe(201)
+}
+
+const RULE = { id: 'priya_from_northwind', payeeId: 'payee_priya', clientIds: ['client_northwind'], requireDeal: true }
+const OFF = { billSignedDeals: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 }
+
+test('autopilot runs the job: proof in, invoice out, client pays, contractor paid, and nobody taps', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  await fake(request, 'invoices-on')
+  await widerCap(request)
+  const job = `job_autopilot_${test.info().project.name}`
+  const offered = await request.post('/v1/deals/offers', {
+    headers: { ...headers, 'idempotency-key': `deal-${job}-0001` },
+    data: { buyer: 'Northwind', terms: { scope: 'Autopilot logo', category: 'design', currency: 'USD', totalCents: 30000, milestones: [{ title: 'Concepts', amountCents: 15000 }, { title: 'Final files', amountCents: 15000 }], proofRequired: true, jobId: job } },
+  })
+  const deal = await offered.json()
+  expect(deal.status).toBe('agreed')
+
+  // The owner says yes once, to the rules. This is the only approval in the whole job.
+  await publishRules(request, { standing: [RULE], automation: { billSignedDeals: true, payOnSettle: true, remindUnpaidAfterDays: 3, maxReminders: 2 } })
+  await unlock(page, OWNER)
+
+  // Today: the next milestone is ready to bill. The work is delivered, so paste the proof.
+  const proof = page.locator(`#proof-${deal.id}-0`)
+  await expect(proof).toBeVisible()
+  await proof.fill('https://www.figma.com/file/autopilot-concepts')
+  await proof.locator('xpath=ancestor::li').getByRole('button', { name: 'Delivered · bill it' }).click()
+  await expect(page.getByText('Invoice sent to Northwind')).toBeVisible()
+  await expect(page.locator('[data-tour="ready"]')).toContainText('Waiting for Northwind to pay $150.00')
+  await shots(page, '34-today-in-flight')
+
+  // The client pays the invoice in PayPal. The server's own look at PayPal finds it; nobody presses Check.
+  await fake(request, 'invoices-pay')
+  await fake(request, 'sweep')
+  await page.reload()
+  const done = page.locator('[data-tour="today-done"]')
+  await expect(done).toContainText('Northwind paid $150.00')
+  await expect(done).toContainText('Billing rule · no tap')
+  await expect(done).toContainText('Priya Shah was paid $90.00')
+  await expect(done).toContainText('Autopilot · no tap')
+  await shots(page, '35-today-done-for-you')
+
+  await page.goto(`/app/jobs/${job}`)
+  await expect(page.locator('.total-out')).toContainText('$90.00')
+  await expect(page.locator('.totals')).toContainText('$60.00')
+
+  // And it is all checkable.
+  await page.goto('/app/proof')
+  await expect(page.locator('.verdict.ok')).toContainText('Everything checks out')
+  await expect(page.locator('.check-row.fail')).toHaveCount(0)
+  await expect(page.locator('.check-row', { hasText: 'Every payment had a yes' })).toContainText('Pass')
+  await shots(page, '36-proof')
+
+  await publishRules(request, { standing: [], automation: OFF })
+  await fake(request, 'invoices-off')
+})
+
+test('Ask Mandate opens from any screen, answers in the rules\' words, and gets out of the way', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/jobs')
+  await page.keyboard.press('Control+k')
+  const ask = page.getByRole('dialog', { name: 'Ask Mandate' })
+  await expect(ask).toBeVisible()
+  await ask.getByRole('button', { name: 'what is waiting for me?' }).click()
+  await expect(ask.locator('.bubble.clerk').last()).toContainText('Tools used', { timeout: 30_000 })
+  await shots(page, '37-ask-mandate')
+  const { default: AxeBuilder } = await import('@axe-core/playwright')
+  const scan = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).include('.ask').analyze()
+  expect(scan.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog', { name: 'Ask Mandate' })).toHaveCount(0)
+  await page.getByRole('button', { name: /^Ask/ }).first().click()
+  await expect(page.getByRole('dialog', { name: 'Ask Mandate' })).toBeVisible()
+  await page.keyboard.press('Escape')
+})
+
+test('the owner says a change in words, reads what it would loosen, and publishes it themselves', async ({ page, request }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/rules')
+  const box = page.locator('[data-tour="rules-draft"]')
+  await box.getByLabel('Describe the change you want to the rules').fill('let Priya be paid automatically from Northwind, no tap')
+  await box.getByRole('button', { name: 'Draft it' }).click()
+  const loosens = box.locator('.draft-loosens')
+  await expect(loosens).toContainText('A standing rule would let Priya Shah from Northwind be paid with no tap')
+  await expect(loosens).toContainText('billed, and the invoice sent, with no tap')
+  await expect(box).toContainText('nothing is published')
+  await shots(page, '38-draft-rules')
+  // A draft is not a decision: the live rules have not moved.
+  const before = await (await request.get('/v1/warrant', { headers: { authorization: `Bearer ${OWNER}` } })).json()
+  expect(before.standing).toEqual([])
+
+  await box.getByRole('button', { name: 'Review this draft' }).click()
+  const editor = page.locator('.editor')
+  await expect(editor).toContainText('Drafted by')
+  await editor.getByRole('button', { name: 'Review changes' }).click()
+  await expect(editor.locator('table.diff')).toContainText('Standing rules (no tap)')
+  await expect(editor.locator('table.diff')).toContainText('Autopilot')
+  await editor.getByRole('button', { name: /Publish version/ }).click()
+  await expect(page.getByText(/Standing rule: Priya Shah is paid, with no tap/)).toBeVisible()
+  await expect(page.getByText(/Autopilot asks to pay each contractor/)).toBeVisible()
+
+  await publishRules(request, { standing: [], automation: OFF })
 })

@@ -21,7 +21,27 @@ export const StandingRuleSchema = z.object({
   clientIds: z.array(z.string().min(1).max(64)).min(1).max(20),
   /** Only client money that came through a signed deal. */
   requireDeal: z.boolean().default(true),
+  /** This payee's share of a client payment, in basis points. Omitted means the whole contractor share. */
+  shareBps: z.number().int().min(1).max(10_000).optional(),
 }).strict()
+
+/**
+ * What the server may do without being asked, once the owner has signed it. Each switch only removes a tap or a
+ * nudge; none of them widens what a payment may be.
+ */
+export const AutomationSchema = z.object({
+  /** A milestone of a signed deal is billed, and its invoice sent, as soon as proof of the work is attached. */
+  billSignedDeals: z.boolean().default(false),
+  /** When a client payment settles, the server asks to pay each contractor whose standing rule covers it. */
+  payOnSettle: z.boolean().default(false),
+  /** Send PayPal's own reminder for an invoice that is still unpaid after this many days. */
+  remindUnpaidAfterDays: z.number().int().min(1).max(60).nullable().default(null),
+  /** The most reminders sent for one invoice. */
+  maxReminders: z.number().int().min(0).max(5).default(2),
+}).strict()
+
+export type Automation = z.infer<typeof AutomationSchema>
+export const NO_AUTOMATION: Automation = { billSignedDeals: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 }
 
 export const WarrantBodySchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
@@ -36,6 +56,7 @@ export const WarrantBodySchema = z.object({
   fundingRequired: z.boolean().default(false),
   contractorShareBps: z.number().int().min(0).max(10_000).default(10_000),
   standing: z.array(StandingRuleSchema).max(20).default([]),
+  automation: AutomationSchema.default(NO_AUTOMATION),
 }).strict().superRefine((warrant, ctx) => {
   if (warrant.autoSettleUnderCents > warrant.perPaymentCeilingCents) {
     ctx.addIssue({ code: 'custom', path: ['autoSettleUnderCents'], message: 'auto settle must be at or under the per-payment ceiling' })
@@ -64,6 +85,16 @@ export const WarrantBodySchema = z.object({
     })
     if (!warrant.fundingRequired) ctx.addIssue({ code: 'custom', path: ['standing', index], message: 'standing rules need "payouts need client money first" switched on' })
   })
+  if (warrant.automation.payOnSettle && warrant.standing.length === 0) {
+    ctx.addIssue({ code: 'custom', path: ['automation', 'payOnSettle'], message: 'paying on settle needs at least one standing rule to say whom to pay' })
+  }
+  // Contractors paid out of one client's money can never be promised more than the contractor share in total.
+  for (const client of warrant.clients) {
+    const promised = warrant.standing.filter((rule) => rule.clientIds.includes(client.id)).reduce((sum, rule) => sum + (rule.shareBps ?? warrant.contractorShareBps), 0)
+    if (promised > warrant.contractorShareBps) {
+      ctx.addIssue({ code: 'custom', path: ['standing'], message: `standing rules promise ${promised / 100}% of ${client.displayName}'s payments, but contractors may receive at most ${warrant.contractorShareBps / 100}%. Give each rule its own share.` })
+    }
+  }
   const categories = new Set<string>()
   warrant.categories.forEach((category, index) => {
     if (categories.has(category)) ctx.addIssue({ code: 'custom', path: ['categories', index], message: 'duplicate category' })
@@ -129,6 +160,7 @@ export const LINE_STUDIO_WARRANT: WarrantBody = {
     aliases: ['Northwind', 'northwind'],
   }],
   standing: [],
+  automation: NO_AUTOMATION,
   fundingRequired: true,
   contractorShareBps: 6000,
 }

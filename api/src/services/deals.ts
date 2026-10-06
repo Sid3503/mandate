@@ -134,7 +134,7 @@ export class DealService {
   }
 
   /** Bills one milestone of an agreed deal as a client charge. The gate still decides; this only fills in the request. */
-  bill(dealId: string, milestone: number, body: { evidenceUrl: string; prompt?: string }, who: Principal): HttpResult {
+  async bill(dealId: string, milestone: number, body: { evidenceUrl: string; prompt?: string }, who: Principal): Promise<HttpResult> {
     const row = this.repo.deal(dealId)
     if (!row || row.status !== 'agreed' || !row.job_id) throw new Problem(404, 'deal.missing', 'No agreed deal', 'Only an agreed deal can be billed.')
     const terms = JSON.parse(row.terms_json) as StoredTerms
@@ -153,7 +153,23 @@ export class DealService {
       dealId: row.id,
       milestone,
     })
-    return this.mandate.propose(input, `bill-${row.id}-${milestone}-${stableHash(body).slice(0, 16)}`, who.role)
+    // If the owner has switched on "bill signed deals when proof is attached", the rules answer AUTO and the invoice goes out now.
+    return this.mandate.proposeAndDispatch(input, `bill-${row.id}-${milestone}-${stableHash(body).slice(0, 16)}`, who.role)
+  }
+
+  /** The next milestone of each agreed deal that has not been billed: work the studio can bill as soon as it is delivered. */
+  readyToBill() {
+    const warrant = this.repo.latestWarrant()
+    const name = (id: string) => warrant?.body.clients.find((client) => client.id === id)?.displayName ?? id
+    const out: Array<{ dealId: string; jobId: string; buyerId: string; buyerName: string; scope: string; milestone: number; title: string; amountCents: number; currency: string; billed: number; total: number }> = []
+    for (const row of this.repo.agreedDeals()) {
+      if (!row.job_id) continue
+      const terms = JSON.parse(row.terms_json) as StoredTerms
+      const next = terms.milestones.findIndex((_, index) => !this.repo.chargeForMilestone(row.id, index))
+      if (next === -1) continue
+      out.push({ dealId: row.id, jobId: row.job_id, buyerId: row.buyer_id, buyerName: name(row.buyer_id), scope: terms.scope, milestone: next, title: terms.milestones[next]!.title, amountCents: terms.milestones[next]!.amountCents, currency: terms.currency, billed: next, total: terms.milestones.length })
+    }
+    return out
   }
 
   /** The deal behind a job, with where each milestone stands. */

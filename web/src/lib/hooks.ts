@@ -65,10 +65,15 @@ export function useOnline(): boolean {
 }
 
 /** Everything a money action can change. Called after approve, reject, settle, propose, publish. */
+export function useToday() {
+  return useQuery({ queryKey: ['today'], queryFn: api.today, refetchInterval: 15_000 })
+}
+
 export function useRefreshMoney() {
   const client = useQueryClient()
   return () => Promise.all([
     client.invalidateQueries({ queryKey: ['proposals'] }),
+    client.invalidateQueries({ queryKey: ['today'] }),
     client.invalidateQueries({ queryKey: ['packet'] }),
     client.invalidateQueries({ queryKey: ['job'] }),
     client.invalidateQueries({ queryKey: ['ledger'] }),

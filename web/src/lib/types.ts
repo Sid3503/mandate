@@ -202,3 +202,64 @@ export type ToolSummary = {
 export type Balance =
   | { available: false; reason: string }
   | { available: true; availableCents: number; withheldCents: number; asOf: string | null; currency: string }
+
+export type TodayAction = 'approve' | 'reject' | 'settle' | 'check' | 'remind' | 'cancel_payout' | 'open'
+
+export type TodayItem = {
+  id: string
+  kind: 'approval' | 'ready' | 'unclaimed' | 'held' | 'overdue' | 'autopilot_blocked' | 'dispute' | 'in_flight' | 'done' | 'stopped'
+  proposalId: string
+  proposalKind: Kind
+  title: string
+  detail: string
+  amountCents: number
+  currency: string
+  phase: string
+  clause: string
+  at: string
+  how?: 'tap' | 'standing' | 'billing' | 'autopilot' | 'auto'
+  actions: TodayAction[]
+}
+
+export type Today = {
+  asOf: string
+  month: { label: string; inCents: number; outCents: number; keptCents: number; refundedCents: number; reservedCents: number; capCents: number; currency: string } | null
+  automation: { billSignedDeals: boolean; payOnSettle: boolean; remindUnpaidAfterDays: number | null; maxReminders: number; standingRules: number; any: boolean } | null
+  waiting: TodayItem[]
+  inFlight: TodayItem[]
+  done: TodayItem[]
+  stopped: { count: number; cents: number; recent: TodayItem[] }
+  readyToBill: Array<{ dealId: string; jobId: string; buyerId: string; buyerName: string; scope: string; milestone: number; title: string; amountCents: number; currency: string; billed: number; total: number }>
+  stats: { last30Days: { requests: number; refused: number; automatic: number; tapped: number; automaticShare: number | null } }
+  setup: { complete: boolean; steps: Array<{ id: string; label: string; hint: string; href: string; done: boolean }> }
+}
+
+export type AuditCheck = {
+  id: string
+  title: string
+  why: string
+  status: 'pass' | 'fail' | 'info'
+  checked: number
+  failures: Array<{ proposalId: string | null; detail: string }>
+  note?: string
+}
+
+export type AuditReport = {
+  ok: boolean
+  ranAt: string
+  totals: { requests: number; moved: number; locks: number; events: number; deals: number; jobs: number }
+  checks: AuditCheck[]
+  agentReach: { toolkitTools: number; agentCanCallDirectly: number; serverUses: number; mcpTools: number }
+}
+
+export type RulesDraft = {
+  draft: Omit<Warrant, 'id' | 'version' | 'createdAt'>
+  summary: string
+  loosens: string[]
+  tightens: string[]
+  notes: string[]
+  changed: boolean
+  model: string
+  ms: number
+  runId: string
+}

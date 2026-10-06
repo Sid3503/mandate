@@ -189,13 +189,13 @@ describe('finishing without anyone pressing Check', () => {
     const asked = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: payout(h.captureId) })
     expect(asked.json).toMatchObject({ clause: 'standing.matched', phase: 'payout_sent', payoutStatus: 'PENDING' })
     // Still processing: the look changes nothing.
-    expect(await h.services.mandate.sweepPending()).toEqual({ payouts: 1, invoices: 0 })
+    expect(await h.services.mandate.sweepPending()).toMatchObject({ payouts: 1, invoices: 0 })
     expect((await call(h.app, 'GET', `/v1/proposals/${asked.json.id}`)).json.phase).toBe('payout_sent')
     paypal.settlePayouts('SUCCESS')
     await h.services.mandate.sweepPending()
     expect((await call(h.app, 'GET', `/v1/proposals/${asked.json.id}`)).json).toMatchObject({ phase: 'captured', payoutStatus: 'SUCCESS', capturedAmountCents: 9_000 })
     expect(paypal.payoutCalls).toBe(1)
-    expect(await h.services.mandate.sweepPending()).toEqual({ payouts: 0, invoices: 0 })
+    expect(await h.services.mandate.sweepPending()).toMatchObject({ payouts: 0, invoices: 0 })
   })
 
   it('settles an invoice the client has paid, and never settles one they have not', async () => {
