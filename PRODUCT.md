@@ -195,7 +195,7 @@ The principle across all of it: the model is a *reader of rules and a writer of 
 | **Payments v2 refunds** | Refund a settled payment | Fake-tested through the gated route. |
 | **Transaction Search** (Agent Toolkit) | Reconciliation | **Yes** for the read, with paging. Matching depends on PayPal's report refresh, which lags by hours. |
 | **Reporting balances** | Balance advice | **Yes** for the read ($5,341.24 reported). It is advice because the report lags. |
-| **Disputes** (Agent Toolkit) | Dispute hold | The read is live (200, none open), and the hold is tested with PayPal's documented shapes and every open status. A real open dispute could not be created: PayPal refused the buyer-side create call (`No permissions to set target_client_id`). Steps to prove it by hand are in `docs/REFERENCE.md`. |
+| **Disputes** (Agent Toolkit) | Dispute hold | The read is live (200, none open), and the hold is tested with PayPal's documented shapes and every open status. A real open dispute could not be produced in the sandbox: PayPal refused the buyer-side create call, and a Resolution Center case opened by the buyer on a real payment never appeared in the Disputes API (it is a message thread, not yet a claim). Mandate holds a payout for disputes the API lists, and says so. Details in `docs/REFERENCE.md`. |
 | **Webhooks** | Nudge a re-read, signature check | Code and tests are done. Needs a public URL (deploy) to prove end to end. |
 
 Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never exposed to a model: `create_invoice`, `send_invoice`, `get_invoice`, `list_invoices`, `send_invoice_reminder`, `cancel_sent_invoice`, `list_transactions`, `list_disputes`, `get_dispute`. The toolkit has no payouts tool, so Payouts uses the REST API directly.
@@ -227,7 +227,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 - **Sandbox only.** No real money.
 - **Not deployed yet.** There is no public URL, so the webhook is not registered and the checkout return URL is only proven locally.
-- **Fake-tested, not live:** refunds, a real *open* client dispute blocking a payout, and signed webhook deliveries.
+- **Fake-tested, not live:** refunds, a dispute that PayPal's API lists as open (a first-stage Resolution Center case is not listed, so Mandate cannot see it), and signed webhook deliveries.
 - **Standing rules were run live only in part:** the real Payouts call and the dispute read ran against PayPal, with a simulated client payment. A full run (real invoice paid, then a standing-rule payout to a real account) has not been done yet.
 - **PayPal's transaction report lags** by a few hours, so the newest payments can show as unmatched for a while.
 - **Model dependence:** the agents use a hosted `gpt-oss:20b`. Two larger models could not be measured because Ollama's free plan does not include them. Everything except the agents works without a model.
@@ -236,7 +236,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 ## 12. What is next
 
 1. Deploy to Render (public HTTPS), register the webhook and set `PAYPAL_WEBHOOK_ID`.
-2. Prove a real open client dispute (buyer-side, by hand) and a real refund on the sandbox, and run the full standing-rule payout to Priya's real account.
+2. Prove a real refund on the sandbox, and run the full standing-rule payout to Priya's real account. A formal dispute can only be seen once PayPal escalates a case to a claim.
 3. A public Postman workspace, and a read-only AG Grid agent query ("show me what the rules refused").
 4. The pitch: demo video, a short deck, and the Devpost write-up.
 

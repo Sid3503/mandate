@@ -803,7 +803,12 @@ Nine tools are marked **used by the server**: `create_invoice`, `send_invoice`, 
 
 The read path is live: `list_disputes` with `disputed_transaction_id` answers 200 for a real transaction and `[]` when there is none. The gate, the hold at capture, the resolve-and-release path and the fail-closed rule are tested with a fake that returns PayPal's documented shapes and every open status (`OPEN`, `WAITING_FOR_BUYER_RESPONSE`, `WAITING_FOR_SELLER_RESPONSE`, `UNDER_REVIEW`, `OTHER`).
 
-A real **open** dispute has not been created, because PayPal's buyer-side create call (`POST /v1/customer/disputes` with a `PayPal-Auth-Assertion`) is refused for this app: `No permissions to set target_client_id`. To prove it by hand, in the sandbox: log in to sandbox.paypal.com as the buyer, open the Resolution Center, report a problem on a payment, then press **Check for disputes now** on the System screen (`POST /v1/paypal/disputes/sync`). A payout funded by that payment is then refused with `funding.disputed`.
+A real **open** dispute could not be created in the sandbox, and this is what was tried on 6 Oct 2026:
+
+1. PayPal's buyer-side create call (`POST /v1/customer/disputes` with a `PayPal-Auth-Assertion`) is refused for this app: `No permissions to set target_client_id`.
+2. The sandbox buyer opened a case in the Resolution Center on a real $150 invoice payment (`PP-R-DUT-10190400`, "message sent to the seller"). The Disputes API then returned **nothing** for it, with no filter, by state and by date (`GET /v1/customer/disputes` answered 200 with an empty list), and the buyer was offered no way to escalate it to a claim.
+
+What that means: that first-stage case is a buyer-and-seller message thread. PayPal's Disputes API lists a case once it is a formal claim or chargeback, and Mandate holds a payout for exactly the disputes that API lists. A message thread that never reaches the API is not visible to Mandate, and the docs do not claim otherwise. To see the hold on a real object, a case has to become a claim (for example after PayPal's waiting period, or a chargeback). Then **System → Check for disputes now** pulls it in and a payout funded by that payment is refused with `funding.disputed`.
 
 | Job | PayPal product | Status |
 | --- | --- | --- |
