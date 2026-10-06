@@ -79,7 +79,7 @@ export function Clerk() {
             <ul className="can">
               <li className="yes"><b>Can</b> read the rules, jobs and ledger</li>
               <li className="yes"><b>Can</b> ask for a payment, a bill or a refund</li>
-              <li className="no"><b>Cannot</b> approve. Only your tap does</li>
+              <li className="no"><b>Cannot</b> approve. Only your tap, or a standing rule you signed, does</li>
               <li className="no"><b>Cannot</b> send money or touch PayPal</li>
               <li className="no"><b>Cannot</b> change the rules</li>
             </ul>

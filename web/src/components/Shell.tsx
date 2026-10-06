@@ -84,7 +84,7 @@ function ShellFrame() {
             <span className="mono">{me.data?.role === 'owner' ? 'Owner key' : me.data?.role === 'proposer' ? 'Proposer key' : '…'}</span>
             <button type="button" className="link" onClick={lock}>Lock</button>
           </div>
-          <p className="rail-rule">Agents can ask. Only the rules and the owner’s tap can pay.</p>
+          <p className="rail-rule">Agents can ask. Only the rules, and the owner’s tap or standing rule, can pay.</p>
         </div>
       </aside>
 
