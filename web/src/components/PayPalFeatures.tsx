@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Chip, KV, Loading, ProblemCard } from './ui'
 import { api } from '../lib/api'
+import { useToast } from './Toast'
 import { useIsOwner } from '../lib/hooks'
 import { dollars } from '../lib/money'
 import type { Feature } from '../lib/types'
@@ -40,13 +41,26 @@ export function FeaturePanel() {
   const features = useFeatures()
   const client = useQueryClient()
   const check = useMutation({ mutationFn: api.checkFeatures, onSuccess: (data) => client.setQueryData(['paypal-features'], data) })
+  const toast = useToast()
+  const disputes = useMutation({
+    mutationFn: api.syncDisputes,
+    onSuccess: (result) => {
+      void client.invalidateQueries({ queryKey: ['packet'] })
+      toast(result.checked
+        ? { title: result.open === 0 ? 'No open disputes' : `${result.open} open dispute${result.open === 1 ? '' : 's'}`, body: result.open === 0 ? 'PayPal lists none on your payments.' : 'A payout funded by a disputed payment is held until PayPal resolves it.', tone: result.open === 0 ? 'info' : undefined }
+        : { title: 'Disputes are not readable', body: 'The PayPal app has no Disputes permission.', tone: 'info' })
+    },
+  })
   if (!owner) return null
   const data = check.data ?? features.data
   return (
     <section className="panel" data-tour="system-features">
       <div className="row between wrap gap-s">
         <h2 className="panel-title">PayPal features</h2>
-        <button type="button" className="btn btn-ghost" disabled={check.isPending} onClick={() => check.mutate()}>{check.isPending ? 'Asking PayPal…' : 'Check again'}</button>
+        <div className="row gap-s wrap">
+          <button type="button" className="btn btn-ghost" disabled={disputes.isPending} onClick={() => disputes.mutate()}>{disputes.isPending ? 'Asking PayPal…' : 'Check for disputes now'}</button>
+          <button type="button" className="btn btn-ghost" disabled={check.isPending} onClick={() => check.mutate()}>{check.isPending ? 'Asking PayPal…' : 'Check again'}</button>
+        </div>
       </div>
       {features.isLoading ? <Loading /> : null}
       {data && !data.configured ? <p className="fine">PayPal credentials are not set, so nothing can be read.</p> : null}
@@ -69,7 +83,7 @@ export function FeaturePanel() {
       </ul>
       <p className="fine">Read from the permissions PayPal put on this app’s access token, so it is what PayPal will actually allow{data?.checkedAt ? `, checked ${new Date(data.checkedAt).toLocaleTimeString('en-US')}` : ''}.</p>
       <BalanceNote />
-      <ProblemCard error={features.error ?? check.error} />
+      <ProblemCard error={features.error ?? check.error ?? disputes.error} />
     </section>
   )
 }

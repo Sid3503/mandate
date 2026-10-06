@@ -291,6 +291,8 @@ test('the PayPal features panel says what is on, what is off, and how to turn it
   await fake(request, 'scopes-full')
   await panel.getByRole('button', { name: 'Check again' }).first().click()
   await expect(invoicing.locator('.chip')).toHaveText('On')
+  await panel.getByRole('button', { name: 'Check for disputes now' }).click()
+  await expect(page.getByText('No open disputes')).toBeVisible()
 })
 
 test('PayPal sends the buyer back to the receipt, which settles by itself', async ({ page, request }) => {

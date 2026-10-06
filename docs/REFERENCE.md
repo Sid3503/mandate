@@ -803,7 +803,7 @@ Nine tools are marked **used by the server**: `create_invoice`, `send_invoice`, 
 
 The read path is live: `list_disputes` with `disputed_transaction_id` answers 200 for a real transaction and `[]` when there is none. The gate, the hold at capture, the resolve-and-release path and the fail-closed rule are tested with a fake that returns PayPal's documented shapes and every open status (`OPEN`, `WAITING_FOR_BUYER_RESPONSE`, `WAITING_FOR_SELLER_RESPONSE`, `UNDER_REVIEW`, `OTHER`).
 
-A real **open** dispute has not been created, because PayPal's buyer-side create call (`POST /v1/customer/disputes` with a `PayPal-Auth-Assertion`) is refused for this app: `No permissions to set target_client_id`. To prove it by hand, in the sandbox: log in to sandbox.paypal.com as the buyer, open the Resolution Center, report a problem on a payment, then press **Sync** (`POST /v1/paypal/disputes/sync`) in Mandate. A payout funded by that payment is then refused with `funding.disputed`.
+A real **open** dispute has not been created, because PayPal's buyer-side create call (`POST /v1/customer/disputes` with a `PayPal-Auth-Assertion`) is refused for this app: `No permissions to set target_client_id`. To prove it by hand, in the sandbox: log in to sandbox.paypal.com as the buyer, open the Resolution Center, report a problem on a payment, then press **Check for disputes now** on the System screen (`POST /v1/paypal/disputes/sync`). A payout funded by that payment is then refused with `funding.disputed`.
 
 | Job | PayPal product | Status |
 | --- | --- | --- |
