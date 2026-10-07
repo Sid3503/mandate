@@ -19,6 +19,7 @@ import { live } from './services/live'
 import { StudioTurnSchema } from './agents/studio'
 import { DEEP_RUN, EVERY_CHANGE_RUN, GUARANTEES } from './domain/guarantees'
 import { generateCases } from './domain/cases'
+import { countTaps, suggestRules } from './domain/suggest'
 import { paypalProblem } from './services/paypalProblem'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
@@ -100,6 +101,7 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'GET', pattern: /^\/v1\/agents\/health$/ },
   { method: 'GET', pattern: /^\/v1\/client-errors$/ },
+  { method: 'GET', pattern: /^\/v1\/suggestions$/ },
   { method: 'POST', pattern: /^\/v1\/safety\/(pause|resume)$/ },
   { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
@@ -293,6 +295,15 @@ export function createApp(deps: AppDeps) {
     return c.json({ stored: true }, 201)
   })
   app.get('/v1/client-errors', (c) => c.json({ data: services.repo.recentClientErrors(50).map((row) => ({ id: row.id, at: row.at, role: row.role, scope: row.scope, message: row.message, stack: row.stack, url: row.url, agent: row.agent, release: row.release_id })) }))
+  // "You keep saying yes": standing rules worth offering, from what the owner actually did. Words for the drafter, never a rule.
+  app.get('/v1/suggestions', (c) => {
+    const warrant = services.repo.latestWarrant()
+    if (!warrant) return c.json({ suggestions: [], taps: { thisMonth: 0, lastMonth: 0, byRule: 0 } })
+    const proposals = services.repo.allProposals().map((row) => ({ id: row.id, kind: row.kind, gate: row.gate, clause: row.clause, phase: row.phase, payeeId: row.payee_id, amountCents: row.amount_cents, fundingCaptureId: row.funding_capture_id, captureId: row.capture_id, createdAt: row.created_at }))
+    const decisions = services.repo.allEvents().filter((event) => event.type === 'proposal.approved' || event.type === 'proposal.rejected').map((event) => ({ proposalId: event.proposal_id, type: event.type === 'proposal.approved' ? ('approved' as const) : ('rejected' as const), actor: String((JSON.parse(event.payload_json) as { actor?: string }).actor ?? ''), at: event.created_at }))
+    const input = { warrant: warrant.body, now: deps.now(), proposals, decisions }
+    return c.json({ suggestions: suggestRules(input), taps: countTaps(input) })
+  })
   // What Mandate promises and where each promise is checked. Static, so it answers when everything else does not.
   app.get('/v1/guarantees', (c) => c.json({ guarantees: GUARANTEES, deepRun: DEEP_RUN, everyChange: EVERY_CHANGE_RUN }))
   // The emergency stop. Anyone with a key can see whether Mandate is paused; only the owner can pause or resume it.

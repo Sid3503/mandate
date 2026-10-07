@@ -7,6 +7,7 @@ import { useAsk } from '../components/Ask'
 import { BalanceNote } from '../components/PayPalFeatures'
 import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
+import { useQuery } from '@tanstack/react-query'
 import { relative } from '../lib/format'
 import { reviewKey, useLive, type ReviewState } from '../lib/live'
 import { ToolTrail } from '../components/ToolTrail'
@@ -65,6 +66,7 @@ export function Today() {
 
       {data ? <MonthStrip data={data} /> : null}
       {data ? <WaitingOnClient data={data} /> : null}
+      <TapToRule />
       {data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length < 4 ? <Setup data={data} /> : null}
 
       <section className="section" data-tour="today-waiting" aria-labelledby="h-waiting">
@@ -136,6 +138,27 @@ function AskButton() {
 }
 
 /** The month in money PayPal confirmed, and how much of it ran without you. */
+/** "You keep saying yes. Make it a rule." Offered only after a clear pattern; it opens the rules drafter with the words filled in, and nothing changes until the owner signs the draft. */
+function TapToRule() {
+  const owner = useIsOwner()
+  const online = useOnline()
+  const found = useQuery({ queryKey: ['suggestions'], queryFn: api.suggestions, enabled: owner && online, staleTime: 30_000, retry: false })
+  const first = found.data?.suggestions[0]
+  const taps = found.data?.taps
+  if (!owner || !first) return null
+  return (
+    <section className="section tap-to-rule" aria-label="A rule worth making" data-testid="tap-to-rule">
+      <div>
+        <span className="eyebrow">You keep saying yes</span>
+        <p>You have approved {first.payeeName}'s payouts from {first.clientName}'s money {first.approved} times ({dollars(first.totalCents)} in all, the largest {dollars(first.largestCents)}) and never said no.
+          {taps && taps.thisMonth > 0 ? <> That is {taps.thisMonth} {taps.thisMonth === 1 ? 'tap' : 'taps'} this month.</> : null}</p>
+        <p className="fine">Make it a rule and these payouts need no tap. You will see exactly what it allows before you sign anything.</p>
+      </div>
+      <Link className="btn btn-ink btn-small" to="/rules" state={{ draft: first.draft }}>Draft this rule</Link>
+    </section>
+  )
+}
+
 function MonthStrip({ data }: { data: TodayData }) {
   const month = data.month
   const stats = data.stats.last30Days

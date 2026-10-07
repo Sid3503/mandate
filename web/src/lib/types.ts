@@ -117,6 +117,8 @@ export type Safety = {
   events: Array<{ id: string; at: string; type: 'paused' | 'resumed'; by: 'owner' | 'breaker'; reason: string | null; detail: string | null; signed: boolean }>
 }
 
+export type Suggestion = { id: string; payeeId: string; payeeName: string; clientId: string; clientName: string; approved: number; totalCents: number; largestCents: number; firstAt: string; draft: string }
+export type Suggestions = { suggestions: Suggestion[]; taps: { thisMonth: number; lastMonth: number; byRule: number } }
 export type TryVerdict = { gate: Gate; clause: string; detail: string }
 export type TryFunding = { captureId: string; jobId: string | null; canStillFundCents: number } | null
 export type TryCaseResult = { id: string; label: string; request: Record<string, unknown>; live: TryVerdict; draft: TryVerdict | null }

@@ -991,3 +991,7 @@ html { scroll-behavior: smooth; }
 .try-details > summary { padding: 12px 16px; cursor: pointer; font-weight: 700; }
 .try-details[open] > summary { border-bottom: 1px dashed var(--rule); }
 .try-details .try { border: 0; }
+
+.tap-to-rule { display: flex; gap: 16px; align-items: center; justify-content: space-between; border: 1.5px solid var(--ink); background: var(--lime-soft); padding: 14px 16px; }
+.tap-to-rule p { margin: 4px 0 0; }
+@media (max-width: 640px) { .tap-to-rule { flex-direction: column; align-items: stretch; } }

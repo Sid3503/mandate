@@ -648,6 +648,21 @@ test('the owner can try a request and check the rules with cases, under the live
   await expect(draftPanel.locator('table.try-cases')).toContainText('Live rules')
 })
 
+test('a suggested rule shows on Today and opens the drafter with the words filled in', async ({ page }) => {
+  // Which suggestions exist is decided by the server and tested there (suggest.test.ts); this checks what the owner sees and where it leads.
+  const draft = "Pay Priya Shah automatically from Northwind's signed-deal payments, with no tap, as soon as Northwind pays."
+  await page.route('**/v1/suggestions', (route) => route.fulfill({ json: { suggestions: [{ id: 'payee_priya:client_northwind', payeeId: 'payee_priya', payeeName: 'Priya Shah', clientId: 'client_northwind', clientName: 'Northwind', approved: 4, totalCents: 10000, largestCents: 2500, firstAt: '2026-10-01T00:00:00Z', draft }], taps: { thisMonth: 4, lastMonth: 0, byRule: 0 } } }))
+  await unlock(page, OWNER)
+  await page.goto('/app')
+  const card = page.getByTestId('tap-to-rule')
+  await expect(card).toContainText('approved Priya Shah', { timeout: 20_000 })
+  await expect(card).toContainText('4 times')
+  await shots(page, '44-tap-to-rule')
+  await card.getByRole('link', { name: 'Draft this rule' }).click()
+  await expect(page).toHaveURL(/\/rules/)
+  await expect(page.getByLabel('Describe the change you want to the rules')).toHaveValue(draft)
+})
+
 test('the ledger can be exported as CSV, and points to the control room', async ({ page }) => {
   await unlock(page, OWNER)
   await page.goto('/app/ledger')
