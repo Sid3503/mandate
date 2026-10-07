@@ -855,3 +855,29 @@ html { scroll-behavior: smooth; }
 .verify-checks li div { display: grid; gap: 2px; }
 .verify-checks li span { color: var(--mute); font-size: 14px; }
 .verify-checks li.bad strong { text-decoration: underline wavy; }
+
+/* Ask: palette, cards, live steps */
+.palette { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--ink); background: var(--sheet); }
+.palette li button { width: 100%; text-align: left; padding: 9px 16px; background: transparent; border: 0; border-bottom: 1px solid var(--line); font: inherit; cursor: pointer; }
+.palette li.on button, .palette li button:hover { background: var(--lime-soft); }
+.quick { margin: 10px 0; }
+.quick-chip { border-style: solid; }
+.steps-live { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 14px; }
+.steps-live li::before { content: '✓ '; font-weight: 700; }
+.steps-live li.now::before { content: '… '; }
+.result-card { display: grid; gap: 6px; margin: 8px 0; }
+.would-pass { border: 1.5px solid var(--ink); background: var(--lime-soft); padding: 8px 12px; margin-top: 8px; }
+.would-pass ul { margin: 4px 0 0; padding-left: 18px; }
+.answer-lines { margin: 6px 0; padding-left: 18px; }
+.action-card .field input { width: 100%; }
+.runs { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; font-size: 14px; }
+
+/* The drafter: amber, red, replay, read-back */
+.draft-steps { display: flex; flex-wrap: wrap; gap: 6px 14px; list-style: none; margin: 0; padding: 0; font: 700 12px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.06em; counter-reset: s; }
+.draft-steps li::before { counter-increment: s; content: counter(s) '. '; color: var(--mute); }
+.draft-added { border: 3px solid var(--ink); background: #ffd9d2; padding: 10px 12px; }
+.draft-ignored { border: 2px solid var(--ink); background: #ffe9a8; padding: 10px 12px; }
+.draft-untrusted { border: 2px dashed var(--ink); background: var(--deny-wash); padding: 10px 12px; }
+.draft-readback, .draft-replay { border: 1.5px solid var(--ink); background: var(--sheet); padding: 10px 12px; }
+.draft-added ul, .draft-ignored ul, .draft-untrusted ul, .draft-readback ul, .draft-replay ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; }
+.draft-added li span, .draft-ignored li span { display: block; color: var(--ink); font-size: 14px; }

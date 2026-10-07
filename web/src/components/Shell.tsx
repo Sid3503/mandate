@@ -12,8 +12,8 @@ const NAV = [
   { to: '/', label: 'Today', tour: 'nav-waiting', icon: 'M4 5h16v14H4z M4 9h16', end: true },
   { to: '/jobs', label: 'Jobs', tour: 'nav-jobs', icon: 'M4 7h16v12H4z M9 7V4h6v3' },
   { to: '/deals', label: 'Deals', tour: 'nav-deals', icon: 'M3 12h7 M14 12h7 M9 7l3 5-3 5 M15 7l-3 5 3 5' },
-  { to: '/clerk', label: 'Clerk', tour: 'nav-clerk', icon: 'M4 5h16v11H9l-5 4z M8 9h8 M8 12h5' },
-  { to: '/new', label: 'Ask', tour: 'nav-new', icon: 'M12 5v14 M5 12h14' },
+  { to: '/clerk', label: 'Ask', tour: 'nav-clerk', icon: 'M4 5h16v11H9l-5 4z M8 9h8 M8 12h5' },
+  { to: '/new', label: 'Request', tour: 'nav-new', icon: 'M12 5v14 M5 12h14' },
   { to: '/ledger', label: 'Ledger', tour: 'nav-ledger', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16' },
   { to: '/rules', label: 'Rules', tour: 'nav-rules', icon: 'M6 4h12v16H6z M9 9h6 M9 13h6 M9 17h3' },
   { to: '/proof', label: 'Proof', tour: 'nav-proof', icon: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z M8.5 12l2.5 2.5 4.5-5' },
@@ -75,7 +75,7 @@ function ShellFrame() {
                 <>
                   {isActive ? <motion.span layoutId="rail-pill" className="pill" transition={{ type: 'spring', stiffness: 520, damping: 40 }} /> : null}
                   <Icon path={item.icon} />
-                  <span>{item.label === 'Ask' ? 'New request' : item.label}</span>
+                  <span>{item.label === 'Request' ? 'Request form' : item.label === 'Ask' ? 'Ask Mandate' : item.label}</span>
                   {item.to === '/' && waiting > 0 ? <span className="badge">{waiting}</span> : null}
                 </>
               )}

@@ -35,7 +35,8 @@ const services = buildServices({ db, paypal, invoices, watch, publicUrl: config.
 
 const model = createAgentModel({ apiKey: config.ollamaApiKey, baseUrl: config.ollamaBaseUrl, name: config.agentModel })
 const drafterModel = createAgentModel({ apiKey: config.ollamaApiKey, baseUrl: config.ollamaBaseUrl, name: config.drafterModel ?? 'gemma4:31b' })
-const agents = new AgentService(services, model, () => new Date(), drafterModel)
+// If the main model errors, the drafter's model (measured best on this work) is tried once before the person sees a failure.
+const agents = new AgentService(services, model, () => new Date(), drafterModel, drafterModel)
 
 const app = createApp({
   db,

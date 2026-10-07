@@ -717,18 +717,41 @@ test('autopilot runs the job: proof in, invoice out, client pays, contractor pai
   await fake(request, 'invoices-off')
 })
 
-test('Ask Mandate opens from any screen, answers in the rules\' words, and gets out of the way', async ({ page }) => {
+test('Ask Mandate opens from any screen, answers from the ledger with no model, prepares a button, and gets out of the way', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
   await unlock(page, OWNER)
   await page.goto('/app/jobs')
   await page.keyboard.press('Control+k')
   const ask = page.getByRole('dialog', { name: 'Ask Mandate' })
   await expect(ask).toBeVisible()
-  await ask.getByRole('button', { name: 'what is waiting for me?' }).click()
-  await expect(ask.locator('.bubble.clerk').last()).toContainText('Tools used', { timeout: 30_000 })
+  // A question about the money is answered from the ledger: no model, no wait.
+  await ask.getByRole('button', { name: 'What is waiting for me?' }).click()
+  await expect(ask.locator('.answer-card')).toContainText('From the ledger · no model')
   await shots(page, '37-ask-mandate')
   const { default: AxeBuilder } = await import('@axe-core/playwright')
   const scan = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).include('.ask').analyze()
   expect(scan.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
+
+  // "The work is delivered" becomes a card with a button. Nothing is sent until the owner presses it.
+  const job = `job_ask_${test.info().project.name}`
+  const deal = await (await request.post('/v1/deals/offers', {
+    headers: { ...headers, 'idempotency-key': `deal-${job}-0001` },
+    data: { buyer: 'Northwind', terms: { scope: 'Ask logo', category: 'design', currency: 'USD', totalCents: 30000, milestones: [{ title: 'Concepts', amountCents: 15000 }, { title: 'Final files', amountCents: 15000 }], proofRequired: true, jobId: job } },
+  })).json()
+  await ask.getByLabel('Message to the clerk').fill('the Ask logo concepts for Northwind are delivered https://www.figma.com/file/ask-concepts')
+  await ask.getByRole('button', { name: 'Send' }).click()
+  const card = ask.getByTestId('action-card')
+  await expect(card).toContainText('Prepared for you · nothing has been sent')
+  await expect(card).toContainText('Northwind · Concepts')
+  const before = await (await request.get('/v1/proposals', { headers })).json()
+  expect(before.data.filter((item: { jobId: string }) => item.jobId === job)).toHaveLength(0)
+  await card.getByRole('button', { name: 'Deliver' }).click()
+  await expect(card).toContainText(/Sent to the client to accept|Billed|Invoice sent/)
+  void deal
+
+  // Typing finds pages and receipts without a model.
+  await ask.getByLabel('Message to the clerk').fill('proof')
+  await expect(ask.getByRole('option', { name: /Go to Proof/ })).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog', { name: 'Ask Mandate' })).toHaveCount(0)
   await page.getByRole('button', { name: /^Ask/ }).first().click()
@@ -736,15 +759,35 @@ test('Ask Mandate opens from any screen, answers in the rules\' words, and gets 
   await page.keyboard.press('Escape')
 })
 
-test('the owner says a change in words, reads what it would loosen, and publishes it themselves', async ({ page, request }) => {
+test('a refusal in Ask says what would pass, tested against the rules, and the receipt says it too', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  await widerCap(request)
+  const job = `job_pass_${test.info().project.name}`
+  const post = async (path: string, data?: unknown, key?: string) => (await request.post(path, { headers: { ...headers, ...(key ? { 'idempotency-key': key } : {}) }, data })).json()
+  const charge = await post('/v1/proposals', { kind: 'charge', payee: 'Northwind', amountCents: 15000, currency: 'USD', category: 'design', description: `Invoice ${job}`, evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job }, `charge-${job}-0001`)
+  await post(`/v1/proposals/${charge.id}/approve`)
+  const paid = await post(`/v1/proposals/${charge.id}/capture`)
+  const over = await post('/v1/proposals', { payee: 'Priya', amountCents: 9100, currency: 'USD', category: 'design', description: `Too much ${job}`, evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job, fundingCaptureId: paid.captureId }, `over-${job}-0001`, PROPOSER)
+  expect(over).toMatchObject({ gate: 'DENY', clause: 'funding.exceeds' })
+  await unlock(page, OWNER)
+  await page.goto(`/app/p/${over.id}`)
+  await expect(page.getByTestId('would-pass')).toContainText('$90.00 would pass')
+  await shots(page, '42-what-would-pass')
+})
+
+test('the owner says a change in words, sees what the code found in it, reads it back, and publishes it themselves', async ({ page, request }) => {
   await unlock(page, OWNER)
   await page.goto('/app/rules')
   const box = page.locator('[data-tour="rules-draft"]')
-  await box.getByLabel('Describe the change you want to the rules').fill('let Priya be paid automatically from Northwind, no tap')
+  await box.getByLabel('Describe the change you want to the rules').fill('Pay Priya 60% of what Northwind pays, never more than $180 a month, and only after I have seen the work.')
   await box.getByRole('button', { name: 'Draft it' }).click()
-  const loosens = box.locator('.draft-loosens')
-  await expect(loosens).toContainText('A standing rule would let Priya Shah from Northwind be paid with no tap')
-  await expect(loosens).toContainText('billed, and the invoice sent, with no tap')
+  // Amber: a wish the rules cannot keep. Found by code, not by the model.
+  const ignored = box.locator('.draft-ignored')
+  await expect(ignored).toContainText('only after I have seen the work')
+  await expect(ignored).toContainText('without asking you')
+  await expect(box.locator('.draft-loosens')).toContainText('A standing rule would let Priya Shah from Northwind be paid with no tap')
+  await expect(box.locator('.draft-readback')).toContainText('Priya Shah gets $90 (60%) with no tap from you')
+  await expect(box.getByTestId('replay')).toContainText('Replay on your history')
   await expect(box).toContainText('nothing is published')
   await shots(page, '38-draft-rules')
   // A draft is not a decision: the live rules have not moved.
@@ -756,14 +799,23 @@ test('the owner says a change in words, reads what it would loosen, and publishe
   await expect(editor).toContainText('Drafted by')
   await editor.getByRole('button', { name: 'Review changes' }).click()
   await expect(editor.locator('table.diff')).toContainText('Standing rules (no tap)')
-  await expect(editor.locator('table.diff')).toContainText('Autopilot')
+  await expect(editor.getByTestId('replay')).toBeVisible()
   await editor.getByRole('button', { name: /Publish version/ }).click()
   await expect(page.getByText(/Standing rule: Priya Shah is paid, with no tap/)).toBeVisible()
-  await expect(page.getByText(/Autopilot asks to pay each contractor/)).toBeVisible()
-
-  await publishRules(request, { standing: [], automation: OFF })
+  await publishRules(request, { standing: [], automation: OFF, monthlyCapCents: 18_000 })
 })
 
+test('a sentence that sounds like a rule is handed from Ask to the drafter', async ({ page, request }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/jobs')
+  await page.keyboard.press('Control+k')
+  const ask = page.getByRole('dialog', { name: 'Ask Mandate' })
+  await ask.getByLabel('Message to the clerk').fill('let Priya be paid automatically from Northwind')
+  await ask.getByRole('button', { name: 'Send' }).click()
+  await expect(page).toHaveURL(/\/app\/rules/)
+  await expect(page.locator('[data-tour="rules-draft"] .draft-loosens')).toContainText('A standing rule would let Priya Shah from Northwind', { timeout: 30_000 })
+  void request
+})
 
 test('billing waits for the client: delivered, accepted by the client\'s agent, and only then invoiced', async ({ page, request }) => {
   const headers = { authorization: `Bearer ${OWNER}` }

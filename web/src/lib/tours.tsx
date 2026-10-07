@@ -17,7 +17,7 @@ export const TOUR_LABEL: Record<TourId, string> = {
   receipt: 'a receipt',
   system: 'System',
   deals: 'Deals',
-  clerk: 'the Clerk',
+  clerk: 'Ask Mandate',
 }
 
 /** Which tour belongs to the screen the person is on. */
@@ -115,10 +115,10 @@ export const TOURS: Record<TourId, TourStep[]> = {
     },
     {
       target: '[data-tour="nav-clerk"]',
-      title: 'Clerk',
+      title: 'Ask Mandate',
       placement: 'right',
       mobilePlacement: 'top',
-      content: p('An AI clerk your producers can talk to in plain words. It reads the message, looks things up and asks the rules for you. It can ask, never pay, and a fooled clerk changes nothing because the rules still decide.'),
+      content: p('Say it in a sentence. Questions about your money are answered from the ledger with no model. “The concepts are delivered” prepares a button for you. A pay or bill request goes to the AI clerk, which can ask and never pay, and the rules still decide. It is the full-page version of Cmd+K.'),
     },
     {
       target: '[data-tour="nav-ledger"]',
@@ -577,7 +577,7 @@ export const TOURS: Record<TourId, TourStep[]> = {
   clerk: [
     {
       target: '[data-tour="clerk-chat"]',
-      title: 'Talk to the clerk',
+      title: 'Say it in a sentence',
       placement: 'right',
       mobilePlacement: 'bottom',
       content: p('Write what you want in plain words, like you would to a colleague. The clerk looks up the job and the client payment, then asks the rules.'),

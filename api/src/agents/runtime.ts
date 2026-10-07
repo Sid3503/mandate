@@ -32,6 +32,8 @@ export type RunInput = {
   requestText?: string
   /** Cancels the model call, for a person who pressed Stop. */
   signal?: AbortSignal
+  /** Told as each model step finishes, so a screen can show the rules' answer before the model's words. */
+  onStep?: (step: TraceStep) => void
 }
 
 export type RunOutput = {
@@ -70,6 +72,11 @@ export async function runAgent(input: RunInput): Promise<RunOutput> {
       temperature: 0,
       maxRetries: 2,
       abortSignal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs ?? 60_000)]) : AbortSignal.timeout(input.timeoutMs ?? 60_000),
+      onStepFinish: input.onStep ? (step) => input.onStep!({
+        text: step.text,
+        toolCalls: step.toolCalls.map((call) => ({ tool: call.toolName, input: call.input })),
+        toolResults: step.toolResults.map((item) => { const unpacked = unpack(item.output); return { tool: item.toolName, ok: unpacked.ok, output: unpacked.data } }),
+      }) : undefined,
       stopWhen: input.stopAfter ? [stepCountIs(input.maxSteps ?? 8), hasToolCall(input.stopAfter)] : stepCountIs(input.maxSteps ?? 8),
     })
     const steps: TraceStep[] = result.steps.map((step) => ({

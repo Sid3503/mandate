@@ -7,6 +7,7 @@ import type { WatchPort } from '../paypal/watch'
 import { DealService } from './deals'
 import { MandateService } from './mandate'
 import { AuditService } from './audit'
+import { AskService } from './ask'
 import { TodayService } from './today'
 
 export type Services = {
@@ -16,6 +17,7 @@ export type Services = {
   deals: DealService
   today: TodayService
   audit: AuditService
+  ask: AskService
 }
 
 /** The one place the services are wired together. The HTTP app, the MCP server and the agents all start here. */
@@ -27,5 +29,6 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   mandate.prepareSigning()
   const today = new TodayService(repo, deals, mandate, deps.now, () => deps.paypal !== null)
   const audit = new AuditService(repo, mandate, deals, deps.now)
-  return { repo, signer, mandate, deals, today, audit }
+  const ask = new AskService(today)
+  return { repo, signer, mandate, deals, today, audit, ask }
 }

@@ -7,7 +7,7 @@ import { databaseReady } from './db/database'
 import { z } from 'zod'
 import { BillMilestoneSchema, DealOfferSchema, DecideDeliverySchema } from './domain/deal'
 import type { Signer } from './domain/signing'
-import { IdempotencyKeySchema, ProposalCreateSchema, CaptureSchema, ListQuerySchema } from './domain/schemas'
+import { IdempotencyKeySchema, ProposalCreateSchema, CaptureSchema, ListQuerySchema, WarrantBodySchema } from './domain/schemas'
 import { onError, Problem, sendProblem, invalidRequest } from './http/problem'
 import { WEB_CSP, webAsset } from './http/web'
 import { buildOpenApi } from './openapi'
@@ -18,6 +18,7 @@ import { AgentService } from './agents/service'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
 import type { WatchPort } from './paypal/watch'
+import { QUICK_IDS, type QuickId } from './services/ask'
 import { toolSummary } from './paypal/tiers'
 import { decodeCursor, type HttpResult } from './services/mandate'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from './services/principal'
@@ -58,7 +59,17 @@ export type AppDeps = {
   }
 }
 
-const ClerkMessageSchema = z.object({ message: z.string().trim().min(1).max(4000), conversationId: z.uuid().optional() }).strict()
+const ClerkMessageSchema = z.object({
+  message: z.string().trim().min(1).max(4000),
+  conversationId: z.uuid().optional(),
+  /** What screen the person is on, from the app. The server checks it against the ledger. */
+  context: z.object({ jobId: z.string().max(80).optional(), proposalId: z.string().max(80).optional() }).strict().optional(),
+}).strict()
+const AskSchema = z.object({
+  message: z.string().trim().max(4000).optional(),
+  quick: z.enum(QUICK_IDS).optional(),
+  context: z.object({ jobId: z.string().max(80).optional() }).strict().optional(),
+}).strict()
 const DraftRulesSchema = z.object({ instruction: z.string().trim().min(3).max(1000) }).strict()
 const NegotiationSchema = z.object({
   buyer: z.string().trim().max(200).optional(),
@@ -76,7 +87,8 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/party-rules$/ },
   { method: 'PUT', pattern: /^\/v1\/party-rules\/[^/]+$/ },
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
-  { method: 'POST', pattern: /^\/v1\/rules\/draft$/ },
+  { method: 'POST', pattern: /^\/v1\/rules\/(draft|replay)$/ },
+  { method: 'POST', pattern: /^\/v1\/ask$/ },
   { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
@@ -372,6 +384,39 @@ export function createApp(deps: AppDeps) {
     const parsed = ClerkMessageSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
     return c.json(await agents.clerk(parsed.data, c.get('principal')))
+  })
+  // Ask, part one: decide where a sentence goes, without a model. Owner only.
+  app.post('/v1/ask', async (c) => {
+    assertJson(c)
+    const parsed = AskSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    if (parsed.data.quick) return c.json(services.ask.quick(parsed.data.quick as QuickId))
+    return c.json(services.ask.route(parsed.data.message ?? '', parsed.data.context))
+  })
+  // Ask, part two: the clerk, told as it works, so the rules' answer shows before the model's words.
+  app.post('/v1/clerk/stream', async (c) => {
+    assertJson(c)
+    const parsed = ClerkMessageSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const principal = c.get('principal')
+    return streamSSE(c, async (stream) => {
+      const send = (event: { type: string }) => stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
+      try {
+        const reply = await agents.clerk(parsed.data, principal, {
+          onStep: (step) => { void send({ type: 'step', tools: step.toolResults.map((item) => ({ tool: item.tool, ok: item.ok })), outcomes: step.toolResults.filter((item) => item.tool === 'propose' && item.ok).map((item) => item.output) } as { type: string }) },
+        })
+        await send({ type: 'done', reply } as { type: string })
+      } catch (error) {
+        const problem = error instanceof Problem ? error : null
+        await send({ type: 'error', code: problem?.code ?? 'internal', message: problem?.detail ?? 'The clerk failed. Nothing was sent to PayPal.' } as { type: string })
+      }
+    })
+  })
+  app.post('/v1/rules/replay', async (c) => {
+    assertJson(c)
+    const parsed = WarrantBodySchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return c.json(service.replay(parsed.data))
   })
   app.post('/v1/rules/draft', async (c) => {
     assertJson(c)

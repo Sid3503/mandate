@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
-import { ClerkChat } from './ClerkChat'
+import { AskPanel } from './AskPanel'
 import { useToday } from '../lib/hooks'
 
 type AskContext = { open: (message?: string) => void; close: () => void; isOpen: boolean }
@@ -75,11 +75,13 @@ function AskDialog({ initial, onClose }: { initial: string | undefined; onClose:
     return () => document.removeEventListener('keydown', onKey, true)
   }, [onClose])
 
+  const job = /^\/jobs\/([^/]+)/.exec(location.pathname)?.[1]
+  const proposal = /^\/p\/([^/]+)/.exec(location.pathname)?.[1]
+  const context = proposal ? { proposalId: proposal } : job ? { jobId: decodeURIComponent(job) } : undefined
   const examples = [
-    'what is waiting for me?',
     ...(today.data?.readyToBill ?? []).slice(0, 1).map((item) => `${item.title} for ${item.buyerName} is delivered, bill it ${LINK}`),
     ...((today.data?.automation?.standingRules ?? 0) > 0 ? [`pay Priya her share for the latest Northwind payment ${LINK}`] : []),
-    'what did the rules refuse this month, and why?',
+    'pay Priya 60% of what Northwind pays, automatically',
   ]
 
   return (
@@ -87,11 +89,11 @@ function AskDialog({ initial, onClose }: { initial: string | undefined; onClose:
       <div ref={box} className="ask" role="dialog" aria-modal="true" aria-labelledby="ask-title">
         <div className="ask-head">
           <h2 id="ask-title">Ask Mandate</h2>
-          <span className="fine">The clerk can ask the rules. It cannot pay, approve or change them.</span>
+          <span className="fine">{context ? 'It can see the screen you are on. ' : ''}It can ask the rules. It cannot pay, approve or change them.</span>
           <button type="button" className="link" onClick={onClose} aria-label="Close">Esc</button>
         </div>
         <div className="chat ask-chat">
-          <ClerkChat examples={examples} autoFocus initial={initial} placeholder="Say what you want done…" />
+          <AskPanel examples={examples} autoFocus initial={initial} context={context} onLeave={onClose} placeholder="Say what you want done…" />
         </div>
       </div>
     </div>

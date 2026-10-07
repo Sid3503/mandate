@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import type { Repo, ProposalRow, ProposalKind, PayoutUpdate } from '../db/repo'
-import { Clause, decide, fundableCents, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
+import { RESERVED_PHASES, type Repo, type ProposalRow, type ProposalKind, type PayoutUpdate } from '../db/repo'
+import { Clause, decide, fundableCents, type Decision, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
 import { cartHash, stableHash, type CartFields } from '../domain/hash'
 import { acceptanceMessage, lockMessage, proofHash, type Signer } from '../domain/signing'
 import { monthWindow } from '../domain/period'
@@ -948,6 +948,7 @@ export class MandateService {
         feeCents: row.payout_fee_cents,
         receiver: payee?.email ?? null,
       } : null,
+      whatWouldPass: row.gate === 'DENY' ? this.whatWouldPass(row.id) : [],
       acceptance: (() => {
         const d = this.repo.deliveryByProposal(row.id)
         return d ? { id: d.id, dealId: d.deal_id, milestone: d.milestone, proofUrl: d.proof_url, status: d.status, note: d.note, decidedBy: d.decided_by, decidedAt: d.decided_at, signature: d.sig, keyId: d.key_id, signatureValid: d.sig ? this.signer.verify(acceptanceMessage(d), d.sig, d.key_id) : null } : null
@@ -1335,6 +1336,136 @@ export class MandateService {
       refunds: refunds.map(toView),
       totals: { inCents, outCents, heldCents, keptCents: inCents - outCents - heldCents },
     }
+  }
+
+  // ---------- replay: what the rules would have said ----------
+
+  /**
+   * What the gate says about a request that was already made, under the given rules. The context is rebuilt from the
+   * ledger with the request itself taken out of the sums (it must not count against its own cap or its own funding).
+   * Asked twice, under two sets of rules, every difference in the answer is the rules' doing: the context is identical.
+   */
+  private replayDecision(row: ProposalRow, body: WarrantBody, over: { amountCents?: number; evidenceUrl?: string | null; category?: string | null } = {}): Decision {
+    const own = (RESERVED_PHASES as readonly string[]).includes(row.phase)
+    const partiesFor = row.kind === 'charge' || (row.kind === 'refund' && this.isClient(body, row.payee_id)) ? body.clients : body.payees
+    const payeeId = row.payee_id && partiesFor.some((party) => party.id === row.payee_id) ? row.payee_id : null
+    const parent = row.kind === 'refund' && row.parent_capture_id ? this.repo.paymentByCapture(row.parent_capture_id) : null
+    const fundingRow = row.kind === 'payment' && row.funding_capture_id ? this.repo.paymentByCapture(row.funding_capture_id) : null
+    let funding = fundingRow ? this.fundingState(fundingRow, payeeId) : null
+    if (funding && own) funding = { ...funding, payoutHeldCents: Math.max(0, funding.payoutHeldCents - row.amount_cents), payeeHeldCents: Math.max(0, (funding.payeeHeldCents ?? 0) - row.amount_cents) }
+    const cap = this.reservation(row.warrant_id, body, row.created_at)
+    const window = monthWindow(new Date(row.created_at), body.timezone)
+    const ownInMonth = own && row.kind === 'payment' && row.reserved_at !== null && row.reserved_at >= window.start && row.reserved_at < window.end
+    const evidenceUrl = over.evidenceUrl !== undefined ? over.evidenceUrl : row.evidence_url
+    const amountCents = over.amountCents ?? row.amount_cents
+    let deal: DealContext | null = null
+    if (row.kind === 'charge') {
+      deal = this.dealContext(row.deal_id, row.milestone, row.job_id, evidenceUrl)
+      const live = row.deal_id && row.milestone !== null ? this.repo.chargeForMilestone(row.deal_id, row.milestone) : null
+      if (live && live.id === row.id) deal = { ...deal, milestoneBilled: false }
+    }
+    return decide(body, {
+      kind: row.kind,
+      payeeId,
+      amountCents,
+      currency: row.currency,
+      category: over.category !== undefined ? over.category : row.category,
+      evidenceUrl,
+      parent: parent ? { payeeId: parent.payee_id ?? '', amountCents: parent.amount_cents, heldCents: this.repo.heldRefundCents(parent.capture_id!), currency: parent.currency, category: parent.category ?? '', evidenceUrl: parent.evidence_url, phase: parent.phase } : null,
+      jobId: row.job_id,
+      fundingCaptureId: row.funding_capture_id,
+      funding,
+      dealId: row.deal_id,
+      milestone: row.milestone,
+      deal,
+    }, { reservedCents: Math.max(0, cap.reservedCents - (ownInMonth ? row.amount_cents : 0)), priorCaptureIds: cap.priorCaptureIds })
+  }
+
+  /**
+   * Runs the last requests again under proposed rules and reports the ones whose answer would change. The same request,
+   * the same ledger, two sets of rules: whatever differs is what the new rules do. Nothing is stored or sent.
+   */
+  replay(proposed: WarrantBody, limit = 40) {
+    const live = this.repo.latestWarrant()
+    if (!live) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+    const names = (id: string | null) => [...live.body.payees, ...live.body.clients, ...proposed.payees, ...proposed.clients].find((party) => party.id === id)?.displayName ?? 'Unknown'
+    const rows = this.repo.listProposals(limit, null)
+    const label = (d: Decision) => (d.gate === 'DENY' ? `refused (${d.clause})` : d.gate === 'AUTO' ? 'goes with no tap' : 'waits for the owner’s tap')
+    const changed: Array<{ proposalId: string; title: string; amountCents: number; before: { gate: string; clause: string; words: string }; after: { gate: string; clause: string; words: string } }> = []
+    for (const row of rows) {
+      const before = this.replayDecision(row, live.body)
+      const after = this.replayDecision(row, proposed)
+      if (before.gate === after.gate && before.clause === after.clause) continue
+      const verb = row.kind === 'charge' ? 'Bill' : row.kind === 'refund' ? 'Refund' : 'Pay'
+      changed.push({ proposalId: row.id, title: `${verb} ${names(row.payee_id)} $${(row.amount_cents / 100).toFixed(2)}`, amountCents: row.amount_cents, before: { gate: before.gate, clause: before.clause, words: label(before) }, after: { gate: after.gate, clause: after.clause, words: label(after) } })
+    }
+    return {
+      checked: rows.length,
+      changed,
+      nowNoTap: changed.filter((item) => item.after.gate === 'AUTO' && item.before.gate !== 'AUTO').length,
+      nowTap: changed.filter((item) => item.after.gate === 'NEEDS_APPROVAL' && item.before.gate !== 'NEEDS_APPROVAL').length,
+      nowRefused: changed.filter((item) => item.after.gate === 'DENY' && item.before.gate !== 'DENY').length,
+      nowAllowed: changed.filter((item) => item.before.gate === 'DENY' && item.after.gate !== 'DENY').length,
+    }
+  }
+
+  /**
+   * After a refusal: what WOULD pass. Each suggestion is a variant of the same request that was put back through the
+   * gate and came out allowed, so none of it is the model's guess.
+   */
+  whatWouldPass(id: string): Array<{ text: string; tested: boolean }> {
+    const row = this.repo.proposal(id)
+    const live = this.repo.latestWarrant()
+    if (!row || !live || row.gate !== 'DENY') return []
+    const body = live.body
+    const ok = (over: Parameters<MandateService['replayDecision']>[2]) => this.replayDecision(row, body, over).gate !== 'DENY'
+    const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`
+    const out: Array<{ text: string; tested: boolean }> = []
+    const fundingRow = row.kind === 'payment' && row.funding_capture_id ? this.repo.paymentByCapture(row.funding_capture_id) : null
+    switch (row.clause) {
+      case Clause.fundingExceeds: {
+        const available = fundingRow ? fundableCents(body, this.fundingState(fundingRow, row.payee_id)) : 0
+        if (available > 0 && ok({ amountCents: available })) out.push({ text: `${dollars(available)} would pass: that is what the client payment can still fund.`, tested: true })
+        else out.push({ text: 'Nothing more can be paid out of that client payment. Another client payment, or a refund being undone, would be needed.', tested: false })
+        break
+      }
+      case Clause.capMonthly: {
+        const room = body.monthlyCapCents - this.reservation(row.warrant_id, body, this.now().toISOString()).reservedCents
+        if (room > 0 && ok({ amountCents: Math.min(room, row.amount_cents) })) out.push({ text: `${dollars(Math.min(room, row.amount_cents))} would pass: that is what is left of this month’s cap.`, tested: true })
+        const next = new Date(monthWindow(this.now(), body.timezone).end)
+        out.push({ text: `The full ${dollars(row.amount_cents)} is possible from ${next.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: body.timezone })}, when the month rolls over, or if the owner raises the cap.`, tested: false })
+        break
+      }
+      case Clause.amountCeiling:
+        if (ok({ amountCents: body.perPaymentCeilingCents })) out.push({ text: `${dollars(body.perPaymentCeilingCents)} would pass: that is the most one payment may be.`, tested: true })
+        break
+      case Clause.evidenceMissing:
+        if (ok({ evidenceUrl: 'https://example.com/proof' })) out.push({ text: 'Add an https link to the work and it would pass.', tested: true })
+        break
+      case Clause.categoryMissing: {
+        const fits = body.categories.filter((category) => ok({ category }))
+        if (fits.length > 0) out.push({ text: `It would pass as ${fits.join(' or ')} work. Those are the kinds of work the rules allow.`, tested: true })
+        break
+      }
+      case Clause.fundingMissing:
+        out.push({ text: 'The client has to pay first. Bill the next milestone, and once the client has paid, this payout can be asked for.', tested: false })
+        break
+      case Clause.fundingDisputed:
+        out.push({ text: 'It would pass once PayPal resolves the client’s dispute on that payment.', tested: false })
+        break
+      case Clause.payeeUnknown:
+        out.push({ text: 'Only the owner can add someone to the rules. Nothing a request says can add a payee.', tested: false })
+        break
+      case Clause.dealMilestoneMismatch:
+        out.push({ text: 'A milestone can only be billed for exactly the amount in the signed deal.', tested: false })
+        break
+      case Clause.dealMilestoneBilled:
+        out.push({ text: 'That milestone was already billed. Cancel its unpaid invoice first if it was wrong.', tested: false })
+        break
+      default:
+        break
+    }
+    return out
   }
 
   private require(id: string): ProposalRow {

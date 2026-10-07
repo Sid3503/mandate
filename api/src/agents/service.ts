@@ -7,6 +7,7 @@ import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from '../services/principal'
 import { draftRules, type RulesDraft } from './drafter'
+import { readBack } from './intent'
 import { composeReply, type Outcome } from './guard'
 import type { AgentModel } from './model'
 import { clerkSystem, negotiatorSystem, reviewerSystem } from './prompts'
@@ -59,6 +60,8 @@ export class AgentService {
     private readonly model: AgentModel | null,
     private readonly now: () => Date,
     private readonly drafterModel: AgentModel | null = null,
+    /** Tried once if the main model errors, so a bad model day does not end the conversation. */
+    private readonly fallbackModel: AgentModel | null = null,
   ) {}
 
   get enabled(): boolean {
@@ -86,7 +89,7 @@ export class AgentService {
 
   // ---------- the clerk ----------
 
-  async clerk(input: { message: string; conversationId?: string }, who: Principal): Promise<ClerkReply> {
+  async clerk(input: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string } }, who: Principal, hooks: { onStep?: (step: TraceStep) => void } = {}): Promise<ClerkReply> {
     const model = this.need()
     if (who.side === 'buyer') throw new Problem(403, 'auth.forbidden', 'Not available to a client agent', 'The clerk works for the studio.')
     this.limit(who, 'clerk', 12)
@@ -100,16 +103,27 @@ export class AgentService {
     ])
     const messages: ModelMessage[] = [...history, { role: 'user', content: input.message }]
 
+    const screen = this.screenFor(input.context)
+    const options = { services: this.services, principal: STUDIO, runId, system: clerkSystem(warrant.body, this.now().toISOString().slice(0, 10), screen), messages, asks: 4, maxSteps: 8, requestText: messages.filter((item) => item.role === 'user').map((item) => (typeof item.content === 'string' ? item.content : '')).join('\n'), onStep: hooks.onStep }
     let run: RunOutput
+    let usedModel = model
     try {
       // The clerk acts as a studio proposer whoever is typing. The owner's own key does not make the clerk stronger.
-      run = await runAgent({ model, services: this.services, principal: STUDIO, runId, system: clerkSystem(warrant.body, this.now().toISOString().slice(0, 10)), messages, asks: 4, maxSteps: 8, requestText: messages.filter((item) => item.role === 'user').map((item) => (typeof item.content === 'string' ? item.content : '')).join('\n') })
+      try {
+        run = await runAgent({ ...options, model })
+      } catch (first) {
+        if (!(first instanceof Problem) || first.code !== 'agent.model_error' || !this.fallbackModel || this.fallbackModel.name === model.name) throw first
+        usedModel = this.fallbackModel
+        run = await runAgent({ ...options, model: usedModel })
+      }
     } catch (error) {
       this.record({ id: runId, agent: 'clerk', who, conversationId, model: model.name, input: input.message, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0 })
       throw error
     }
-    const { reply, guarded } = composeReply(run.text, run.outcomes)
-    this.record({ id: runId, agent: 'clerk', who, conversationId, model: model.name, input: input.message, output: reply, steps: run.steps, status: 'ok', error: null, ms: run.ms })
+    // Figures in the reply must come from what the person wrote or what a tool returned.
+    const evidence = [...messages.filter((item) => item.role === 'user').map((item) => (typeof item.content === 'string' ? item.content : '')), ...run.steps.flatMap((step) => step.toolResults.map((item) => JSON.stringify(item.output ?? {})))]
+    const { reply, guarded } = composeReply(run.text, run.outcomes, evidence)
+    this.record({ id: runId, agent: 'clerk', who, conversationId, model: usedModel.name, input: input.message, output: reply, steps: run.steps, status: 'ok', error: null, ms: run.ms })
     return {
       conversationId,
       runId,
@@ -117,9 +131,25 @@ export class AgentService {
       guarded,
       outcomes: run.outcomes,
       tools: run.steps.flatMap((step) => step.toolResults.map((item) => ({ tool: item.tool, ok: item.ok }))),
-      model: model.name,
+      model: usedModel.name,
       ms: run.ms,
     }
+  }
+
+  /** What the person is looking at, in words, checked against the ledger. The app says it; the model does not. */
+  private screenFor(context: { jobId?: string; proposalId?: string } | undefined): string | null {
+    if (!context) return null
+    const warrant = this.services.repo.latestWarrant()
+    const name = (id: string | null) => [...(warrant?.body.payees ?? []), ...(warrant?.body.clients ?? [])].find((party) => party.id === id)?.displayName ?? id ?? 'unknown'
+    if (context.proposalId) {
+      const row = this.services.repo.proposal(context.proposalId)
+      if (row) return `the receipt for a ${row.kind === 'charge' ? 'client charge' : row.kind === 'refund' ? 'refund' : 'contractor payout'} of $${(row.amount_cents / 100).toFixed(2)} ${row.kind === 'charge' ? 'to bill' : 'for'} ${name(row.payee_id)}${row.job_id ? `, job ${row.job_id}` : ''}, which is ${row.phase.replaceAll('_', ' ')}`
+    }
+    if (context.jobId && this.services.repo.proposalsForJob(context.jobId).length > 0) {
+      const charge = this.services.repo.proposalsForJob(context.jobId).find((row) => row.kind === 'charge')
+      return `the page for job ${context.jobId}${charge ? ` (client ${name(charge.payee_id)})` : ''}`
+    }
+    return null
   }
 
   // ---------- the client's reviewer ----------
@@ -169,7 +199,7 @@ export class AgentService {
   // ---------- the rules drafter ----------
 
   /** A draft of new rules from the owner's own words. It is a draft only: nothing is published, and the owner reads a diff first. */
-  async draftRules(instruction: string, who: Principal): Promise<RulesDraft & { runId: string }> {
+  async draftRules(instruction: string, who: Principal) {
     const model = this.drafterModel ?? this.need()
     this.limit(who, 'drafter', 8)
     const warrant = this.services.repo.latestWarrant()
@@ -178,7 +208,9 @@ export class AgentService {
     try {
       const draft = await draftRules({ model, current: warrant.body, instruction })
       this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: model.name, input: instruction, output: draft.summary, steps: [], status: 'ok', error: null, ms: draft.ms })
-      return { ...draft, runId }
+      // A worked example in the owner's own numbers: the biggest milestone on a signed deal, or $150.
+      const exampleCents = Math.max(0, ...this.services.deals.readyToBill().map((item) => item.amountCents), 0) || 15_000
+      return { ...draft, runId, readBack: readBack(draft.draft, exampleCents), replay: this.services.mandate.replay(draft.draft) }
     } catch (error) {
       this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: model.name, input: instruction, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0 })
       throw error

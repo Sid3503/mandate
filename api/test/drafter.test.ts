@@ -107,6 +107,25 @@ describe('the rules drafter', () => {
     expect(runs[0]).toMatchObject({ agent: 'drafter', status: 'ok' })
   })
 
+  it('front door: says it, sees it, checks it, replays it, reads it back, signs it', async () => {
+    const model = patchModel({ summary: 'Priya gets 60% of Northwind payments, capped at $180.', standingRules: [{ payee: 'Priya', clients: ['Northwind'], sharePercent: 60 }], monthlyCapDollars: 180, perPaymentCeilingDollars: 50 })
+    const { app } = harness({ model })
+    const deal = await agree(app)
+    const paid = await collect(app, deal.id, 0)
+    const asked = await call(app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: { payee: 'Priya', amountCents: 9_000, currency: 'USD', category: 'design', description: 'share', evidenceUrl: EVIDENCE, jobId: JOB, fundingCaptureId: paid.captureId } })
+    const made = await draft(app, 'Pay Priya 60% of what Northwind pays, never more than $180 a month, and only after I have seen the work.')
+    expect(made.status).toBe(200)
+    // Amber: the wish the rules cannot keep. Red: the $50 ceiling that nobody asked for.
+    expect(made.json.ignored.map((flag: { phrase: string }) => flag.phrase).join(' ')).toMatch(/only after I have seen the work/)
+    expect(made.json.added).toEqual([expect.objectContaining({ phrase: 'The per-payment ceiling: $500 → $50', why: 'You did not write $50. The model chose it.' })])
+    expect(made.json.readBack[0]).toBe('When Northwind pays $150 on a signed deal, Priya Shah gets $90 (60%) with no tap from you, when someone asks for it.')
+    // Replay shows what the unasked $50 ceiling would really do: refuse both the $150 bill and the $90 payout already in the ledger.
+    expect(made.json.replay).toMatchObject({ checked: 2, nowNoTap: 0, nowRefused: 2 })
+    expect(made.json.replay.changed.map((item: { after: { clause: string } }) => item.after.clause)).toEqual(['amount.ceiling', 'amount.ceiling'])
+    expect(made.json.replay.changed.map((item: { proposalId: string }) => item.proposalId)).toContain(asked.json.id)
+    expect((await call(app, 'GET', '/v1/warrant')).json.version).toBe(1)
+  })
+
   it('works end to end: the drafted rules are the ones the gate then follows', async () => {
     const model = patchModel({ summary: 'ok', standingRules: [{ payee: 'Priya', clients: ['Northwind'] }] })
     const { app } = harness({ model })

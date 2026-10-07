@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { resolveClient, resolvePayee } from '../domain/gate'
 import { WarrantBodySchema, type WarrantBody } from '../domain/schemas'
 import { Problem } from '../http/problem'
+import { checkIntent, type IntentFlag } from './intent'
 import type { AgentModel } from './model'
 
 /**
@@ -67,6 +68,12 @@ export type RulesDraft = {
   tightens: string[]
   /** Changes that neither widen nor narrow what can happen, such as a reminder schedule. */
   notes: string[]
+  /** Amber: something in the owner's words that no part of the rules carries out. Found by code. */
+  ignored: IntentFlag[]
+  /** Parts of the message that look like someone else's instructions. Not treated as the owner's. */
+  untrusted: string[]
+  /** Red: something in the rules that nothing in the owner's words asked for. Found by code. */
+  added: IntentFlag[]
   changed: boolean
   model: string
   ms: number
@@ -283,5 +290,6 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
     throw new Problem(422, 'rules.draft_unusable', 'The model did not produce a usable draft', detail)
   }
   const { loosens, tightens, notes } = compareRules(input.current, merged)
-  return { draft: merged, summary: patch.summary, loosens, tightens, notes, changed: loosens.length + tightens.length + notes.length > 0, model: input.model.name, ms: Date.now() - started }
+  const intent = checkIntent(input.instruction, input.current, merged)
+  return { draft: merged, summary: patch.summary, loosens, tightens, notes, ignored: intent.ignored, untrusted: intent.untrusted, added: intent.added, changed: loosens.length + tightens.length + notes.length > 0, model: input.model.name, ms: Date.now() - started }
 }

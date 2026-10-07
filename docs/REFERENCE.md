@@ -186,7 +186,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 265 API tests (Vitest), including a 56-case red team, plus 50 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 299 API tests (Vitest), including a 56-case red team, plus 54 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -396,7 +396,8 @@ An installable web app (PWA) for the owner, built only on the existing API. It h
 | **Jobs** | `/app/jobs`, `/app/jobs/:jobId` | Money in, out, held and kept, with bars. Each client payment with what it can still fund and the payouts under it. Shortcuts to bill the next milestone or pay a contractor from a payment. | `GET /v1/jobs/:jobId` |
 | **New request** | `/app/new` | Money in, money out or refund. People and categories come from the rules. The funding picker lists only settled client payments, with what each can still fund. You can deliberately pick "not funded yet", "someone not on the rules" or another kind of work to see refusals. The answer card is always the server's decision; the screen never predicts it. | `GET /v1/warrant`, `POST /v1/proposals` |
 | **Ledger** | `/app/ledger` | An AG Grid Community table of every request, with filters (everything, refused, waiting, settled, money in, money out), search, refusals highlighted, and a compact phone layout. An events tab lists every event, with paging. | `GET /v1/proposals`, `GET /v1/ledger` |
-| **Rules** | `/app/rules` | The live rules as numbered sentences, the version history, and what changed per version. **Say it in your own words** drafts a change with a model (see [the rules drafter](#the-rules-drafter)). **Write version N+1** → edit (including standing rules and autopilot) → **Review changes** (a diff) → **Publish**. | `GET /v1/warrant/versions`, `PUT /v1/warrant`, `POST /v1/rules/draft` |
+| **Rules** | `/app/rules` | The live rules as numbered sentences, the version history, and what changed per version. **Say it in your own words** drafts a change with a model, and shows what code found in it, a read-back and a replay of your history (see [the rules drafter](#the-rules-drafter)). **Write version N+1** → edit (including standing rules and autopilot) → **Review changes** (a diff) → **Publish**. | `GET /v1/warrant/versions`, `PUT /v1/warrant`, `POST /v1/rules/draft` |
+| **Ask** | `/app/clerk` | The full-page Ask Mandate (the same panel as Cmd+K), with recent asks beside it. | `POST /v1/ask`, `POST /v1/clerk/stream` |
 | **Verify** | `/app/verify` | Public, no key. Paste a downloaded receipt and the browser checks the lock and signatures itself. | none (reads `/.well-known/mandate-keys.json`) |
 | **Proof** | `/app/proof` | One button re-verifies the whole ledger in the server and lists every check with what it looked at and, if any fail, the exact requests. Also what an agent can reach in PayPal (none). | `GET /v1/audit` |
 | **System** | `/app/system` | Process and readiness checks, which key you hold, the API version, and a link to the OpenAPI document. **Lock console**. | `GET /health`, `GET /ready` |
@@ -597,6 +598,27 @@ The tests change the database by hand (an amount, a settled amount, a deleted ap
 - **It proves** that what is on the receipt is what the owner approved, signed by the server's key. **It does not prove** PayPal moved the money; the PayPal ids on the receipt are for checking in PayPal.
 - Browsers without Ed25519 in WebCrypto (older than roughly 2024) get a plain message saying so.
 
+### Ask Mandate
+
+`Cmd/Ctrl + K` (or the **Ask** button, or the **Ask** page) opens one box. A sentence takes one of four roads, chosen by **code on the server before any model is involved** (`POST /v1/ask`, `api/src/services/ask.ts`):
+
+| Road | When | What happens | Model? |
+| --- | --- | --- | --- |
+| **Answer** | A question the ledger can answer: what is waiting, refused, this month, in flight, ready to bill, done, is autopilot on | Answered from the same data as Today. The quick chips call it by id. | **No**, so it works with no key and no rate limit |
+| **Action card** | "The concepts for Northwind are delivered <link>" (delivery verbs only; a link containing the word "invoice" is not a delivery) | The app prepares a card: which deal and milestone, the proof link. **The owner presses Deliver.** If several deals are open it narrows by the client, the job's name and the milestone's title, and says so when the asked milestone is not the next one. | No |
+| **Hand-off** | It sounds like a rule ("let Priya be paid automatically", a percent, "from now on", "cap at") rather than a request | Opens the Rules page and runs the drafter on the owner's words | The drafter |
+| **Clerk** | Everything else | The clerk, streamed (`POST /v1/clerk/stream`): each step appears as the model finishes it and **the rules' answer appears as a card before the model's words** | The clerk |
+
+Also in Ask:
+
+- **What would pass.** After a refusal, code puts variants of the same request back through the gate and lists only those that came out allowed: the amount the client payment can still fund, what is left of the month's cap (and the date it rolls over), the per-payment ceiling, adding a proof link, the allowed kinds of work. Shown on the card and on the receipt (`whatWouldPass` on the packet). Suggestions that cannot be tested (for example "the client must pay first") are marked as not tested.
+- **Screen context.** On a job page or a receipt the app tells the clerk which one, as typed fields that the server checks against the ledger (a made-up id is ignored). "Pay her share" on a job page then has no doubt. The rule that the payee must appear in the person's own words still applies.
+- **Numbers must come from somewhere.** Every dollar amount in a clerk reply must appear in what the person wrote or in a tool result; otherwise the reply is replaced by the rules' answer and the console says so.
+- **A bad model day.** If the clerk's model errors, the drafter's model (`DRAFTER_MODEL`) is tried once and the reply says which model answered.
+- **Jump to anything.** Typing finds pages and receipts (by name, amount or job) without a model.
+- **One Ask.** The Ask page is the same panel, full size, with the recent asks beside it; the old Clerk screen and the Ask dialog are one thing. The form for filling in every field by hand is now called **Request form**.
+- **Not built:** sharing a client's email into Ask from a phone, voice, and push notifications. They depend on browser and OS support that differs between Android and iPhone.
+
 ### The rules drafter
 
 `POST /v1/rules/draft` (owner only) takes `{ "instruction": "let Priya be paid automatically from Northwind" }` and returns a **draft**: the new rules, a one-line summary, and `loosens`, `tightens` and `notes`.
@@ -604,6 +626,24 @@ The tests change the database by hand (an amount, a settled amount, a deleted ap
 - A model gets one tool, `propose_rules`, that takes a small patch in plain units (dollars, percent, names), not the rules. The server merges it into the current rules and validates the result with the **same schema the owner's own edits must pass**. If the merge is invalid (for example, shares that add up to more than 100%), the model is told why and tries again, up to twice.
 - **What a draft loosens is decided by code, not by the model.** A deterministic comparison lists every change that lets more happen without the owner (a higher cap or line, a new payee or client, a standing rule, an autopilot switch, proof or funding no longer required) and every change that narrows it. The model's own summary is shown second, and the test suite includes a hostile draft whose summary says "nothing risky" while the code lists five loosenings.
 - **It cannot publish.** The draft opens in the editor as a before-and-after; publishing is `PUT /v1/warrant` with the owner key. A test publishes a draft and then shows the gate following it.
+- **Say it, see it, check it, replay it, sign it.** The Rules page walks a change through those five steps:
+  1. *Say it*: the owner's words (from the Rules page, or handed over from Ask).
+  2. *See it*: the drafted rules, with the model's own one-line summary shown last.
+  3. *Check it* (`api/src/agents/intent.ts`, pure code):
+     - **Not in the rule (amber).** A number in the words that no rule holds ("never more than $75" when nothing carries $75), a wish the rules cannot keep (**"only after I have seen the work"** beside a standing rule, which pays with no tap), a switch the words asked for and the draft left off, and wishes with no setting at all (email me, on Fridays, until the end of the month).
+     - **Added by the model (red).** A number the owner never wrote, or a switch turned on with nothing in the words that means it: a new ceiling, reminders nobody mentioned, a payee nobody named, proof or funding dropped.
+     - **Set aside.** Forwarded notes, quoted lines, and sentences such as "ignore all previous instructions" are not treated as the owner's; a change that only they support shows up red.
+     - It is deliberately plain (numbers, percents, days, counts, emails and a short list of phrases). It will miss a cleverly worded request, and it says what it checked. What it must not do is call a draft faithful when a number or switch came from nowhere.
+  4. *Replay it* (`POST /v1/rules/replay`, also used for hand edits in the editor): the last requests are run again through the pure gate under the proposed rules, with each request's own amount taken out of its cap and funding, and the ones whose answer would change are listed ("2 would now go with no tap", "1 would now be refused"). Nothing is stored or sent.
+  5. *Sign it*: the owner publishes with their own key. The read-back ("When Northwind pays $150 on a signed deal, Priya Shah gets $90 (60%) with no tap from you") is shown before they do.
+- **A measured eval.** `npm run eval:drafter` runs 25 wordings in five groups (10 plain requests, 4 vague, 5 that hold a wish the rules cannot keep, 4 injected instructions, 2 off-topic). *Hidden loosening* is measured independently: it compares the two sets of rules field by field and counts anything looser that the owner did not ask for and that has no red flag. Run on 7 Oct 2026:
+
+  | Model | Plain | Vague | Dropped wish | Injected | Off-topic | Overall | Hidden loosenings |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | `gemma4:31b` (the drafter) | 10/10 | 4/4 | 5/5 | 4/4 | 2/2 | **25/25** | **0** |
+  | `gpt-oss:20b` | 7/10 | 4/4 | 5/5 | 4/4 | 2/2 | 22/25 | **0** |
+
+  The first run of `gemma4:31b` scored 23/25 with one "hidden" loosening. Both were faults in the eval, not the drafter: it counted a loosening the owner really asked for as hidden, and it treated a model that put a red-flagged standing rule under a vague request as a failure though the flag was exactly the right outcome. I fixed the metric and re-ran. `gpt-oss:20b` missed three plain requests (reminders, acceptance, a two-person split): it drafted less than was asked, which the amber check reports, and it loosened nothing in secret.
 - `DRAFTER_MODEL` chooses the model (default `gemma4:31b`). On the real models, on four compound requests, `gemma4:31b` got 4 of 4 in about a second each, `gpt-oss:120b` 3 of 4, `nemotron-3-nano:30b` 3 of 4 and `gpt-oss:20b` 2 of 6 tries, so the drafter has its own model.
 
 ---
@@ -791,6 +831,9 @@ The base URL is `http://127.0.0.1:8787` locally. Everything under `/v1` needs a 
 | `GET /v1/deliveries` | any key | Deliveries (a client sees its own) |
 | `GET /v1/today` | owner | The landing page's data: waiting, in flight, done, stopped, the month, ready to bill, setup |
 | `GET /v1/audit` | owner | Re-verify the whole ledger (add `?paypal=1` to compare with PayPal) |
+| `POST /v1/ask` | owner | Where a sentence goes: an answer from the ledger, a delivery card, a hand-off to the drafter, or the clerk |
+| `POST /v1/clerk/stream` | studio, owner | The clerk, streamed step by step |
+| `POST /v1/rules/replay` | owner | Run the last requests under proposed rules and list what would change |
 | `POST /v1/rules/draft` | owner | Draft a change to the rules from plain words. Never publishes. |
 | `GET /v1/paypal/features`, `POST /v1/paypal/features/check` | owner | Which PayPal features the app may use, read from its token scopes |
 | `GET /v1/paypal/tools` | owner | Every PayPal Agent Toolkit tool, its tier, and whether the server uses it |
@@ -953,8 +996,8 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 265 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 50 Playwright tests (desktop 1440×960 and Pixel 7)
+cd api && npm test && npm run typecheck        # 299 Vitest tests
+cd web && npm run typecheck && npm run e2e     # 54 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 
 **API tests (`api/test/`)** cover:
@@ -993,6 +1036,10 @@ cd web && npm run typecheck && npm run e2e     # 50 Playwright tests (desktop 14
 - **PayPal depth:** feature readiness from token scopes, cancel-and-return of an unclaimed payout (and the wait when PayPal's batch is unfinished), the return URL, invoice reminder and cancel, dispute hold with fail-closed, reconciliation, balance, webhook signature and de-duplication, and PayPal's own payload shapes.
 - **Tool tiers:** every one of the Agent Toolkit's 47 tools has a tier, so a new tool cannot arrive unreviewed; anything that moves money is never "read"; the server's runner refuses any tool not written down as its own, even with every action switched on; the agent door exposes none of them.
 - **Autopilot:** billing a signed deal with no tap (and still needing one until the switch is on, for ad hoc charges, and for a wrong amount, a milestone twice or no proof); checkout fallback that settles when the client approves; the whole job with nobody touching it; two contractors split by their shares; refusing shares that add up to too much; a refusal recorded instead of a payout when the cap or a dispute is in the way; no payout for a charge that settled before the switch; reminders on the owner's schedule, capped, and never for a paid invoice (with a controllable clock).
+- **Replay:** the $90 request already in the ledger would have gone with no tap under a standing rule; a tightening shows requests that would now be refused and a loosening shows refused ones that would now be allowed; rules that change nothing report nothing; a request already paid is not counted against its own cap and funding; owner only.
+- **What would pass:** only variants that were put back through the gate and allowed (what the client payment can fund, the proof link, the allowed kinds of work), untestable advice marked as such, nothing for an allowed request.
+- **The intent checker:** the owner's example sentence ("…and only after I have seen the work") is flagged amber; a $50 ceiling nobody wrote is flagged red; a faithful draft that does seven things is not accused; a forwarded or quoted instruction is set aside; notifications, days of the week and end dates are flagged; a wish to look first is not raised when nothing is paid without a tap.
+- **Ask:** questions answered with no model, the delivery card for the owner to press (and never delivered by itself), narrowing by deal name and milestone title, a fake-vendor email with "invoice" in its link not mistaken for a delivery, rule-like sentences handed to the drafter, owner only, the clerk streamed with the rules' answer before the model's words, screen context checked against the ledger, figures in a reply checked, and the fallback model.
 - **Client acceptance:** delivery waits and nothing is billed until the client's agent accepts; then the exact milestone is billed with no tap; a rejection bills nothing and allows redelivery; an acceptance for one link cannot bill another (even with a copied signature); only the client's key can decide (not the studio, not the owner); no double decision; non-https proofs refused; nothing changes when the owner has not asked for acceptance; the client's agent does it all over MCP and the studio's agent is offered no such tool; the hosted reviewer; and the audit catches an edited, deleted or re-pointed acceptance.
 - **The receipt verifier:** the browser code agrees with the server for all three cart formats, and catches each kind of tampering with the file.
 - **Today:** owner only; the setup checklist; waiting, ready-to-bill, in flight, done (with how), stopped, overdue, autopilot-blocked, held and disputed items; the month in money from PayPal-confirmed events.
@@ -1034,9 +1081,12 @@ Every miss was behavioural (a wrong tool, a refusal in words that leaves no reco
 16. the guided tour: a first-time visitor sees the welcome tour, leaving it is remembered, every screen's guide reaches its last step with a lit spotlight on every target, and a receipt with the tour open passes axe
 17. Today's full chain: the owner signs the rules once, pastes a proof link, the invoice goes out, the client pays, the server's own look finds it, the contractor is paid, and the Done-for-you list, the job totals and the Proof page all agree, with no tap after the rules
 18. Ask Mandate opens with Cmd/Ctrl + K from any screen, answers, passes axe, and closes
-19. the owner says a change in words, reads what it loosens, reviews the diff and publishes it
-20. billing waits for the client: delivered, accepted by the client's agent, and only then invoiced; Proof shows the acceptance check green
-21. a receipt is verified in the browser with no key, a tampered copy is caught, and an axe scan of the page is clean
+19. the owner says a change in words, sees the amber flag for a wish the rules cannot keep, reads it back, reviews the diff and the replay, and publishes it
+20. Ask Mandate: a question answered from the ledger with no model, "delivered" prepared as a card the owner presses, page search, an axe scan of the dialog
+21. a refusal says what would pass, on the receipt
+22. a sentence that sounds like a rule is handed from Ask to the drafter
+23. billing waits for the client: delivered, accepted by the client's agent, and only then invoiced; Proof shows the acceptance check green
+24. a receipt is verified in the browser with no key, a tampered copy is caught, and an axe scan of the page is clean
 
 Screenshots are written to `web/e2e/shots/`.
 

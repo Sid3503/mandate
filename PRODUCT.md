@@ -97,8 +97,11 @@ One frozen scenario drives every test, screenshot and demo. Nothing in the repo 
 ### Verify a receipt without asking Mandate
 A public page (`/app/verify`) takes a downloaded receipt and checks it **in the browser**: it recomputes the lock from the fields and verifies the Ed25519 signatures (the server's, and the client's acceptance when there is one) against the public keys, which the person can paste from somewhere other than the server. It is one short file that the test suite runs against real receipts, and it is the clearest way to show "do not trust our server".
 
+### Ask Mandate
+One box (Cmd/Ctrl + K, or the Ask page). Code on the server decides where a sentence goes before any model is involved: a question about the money is **answered from the ledger** (works with no key); "the concepts are delivered" becomes **a card with a Deliver button that the owner presses**; a sentence that sounds like a rule is **handed to the drafter**; anything else goes to the clerk, which is streamed so the **rules' answer appears before the model's words**. A refusal comes with **what would pass**, found by putting variants back through the gate. Figures in a reply must come from what the person wrote or what a tool returned, and if the model errors a second model answers.
+
 ### The rules drafter
-Say "let Priya be paid automatically from Northwind" and a model drafts the change. It cannot publish. The server validates the draft against the same schema as a hand edit, and **code, not the model, lists what the draft loosens**, so a draft that calls itself "nothing risky" is still shown with its five loosenings. The owner reads the before-and-after and publishes it.
+Say "pay Priya 60% of what Northwind pays, never more than $180 a month, and only after I have seen the work" and a model drafts the change. It cannot publish. **Code, not the model, checks the draft against the words:** a wish the rules cannot keep ("only after I have seen the work" cannot sit beside a payout that goes with no tap) is flagged amber; anything the model added that the words never asked for (a $50 ceiling nobody wrote) is flagged red; forwarded or quoted instructions are set aside. The owner then sees what it loosens, a plain-words read-back with a worked example, and a **replay of their own history** under the new rules ("2 of your last 30 requests would now go with no tap"), and publishes it with their own key. Measured on 25 wordings: `gemma4:31b` 25/25 and `gpt-oss:20b` 22/25, with **0 hidden loosenings** on both.
 
 ### The owner console (`web/`)
 An installable React app served at `/app/`.
@@ -155,7 +158,7 @@ An installable React app served at `/app/`.
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 265 API tests (56 of them a red team) and 50 browser tests on desktop and phone, with an accessibility scan on every screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 299 API tests (56 of them a red team) and 54 browser tests on desktop and phone, with an accessibility scan on every screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -250,11 +253,12 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 | "How do I know nothing slipped through?" | Proof: the server re-verifies every lock, every yes, every amount, on demand. |
 | "Why should I trust your server's receipts?" | You don't have to: the verify page checks a receipt in your own browser against public keys. |
 | "The studio can attach any link as proof" | The client's own agent accepts the delivery, signed over that exact link, before the invoice goes out. |
-| Writing rules is hard to do safely | Say it in words: a model drafts it, code lists what it loosens, you publish. |
+| Writing rules is hard to do safely | Say it in words: a model drafts it, code flags what it dropped or added, lists what it loosens and replays your history, and you publish. |
+| A refusal is a dead end | "What would pass": only variants that were put back through the gate and allowed. |
 
 ## 10. Proof
 
-- **265 API tests** (Vitest; 56 are the red team) and **50 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
+- **299 API tests** (Vitest; 56 are the red team) and **54 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation) and compared on four models. No miss on any model moved money.
 - **The whole frozen job has run on the real PayPal sandbox, both milestones:** agents negotiated and signed $300; Northwind paid two real invoices; the locks verified; two real $90 payouts reached Priya's sandbox account (the second with no tap, under a standing rule); the job reads **$300 in, $180 out, $120 kept**; and cancelling an unclaimed payout returned the money.
 - **Proof** runs ten checks over the ledger (and an eleventh against PayPal's own history on request), and the tests tamper with the database eight ways to check the right one fails.
@@ -267,7 +271,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 - **Fake-tested, not live:** refunds, a dispute that PayPal's API lists as open (a first-stage Resolution Center case is not listed, so Mandate cannot see it), and signed webhook deliveries.
 - **Autopilot's full chain was not run live in one go.** Each live piece has run on the real sandbox (the auto-billed invoice, the reminder, the standing-rule payout to Priya's real account after a real paid invoice), and the whole chain runs in the browser and in tests against the fake PayPal.
 - **Without `requireAcceptance`, `billSignedDeals` trusts the proof link to exist, not to be true.** Anyone who can attach an https link to a milestone sends the client a real invoice, for exactly the agreed amount. With it on, the client's own agent must accept first. The hosted stand-in for the client's agent cannot open the link, so it judges whether the link plausibly fits the milestone, not whether the work is good; a real client agent, or a person, is a stronger check. An unpaid invoice can be cancelled from Today and the milestone billed again.
-- **The 20B model is weak at compound rule drafting,** so the drafter has its own model (`gemma4:31b`) and the server validates and retries. The owner always reads a diff, and code, not the model, lists what a draft loosens.
+- **The 20B model is weaker at compound rule drafting** (22/25 against 25/25 on the eval), so the drafter has its own model (`gemma4:31b`) and the server validates and retries. The intent checker is plain code (numbers, percents, days, emails and a list of phrases): it will miss a cleverly worded request, and a fair reading of "zero hidden loosenings" is on 25 wordings, not on all possible ones. The first eval run showed two faults in the eval itself, which I fixed and re-ran; the write-up says so.
 - **PayPal's transaction report lags** by a few hours, so the newest payments can show as unmatched for a while.
 - **Model dependence:** the agents use a hosted `gpt-oss:20b`. Two larger models could not be measured because Ollama's free plan does not include them. Everything except the agents works without a model.
 - **Single-process SQLite.** Right for one owner; a hosted multi-tenant version would move to Postgres (a driver change, not a redesign).

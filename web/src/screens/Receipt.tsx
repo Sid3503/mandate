@@ -38,6 +38,12 @@ export function Receipt() {
             <p className="decision-words">{explain(p.clause, p, warrant, names)}</p>
             <p className="server-words"><span>Server · {p.clause}</span>{p.detail}</p>
             {p.gate === 'DENY' ? <NoMoneyMoved /> : null}
+            {p.gate === 'DENY' && data.whatWouldPass && data.whatWouldPass.length > 0 ? (
+              <div className="would-pass" data-testid="would-pass">
+                <strong>What would pass</strong>
+                <ul>{data.whatWouldPass.map((option) => <li key={option.text}>{option.text}{option.tested ? <span className="fine"> Tested against the rules.</span> : null}</li>)}</ul>
+              </div>
+            ) : null}
           </section>
 
           {data.dispute ? (

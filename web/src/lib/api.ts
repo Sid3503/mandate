@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
+import type { AskRoute, ClerkStreamEvent, QuickId, Replay, Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -102,8 +102,50 @@ async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, sig
   }
 }
 
+/** The clerk, told as it works. Each step arrives as the model finishes it; the last event is the whole reply. */
+async function streamClerk(body: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string } }, onEvent: (event: ClerkStreamEvent) => void, signal?: AbortSignal): Promise<void> {
+  const key = session.get()
+  let response: Response
+  try {
+    response = await fetch('/v1/clerk/stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+      signal,
+    })
+  } catch {
+    if (signal?.aborted) return
+    throw new ApiError(0, 'network.offline', 'No connection', 'The server could not be reached. Nothing was sent.', {})
+  }
+  if (!response.ok || !response.body) {
+    const text = await response.text()
+    const parsed = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+    throw new ApiError(response.status, String(parsed.code ?? 'http.error'), String(parsed.title ?? response.statusText), String(parsed.detail ?? ''), parsed)
+  }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let split = buffer.indexOf('\n\n')
+    while (split !== -1) {
+      const block = buffer.slice(0, split)
+      buffer = buffer.slice(split + 2)
+      const data = /^data: (.*)$/m.exec(block)?.[1]
+      if (data) onEvent(JSON.parse(data) as ClerkStreamEvent)
+      split = buffer.indexOf('\n\n')
+    }
+  }
+}
+
 export const api = {
   streamNegotiation,
+  streamClerk,
+  ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
+  replayRules: (rules: unknown) => request<Replay>('/v1/rules/replay', { method: 'POST', body: rules }),
   health: () => request<Health>('/health'),
   ready: () => request<Health>('/ready'),
   session: (key?: string) => request<Session>('/v1/session', { key }),
@@ -146,6 +188,7 @@ export const api = {
   partyRules: () => request<{ data: PartyRulesView[] }>('/v1/party-rules'),
   negotiate: (body: { buyerBrief?: string; sellerBrief?: string } = {}) => request<Negotiation>('/v1/negotiations', { method: 'POST', body }),
   clerk: (message: string, conversationId?: string) => request<ClerkReply>('/v1/clerk/messages', { method: 'POST', body: { message, conversationId } }),
+  agentRuns: () => request<{ data: Array<{ id: string; agent: string; status: string; model: string; input: string; ms: number; createdAt: string }> }>('/v1/agent-runs'),
   agentRun: (id: string) => request<AgentRun>(`/v1/agent-runs/${id}`),
   ledger: (cursor?: string | null) => request<Page<LedgerEvent>>(`/v1/ledger?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
 }

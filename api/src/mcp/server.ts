@@ -97,7 +97,7 @@ export function cleanProposal<T extends Record<string, unknown>>(args: T): T {
 
 const key = (context: McpContext, tool: string, args: unknown) => `mcp-${context.runId}-${tool}-${stableHash(args).slice(0, 24)}`
 
-function outcome(view: ProposalView, names: (id: string | null) => string, warrant: Parameters<typeof explainClause>[0]['warrant']) {
+function outcome(view: ProposalView, names: (id: string | null) => string, warrant: Parameters<typeof explainClause>[0]['warrant'], options: string[] = []) {
   return {
     proposalId: view.id,
     decision: view.gate,
@@ -109,6 +109,7 @@ function outcome(view: ProposalView, names: (id: string | null) => string, warra
     amount: dollars(view.amountCents),
     // Only what PayPal has confirmed. An agent that can only ask must not say more than this.
     moneyMoved: view.phase === 'captured' ? dollars(view.capturedAmountCents ?? 0) : '$0.00',
+    ...(view.gate === 'DENY' && options.length > 0 ? { whatWouldPass: options } : {}),
   }
 }
 
@@ -243,7 +244,7 @@ export function createMandateMcpServer(context: McpContext): McpServer {
         const result = await services.mandate.proposeAndDispatch(input, key(context, 'propose', args), 'proposer', context.runId)
         const view = result.body as ProposalView
         const { warrant, names } = nameLookup(services)
-        return json(outcome(view, names, warrant))
+        return json(outcome(view, names, warrant, view.gate === 'DENY' ? services.mandate.whatWouldPass(view.id).map((item) => item.text) : []))
       } catch (error) {
         return asResult(error)
       }

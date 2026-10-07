@@ -1,11 +1,12 @@
-import { useMutation } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation } from 'react-router-dom'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { when } from '../lib/format'
 import { useAgentsOn, useIsOwner, useOnline, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
-import type { Party, RulesDraft, Warrant } from '../lib/types'
+import type { Party, Replay, RulesDraft, Warrant } from '../lib/types'
 import { ruleSentences } from '../lib/words'
 import { useQueryClient } from '@tanstack/react-query'
 
@@ -47,6 +48,7 @@ export function diff(before: Body | null, after: Body): Change[] {
 }
 
 export function Rules() {
+  const location = useLocation()
   const versions = useVersions()
   const owner = useIsOwner()
   const list = versions.data?.data ?? []
@@ -68,7 +70,7 @@ export function Rules() {
         {owner && !editing ? <button type="button" className="btn btn-ink" data-tour="rules-write" onClick={() => { setSeed(null); setEditing(true) }}>Write version {current.version + 1}</button> : null}
       </PageHead>
 
-      {owner && !editing ? <DraftBox onUse={(result) => { setSeed(result); setEditing(true) }} /> : null}
+      {owner && !editing ? <DraftBox prefill={(location.state as { draft?: string } | null)?.draft} onUse={(result) => { setSeed(result); setEditing(true) }} /> : null}
       {editing ? <Editor key={seed?.runId ?? 'blank'} current={current} seed={seed} onDone={(version) => { setEditing(false); setSeed(null); if (version) setSelected(version) }} /> : null}
 
       <div className="rules-grid">
@@ -187,7 +189,7 @@ function Editor({ current, seed, onDone }: { current: Warrant; seed: RulesDraft 
   return (
     <section className="panel panel-lime editor">
       <div className="row between"><h2 className="panel-title">Write version {current.version + 1}</h2><button type="button" className="link" onClick={() => onDone(null)}>Cancel</button></div>
-      {seed ? <DraftNote result={seed} /> : null}
+      {seed ? <DraftNote result={seed} replay={false} /> : null}
       {!review ? (
         <div className="stack">
           <div className="field-row three">
@@ -225,6 +227,7 @@ function Editor({ current, seed, onDone }: { current: Warrant; seed: RulesDraft 
         <div className="stack">
           <p>Version {current.version} → {current.version + 1}. Open requests stay judged by version {current.version}.</p>
           <Changes changes={changes} />
+          {draft ? <ReplayPanel rules={draft} seed={seed?.replay ?? null} /> : null}
           <div className="row gap-s wrap">
             <button type="button" className="btn btn-ghost" onClick={() => setReview(false)}>Back</button>
             <button type="button" className="btn btn-lime btn-big" disabled={!draft || !online || publish.isPending} onClick={() => draft && publish.mutate(draft)}>
@@ -293,39 +296,64 @@ function Parties({ title, prefix, list, onChange }: { title: string; prefix: str
 }
 
 /** Describe a change in your own words. A model drafts it; you read the before-and-after and publish it yourself. */
-function DraftBox({ onUse }: { onUse: (result: RulesDraft) => void }) {
+function DraftBox({ onUse, prefill }: { onUse: (result: RulesDraft) => void; prefill?: string }) {
   const agents = useAgentsOn()
   const online = useOnline()
-  const [text, setText] = useState('')
+  const [text, setText] = useState(prefill ?? '')
   const make = useMutation({ mutationFn: (instruction: string) => api.draftRules(instruction) })
+  const ran = useRef(false)
+  useEffect(() => {
+    if (prefill && agents && !ran.current) { ran.current = true; make.mutate(prefill) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill, agents])
   if (!agents) return null
   const result = make.data
+  const blocked = Boolean(result && result.added.length > 0)
   return (
     <section className="panel draft-box" data-tour="rules-draft" aria-labelledby="h-draft">
       <h2 className="panel-title" id="h-draft">Say it in your own words</h2>
+      <ol className="draft-steps" aria-label="How a change is made"><li>Say it</li><li>See it</li><li>Check it</li><li>Replay it</li><li>Sign it</li></ol>
       <form className="draft-form" onSubmit={(event) => { event.preventDefault(); if (text.trim().length >= 3) make.mutate(text.trim()) }}>
         <label className="sr-only" htmlFor="draft-text">Describe the change you want to the rules</label>
-        <textarea id="draft-text" rows={2} maxLength={1000} value={text} placeholder="e.g. let Priya be paid automatically from Northwind as soon as the client pays" onChange={(event) => setText(event.target.value)} />
+        <textarea id="draft-text" rows={2} maxLength={1000} value={text} placeholder="e.g. pay Priya 60% of what Northwind pays, never more than $180 a month, and only after the client accepts" onChange={(event) => setText(event.target.value)} />
         <button type="submit" className="btn btn-ink" disabled={!online || text.trim().length < 3 || make.isPending}>{make.isPending ? 'Drafting…' : 'Draft it'}</button>
       </form>
-      <p className="fine">A model drafts the change. It cannot publish: you read exactly what differs, and what it would let happen without you, and then you publish.</p>
+      <p className="fine">A model drafts the change. It cannot publish. Code, not the model, checks the draft against your words, lists what it loosens and replays your history under it. Then you publish.</p>
       <ProblemCard error={make.error} />
       {result ? (
         <div className="draft-result" role="status">
           <DraftNote result={result} />
-          {result.changed ? <button type="button" className="btn btn-lime" onClick={() => onUse(result)}>Review this draft</button> : null}
+          {result.changed ? <button type="button" className={`btn ${blocked ? 'btn-ghost' : 'btn-lime'}`} onClick={() => onUse(result)}>{blocked ? 'Review this draft anyway' : 'Review this draft'}</button> : null}
         </div>
       ) : null}
     </section>
   )
 }
 
-/** What a draft would change, said by code. The model's own summary is shown second, because only the code can be trusted to be complete. */
-function DraftNote({ result }: { result: RulesDraft }) {
+/** What a draft would change, said by code. The model's own summary comes last, because only the code can be trusted to be complete. */
+function DraftNote({ result, replay = true }: { result: RulesDraft; replay?: boolean }) {
   return (
     <div className="draft-note">
       <span className="eyebrow">Drafted by {result.model} · {(result.ms / 1000).toFixed(1)}s · nothing is published</span>
       {!result.changed ? <p>That request did not change any rule.</p> : null}
+      {result.added.length > 0 ? (
+        <div className="draft-added" role="alert">
+          <strong>Added by the model. You did not ask for this:</strong>
+          <ul>{result.added.map((flag) => <li key={flag.phrase}><b>{flag.phrase}</b> <span>{flag.why}</span></li>)}</ul>
+        </div>
+      ) : null}
+      {result.ignored.length > 0 ? (
+        <div className="draft-ignored" role="status">
+          <strong>Not in the rule. You said this and nothing carries it out:</strong>
+          <ul>{result.ignored.map((flag) => <li key={flag.phrase}><b>“{flag.phrase}”</b> <span>{flag.why}</span></li>)}</ul>
+        </div>
+      ) : null}
+      {result.untrusted.length > 0 ? (
+        <div className="draft-untrusted" role="status">
+          <strong>Set aside. This looks like someone else’s instruction, not yours:</strong>
+          <ul>{result.untrusted.map((line) => <li key={line}>{line}</li>)}</ul>
+        </div>
+      ) : null}
       {result.loosens.length > 0 ? (
         <div className="draft-loosens">
           <strong>This lets more happen without you:</strong>
@@ -339,7 +367,34 @@ function DraftNote({ result }: { result: RulesDraft }) {
         </div>
       ) : null}
       {result.notes.length > 0 ? <ul className="draft-notes">{result.notes.map((line) => <li key={line}>{line}</li>)}</ul> : null}
+      {result.readBack.length > 0 ? (
+        <div className="draft-readback">
+          <strong>Read back, in plain words:</strong>
+          <ul>{result.readBack.map((line) => <li key={line}>{line}</li>)}</ul>
+        </div>
+      ) : null}
+      {replay ? <ReplayBody replay={result.replay} /> : null}
       <p className="fine">The model’s summary: “{result.summary}”</p>
+    </div>
+  )
+}
+
+/** Your own history, run again under the proposed rules. Works for a hand edit as well as a draft. */
+function ReplayPanel({ rules, seed }: { rules: Body; seed: Replay | null }) {
+  const replay = useQuery({ queryKey: ['replay', JSON.stringify(rules)], queryFn: () => api.replayRules(rules), initialData: seed ?? undefined, staleTime: 60_000 })
+  return replay.data ? <ReplayBody replay={replay.data} /> : <p className="fine">{replay.isLoading ? 'Replaying your history…' : ''}</p>
+}
+
+function ReplayBody({ replay }: { replay: Replay }) {
+  return (
+    <div className="draft-replay" data-testid="replay">
+      <strong>Replay on your history</strong>
+      {replay.checked === 0 ? <p className="fine">There are no requests yet to replay.</p> : replay.changed.length === 0 ? <p>Of your last {replay.checked} request{replay.checked === 1 ? '' : 's'}, none would have gone differently.</p> : (
+        <>
+          <p>Of your last {replay.checked} request{replay.checked === 1 ? '' : 's'}, {replay.changed.length} would have gone differently{replay.nowNoTap > 0 ? `: ${replay.nowNoTap} would now go with no tap` : ''}{replay.nowRefused > 0 ? `${replay.nowNoTap > 0 ? ',' : ':'} ${replay.nowRefused} would now be refused` : ''}{replay.nowAllowed > 0 ? `, ${replay.nowAllowed} refused ${replay.nowAllowed === 1 ? 'one' : 'ones'} would now be allowed` : ''}.</p>
+          <ul>{replay.changed.slice(0, 8).map((item) => <li key={item.proposalId}><b>{item.title}</b>: {item.before.words} → <b>{item.after.words}</b></li>)}</ul>
+        </>
+      )}
     </div>
   )
 }

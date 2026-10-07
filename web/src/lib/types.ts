@@ -41,6 +41,7 @@ export type Packet = {
     receiver: string | null
   } | null
   job: string | null
+  whatWouldPass?: Array<{ text: string; tested: boolean }>
   dispute?: { id: string; status: string; reason: string | null; amountCents: number | null } | null
   acceptance?: { id: string; dealId: string; milestone: number; proofUrl: string; status: string; note: string | null; decidedBy: string | null; decidedAt: string | null; signature: string | null; keyId: string | null; signatureValid: boolean | null } | null
   funding: {
@@ -279,14 +280,43 @@ export type AuditReport = {
   agentReach: { toolkitTools: number; agentCanCallDirectly: number; serverUses: number; mcpTools: number }
 }
 
+export type Replay = {
+  checked: number
+  changed: Array<{ proposalId: string; title: string; amountCents: number; before: { gate: string; clause: string; words: string }; after: { gate: string; clause: string; words: string } }>
+  nowNoTap: number
+  nowTap: number
+  nowRefused: number
+  nowAllowed: number
+}
+
+export type IntentFlag = { phrase: string; why: string }
+
 export type RulesDraft = {
   draft: Omit<Warrant, 'id' | 'version' | 'createdAt'>
   summary: string
   loosens: string[]
   tightens: string[]
   notes: string[]
+  ignored: IntentFlag[]
+  added: IntentFlag[]
+  untrusted: string[]
+  readBack: string[]
+  replay: Replay
   changed: boolean
   model: string
   ms: number
   runId: string
 }
+
+export type AskRoute =
+  | { kind: 'answer'; id: string; title: string; lines: string[]; links: Array<{ label: string; to: string }> }
+  | { kind: 'action'; type: 'deliver'; text: string; proofUrl: string | null; note: string | null; choices: Array<{ dealId: string; milestone: number; jobId: string; buyerName: string; title: string; amountCents: number; currency: string }> }
+  | { kind: 'handoff'; to: 'rules'; text: string }
+  | { kind: 'clerk' }
+
+export type QuickId = 'waiting' | 'refused' | 'month' | 'inflight' | 'ready' | 'done' | 'autopilot'
+
+export type ClerkStreamEvent =
+  | { type: 'step'; tools: Array<{ tool: string; ok: boolean }>; outcomes: Array<Record<string, any>> }
+  | { type: 'done'; reply: ClerkReply }
+  | { type: 'error'; code: string; message: string }

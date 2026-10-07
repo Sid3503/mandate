@@ -12,7 +12,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "eval:agents": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-agents.ts",
-    "mcp": "tsx src/mcp/stdio.ts"
+    "mcp": "tsx src/mcp/stdio.ts",
+    "eval:drafter": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-drafter.ts"
   },
   "dependencies": {
     "@ai-sdk/mcp": "^2.0.66",

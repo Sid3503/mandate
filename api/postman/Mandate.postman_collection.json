@@ -1040,6 +1040,40 @@
             "header": [],
             "url": "{{baseUrl}}/v1/deliveries"
           }
+        },
+        {
+          "name": "Ask: where does this sentence go (no model)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"message\":\"what is waiting for me?\"}"
+            },
+            "url": "{{baseUrl}}/v1/ask"
+          }
+        },
+        {
+          "name": "Replay the last requests under proposed rules",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"note\": \"paste the full rules body here, as in PUT /v1/warrant\" }"
+            },
+            "url": "{{baseUrl}}/v1/rules/replay"
+          }
         }
       ]
     }
