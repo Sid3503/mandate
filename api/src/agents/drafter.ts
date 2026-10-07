@@ -242,8 +242,11 @@ export type DraftStage =
   | { stage: 'checking' }
   | { stage: 'replaying' }
   | { stage: 'reading_back' }
+  | { stage: 'reading_policy'; sentences: number; parts: number }
+  | { stage: 'classified'; rules: number; setAside: number }
+  | { stage: 'auditing'; sentences: number; changes: number }
 
-export async function draftRules(input: { model: AgentModel; current: WarrantBody; instruction: string; signal?: AbortSignal; onStage?: (stage: DraftStage) => void }): Promise<RulesDraft> {
+export async function draftRules(input: { model: AgentModel; current: WarrantBody; instruction: string; signal?: AbortSignal; onStage?: (stage: DraftStage) => void; /** False when the caller checks the draft against the words itself, with a model, instead of the built-in word check. */ intent?: boolean }): Promise<RulesDraft> {
   const started = Date.now()
   const stage = input.onStage ?? (() => undefined)
   stage({ stage: 'reading', people: input.current.payees.length + input.current.clients.length, standing: input.current.standing.length })
@@ -310,6 +313,6 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
   }
   stage({ stage: 'checking' })
   const { loosens, tightens, notes } = compareRules(input.current, merged)
-  const intent = checkIntent(input.instruction, input.current, merged)
+  const intent = input.intent === false ? { ignored: [], untrusted: [], added: [] } : checkIntent(input.instruction, input.current, merged)
   return { draft: merged, summary: patch.summary, loosens, tightens, notes, ignored: intent.ignored, untrusted: intent.untrusted, added: intent.added, changed: loosens.length + tightens.length + notes.length > 0, model: input.model.name, ms: Date.now() - started }
 }

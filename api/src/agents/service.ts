@@ -8,7 +8,8 @@ import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from '../services/principal'
 import { draftRules, type DraftStage } from './drafter'
-import { assessPolicy, countStatuses, planPolicy } from './policy'
+import { auditPolicy, readAll, type Audit, type Read } from './policyAgents'
+import { applyAudit, countStatuses, firstPass, instructionFor, listChanges, POLICY_MAX_SENTENCES, READ_CHUNK, segmentPolicy, sendable } from './policy'
 import { ModelHealth } from './health'
 import { runStudioTurn, type StudioEvent, type StudioTurn } from './studio'
 import { assessProof } from './proof'
@@ -268,7 +269,7 @@ export class AgentService {
   // ---------- the rules drafter ----------
 
   /** A draft of new rules from the owner's own words. It is a draft only: nothing is published, and the owner reads a diff first. */
-  async draftRules(instruction: string, who: Principal, hooks: { onStage?: (stage: DraftStage) => void } = {}) {
+  async draftRules(instruction: string, who: Principal, hooks: { onStage?: (stage: DraftStage) => void } = {}, options: { intent?: boolean } = {}) {
     const model = this.drafterModel ?? this.need()
     this.limit(who, 'drafter', 8)
     const warrant = this.services.repo.latestWarrant()
@@ -276,7 +277,7 @@ export class AgentService {
     const runId = randomUUID()
     const stage = hooks.onStage ?? (() => undefined)
     try {
-      const { output: draft, model: used } = await this.withModels((chosen) => draftRules({ model: chosen, current: warrant.body, instruction, onStage: stage }), { primary: model })
+      const { output: draft, model: used } = await this.withModels((chosen) => draftRules({ model: chosen, current: warrant.body, instruction, onStage: stage, intent: options.intent }), { primary: model })
       this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: used.name, input: instruction, output: draft.summary, steps: [], status: 'ok', error: null, ms: draft.ms, prompt: 'drafter' })
       // A worked example in the owner's own numbers: the biggest milestone on a signed deal, or $150.
       stage({ stage: 'replaying' })
@@ -291,21 +292,63 @@ export class AgentService {
   }
 
   /**
-   * "Paste your policy." The text is split and sorted by code; only the sentences that could be rules reach the drafter,
-   * as numbered lines inside the owner's own request; and every verdict on a sentence is found by code in the finished
-   * draft. Nothing is published. With nothing in the paste that could be a rule, no model is called.
+   * "Paste your policy." Three model stages and no word-matching:
+   *   1. a reader says what KIND of sentence each one is (a rule, a matter of judgment, someone else's words...)
+   *   2. the drafter drafts rules from the sentences that are rules, and only those
+   *   3. an auditor reads the finished draft against the sentences and says, for each, whether it is carried out, citing
+   *      the rules by key; and for each change in the draft, which sentence asked for it
+   * Code cuts the text into numbered pieces and then only checks claims against what the model was shown: a cited rule
+   * that does not exist, a quote that is not in the sentence, a sentence nobody answered for. A claim that points at
+   * nothing is not believed. If the audit cannot run, the draft still comes back, marked as unchecked. Nothing is published.
    */
-  async draftFromPolicy(text: string, who: Principal, hooks: { onStage?: (stage: DraftStage) => void } = {}) {
+  async draftFromPolicy(text: string, who: Principal, hooks: { onStage?: (stage: DraftStage) => void; signal?: AbortSignal } = {}) {
+    const model = this.drafterModel ?? this.need()
+    this.limit(who, 'policy', 4)
     const warrant = this.services.repo.latestWarrant()
     if (!warrant) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
-    const plan = planPolicy(text, warrant.body)
-    if (!plan.instruction) {
-      const counts = countStatuses(plan.sentences)
-      return { sentences: plan.sentences, counts, draft: null }
+    const stage = hooks.onStage ?? (() => undefined)
+    const all = segmentPolicy(text)
+    if (all.length === 0) throw new Problem(422, 'policy.empty', 'There is nothing to read', 'The text had no sentences in it.')
+    const readable = all.slice(0, POLICY_MAX_SENTENCES)
+    const current = warrant.body
+    const runId = randomUUID()
+
+    stage({ stage: 'reading_policy', sentences: readable.length, parts: Math.ceil(readable.length / READ_CHUNK) })
+    let read: Read
+    let reader: AgentModel
+    try {
+      ;({ output: read, model: reader } = await this.withModels((chosen) => readAll({ model: chosen, current, segments: readable, signal: hooks.signal, onRetry: (reason) => stage({ stage: 'retry', attempt: 1, reason }) }), { primary: model }))
+    } catch (error) {
+      this.record({ id: runId, agent: 'policy_reader', who, conversationId: runId, model: model.name, input: text.slice(0, 2000), output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0, prompt: 'policyReader' })
+      throw error
     }
-    const draft = await this.draftRules(plan.instruction, who, hooks)
-    const sentences = assessPolicy(plan, warrant.body, draft.draft)
-    return { sentences, counts: countStatuses(sentences), draft }
+    this.record({ id: runId, agent: 'policy_reader', who, conversationId: runId, model: reader.name, input: text.slice(0, 2000), output: `${read.kinds.size} of ${readable.length} sentences classified`, steps: [], status: 'ok', error: null, ms: read.ms, prompt: 'policyReader', usage: read.usage })
+
+    const kinds = new Map([...read.kinds].map(([id, value]) => [id, value.kind]))
+    const { sent, skipped } = sendable(readable, kinds)
+    stage({ stage: 'classified', rules: sent.length, setAside: readable.length - sent.length })
+    const skippedIds = new Set([...skipped.map((item) => item.id), ...all.slice(POLICY_MAX_SENTENCES).map((item) => item.id)])
+
+    const sentences = firstPass(all, read.kinds, skippedIds)
+    const instruction = instructionFor(sent)
+    if (!instruction) return { sentences, counts: countStatuses(sentences), audit: 'none' as const, draft: null }
+
+    const drafted = await this.draftRules(instruction, who, hooks.onStage ? { onStage: hooks.onStage } : {}, { intent: false })
+    stage({ stage: 'auditing', sentences: sent.length, changes: listChanges(current, drafted.draft).length })
+    let audit: Audit | null = null
+    const auditId = randomUUID()
+    try {
+      const done = await this.withModels((chosen) => auditPolicy({ model: chosen, current, draft: drafted.draft, sent, signal: hooks.signal, onRetry: (reason) => stage({ stage: 'retry', attempt: 1, reason }) }), { primary: model })
+      audit = done.output
+      this.record({ id: auditId, agent: 'policy_auditor', who, conversationId: runId, model: done.model.name, input: instruction, output: JSON.stringify({ sentences: audit.sentences.length, changes: audit.changes.length }), steps: [], status: 'ok', error: null, ms: audit.ms, prompt: 'policyAuditor', usage: audit.usage })
+    } catch (error) {
+      if (error instanceof Problem && error.code === 'agent.stopped') throw error
+      this.record({ id: auditId, agent: 'policy_auditor', who, conversationId: runId, model: model.name, input: instruction, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0, prompt: 'policyAuditor' })
+    }
+
+    const added = applyAudit(sentences, sent, audit)
+    const untrustedLines = sentences.filter((item) => item.status === 'untrusted').map((item) => item.text)
+    return { sentences, counts: countStatuses(sentences), audit: audit ? ('ok' as const) : ('failed' as const), draft: { ...drafted, added, untrusted: untrustedLines } }
   }
 
   /**

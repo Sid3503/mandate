@@ -85,6 +85,9 @@ export type DraftStage =
   | { stage: 'checking' }
   | { stage: 'replaying' }
   | { stage: 'reading_back' }
+  | { stage: 'reading_policy'; sentences: number; parts: number }
+  | { stage: 'classified'; rules: number; setAside: number }
+  | { stage: 'auditing'; sentences: number; changes: number }
 export type PolicyStreamEvent = ({ type: 'stage' } & DraftStage) | { type: 'done'; policy: import('./types').PolicyResult } | { type: 'error'; code: string; title: string; message: string }
 export type DraftStreamEvent = ({ type: 'stage' } & DraftStage) | { type: 'done'; draft: RulesDraft } | { type: 'error'; code: string; title: string; message: string }
 

@@ -447,6 +447,7 @@ const POLICY_STATUS: Record<SentenceStatus, { label: string; tone: 'deny' | 'aut
   context: { label: 'Background', tone: 'muted' },
   untrusted: { label: 'Set aside', tone: 'deny' },
   skipped: { label: 'Not read yet', tone: 'muted' },
+  unchecked: { label: 'Not checked', tone: 'need' },
 }
 
 const POLICY_LIMIT = 12_000
@@ -487,12 +488,12 @@ function PolicyBox({ onUse }: { onUse: (result: RulesDraft) => void }) {
   return (
     <details className="panel policy-box" data-testid="policy-box">
       <summary className="panel-title">Paste your written policy</summary>
-      <p className="fine">Paste a spending policy from a document or an email. Mandate reads it sentence by sentence and tells you which parts it can enforce, which are a person’s judgment, and which it set aside. It drafts rules for the rest. You read the draft and publish it yourself.</p>
+      <p className="fine">Paste a spending policy from a document or an email. A model reads it sentence by sentence and says which parts Mandate can enforce, which are a person’s judgment, and which are not your words. Another drafts rules for the rest, and a second reading checks that draft against each sentence. Code checks every claim against the rules. You read the draft and publish it yourself.</p>
       <form className="draft-form" onSubmit={(event) => { event.preventDefault(); if (text.trim().length >= 20) read.mutate(text.trim()) }}>
         <label className="sr-only" htmlFor="policy-text">Your written policy</label>
         <textarea id="policy-text" rows={8} maxLength={POLICY_LIMIT} value={text} placeholder={'Contractors may be paid at most $2,000 a month.\nEvery request needs a link to the work.\nUse good judgment on anything unusual.'} onChange={(event) => setText(event.target.value)} />
         <div className="row between wrap">
-          <span className="fine">{text.length.toLocaleString()} of {POLICY_LIMIT.toLocaleString()} characters. Forwarded or quoted text is never treated as yours.</span>
+          <span className="fine">{text.length.toLocaleString()} of {POLICY_LIMIT.toLocaleString()} characters. Quoted or forwarded text is not treated as yours.</span>
           <button type="submit" className="btn btn-ink" disabled={!online || text.trim().length < 20 || read.isPending}>{read.isPending ? 'Reading…' : 'Read my policy'}</button>
         </div>
       </form>
@@ -501,7 +502,7 @@ function PolicyBox({ onUse }: { onUse: (result: RulesDraft) => void }) {
       {result ? (
         <div className="policy-result" data-testid="policy-result">
           <p className="policy-counts" role="status">
-            {(['covered', 'partly', 'not_covered', 'unenforceable', 'untrusted', 'skipped'] as SentenceStatus[]).filter((key) => result.counts[key] > 0).map((key) => <Chip key={key} tone={POLICY_STATUS[key].tone}>{result.counts[key]} {POLICY_STATUS[key].label.toLowerCase()}</Chip>)}
+            {(['covered', 'partly', 'not_covered', 'unchecked', 'unenforceable', 'untrusted', 'skipped'] as SentenceStatus[]).filter((key) => result.counts[key] > 0).map((key) => <Chip key={key} tone={POLICY_STATUS[key].tone}>{result.counts[key]} {POLICY_STATUS[key].label.toLowerCase()}</Chip>)}
           </p>
           <table className="diff policy-table">
             <thead><tr><th scope="col">Line</th><th scope="col">What your policy says</th><th scope="col">What Mandate does with it</th></tr></thead>
@@ -510,6 +511,7 @@ function PolicyBox({ onUse }: { onUse: (result: RulesDraft) => void }) {
             </tbody>
           </table>
           {result.counts.context > 0 ? <button type="button" className="link" onClick={() => setShowAll((value) => !value)}>{showAll ? 'Hide' : 'Show'} {result.counts.context} background line{result.counts.context === 1 ? '' : 's'}</button> : null}
+          {result.audit === 'failed' ? <p className="draft-added" role="alert"><strong>The check of this draft against your policy failed.</strong> Nothing below is confirmed. Read every change before you sign.</p> : null}
           {result.draft ? (
             <div className="draft-result">
               <DraftNote result={result.draft} />
@@ -617,6 +619,9 @@ function stageViews(stages: Array<DraftStage & { at: number }>): StageView[] {
       case 'checking': return { label: 'Code is checking the draft against your words', detail: 'What it loosens, what it leaves out, what it adds' }
       case 'replaying': return { label: 'Replaying your history under the new rules' }
       case 'reading_back': return { label: 'Writing the read-back in plain words' }
+      case 'reading_policy': return { label: 'A model is reading your policy', detail: `${stage.sentences} sentence${stage.sentences === 1 ? '' : 's'}${stage.parts > 1 ? `, in ${stage.parts} parts` : ''}: rule, judgment, someone else’s words, or something Mandate cannot do` }
+      case 'classified': return { label: 'Sorted', detail: `${stage.rules} could be rules and go to the drafter; ${stage.setAside} set aside` }
+      case 'auditing': return { label: 'A second reading is checking the draft against each sentence', detail: `${stage.sentences} sentence${stage.sentences === 1 ? '' : 's'}, ${stage.changes} change${stage.changes === 1 ? '' : 's'}; every claim is checked against the rules` }
     }
   }
   return stages.map((stage, index) => ({ key: `${index}:${stage.stage}`, ...label(stage), state: stage.stage === 'retry' ? 'retry' : index === stages.length - 1 ? 'active' : 'done' }))

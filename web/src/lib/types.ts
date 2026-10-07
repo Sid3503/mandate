@@ -353,9 +353,9 @@ export type RulesDraft = {
   runId: string
 }
 
-export type SentenceStatus = 'covered' | 'partly' | 'not_covered' | 'unenforceable' | 'context' | 'untrusted' | 'skipped'
+export type SentenceStatus = 'covered' | 'partly' | 'not_covered' | 'unenforceable' | 'context' | 'untrusted' | 'skipped' | 'unchecked'
 export type PolicySentence = { id: number; text: string; start: number; end: number; line: number; status: SentenceStatus; reasons: string[]; carriedBy: string[]; already: boolean }
-export type PolicyResult = { sentences: PolicySentence[]; counts: Record<SentenceStatus, number>; draft: RulesDraft | null }
+export type PolicyResult = { sentences: PolicySentence[]; counts: Record<SentenceStatus, number>; audit: 'ok' | 'failed' | 'none'; draft: RulesDraft | null }
 
 export type AskRoute =
   | { kind: 'answer'; id: string; title: string; lines: string[]; links: Array<{ label: string; to: string }> }

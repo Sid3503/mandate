@@ -68,6 +68,41 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
         return call('decide_delivery', { dealId, milestone, decision: bad ? 'rejected' : 'accepted', note: bad ? 'That link does not look like the delivered work.' : 'The link points at the design file for this milestone.' })
       }
 
+      // The policy reader and auditor. Stand-ins for the offline demo and the browser tests only: a real model does this
+      // by reading, and the app does not use patterns like these anywhere. They answer in the shape the real ones do.
+      if (system.includes('You read a company')) {
+        if (seen > 0) return say('Classified.')
+        const items = [...message.matchAll(/^\[(\d+)\] (.+)$/gm)].map((match) => {
+          const line = match[2]!
+          const kind = /ignore (all )?(the )?(previous|prior|above)|system administrator|^>/i.test(line) ? 'not_owners'
+            : /manager|cfo|sign-?off/i.test(line) ? 'second_person'
+            : /judg(e)?ment|reasonabl|fair/i.test(line) ? 'judgment'
+            : /text message|within \d+ days|net \d+|notify/i.test(line) ? 'cannot_express'
+            : line.split(/\s+/).length <= 3 && !/[$%\d]/.test(line) ? 'background' : 'rule'
+          const reason = kind === 'rule' ? 'A rule the settings can carry out.' : kind === 'cannot_express' ? 'Mandate has no notification setting or payment-term clock.' : kind === 'judgment' ? 'This asks for judgment, which a gate cannot check.' : kind === 'second_person' ? 'This needs a second person to approve.' : kind === 'background' ? 'A heading.' : 'Not the owner speaking.'
+          return { id: Number(match[1]), kind, reason }
+        })
+        return call('classify_policy', { items })
+      }
+      if (system.includes('You check a DRAFT')) {
+        if (seen > 0) return say('Audited.')
+        const sentences = [...message.matchAll(/^\[(\d+)\] (.+)$/gm)].map((match) => ({ id: Number(match[1]), text: match[2]! }))
+        const factKeys = [...message.matchAll(/^- (\S+): /gm)].map((match) => match[1]!)
+        const has = (key: string) => factKeys.find((candidate) => candidate === key || candidate.startsWith(key))
+        const audited = sentences.map(({ id, text: line }) => {
+          const money = /\$[\d,]+/.exec(line)?.[0]
+          const cite = (fact: string | undefined, quote: string | undefined) => fact && quote ? { id, verdict: 'enforced', suspicious: false, evidence: [{ fact, quote }], gap: '' } : null
+          return (money && /month/i.test(line) ? cite(has('monthlyCapCents'), money) : null)
+            ?? (money && /single|per payment/i.test(line) ? cite(has('perPaymentCeilingCents'), money) : null)
+            ?? (/priya|automatic/i.test(line) ? cite(has('standing:'), line.slice(0, Math.min(20, line.length))) : null)
+            ?? (/link to the work|proof/i.test(line) ? cite(has('evidenceRequired'), /link to the work|proof/i.exec(line)?.[0]) : null)
+            ?? { id, verdict: 'not_enforced', suspicious: /ignore/i.test(line), evidence: [], gap: 'Nothing in the rules carries this out.' }
+        })
+        const ids = sentences.map((item) => item.id)
+        const changes = [...message.matchAll(/^(\d+)\. \((?:loosens|tightens|note)\)/gm)].map((match) => ({ change: Number(match[1]), supportedBy: ids }))
+        return call('audit_policy', { sentences: audited, changes })
+      }
+
       // The rules drafter: a few phrases, turned into the same kind of patch a real model would write. It only puts in
       // what the words ask for, which is what a faithful drafter does; the checker in the app is what catches an unfaithful one.
       if (system.includes('rules drafter for Mandate')) {
