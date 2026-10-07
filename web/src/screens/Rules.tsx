@@ -9,7 +9,7 @@ import { useToast } from '../components/Toast'
 import { when } from '../lib/format'
 import { useAgentsOn, useIsOwner, useOnline, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
-import type { Party, Replay, RulesDraft, Warrant } from '../lib/types'
+import type { Party, PolicyResult, PolicySentence, Replay, RulesDraft, SentenceStatus, Warrant } from '../lib/types'
 import { wip, type RulesWip } from '../lib/wip'
 import { ruleSentences } from '../lib/words'
 import { useQueryClient } from '@tanstack/react-query'
@@ -116,6 +116,7 @@ export function Rules() {
           onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }}
         />
       ) : null}
+      {owner && !editing ? <PolicyBox onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }} /> : null}
       {editing ? (
         <Editor
           key={resume ? 'resume' : seed?.runId ?? 'blank'}
@@ -435,6 +436,104 @@ function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult }:
         </div>
       ) : null}
     </section>
+  )
+}
+
+const POLICY_STATUS: Record<SentenceStatus, { label: string; tone: 'deny' | 'auto' | 'need' | 'ink' | 'muted' }> = {
+  covered: { label: 'Enforced', tone: 'auto' },
+  partly: { label: 'Partly enforced', tone: 'need' },
+  not_covered: { label: 'Not enforced', tone: 'need' },
+  unenforceable: { label: 'A person’s call', tone: 'muted' },
+  context: { label: 'Background', tone: 'muted' },
+  untrusted: { label: 'Set aside', tone: 'deny' },
+  skipped: { label: 'Not read yet', tone: 'muted' },
+}
+
+const POLICY_LIMIT = 12_000
+
+/**
+ * Paste your written policy. Code sorts it into sentences, sets aside what is not yours or not a rule, a model drafts the
+ * rest, and then code reads every sentence against the finished draft and says which are enforced and which are not.
+ * The model never gives the verdict. Nothing is published.
+ */
+function PolicyBox({ onUse }: { onUse: (result: RulesDraft) => void }) {
+  const agents = useAgentsOn()
+  const online = useOnline()
+  const toast = useToast()
+  const [text, setText] = useState('')
+  const [stages, setStages] = useState<Array<DraftStage & { at: number }>>([])
+  const [showAll, setShowAll] = useState(false)
+  const read = useMutation({
+    mutationFn: async (policy: string) => {
+      setStages([])
+      let result: PolicyResult | null = null
+      let failure: ApiError | null = null
+      await api.streamPolicy(policy, (event) => {
+        if (event.type === 'stage') setStages((current) => [...current, { ...event, at: Date.now() }])
+        else if (event.type === 'done') result = event.policy
+        else if (event.type === 'error') failure = new ApiError(422, event.code, event.title, event.message, {})
+      })
+      if (failure) throw failure
+      if (!result) throw new ApiError(502, 'stream.ended', 'The reading did not finish', 'The connection ended before the policy was read. Nothing was changed.', {})
+      return result as PolicyResult
+    },
+    onSuccess: (data) => toast({ title: 'Policy read', body: `${data.counts.covered + data.counts.partly} of ${data.sentences.length} sentences are enforced, wholly or in part. Nothing is published.`, tone: 'good' }),
+    onError: () => toast({ title: 'The policy could not be read', body: 'Nothing was changed.', tone: 'bad' }),
+  })
+  if (!agents) return null
+  const result = read.data
+  const rows = result ? result.sentences.filter((item) => showAll || (item.status !== 'context')) : []
+  const blocked = Boolean(result?.draft && result.draft.added.length > 0)
+  return (
+    <details className="panel policy-box" data-testid="policy-box">
+      <summary className="panel-title">Paste your written policy</summary>
+      <p className="fine">Paste a spending policy from a document or an email. Mandate reads it sentence by sentence and tells you which parts it can enforce, which are a person’s judgment, and which it set aside. It drafts rules for the rest. You read the draft and publish it yourself.</p>
+      <form className="draft-form" onSubmit={(event) => { event.preventDefault(); if (text.trim().length >= 20) read.mutate(text.trim()) }}>
+        <label className="sr-only" htmlFor="policy-text">Your written policy</label>
+        <textarea id="policy-text" rows={8} maxLength={POLICY_LIMIT} value={text} placeholder={'Contractors may be paid at most $2,000 a month.\nEvery request needs a link to the work.\nUse good judgment on anything unusual.'} onChange={(event) => setText(event.target.value)} />
+        <div className="row between wrap">
+          <span className="fine">{text.length.toLocaleString()} of {POLICY_LIMIT.toLocaleString()} characters. Forwarded or quoted text is never treated as yours.</span>
+          <button type="submit" className="btn btn-ink" disabled={!online || text.trim().length < 20 || read.isPending}>{read.isPending ? 'Reading…' : 'Read my policy'}</button>
+        </div>
+      </form>
+      {read.isPending ? <StageTrail title="Reading the policy" stages={stageViews(stages)} /> : null}
+      <ProblemCard error={read.error} />
+      {result ? (
+        <div className="policy-result" data-testid="policy-result">
+          <p className="policy-counts" role="status">
+            {(['covered', 'partly', 'not_covered', 'unenforceable', 'untrusted', 'skipped'] as SentenceStatus[]).filter((key) => result.counts[key] > 0).map((key) => <Chip key={key} tone={POLICY_STATUS[key].tone}>{result.counts[key]} {POLICY_STATUS[key].label.toLowerCase()}</Chip>)}
+          </p>
+          <table className="diff policy-table">
+            <thead><tr><th scope="col">Line</th><th scope="col">What your policy says</th><th scope="col">What Mandate does with it</th></tr></thead>
+            <tbody>
+              {rows.map((item) => <PolicyRow key={item.id} item={item} />)}
+            </tbody>
+          </table>
+          {result.counts.context > 0 ? <button type="button" className="link" onClick={() => setShowAll((value) => !value)}>{showAll ? 'Hide' : 'Show'} {result.counts.context} background line{result.counts.context === 1 ? '' : 's'}</button> : null}
+          {result.draft ? (
+            <div className="draft-result">
+              <DraftNote result={result.draft} />
+              {result.draft.changed ? <button type="button" className={`btn ${blocked ? 'btn-ghost' : 'btn-lime'}`} onClick={() => onUse(result.draft!)}>{blocked ? 'Review this draft anyway' : 'Review this draft'}</button> : <p className="fine">Your policy already matches the rules. There is nothing to publish.</p>}
+            </div>
+          ) : <p className="fine">Nothing in this text could be a rule, so no model was asked and no draft was made.</p>}
+        </div>
+      ) : null}
+    </details>
+  )
+}
+
+function PolicyRow({ item }: { item: PolicySentence }) {
+  const info = POLICY_STATUS[item.status]
+  return (
+    <tr className={`policy-${item.status}`} data-status={item.status}>
+      <td className="mono">{item.line}</td>
+      <th scope="row">{item.text}</th>
+      <td>
+        <Chip tone={info.tone}>{info.label}</Chip>{item.already && item.status === 'covered' ? <span className="fine"> · already in your rules</span> : null}
+        {item.carriedBy.length > 0 ? <ul className="policy-by">{item.carriedBy.map((line) => <li key={line}>{line}</li>)}</ul> : null}
+        {item.reasons.length > 0 ? <ul className="policy-why">{item.reasons.map((line) => <li key={line}>{line}</li>)}</ul> : null}
+      </td>
+    </tr>
   )
 }
 

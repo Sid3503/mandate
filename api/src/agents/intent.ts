@@ -55,7 +55,7 @@ export function quantitiesIn(words: string): Quantity[] {
 }
 
 /** Every number the finished rules hold, by kind. */
-function valuesIn(rules: WarrantBody) {
+export function valuesIn(rules: WarrantBody) {
   return {
     money: new Set([rules.autoSettleUnderCents, rules.monthlyCapCents, rules.perPaymentCeilingCents]),
     percent: new Set([rules.contractorShareBps / 100, ...rules.standing.map((rule) => (rule.shareBps ?? rules.contractorShareBps) / 100)]),
@@ -67,7 +67,7 @@ function valuesIn(rules: WarrantBody) {
 const dollars = (cents: number) => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: cents % 100 === 0 ? 0 : 2, maximumFractionDigits: 2 })}`
 
 /** Phrases that mean a switch, so a switch turned on without any of them is the model's own idea. */
-const MEANS = {
+export const MEANS = {
   autopay: /automatic|no tap|without (a |any )?(tap|approval)|no approval|don'?t (need|have) to (tap|approve)|straight away|right away|as soon as|(when|once|after|whenever) .{0,40}(pays|paid|payment|settles)|pay(s|ing)? .{0,40}(share|%|percent)|from now on|always pay/i,
   payOnSettle: /(as soon as|when|once|after|whenever) .{0,40}(pays|paid|payment|settles|settled)|automatic|no tap|without (a |any )?(tap|approval)|straight away|right away/i,
   billing: /\bbill|invoice|deliver|milestone|send .{0,20}(client|them) .{0,20}(invoice|bill)/i,
@@ -85,20 +85,24 @@ const WANTS_A_LOOK = /\b(only after|not until|until|unless|before)\b[^.;,]{0,40}
  * to be ignored. Whatever these say, they cannot be what the owner asked for, so a change that only they support is
  * reported as added by the model.
  */
+export const QUOTE_START = /^\s*(fwd?:|forwarded message|begin forwarded|-{3,}|_{3,}|on .{5,60} wrote:)/i
+export const QUOTE_LINE = /^\s*>|^\s*(system|assistant|developer)\s*:/i
+export const INJECTION = /\b(ignore|disregard|forget|override|bypass)\b[^.!?]{0,40}\b(previous|prior|above|earlier|all|your|the|these|owner'?s?)\b[^.!?]{0,30}\b(instructions?|rules?|limits?|checks?|caps?)\b|\bsystem (override|prompt|message)\b|\bnew instructions?\b/i
+
 export function splitUntrusted(message: string): { trusted: string; untrusted: string[] } {
   const untrusted: string[] = []
   const kept: string[] = []
   let quoting = false
   for (const line of message.split('\n')) {
-    if (/^\s*(fwd?:|forwarded message|begin forwarded|-{3,}|_{3,}|on .{5,60} wrote:)/i.test(line)) quoting = true
-    if (quoting || /^\s*>/.test(line) || /^\s*(system|assistant|developer)\s*:/i.test(line)) {
+    if (QUOTE_START.test(line)) quoting = true
+    if (quoting || QUOTE_LINE.test(line)) {
       if (line.trim()) untrusted.push(line.trim())
       continue
     }
     const sentences = line.split(/(?<=[.!?])\s+/)
     const good: string[] = []
     for (const sentence of sentences) {
-      if (/\b(ignore|disregard|forget|override|bypass)\b[^.!?]{0,40}\b(previous|prior|above|earlier|all|your|the|these|owner'?s?)\b[^.!?]{0,30}\b(instructions?|rules?|limits?|checks?|caps?)\b|\bsystem (override|prompt|message)\b|\bnew instructions?\b/i.test(sentence)) untrusted.push(sentence.trim())
+      if (INJECTION.test(sentence)) untrusted.push(sentence.trim())
       else good.push(sentence)
     }
     if (good.length) kept.push(good.join(' '))

@@ -995,3 +995,18 @@ html { scroll-behavior: smooth; }
 .tap-to-rule { display: flex; gap: 16px; align-items: center; justify-content: space-between; border: 1.5px solid var(--ink); background: var(--lime-soft); padding: 14px 16px; }
 .tap-to-rule p { margin: 4px 0 0; }
 @media (max-width: 640px) { .tap-to-rule { flex-direction: column; align-items: stretch; } }
+
+/* ---- Paste your policy ---- */
+.policy-box > summary { cursor: pointer; }
+.policy-box textarea { width: 100%; font: inherit; }
+.policy-counts { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.policy-table th[scope='row'] { text-align: left; font-weight: 500; max-width: 46ch; }
+.policy-table td, .policy-table th { padding: 8px 10px; vertical-align: top; }
+.policy-by, .policy-why { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+.policy-by li::marker { content: '✓ '; }
+.policy-untrusted { background: color-mix(in srgb, var(--red, #d33) 10%, transparent); }
+.policy-context, .policy-unenforceable, .policy-skipped { color: var(--muted, #555); }
+.policy-box .draft-form { display: grid; gap: 8px; }
+.policy-box textarea { min-height: 150px; padding: 10px 12px; border: 1.5px solid var(--ink); background: var(--surface); resize: vertical; }
+.policy-table th[scope='row'] { font: 500 15px/1.4 var(--body, inherit); text-transform: none; letter-spacing: 0; }
+.policy-table td:first-child { width: 48px; }

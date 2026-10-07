@@ -8,6 +8,7 @@ import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from '../services/principal'
 import { draftRules, type DraftStage } from './drafter'
+import { assessPolicy, countStatuses, planPolicy } from './policy'
 import { ModelHealth } from './health'
 import { runStudioTurn, type StudioEvent, type StudioTurn } from './studio'
 import { assessProof } from './proof'
@@ -287,6 +288,24 @@ export class AgentService {
       this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: model.name, input: instruction, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0, prompt: 'drafter' })
       throw error
     }
+  }
+
+  /**
+   * "Paste your policy." The text is split and sorted by code; only the sentences that could be rules reach the drafter,
+   * as numbered lines inside the owner's own request; and every verdict on a sentence is found by code in the finished
+   * draft. Nothing is published. With nothing in the paste that could be a rule, no model is called.
+   */
+  async draftFromPolicy(text: string, who: Principal, hooks: { onStage?: (stage: DraftStage) => void } = {}) {
+    const warrant = this.services.repo.latestWarrant()
+    if (!warrant) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+    const plan = planPolicy(text, warrant.body)
+    if (!plan.instruction) {
+      const counts = countStatuses(plan.sentences)
+      return { sentences: plan.sentences, counts, draft: null }
+    }
+    const draft = await this.draftRules(plan.instruction, who, hooks)
+    const sentences = assessPolicy(plan, warrant.body, draft.draft)
+    return { sentences, counts: countStatuses(sentences), draft }
   }
 
   /**

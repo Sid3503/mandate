@@ -85,6 +85,7 @@ export type DraftStage =
   | { stage: 'checking' }
   | { stage: 'replaying' }
   | { stage: 'reading_back' }
+export type PolicyStreamEvent = ({ type: 'stage' } & DraftStage) | { type: 'done'; policy: import('./types').PolicyResult } | { type: 'error'; code: string; title: string; message: string }
 export type DraftStreamEvent = ({ type: 'stage' } & DraftStage) | { type: 'done'; draft: RulesDraft } | { type: 'error'; code: string; title: string; message: string }
 
 export type NegotiationEvent =
@@ -190,8 +191,11 @@ const streamClerk = (body: { message: string; conversationId?: string; context?:
 /** A draft of new rules, told as it is made: each stage is a real step the server took. */
 const streamDraft = (instruction: string, onEvent: (event: DraftStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/rules/draft/stream', { instruction }, onEvent, signal)
 
+const streamPolicy = (text: string, onEvent: (event: PolicyStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/rules/policy/stream', { text }, onEvent, signal)
+
 export const api = {
   streamNegotiation,
+  streamPolicy,
   streamClerk,
   streamDraft,
   agentHealth: () => request<AgentHealth>('/v1/agents/health'),

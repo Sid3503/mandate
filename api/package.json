@@ -14,7 +14,8 @@
     "eval:agents": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-agents.ts",
     "mcp": "tsx src/mcp/stdio.ts",
     "webhook:register": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/register-webhook.ts",
-    "eval:drafter": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-drafter.ts"
+    "eval:drafter": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-drafter.ts",
+    "eval:policy": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-policy.ts"
   },
   "dependencies": {
     "@ai-sdk/mcp": "^2.0.66",

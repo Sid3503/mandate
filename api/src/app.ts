@@ -20,6 +20,7 @@ import { StudioTurnSchema } from './agents/studio'
 import { DEEP_RUN, EVERY_CHANGE_RUN, GUARANTEES } from './domain/guarantees'
 import { generateCases } from './domain/cases'
 import { countTaps, suggestRules } from './domain/suggest'
+import { POLICY_MAX_CHARS, POLICY_MIN_CHARS } from './agents/policy'
 import { paypalProblem } from './services/paypalProblem'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
@@ -79,6 +80,7 @@ const AskSchema = z.object({
   context: z.object({ jobId: z.string().max(80).optional() }).strict().optional(),
 }).strict()
 const DraftRulesSchema = z.object({ instruction: z.string().trim().min(3).max(1000) }).strict()
+const PolicySchema = z.object({ text: z.string().trim().min(POLICY_MIN_CHARS).max(POLICY_MAX_CHARS) }).strict()
 const NegotiationSchema = z.object({
   buyer: z.string().trim().max(200).optional(),
   task: z.string().trim().max(300).optional(),
@@ -95,7 +97,7 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/party-rules$/ },
   { method: 'PUT', pattern: /^\/v1\/party-rules\/[^/]+$/ },
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
-  { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay|try|cases)$/ },
+  { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay|try|cases|policy|policy\/stream)$/ },
   { method: 'POST', pattern: /^\/v1\/ask$/ },
   { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
@@ -564,6 +566,29 @@ export function createApp(deps: AppDeps) {
       } catch (error) {
         const problem = error instanceof Problem ? error : null
         await send('error', { code: problem?.code ?? 'internal', title: problem?.title ?? 'The draft failed', message: problem?.detail ?? 'The draft failed. Nothing was changed.' })
+      }
+    })
+  })
+  // Paste a written policy; get back which sentences the rules carry out, which cannot be rules, and a draft for the rest.
+  app.post('/v1/rules/policy', async (c) => {
+    assertJson(c)
+    const parsed = PolicySchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return c.json(await agents.draftFromPolicy(parsed.data.text, c.get('principal')))
+  })
+  app.post('/v1/rules/policy/stream', async (c) => {
+    assertJson(c)
+    const parsed = PolicySchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const principal = c.get('principal')
+    return streamSSE(c, async (stream) => {
+      const send = (name: string, data: unknown) => stream.writeSSE({ event: name, data: JSON.stringify({ type: name, ...(data as object) }) })
+      try {
+        const result = await agents.draftFromPolicy(parsed.data.text, principal, { onStage: (stage) => { void send('stage', stage).catch(() => undefined) } })
+        await send('done', { policy: result })
+      } catch (error) {
+        const problem = error instanceof Problem ? error : null
+        await send('error', { code: problem?.code ?? 'internal', title: problem?.title ?? 'The policy could not be read', message: problem?.detail ?? 'The policy could not be read. Nothing was changed.' })
       }
     })
   })
