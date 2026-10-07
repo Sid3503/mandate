@@ -121,6 +121,7 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
     case 'job.missing': return 'Money in has to name the job it pays for.'
     case 'funding.missing': return 'No client payment has money left to fund this payout.'
     case 'funding.job_mismatch': return 'That client payment belongs to a different job.'
+    case 'system.paused': return 'Mandate is paused. Nothing automatic runs and no agent is served until the owner resumes it; the owner’s own requests wait for a tap.'
     case 'funding.disputed': return 'The client has disputed that payment with PayPal, so it cannot fund a payout until the dispute is resolved.'
     case 'funding.exceeds': return `That client payment cannot fund this much at a ${share} contractor share.`
     case 'deal.required': return 'This job has an agreed deal, so a charge on it must bill one of the deal’s milestones.'

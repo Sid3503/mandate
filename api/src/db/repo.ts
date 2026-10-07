@@ -190,18 +190,31 @@ const PROPOSAL_COLUMNS = `id, warrant_id, warrant_version, kind, parent_capture_
   payout_status, payout_txn_id, payout_fee_cents, deal_id, milestone, lock_sig, lock_key_id, invoice_id, invoice_url,
   invoice_status, created_at, updated_at`
 
+/** How many transactions are open on each database, however many Repo objects look at it. */
+const DEPTH = new WeakMap<DatabaseSync, number>()
+
 export class Repo {
   constructor(private readonly db: DatabaseSync) {}
 
+  /**
+   * Runs `fn` as one unit: all of it happens or none of it does. It may be called from inside another transaction (a rule
+   * that records a pause while a request is being decided): the inner one is then a savepoint that can be undone on its
+   * own without undoing the outer one.
+   */
   transaction<T>(fn: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE')
+    const depth = DEPTH.get(this.db) ?? 0
+    const name = `sp_${depth}`
+    this.db.exec(depth === 0 ? 'BEGIN IMMEDIATE' : `SAVEPOINT ${name}`)
+    DEPTH.set(this.db, depth + 1)
     try {
       const value = fn()
-      this.db.exec('COMMIT')
+      this.db.exec(depth === 0 ? 'COMMIT' : `RELEASE ${name}`)
       return value
     } catch (error) {
-      this.db.exec('ROLLBACK')
+      this.db.exec(depth === 0 ? 'ROLLBACK' : `ROLLBACK TO ${name}; RELEASE ${name}`)
       throw error
+    } finally {
+      DEPTH.set(this.db, depth)
     }
   }
 
@@ -641,6 +654,26 @@ export class Repo {
 
   agentRunsInConversation(conversationId: string, limit: number): AgentRunRow[] {
     return this.db.prepare('SELECT * FROM agent_runs WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(conversationId, limit) as AgentRunRow[]
+  }
+
+  safetyState(): { paused: number; reason: string | null; since: string | null; by: string | null; epoch: number } {
+    return this.db.prepare('SELECT paused, reason, since, by, epoch FROM safety_state WHERE id = 1').get() as never
+  }
+
+  setSafetyState(state: { paused: boolean; reason: string | null; since: string | null; by: string | null; epoch: number }): void {
+    this.db.prepare('UPDATE safety_state SET paused = ?, reason = ?, since = ?, by = ?, epoch = ? WHERE id = 1').run(state.paused ? 1 : 0, state.reason, state.since, state.by, state.epoch)
+  }
+
+  insertSafetyEvent(row: { id: string; at: string; type: string; by: string; reason: string | null; detail: string | null; sig: string | null; keyId: string | null }): void {
+    this.db.prepare('INSERT INTO safety_events (id, at, type, by, reason, detail, sig, key_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(row.id, row.at, row.type, row.by, row.reason, row.detail, row.sig, row.keyId)
+  }
+
+  safetyEvents(limit: number): Array<{ id: string; at: string; type: string; by: string; reason: string | null; detail: string | null; sig: string | null; key_id: string | null }> {
+    return this.db.prepare('SELECT * FROM safety_events ORDER BY at DESC, rowid DESC LIMIT ?').all(limit) as never
+  }
+
+  allSafetyEvents(): Array<{ id: string; at: string; type: string; by: string; reason: string | null }> {
+    return this.db.prepare('SELECT id, at, type, by, reason FROM safety_events ORDER BY at ASC, rowid ASC').all() as never
   }
 
   insertClientError(row: { id: string; at: string; role: string; scope: string; message: string; stack: string | null; url: string | null; agent: string | null; releaseId: string | null }): void {

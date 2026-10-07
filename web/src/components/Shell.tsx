@@ -5,7 +5,9 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { PageTransition } from './PageTransition'
 import { ErrorBoundary } from './ErrorBoundary'
 import { StatusBanner } from './StatusBanner'
-import { useQueryClient } from '@tanstack/react-query'
+import { PauseButton } from './PauseButton'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { api } from '../lib/api'
 import { useOnline, useSession, useToday } from '../lib/hooks'
 import { AskProvider, useAsk } from './Ask'
 import { session } from '../lib/session'
@@ -64,6 +66,7 @@ function ShellFrame() {
   const client = useQueryClient()
   const waiting = Array.isArray(today.data?.waiting) ? today.data.waiting.length : 0
   const live = useLive()
+  const paused = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 15_000, retry: false }).data?.paused ?? null
   const location = useLocation()
   const toast = useToast()
   const lock = () => {
@@ -108,6 +111,7 @@ function ShellFrame() {
           <div className="topbar-status">
             <button type="button" className="btn btn-ghost btn-small ask-top" onClick={() => ask.open()} disabled={!me.data?.agents.enabled} title="Ask the clerk (Cmd or Ctrl + K)">Ask <kbd aria-hidden="true">⌘K</kbd></button>
             <GuideButton />
+            <PauseButton paused={Boolean(paused)} />
             {me.data?.role === 'proposer' ? <Chip tone="need">Proposer · can ask, not approve</Chip> : null}
             <Chip tone={live.connected ? 'auto' : 'muted'}><span title={live.connected ? 'Updates arrive the moment they happen' : 'Reconnecting. The page still refreshes every few seconds.'}>{live.connected ? 'Live' : 'Reconnecting'}</span></Chip>
             {me.data ? <Chip tone={me.data.paypalConfigured ? 'auto' : 'muted'}>{me.data.paypalConfigured ? 'PayPal sandbox' : 'PayPal not set'}</Chip> : null}

@@ -22,7 +22,7 @@ const model = (process.env.E2E_LIVE_MODEL ? modelByName(process.env.AGENT_MODEL 
 paypal.autoApprove = process.env.FAKE_BUYER !== 'manual'
 
 const watch = new FakeWatch()
-const services = buildServices({ db, paypal, invoices, watch, publicUrl: `http://127.0.0.1:${port}`, now: () => new Date() })
+const services = buildServices({ db, paypal, invoices, watch, publicUrl: `http://127.0.0.1:${port}`, now: () => new Date(), safety: { tripAfter: 0 } })
 const app = createApp({
   db,
   paypal,

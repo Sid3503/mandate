@@ -165,6 +165,28 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 );
 CREATE INDEX IF NOT EXISTS agent_runs_conversation ON agent_runs(conversation_id, created_at);
 
+CREATE TABLE IF NOT EXISTS safety_state (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  paused INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  since TEXT,
+  by TEXT,
+  epoch INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO safety_state (id, paused, epoch) VALUES (1, 0, 0);
+
+CREATE TABLE IF NOT EXISTS safety_events (
+  id TEXT PRIMARY KEY,
+  at TEXT NOT NULL,
+  type TEXT NOT NULL,
+  by TEXT NOT NULL,
+  reason TEXT,
+  detail TEXT,
+  sig TEXT,
+  key_id TEXT
+);
+CREATE INDEX IF NOT EXISTS safety_events_at ON safety_events(at);
+
 CREATE TABLE IF NOT EXISTS client_errors (
   id TEXT PRIMARY KEY,
   at TEXT NOT NULL,

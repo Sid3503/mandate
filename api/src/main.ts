@@ -32,7 +32,7 @@ const sandbox = config.paypal ? !config.paypal.baseUrl.includes('api-m.paypal.co
 const paypal = config.paypal ? createPayPalClient(config.paypal) : null
 const invoices = config.invoices && config.paypal ? createToolkitInvoices({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
 const watch = config.paypal ? createToolkitWatch({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
-const services = buildServices({ db, paypal, invoices, watch, publicUrl: config.publicUrl, now: () => new Date(), signer })
+const services = buildServices({ db, paypal, invoices, watch, publicUrl: config.publicUrl, now: () => new Date(), signer, safety: { tripAfter: config.breakerRefusals, windowSeconds: config.breakerWindowSeconds } })
 
 // Amazon Bedrock (OpenAI-compatible endpoint) is the default model; Ollama Cloud is optional and is the fallback.
 const { primary: model, drafter: drafterModel, fallback: fallbackModel } = buildModels({

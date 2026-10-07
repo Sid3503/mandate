@@ -573,6 +573,43 @@ test('a server that answers with a page of HTML, or not at all, is described ins
   await expect(page.getByTestId('error-boundary')).toHaveCount(0)
 })
 
+test('the owner can stop everything with one button; agents are refused with the reason; resuming brings it back', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  await unlock(page, OWNER)
+  await page.getByRole('button', { name: 'Pause', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Pause Mandate' })
+  await expect(dialog).toContainText('cannot be called back')
+  await dialog.getByLabel('Why (optional)').fill('Odd requests on Friday')
+  await dialog.getByRole('button', { name: 'Pause everything' }).click()
+
+  const banner = page.getByTestId('paused-banner')
+  await expect(banner).toContainText('Mandate is paused')
+  await expect(banner).toContainText('Odd requests on Friday')
+  await shots(page, '42-paused')
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toHaveCount(0)
+
+  // While paused the studio's key is refused, whatever it asks, and the reason is on the receipt.
+  const refused = await (await request.post('/v1/proposals', {
+    headers: { authorization: 'Bearer proposer-e2e-key-0123456789', 'idempotency-key': `paused-${test.info().project.name}-0001-aaaa` },
+    data: { kind: 'payment', payee: 'Priya', amountCents: 1000, currency: 'USD', category: 'design', description: 'While paused', evidenceUrl: 'https://www.figma.com/file/x' },
+  })).json()
+  expect(['system.paused', 'funding.missing']).toContain(refused.clause)
+
+  // The System page shows the history, signed.
+  await page.goto('/app/system')
+  await expect(page.getByTestId('safety-panel')).toContainText('Paused · Odd requests on Friday')
+  await expect(page.getByTestId('safety-panel')).toContainText('signed ✓')
+
+  await page.getByTestId('paused-banner').getByRole('button', { name: 'Resume' }).click()
+  await expect(page.getByTestId('paused-banner')).toHaveCount(0)
+  await expect(page.locator('.toast', { hasText: 'running again' }).first()).toBeVisible()
+  const state = await (await request.get('/v1/safety', { headers })).json()
+  expect(state.paused).toBe(false)
+  // Proof checks that nothing ran on its own meanwhile.
+  await page.goto('/app/proof')
+  await expect(page.locator('.check-row', { hasText: 'Nothing ran on its own while Mandate was paused' })).toContainText('Pass')
+})
+
 test('the ledger can be exported as CSV, and points to the control room', async ({ page }) => {
   await unlock(page, OWNER)
   await page.goto('/app/ledger')

@@ -205,6 +205,7 @@ const dollars = (cents: number) => `$${(cents / 100).toLocaleString('en-US', { m
 const verb = (kind: string) => (kind === 'charge' ? 'Bill' : kind === 'refund' ? 'Refund' : 'Pay')
 
 const HELD: Record<string, string> = {
+  'system.paused': 'Mandate is paused, so this waits locked. It goes out by itself when the owner resumes.',
   'funding.disputed': 'The client has an open PayPal dispute on the payment that funds it. It goes out by itself when PayPal resolves the dispute.',
   'funding.unverifiable': 'PayPal could not say whether the client payment is disputed, so it is waiting. Mandate asks again every minute.',
   'paypal.upstream': 'PayPal could not be reached. Mandate tries again every minute.',

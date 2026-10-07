@@ -212,22 +212,39 @@ export class DealService {
     // The moment the client decides, whoever decided (the hosted stand-in or an outside agent), the console hears it.
     live.publish({ type: 'review', stage: 'decided', dealId, milestone, decision: input.decision, note, at: stamp() })
     let charge: unknown = null
-    if (input.decision === 'accepted') {
-      const terms = JSON.parse(row.terms_json) as StoredTerms
-      const item = terms.milestones[milestone]!
-      const made = await this.mandate.proposeAndDispatch(ProposalCreateSchema.parse({
-        kind: 'charge', payee: row.buyer_id, amountCents: item.amountCents, currency: terms.currency, category: terms.category,
-        description: `${terms.scope}: ${item.title}`.slice(0, 500), evidenceUrl: current.proof_url,
-        prompt: `Milestone ${milestone + 1} of deal ${row.id.slice(0, 8)} was accepted by the client's agent`, jobId: row.job_id!, dealId: row.id, milestone,
-      }), `accept-${current.id}`, 'autopilot')
-      charge = made.body
-      const id = (made.body as { id?: string }).id
-      if (id) {
-        this.repo.linkDelivery(current.id, id)
-        this.repo.insertEvent(randomUUID(), id, 'delivery.accepted', 'deal.accepted', { deliveryId: current.id, decidedBy: who.buyerId, proofHash: current.proof_hash, keyId: signed.keyId, note }, now)
-      }
-    }
+    // Paused: the client's acceptance is kept, signed, and the invoice waits. Resuming bills what was accepted meanwhile.
+    if (input.decision === 'accepted' && !this.mandate.isPaused()) charge = await this.billAccepted(row, current, signed.keyId, note, who.buyerId)
     return { status: 200, body: { delivery: this.deliveryView(this.repo.delivery(current.id)!), charge } }
+  }
+
+  /** Bills a delivery the client accepted, through the same gate as any bill. The owner's rules decide whether it needs a tap. */
+  private async billAccepted(row: DealRow, current: DeliveryRow, keyId: string, note: string | null, decidedBy: string | null): Promise<unknown> {
+    const terms = JSON.parse(row.terms_json) as StoredTerms
+    const item = terms.milestones[current.milestone]!
+    const made = await this.mandate.proposeAndDispatch(ProposalCreateSchema.parse({
+      kind: 'charge', payee: row.buyer_id, amountCents: item.amountCents, currency: terms.currency, category: terms.category,
+      description: `${terms.scope}: ${item.title}`.slice(0, 500), evidenceUrl: current.proof_url,
+      prompt: `Milestone ${current.milestone + 1} of deal ${row.id.slice(0, 8)} was accepted by the client's agent`, jobId: row.job_id!, dealId: row.id, milestone: current.milestone,
+    }), `accept-${current.id}`, 'autopilot')
+    const id = (made.body as { id?: string }).id
+    if (id) {
+      this.repo.linkDelivery(current.id, id)
+      this.repo.insertEvent(randomUUID(), id, 'delivery.accepted', 'deal.accepted', { deliveryId: current.id, decidedBy, proofHash: current.proof_hash, keyId, note }, this.now().toISOString())
+    }
+    return made.body
+  }
+
+  /** After a resume: bill the milestones the client accepted while Mandate was paused. */
+  async billAcceptedWhilePaused(): Promise<number> {
+    let billed = 0
+    for (const delivery of this.repo.allDeliveries()) {
+      if (delivery.status !== 'accepted' || delivery.proposal_id) continue
+      const deal = this.repo.deal(delivery.deal_id)
+      if (!deal || deal.status !== 'agreed' || this.repo.chargeForMilestone(delivery.deal_id, delivery.milestone)) continue
+      await this.billAccepted(deal, delivery, delivery.key_id ?? '', delivery.note, delivery.decided_by).catch(() => undefined)
+      billed += 1
+    }
+    return billed
   }
 
   /** The deliveries a caller may see: a client sees its own, the owner and the studio see all. */

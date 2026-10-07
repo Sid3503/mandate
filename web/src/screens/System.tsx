@@ -15,6 +15,7 @@ export function System() {
   const keys = useQuery({ queryKey: ['signing-keys'], queryFn: api.signingKeys })
   const owner = useIsOwner()
   const agents = useQuery({ queryKey: ['agent-health'], queryFn: api.agentHealth, enabled: owner, refetchInterval: 15_000 })
+  const safety = useQuery({ queryKey: ['safety'], queryFn: api.safety, refetchInterval: 30_000 })
   const errors = useQuery({ queryKey: ['client-errors'], queryFn: api.clientErrors, enabled: owner, refetchInterval: 60_000 })
   const guide = useGuide()
   const navigate = useNavigate()
@@ -31,6 +32,24 @@ export function System() {
         <button type="button" className="btn btn-ghost" onClick={lock}>Lock console</button>
       </PageHead>
       <FeaturePanel />
+      {safety.data ? (
+        <section className="panel" aria-labelledby="h-safety" data-testid="safety-panel">
+          <h2 className="panel-title" id="h-safety">Emergency stop and breaker</h2>
+          <div className="kvs">
+            <KV label="State">{safety.data.paused ? `Paused · ${safety.data.reason ?? ''}` : 'Running'}</KV>
+            <KV label="Breaker">{safety.data.breaker.tripAfter === 0 ? 'Off' : `Pauses itself after ${safety.data.breaker.tripAfter} refusals from one key in ${Math.round(safety.data.breaker.windowSeconds / 60)} minutes`}</KV>
+            <KV label="What counts">Requests the rules never allow (an unknown payee, a changed cart, an unlisted kind of work). Asking early, or without a proof link, does not.</KV>
+          </div>
+          <p className="fine">The owner’s Pause button does the same by hand. While paused nothing automatic runs, every agent is refused, and the Proof page checks that nothing did. The owner’s own requests wait for a tap.</p>
+          {safety.data.events.length === 0 ? <p className="fine">Mandate has never been paused.</p> : (
+            <ul className="runs">
+              {safety.data.events.slice(0, 8).map((event) => (
+                <li key={event.id}><Chip tone={event.type === 'paused' ? 'deny' : 'auto'}>{event.type}</Chip> <span>{event.by === 'breaker' ? 'by the breaker' : 'by the owner'}{event.reason ? ` · ${event.reason}` : ''}</span> <span className="muted small">{when(event.at)} · {event.signed ? 'signed ✓' : 'NOT SIGNED'}</span></li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
       {owner && (errors.data?.data.length ?? 0) > 0 ? (
         <section className="panel" aria-labelledby="h-screen-errors">
           <h2 className="panel-title" id="h-screen-errors">Recent screen errors</h2>

@@ -98,6 +98,7 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'GET', pattern: /^\/v1\/agents\/health$/ },
   { method: 'GET', pattern: /^\/v1\/client-errors$/ },
+  { method: 'POST', pattern: /^\/v1\/safety\/(pause|resume)$/ },
   { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit)$/ },
@@ -260,7 +261,8 @@ export function createApp(deps: AppDeps) {
     const degraded: string[] = []
     if (upstream && upstream.circuit !== 'closed') degraded.push('paypal')
     if (ai.enabled && primary && primary.circuit !== 'closed' && !ai.fallback) degraded.push('ai')
-    return c.json({ time: deps.now().toISOString(), degraded, paypal: upstream, ai: { enabled: ai.enabled, primary: ai.primary, fallback: ai.fallback, circuit: primary?.circuit ?? 'closed' } })
+    const pause = services.safety.state()
+    return c.json({ time: deps.now().toISOString(), degraded, paused: pause.paused ? { reason: pause.reason, since: pause.since, by: pause.by } : null, paypal: upstream, ai: { enabled: ai.enabled, primary: ai.primary, fallback: ai.fallback, circuit: primary?.circuit ?? 'closed' } })
   })
   // Errors the console hit on a person's screen, so an operator can see them. Rate limited, size capped, never trusted.
   app.post('/v1/client-errors', async (c) => {
@@ -286,6 +288,24 @@ export function createApp(deps: AppDeps) {
     return c.json({ stored: true }, 201)
   })
   app.get('/v1/client-errors', (c) => c.json({ data: services.repo.recentClientErrors(50).map((row) => ({ id: row.id, at: row.at, role: row.role, scope: row.scope, message: row.message, stack: row.stack, url: row.url, agent: row.agent, release: row.release_id })) }))
+  // The emergency stop. Anyone with a key can see whether Mandate is paused; only the owner can pause or resume it.
+  app.get('/v1/safety', (c) => c.json({ ...services.safety.state(), breaker: { tripAfter: services.safety.config.tripAfter, windowSeconds: services.safety.config.windowSeconds }, events: services.safety.events(20) }))
+  app.post('/v1/safety/pause', async (c) => {
+    const text = await c.req.text()
+    let reason: string | null = null
+    if (text) {
+      try {
+        const parsed = z.object({ reason: z.string().max(200).optional() }).safeParse(JSON.parse(text))
+        if (!parsed.success) throw invalidRequest(parsed.error)
+        reason = parsed.data.reason ?? null
+      } catch (error) {
+        if (error instanceof Problem) throw error
+        throw new Problem(400, 'request.invalid', 'Request is invalid', 'Body is not JSON.')
+      }
+    }
+    return c.json(services.safety.pause('owner', reason))
+  })
+  app.post('/v1/safety/resume', async (c) => c.json(await services.safety.resume('owner')))
   app.get('/v1/session', (c) => c.json({ role: c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName } }))
   app.get('/.well-known/mandate-keys.json', (c) => c.json(service.publicKeys()))
   app.get('/v1/warrant', (c) => c.json(service.currentWarrant()))

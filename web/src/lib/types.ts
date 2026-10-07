@@ -107,8 +107,19 @@ export type ClerkReply = {
   ms: number
 }
 
+export type Safety = {
+  paused: boolean
+  reason: string | null
+  since: string | null
+  by: 'owner' | 'breaker' | null
+  epoch: number
+  breaker: { tripAfter: number; windowSeconds: number }
+  events: Array<{ id: string; at: string; type: 'paused' | 'resumed'; by: 'owner' | 'breaker'; reason: string | null; detail: string | null; signed: boolean }>
+}
+
 export type SystemStatus = {
   time: string
+  paused: { reason: string | null; since: string | null; by: 'owner' | 'breaker' | null } | null
   degraded: Array<'paypal' | 'ai'>
   paypal: { circuit: 'closed' | 'open' | 'half_open'; consecutiveFailures: number; lastError: string | null; lastOkAt: string | null; openUntil: string | null } | null
   ai: { enabled: boolean; primary: string | null; fallback: string | null; circuit: 'closed' | 'open' | 'half_open' }

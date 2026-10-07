@@ -27,6 +27,7 @@ export const Clause = {
   dealMilestoneUnknown: 'deal.milestone_unknown',
   dealMilestoneMismatch: 'deal.milestone_mismatch',
   dealMilestoneBilled: 'deal.milestone_billed',
+  systemPaused: 'system.paused',
 } as const
 
 export type GateName = 'DENY' | 'AUTO' | 'NEEDS_APPROVAL'

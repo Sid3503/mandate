@@ -23,6 +23,8 @@ const EnvSchema = z.object({
   AGENT_MODEL: z.string().min(1).optional(),
   DRAFTER_MODEL: z.string().min(1).optional(),
   CLIENT_AGENT: z.enum(['auto', 'manual']).default('auto'),
+  BREAKER_REFUSALS: z.coerce.number().int().min(0).max(50).default(3),
+  BREAKER_WINDOW_SECONDS: z.coerce.number().int().min(10).max(3600).default(120),
   SIGNING_KEYS_PREVIOUS: z.string().optional(),
   WEB_DIST: z.string().min(1).optional(),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).max(10_000).default(120),
@@ -47,6 +49,8 @@ export type AppConfig = {
   invoices: boolean
   bedrockApiKey: string | undefined
   bedrockRegion: string | undefined
+  breakerRefusals: number
+  breakerWindowSeconds: number
   ollamaApiKey: string | undefined
   ollamaBaseUrl: string | undefined
   agentModel: string | undefined
@@ -108,6 +112,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     agentModel: value.AGENT_MODEL,
     drafterModel: value.DRAFTER_MODEL,
     clientAgent: value.CLIENT_AGENT,
+    breakerRefusals: value.BREAKER_REFUSALS,
+    breakerWindowSeconds: value.BREAKER_WINDOW_SECONDS,
     previousPublicKeys: (value.SIGNING_KEYS_PREVIOUS ?? '').split('|').map((item) => item.trim()).filter(Boolean),
     webDist: value.WEB_DIST ?? null,
     rateLimitPerMinute: value.RATE_LIMIT_PER_MINUTE,

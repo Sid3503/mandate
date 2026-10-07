@@ -24,7 +24,7 @@ export const reviewKey = (dealId: string, milestone: number) => `${dealId}:${mil
 export const useLive = () => useContext(LiveContext)
 
 type ServerEvent =
-  | { type: 'changed'; scope: 'ledger' | 'delivery' | 'deal' | 'rules'; what: string; id?: string; dealId?: string; milestone?: number }
+  | { type: 'changed'; scope: 'ledger' | 'delivery' | 'deal' | 'rules' | 'safety'; what: string; id?: string; dealId?: string; milestone?: number }
   | { type: 'review'; stage: 'started' | 'decided' | 'failed'; dealId: string; milestone: number; model?: string; decision?: 'accepted' | 'rejected'; note?: string | null; ms?: number }
   | { type: 'agent'; agent: 'reviewer'; dealId: string; milestone: number; call: { phase: 'start' | 'call' | 'end'; id: string; tool: string; source: 'code' | 'model'; input?: unknown; ok?: boolean; ms?: number; note?: string } }
   | { type: 'hello' }
@@ -34,6 +34,7 @@ const KEYS: Record<string, string[][]> = {
   delivery: [['today'], ['deals'], ['proposals'], ['job']],
   deal: [['today'], ['deals'], ['job']],
   rules: [['warrant'], ['versions'], ['today'], ['party-rules']],
+  safety: [['status'], ['safety'], ['today'], ['proposals'], ['audit'], ['deals']],
 }
 
 /**
@@ -93,7 +94,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         refresh('delivery')
         return
       }
-      if (event.what === 'capture.completed') toastRef.current({ title: 'Money in', body: 'PayPal confirmed the payment. The receipt is settled.' })
+      if (event.what === 'safety.paused') toastRef.current({ title: 'Mandate is paused', body: 'Nothing automatic runs and agents are refused until the owner resumes it.', tone: 'warn', key: 'safety', ms: 9000 })
+      else if (event.what === 'safety.resumed') toastRef.current({ title: 'Mandate is running again', body: 'The autopilot caught up on what it was told to wait for.', key: 'safety' })
+      else if (event.what === 'capture.completed') toastRef.current({ title: 'Money in', body: 'PayPal confirmed the payment. The receipt is settled.' })
       else if (event.what === 'payout.completed') toastRef.current({ title: 'Payout complete', body: 'PayPal confirmed the money reached the contractor.' })
       else if (event.what === 'invoice.sent') toastRef.current({ title: 'Invoice sent', body: 'PayPal emailed it to the client. It settles only when PayPal says it was paid.', tone: 'info' })
       refresh(event.scope)

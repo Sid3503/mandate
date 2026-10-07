@@ -13,6 +13,8 @@ import { assessFeatures } from '../domain/paypalFeatures'
 import { reconcile } from '../domain/reconcile'
 import { Problem } from '../http/problem'
 import { paypalProblem } from './paypalProblem'
+import { applyPause, NOT_PAUSED } from '../domain/safety'
+import type { SafetyService } from './safety'
 import { runIdempotent } from './idempotency'
 
 export type HttpResult = { status: number; body: unknown }
@@ -133,6 +135,8 @@ export class MandateService {
       publicUrl?: string
       /** Read-only view of the PayPal account: disputes and transactions. */
       watch?: WatchPort | null
+      /** The emergency stop and the breaker. Absent in tests that do not need it. */
+      safety?: SafetyService
     } = {},
   ) {}
 
@@ -256,6 +260,14 @@ export class MandateService {
   async dispatchStanding(id: string): Promise<ProposalView | null> {
     const row = this.repo.proposal(id)
     if (!row || !['payment', 'charge'].includes(row.kind) || !STANDING_CLAUSES.includes(row.clause) || !['locked', 'order_created'].includes(row.phase)) return null
+    // Paused: a payout the owner's rule already approved waits, locked, and is sent when Mandate is resumed.
+    if (this.options.safety?.paused()) {
+      const last = [...this.repo.eventsFor(id)].reverse().find((event) => event.type === 'standing.waiting')
+      if (!last || (JSON.parse(last.payload_json) as { code?: string }).code !== Clause.systemPaused) {
+        this.repo.insertEvent(randomUUID(), id, 'standing.waiting', Clause.standingMatched, { code: Clause.systemPaused, detail: 'Mandate is paused, so this waits locked until the owner resumes it' }, this.iso())
+      }
+      return toView(this.require(id))
+    }
     try {
       await this.capture(id)
     } catch (error) {
@@ -316,7 +328,7 @@ export class MandateService {
    */
   private async remindOverdueInvoices(): Promise<number> {
     const automation = this.repo.latestWarrant()?.body.automation
-    if (!this.invoices || !automation?.remindUnpaidAfterDays || automation.maxReminders < 1) return 0
+    if (this.options.safety?.paused() || !this.invoices || !automation?.remindUnpaidAfterDays || automation.maxReminders < 1) return 0
     let sent = 0
     for (const row of this.repo.invoicesOut()) {
       const events = this.repo.eventsFor(row.id)
@@ -332,6 +344,7 @@ export class MandateService {
 
   /** Looks for standing-rule payouts that are approved but not yet sent (PayPal was down, or a dispute held them) and sends them. */
   async sweepStanding(): Promise<number> {
+    if (this.options.safety?.paused()) return 0
     const stuck = this.repo.lockedStandingItems()
     for (const row of stuck) await this.dispatchStanding(row.id)
     return stuck.length
@@ -847,9 +860,29 @@ export class MandateService {
    * server asks to pay each contractor whose standing rule covers it. It only asks: the gate answers exactly as it would
    * for anyone else, and the same settle path sends it.
    */
+  isPaused(): boolean {
+    return this.options.safety?.paused() ?? false
+  }
+
+  /** After a resume: ask, for every settled client payment, for the payouts the autopilot was told to wait on. Idempotent. */
+  async resumeAutopilot(): Promise<number> {
+    let asked = 0
+    for (const row of this.repo.allProposals()) {
+      if (row.kind === 'charge' && row.phase === 'captured') {
+        const before = this.repo.eventsFor(row.id).filter((event) => event.type === 'autopilot.payout_asked').length
+        await this.afterMoney(row.id).catch(() => undefined)
+        asked += this.repo.eventsFor(row.id).filter((event) => event.type === 'autopilot.payout_asked').length - before
+      }
+    }
+    await this.sweepStanding().catch(() => 0)
+    return asked
+  }
+
   private async afterMoney(id: string): Promise<void> {
     const charge = this.repo.proposal(id)
     if (!charge || charge.kind !== 'charge' || charge.phase !== 'captured' || !charge.capture_id) return
+    // Paused: do not ask. Resuming goes back over every settled client payment and asks for what was missed.
+    if (this.options.safety?.paused()) return
     const warrant = this.repo.latestWarrant()
     if (!warrant?.body.automation.payOnSettle) return
     const body = warrant.body
@@ -1025,7 +1058,7 @@ export class MandateService {
     const dealId = input.kind === 'charge' ? input.dealId ?? null : null
     const milestone = dealId ? input.milestone ?? null : null
     const deal = input.kind === 'charge' ? this.dealContext(dealId, milestone, jobId, evidenceUrl) : null
-    const decision = decide(warrant.body, {
+    const decision = applyPause(decide(warrant.body, {
       kind: input.kind,
       payeeId: payee?.id ?? null,
       amountCents: input.amountCents,
@@ -1047,7 +1080,7 @@ export class MandateService {
       dealId,
       milestone,
       deal,
-    }, cap)
+    }, cap), this.options.safety?.state() ?? NOT_PAUSED, actor)
     const id = randomUUID()
     const lockNow = decision.gate === 'AUTO'
     const fields: CartFields | null = lockNow && payee && category && evidenceUrl ? {
@@ -1103,6 +1136,8 @@ export class MandateService {
       runId,
       priorCaptureIds: decision.clause === Clause.capMonthly ? cap.priorCaptureIds : undefined,
     }, now)
+    // Anyone but the owner who keeps asking for things the rules never allow trips the breaker.
+    if (decision.gate === 'DENY' && actor !== 'owner') this.options.safety?.noteRefusal(String(actor), decision.clause)
     const view = toView(this.require(id))
     return { status: 201, body: view }
   }
@@ -1474,6 +1509,9 @@ export class MandateService {
         else out.push({ text: `A client payment on this job can still fund ${dollars(left)}. Ask for that payout and cite that payment.`, tested: false })
         break
       }
+      case Clause.systemPaused:
+        out.push({ text: 'The owner resumes Mandate from the System page or the banner at the top. Until then nothing automatic runs and agents are refused.', tested: false })
+        break
       case Clause.fundingDisputed:
         out.push({ text: 'It would pass once PayPal resolves the client’s dispute on that payment.', tested: false })
         break
