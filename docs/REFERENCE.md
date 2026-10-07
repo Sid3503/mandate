@@ -186,7 +186,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 338 API tests (Vitest), including a 56-case red team, plus 58 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 353 API tests (Vitest), including a 56-case red team, plus 62 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -840,6 +840,7 @@ The base URL is `http://127.0.0.1:8787` locally. Everything under `/v1` needs a 
 | `POST /v1/deals/:id/milestones/:n/decision` | the client's key only | Accept or reject a waiting delivery. Signed. |
 | `POST /v1/deals/:id/milestones/:n/review` | owner | Run the client's agent over a waiting delivery |
 | `GET /v1/deliveries` | any key | Deliveries (a client sees its own) |
+| `POST /v1/studio/turn` | owner | One turn of the dashboard agent in AG Studio, streamed as AG-UI events (`ai`), then `complete`, or `error`. The browser runs Studio's own tools; this route runs none and holds no ledger service or PayPal client. |
 | `POST /v1/rules/draft/stream` | owner | The same draft, told as it is made: `stage` events (`reading`, `drafting`, `patch`, `retry`, `checking`, `replaying`, `reading_back`), then `done` with the draft, or `error` with a named code |
 | `GET /v1/agents/health` | owner | Each model's calls, failures, median and slowest-5% latency, circuit state and tokens, and the prompt version of every agent |
 | `GET /v1/stream` | owner, studio | Server-sent events: `changed` (scope, what, ids), `review` (the client's agent started, decided or failed), `ping`. The console listens and re-reads what changed, so a delivery, a decision, an invoice or a settlement shows the moment it is written. It carries no amounts and no authority. Polling stays as the fallback. |
@@ -1010,8 +1011,8 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 338 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 58 Playwright tests (desktop 1440×960 and Pixel 7)
+cd api && npm test && npm run typecheck        # 353 Vitest tests
+cd web && npm run typecheck && npm run e2e     # 62 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 
 **API tests (`api/test/`)** cover:
@@ -1250,3 +1251,16 @@ The rules are data, so the same server works for anyone whose money is moved by 
 [MIT](../LICENSE). Copyright (c) 2026 Siddharth Mishra.
 
 > **AI can act on your money without owning your money.**
+
+
+## The control room (AG Studio)
+
+**What it is.** `/app/control-room` is a second screen on the ledger, built with AG Studio 3 (`ag-studio`, `ag-studio-react`). The Ledger page stays the table of requests. The control room is a dashboard: three tiles (money in, money out, kept), refusals by rule, how each request was approved, what the rules refused, and who still owes what. The default layout is in `web/src/control-room/layout.ts`; the owner can edit it in Studio, **Save layout** (kept in this browser), **Reset to demo**, or **Copy layout** to make it the default.
+
+**No path to PayPal.** The page fetches every request from the ledger endpoint (`GET /v1/proposals`, all pages), shapes each into a plain row (`web/src/control-room/rows.ts`: `decision`, `reason`, `status`, `how`, `amount`, `direction`, `moneyIn`, `moneyOut`, `kept`, `refused`, `owed`, `job`, `orderId`, `captureId`) and hands Studio the array. `moneyIn` and `moneyOut` count only what PayPal confirmed, never what was asked for. A test checks that the rows add up to the same $150 in, $90 out, $60 kept the job page reports, and a browser test checks that Studio makes no request to any host but this server.
+
+**The dashboard agent.** Studio's agent framework runs its loop in the browser and needs only a model from a server. `POST /v1/studio/turn` is that: the conversation and Studio's tool schemas go in, words and tool calls stream out as AG-UI events. The module (`api/src/agents/studio.ts`) imports the model library and nothing of Mandate's (a test asserts the import list), so it has no service, no ledger and no PayPal client. The analyst has Studio's read and filter tools, a small read-only `ledger_totals` tool of ours (Studio's general query tool has a very large schema that a small model stumbles on), and a hand-off to Studio's built-in page and widget agents. Its text ends up in the agent runs like any other. The ledger text it reads (descriptions) is data: the instructions say so, and the only things it can act on are filters and widgets.
+
+**Licence.** AG Studio is a commercial package (the repository stays MIT; the dependency is not redistributed). It runs locally and in a build with no key: the console shows a watermark and prints "All AG Studio Pro with AI features are unlocked for trial". A trial key (45 days, ag-grid.com/studio/license-pricing) goes in `web/.env` as `VITE_AG_STUDIO_LICENSE`; Vite reads it at build time, so rebuild after setting it. It is passed to `AgStudioProvider`, not to `AgStudio`. To be alive for judging to 15 December the trial has to start on or after 31 October. The key is git-ignored (`web/.env.example` documents it).
+
+**What it costs.** The Studio chunk is 4.6 MB (1.3 MB gzipped), loaded only when the screen opens and left out of the offline cache. On a phone the screen says it is a desktop screen and points to the Ledger. Studio is not in the accessibility scan: its widgets are third-party.

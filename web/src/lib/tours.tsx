@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { TourStep } from '../components/ui/product-tour'
 
-export type TourId = 'welcome' | 'inbox' | 'proof' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk'
+export type TourId = 'welcome' | 'inbox' | 'proof' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk' | 'control-room'
 
 const p = (children: ReactNode) => <p>{children}</p>
 
@@ -18,6 +18,7 @@ export const TOUR_LABEL: Record<TourId, string> = {
   system: 'System',
   deals: 'Deals',
   clerk: 'Ask Mandate',
+  'control-room': 'the Control room',
 }
 
 /** Which tour belongs to the screen the person is on. */
@@ -29,6 +30,7 @@ export function tourFor(pathname: string): TourId {
   if (pathname.startsWith('/deals')) return 'deals'
   if (pathname.startsWith('/clerk')) return 'clerk'
   if (pathname.startsWith('/ledger')) return 'ledger'
+  if (pathname.startsWith('/control-room')) return 'control-room'
   if (pathname.startsWith('/rules')) return 'rules'
   if (pathname.startsWith('/system')) return 'system'
   if (pathname.startsWith('/proof')) return 'proof'
@@ -403,6 +405,27 @@ export const TOURS: Record<TourId, TourStep[]> = {
       title: 'What the rules kept safe',
       placement: 'top',
       content: p('The total that was asked for and refused. PayPal was never called for any of it.'),
+    },
+  ],
+
+  'control-room': [
+    {
+      target: '[data-tour="cr-note"]',
+      title: 'A second screen on the same ledger',
+      placement: 'bottom',
+      content: p('The Ledger is the table of requests. This is the dashboard you build from them. AG Studio is handed plain rows copied from the ledger and can only display them: it has no connection to PayPal or to Mandate.'),
+    },
+    {
+      target: '[data-tour="cr-stage"]',
+      title: 'Money in and out count only what PayPal confirmed',
+      placement: 'top',
+      content: p('A request that was asked for but not paid does not move a tile. Switch to Edit to drag widgets, change what a chart shows, or build your own. Save layout keeps it in this browser.'),
+    },
+    {
+      target: '[data-tour="cr-stage"]',
+      title: 'Ask the analyst',
+      placement: 'top',
+      content: p('In Edit mode the chat panel takes a sentence: “show what the rules refused”. It can read the ledger copy and change this dashboard. It has no tool for PayPal and none for asking Mandate to move money.'),
     },
   ],
 

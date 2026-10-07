@@ -20,7 +20,9 @@ This file is the product story: what it is, why it exists, what we built, how it
 
 **The AI layer is built like a service.** Amazon Bedrock is the default model (Ollama is the fallback), with a forced single tool call where the job is one decision, retries only when nothing has happened, a circuit breaker, token and latency counts, and prompts that are versioned, fenced against injected text and backed by snapshot tests. Measured on the real model: 14 of 14 agent cases and 25 of 25 drafter wordings, with no miss ever moving money.
 
-**Numbers:** 338 API tests (56 of them a red team), 58 browser tests on desktop and phone, an axe accessibility scan on every screen.
+**A second screen, built with AG Studio** (`/app/control-room`, desktop). The Ledger page is the table of requests (AG Grid); the control room is the dashboard the owner builds from them: money in and out, refusals by rule, how each request was approved, who still owes what. Studio is handed plain rows copied from the ledger and can only display them: it has no connection to PayPal or to Mandate, and the tiles count only what PayPal confirmed. A chat analyst inside Studio reads the ledger copy, sets filters and asks Studio's page and widget agents to draw. It runs on Mandate's own model through one route that holds no ledger service and no PayPal client, so the worst it can do is change the dashboard.
+
+**Numbers:** 353 API tests (56 of them a red team), 62 browser tests on desktop and phone, an axe accessibility scan on every screen.
 
 **Not yet:** a public deploy (so no registered webhook or hosted return URL), a real open dispute (the sandbox cannot create one), the demo video, the deck and the Devpost write-up.
 
@@ -175,7 +177,7 @@ An installable React app served at `/app/`.
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 338 API tests (56 of them a red team) and 58 browser tests on desktop and phone, with an accessibility scan on every screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 353 API tests (56 of them a red team) and 62 browser tests on desktop and phone, with an accessibility scan on every screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -276,7 +278,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 10. Proof
 
-- **338 API tests** (Vitest; 56 are the red team) and **58 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
+- **353 API tests** (Vitest; 56 are the red team) and **62 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation) and compared on four models. No miss on any model moved money.
 - **The whole frozen job has run on the real PayPal sandbox, both milestones:** agents negotiated and signed $300; Northwind paid two real invoices; the locks verified; two real $90 payouts reached Priya's sandbox account (the second with no tap, under a standing rule); the job reads **$300 in, $180 out, $120 kept**; and cancelling an unclaimed payout returned the money.
 - **Proof** runs ten checks over the ledger (and an eleventh against PayPal's own history on request), and the tests tamper with the database eight ways to check the right one fails.

@@ -1,9 +1,10 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef, type ICellRendererParams } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useMemo, useRef, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { EnableSteps, useFeatures } from '../components/PayPalFeatures'
+import { useToast } from '../components/Toast'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { shortId, when } from '../lib/format'
@@ -70,6 +71,8 @@ function Requests() {
   const warrant = useWarrant()
   const navigate = useNavigate()
   const narrow = useNarrow()
+  const toast = useToast()
+  const grid = useRef<AgGridReact<Proposal>>(null)
   const [preset, setPreset] = useState<Preset>('all')
   const [search, setSearch] = useState('')
   const rows = useMemo(() => (proposals.data?.data ?? []).filter(PRESETS.find((item) => item.id === preset)!.test), [proposals.data, preset])
@@ -123,11 +126,14 @@ function Requests() {
             <button key={item.id} type="button" className={`filter${preset === item.id ? ' on' : ''}`} onClick={() => setPreset(item.id)}>{item.label}</button>
           ))}
         </div>
+        <button type="button" className="btn btn-ghost btn-small" onClick={() => { grid.current?.api.exportDataAsCsv({ fileName: 'mandate-ledger.csv', skipPinnedBottom: true }); toast({ title: 'Ledger exported', body: `${rows.length} requests saved as mandate-ledger.csv.`, tone: 'info', key: 'export' }) }}>Export CSV</button>
+        <Link className="btn btn-ghost btn-small" to="/control-room">Open in the control room →</Link>
         <input className="search" data-tour="ledger-search" type="search" placeholder="Search names, rules, jobs…" value={search} onChange={(event) => setSearch(event.target.value)} aria-label="Search the ledger" />
       </div>
       <ProblemCard error={proposals.error} />
       <div className="grid-wrap" data-tour="ledger-grid" style={{ height: Math.min(680, 140 + rows.length * 62) }}>
         <AgGridReact<Proposal>
+          ref={grid}
           theme={theme}
           rowData={rows}
           columnDefs={columns}

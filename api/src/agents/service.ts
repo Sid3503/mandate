@@ -9,6 +9,7 @@ import type { Services } from '../services/container'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from '../services/principal'
 import { draftRules, type DraftStage } from './drafter'
 import { ModelHealth } from './health'
+import { runStudioTurn, type StudioEvent, type StudioTurn } from './studio'
 import { assessProof } from './proof'
 import { readBack } from './intent'
 import { claimsMoneyMoved, composeReply, unsupportedAmounts, type Outcome } from './guard'
@@ -286,6 +287,19 @@ export class AgentService {
       this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: model.name, input: instruction, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0, prompt: 'drafter' })
       throw error
     }
+  }
+
+  /**
+   * One turn of the dashboard agent in the browser (AG Studio). The model only writes; the dashboard's own tools run in
+   * the browser, against a copy of the ledger. Nothing here is handed a service, the ledger or PayPal.
+   */
+  async studioTurn(turn: StudioTurn, who: Principal, hooks: { onEvent: (event: StudioEvent) => void; signal?: AbortSignal }) {
+    this.need()
+    this.limit(who, 'studio', 40)
+    const { output: done, model } = await this.withModels((chosen) => runStudioTurn({ model: chosen, turn, signal: hooks.signal, onEvent: hooks.onEvent }))
+    this.record({ id: randomUUID(), agent: 'studio', who, conversationId: randomUUID(), model: model.name, input: JSON.stringify(turn.input.slice(-1)[0] ?? {}).slice(0, 2000), output: JSON.stringify(done.output).slice(0, 4000), steps: [], status: 'ok', error: null, ms: done.ms, usage: { inputTokens: done.usage?.inputTokens, outputTokens: done.usage?.outputTokens } })
+    const { emitted: _emitted, ms: _ms, ...response } = done
+    return response
   }
 
   /** What an operator wants to know about the AI layer: the models, their recent health, the prompt versions in force. */

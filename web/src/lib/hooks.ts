@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from './api'
-import type { Proposal } from './types'
+import type { Page, Proposal } from './types'
 import { namer } from './words'
 
 export function useSession() {
@@ -93,4 +93,23 @@ export function useRefreshDeals() {
 
 export function useAgentsOn(): boolean {
   return useSession().data?.agents.enabled === true
+}
+
+/** Every request in the ledger, all pages (up to 2,000). The control room needs the whole picture, not the first hundred. */
+export function useAllProposals() {
+  return useQuery({
+    queryKey: ['proposals', 'all'],
+    queryFn: async () => {
+      const all: Proposal[] = []
+      let cursor: string | null = null
+      for (let page = 0; page < 20; page += 1) {
+        const made: Page<Proposal> = await api.proposals(cursor)
+        all.push(...made.data)
+        cursor = made.nextCursor
+        if (!cursor) break
+      }
+      return all
+    },
+    refetchInterval: 15_000,
+  })
 }

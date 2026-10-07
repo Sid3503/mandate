@@ -368,7 +368,7 @@ async function settled(page: import('@playwright/test').Page) {
 
 test('every screen has a guide that walks to its last step', async ({ page }) => {
   await unlock(page, OWNER)
-  const screens = ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/proof', '/app/system']
+  const screens = ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', ...(test.info().project.name === 'desktop' ? ['/app/control-room'] : []), '/app/rules', '/app/proof', '/app/system']
   for (const path of screens) {
     await page.goto(path)
     await settled(page)
@@ -534,6 +534,72 @@ test('the system page shows the AI layer: which models, which prompt versions, a
   await expect(panel).toContainText('Prompt versions')
   await expect(panel).toContainText('clerk v1')
   await expect(panel).toContainText('reviewer v2')
+})
+
+test('the ledger can be exported as CSV, and points to the control room', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/ledger')
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export CSV' }).click()
+  expect((await download).suggestedFilename()).toBe('mandate-ledger.csv')
+  await expect(page.locator('.toast', { hasText: 'Ledger exported' })).toBeVisible()
+  if (test.info().project.name === 'desktop') {
+    await page.getByRole('link', { name: /Open in the control room/ }).click()
+    await expect(page).toHaveURL(/\/app\/control-room/)
+  }
+})
+
+test('the control room shows the ledger in AG Studio, follows it live, keeps a saved layout, and reaches nothing outside Mandate', async ({ page, request }) => {
+  if (test.info().project.name === 'phone') {
+    // A dashboard needs room: on a phone the screen says so and points at the Ledger.
+    await unlock(page, OWNER)
+    await page.goto('/app/control-room')
+    await expect(page.getByRole('status').filter({ hasText: 'desktop screen' })).toBeVisible()
+    return
+  }
+  const headers = { authorization: `Bearer ${OWNER}` }
+  const tag = test.info().project.name
+  const refuse = (n: number, description: string, payee: string) => request.post('/v1/proposals', {
+    headers: { ...headers, 'idempotency-key': `cr-${tag}-${n}-aaaaaaaa` },
+    data: { kind: 'payment', payee, amountCents: 1800, currency: 'USD', category: 'design', description, evidenceUrl: 'https://www.figma.com/file/x', prompt: 'x' },
+  })
+  await refuse(1, 'Control room first refusal', 'Nobody Known')
+  const outside: string[] = []
+  page.on('request', (r) => { const url = new URL(r.url()); if (!['127.0.0.1', 'localhost'].includes(url.hostname) && url.protocol.startsWith('http')) outside.push(r.url()) })
+
+  await unlock(page, OWNER)
+  await page.getByRole('link', { name: 'Control room' }).first().click()
+  const room = page.getByTestId('control-room')
+  await expect(room).toContainText('MONEY IN · CONFIRMED', { timeout: 30_000 })
+  await expect(room).toContainText('WHAT THE RULES REFUSED', { timeout: 30_000 })
+  await expect(room).toContainText('Control room first refusal', { timeout: 30_000 })
+  // Every widget finishes loading, and none is left on a visible spinner (Studio keeps a hidden status label, so read what is shown).
+  await expect.poll(async () => (await room.innerText()).includes('Loading...'), { timeout: 30_000 }).toBe(false)
+  await shots(page, '40-control-room')
+
+  // A new refusal appears on the dashboard without a reload.
+  await refuse(2, 'Control room live refusal', 'Nobody Known')
+  await expect(room).toContainText('Control room live refusal', { timeout: 30_000 })
+
+  // The dashboard agent answers in the chat panel through Mandate's own route.
+  const turn = page.waitForResponse((r) => r.url().includes('/v1/studio/turn') && r.status() === 200)
+  await page.getByRole('textbox', { name: 'Message input' }).fill('hello')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await turn
+  await expect(room).toContainText('Tell me what to pay', { timeout: 30_000 })
+
+  // A saved layout survives a reload, and Reset goes back to the demo layout.
+  await page.getByRole('button', { name: 'Save layout' }).click()
+  await expect(page.locator('.toast', { hasText: 'Layout saved' })).toBeVisible()
+  await page.reload()
+  await expect(page.getByTestId('control-room')).toContainText('WHAT THE RULES REFUSED', { timeout: 30_000 })
+  const reset = page.getByRole('button', { name: 'Reset to demo' })
+  await expect(reset).toBeEnabled()
+  await reset.click()
+  await expect(reset).toBeDisabled()
+
+  // Studio never reached anything but this server: no PayPal, no AG Grid, no font or analytics host.
+  expect(outside).toEqual([])
 })
 
 test('a visitor with no key sees what Mandate is first, and can reach the unlock', async ({ page }) => {

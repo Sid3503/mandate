@@ -41,6 +41,7 @@ const GO: Array<{ label: string; to: string; words: string }> = [
   { label: 'Deals', to: '/deals', words: 'deals negotiate agree' },
   { label: 'Rules', to: '/rules', words: 'rules standing autopilot cap limit draft' },
   { label: 'Ledger', to: '/ledger', words: 'ledger history events requests' },
+  { label: 'Control room', to: '/control-room', words: 'control room dashboard studio charts money in out refusals' },
   { label: 'Proof', to: '/proof', words: 'proof audit verify check ledger' },
   { label: 'Verify a receipt', to: '/verify', words: 'verify receipt signature check browser' },
   { label: 'System', to: '/system', words: 'system paypal features tools balance disputes' },

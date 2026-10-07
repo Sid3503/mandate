@@ -34,7 +34,8 @@ export default defineConfig({
         // Only the app shell is cached. Money calls (/v1/*) are never cached and never queued.
         globPatterns: ['**/*.{js,css,html,svg,png,woff2,webmanifest}'],
         // The landing page's screenshots are for first-time visitors, not for working offline.
-        globIgnores: ['landing/**'],
+        // The control room (AG Studio) is 4.6 MB: it is fetched when opened, not cached with the shell.
+        globIgnores: ['landing/**', '**/ControlRoom-*.js'],
         navigateFallback: '/app/index.html',
         navigateFallbackAllowlist: [/^\/app\//],
         cleanupOutdatedCaches: true,

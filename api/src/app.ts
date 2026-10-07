@@ -16,6 +16,7 @@ import { PayPalError, type PayPalPort } from './paypal/port'
 import { handleMcp } from './mcp/http'
 import { AgentService, logReviewFailure } from './agents/service'
 import { live } from './services/live'
+import { StudioTurnSchema } from './agents/studio'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
 import type { WatchPort } from './paypal/watch'
@@ -93,6 +94,7 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'GET', pattern: /^\/v1\/agents\/health$/ },
+  { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit)$/ },
   { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
@@ -458,6 +460,34 @@ export function createApp(deps: AppDeps) {
       } catch (error) {
         const problem = error instanceof Problem ? error : null
         await send('error', { code: problem?.code ?? 'internal', title: problem?.title ?? 'The draft failed', message: problem?.detail ?? 'The draft failed. Nothing was changed.' })
+      }
+    })
+  })
+  // One turn of the dashboard agent in AG Studio. It streams the model's words and tool calls back; the browser runs the
+  // dashboard's own tools. The route hands the agent no service, no ledger and no PayPal client. Owner only.
+  app.post('/v1/studio/turn', async (c) => {
+    assertJson(c)
+    const raw = await c.req.text()
+    if (raw.length > 600_000) throw new Problem(413, 'request.too_large', 'The conversation is too long', 'Start a new thread in the chat panel.')
+    let body: unknown
+    try {
+      body = JSON.parse(raw)
+    } catch {
+      throw new Problem(400, 'request.invalid', 'Request is invalid', 'Body is not JSON.')
+    }
+    const parsed = StudioTurnSchema.safeParse(body)
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const principal = c.get('principal')
+    const abort = new AbortController()
+    c.req.raw.signal.addEventListener('abort', () => abort.abort())
+    return streamSSE(c, async (stream) => {
+      const send = (name: string, data: unknown) => stream.writeSSE({ event: name, data: JSON.stringify(data) })
+      try {
+        const done = await agents.studioTurn(parsed.data, principal, { signal: abort.signal, onEvent: (event) => { void send('ai', event).catch(() => undefined) } })
+        await send('complete', done)
+      } catch (error) {
+        const problem = error instanceof Problem ? error : null
+        await send('error', { code: problem?.code ?? 'internal', message: problem?.detail ?? 'The agent failed. Nothing on the dashboard changed.' })
       }
     })
   })

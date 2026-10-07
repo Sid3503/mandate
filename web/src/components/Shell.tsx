@@ -17,6 +17,7 @@ const NAV = [
   { to: '/clerk', label: 'Ask', tour: 'nav-clerk', icon: 'M4 5h16v11H9l-5 4z M8 9h8 M8 12h5' },
   { to: '/new', label: 'Request', tour: 'nav-new', icon: 'M12 5v14 M5 12h14' },
   { to: '/ledger', label: 'Ledger', tour: 'nav-ledger', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16' },
+  { to: '/control-room', label: 'Control room', tour: 'nav-control-room', icon: 'M4 19V9 M10 19V5 M16 19v-7 M22 19H2', desktopOnly: true },
   { to: '/rules', label: 'Rules', tour: 'nav-rules', icon: 'M6 4h12v16H6z M9 9h6 M9 13h6 M9 17h3' },
   { to: '/proof', label: 'Proof', tour: 'nav-proof', icon: 'M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z M8.5 12l2.5 2.5 4.5-5' },
 ]
@@ -121,7 +122,7 @@ function ShellFrame() {
       </div>
 
       <nav className="tabbar" aria-label="Main">
-        {NAV.map((item) => (
+        {NAV.filter((item) => !('desktopOnly' in item && item.desktopOnly)).map((item) => (
           <NavLink key={item.to} to={item.to} end={item.end} className="tab" data-tour={item.tour}>
             {({ isActive }) => (
               <>
