@@ -201,6 +201,11 @@ export function migrate(db: DatabaseSync): void {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS proposals_payout_batch ON proposals(payout_batch_id) WHERE payout_batch_id IS NOT NULL')
   db.exec('CREATE INDEX IF NOT EXISTS proposals_job ON proposals(job_id, created_at)')
   db.exec('CREATE INDEX IF NOT EXISTS proposals_funding ON proposals(funding_capture_id)')
+  // What each agent run cost and which wording produced it, so "why did it say that?" and "what does it cost?" have answers.
+  const runColumns = new Set((db.prepare('PRAGMA table_info(agent_runs)').all() as Array<{ name: string }>).map((column) => column.name))
+  for (const [name, type] of [['prompt_version', 'TEXT'], ['input_tokens', 'INTEGER'], ['output_tokens', 'INTEGER'], ['turns', 'INTEGER']] as const) {
+    if (!runColumns.has(name)) db.exec(`ALTER TABLE agent_runs ADD COLUMN ${name} ${type}`)
+  }
 }
 
 export function seed(db: DatabaseSync, now: Date): void {

@@ -83,6 +83,10 @@ export type AgentRunRow = {
   error: string | null
   ms: number | null
   created_at: string
+  prompt_version?: string | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  turns?: number | null
 }
 
 export type DisputeRow = { disputeId: string; transactionId: string; status: string; reason: string | null; amountCents: number | null; currency: string | null; openedAt: string | null; updatedAt: string }
@@ -624,9 +628,10 @@ export class Repo {
   // ---------- agent runs ----------
 
   insertAgentRun(row: AgentRunRow): void {
-    this.db.prepare(`INSERT INTO agent_runs (id, agent, actor, conversation_id, model, status, input, output, trace_json, error, ms, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+    this.db.prepare(`INSERT INTO agent_runs (id, agent, actor, conversation_id, model, status, input, output, trace_json, error, ms, created_at, prompt_version, input_tokens, output_tokens, turns)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       row.id, row.agent, row.actor, row.conversation_id, row.model, row.status, row.input, row.output, row.trace_json, row.error, row.ms, row.created_at,
+      row.prompt_version ?? null, row.input_tokens ?? null, row.output_tokens ?? null, row.turns ?? null,
     )
   }
 

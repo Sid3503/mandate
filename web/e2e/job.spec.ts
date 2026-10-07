@@ -485,7 +485,12 @@ test('the clerk asks the rules; a fooled clerk changes nothing', async ({ page, 
   await expect(bubble).toContainText('not on the rules', { timeout: 30_000 })
   await expect(bubble).toContainText('payee.unknown')
   await expect(bubble).toContainText('$0 moved')
-  await expect(bubble.locator('.chip').first()).toHaveText('Refused')
+  await expect(bubble.locator('.result-card .chip').first()).toHaveText('Refused')
+  // The slip shows the work: which tool, what it was given, the rules' one-line answer.
+  await expect(bubble.locator('.tooltrail')).toContainText('Filed the request with the rules')
+  await expect(bubble.locator('.tooltrail .tt-answer')).toContainText('Refused · payee.unknown')
+  await bubble.locator('.tt-raw summary').first().click()
+  await expect(bubble.locator('.tt-raw pre').first()).toBeVisible()
   await shots(page, '27-clerk-refused')
   await bubble.getByRole('link', { name: 'Open receipt →' }).click()
   await expect(page.locator('.agent-trace')).toContainText('Studio clerk')
@@ -519,6 +524,16 @@ test('a client charge can be billed as a PayPal invoice and settles only when Pa
   await expect(page.locator('.match-flag')).toHaveText('cents match ✓')
   await expect(page.getByText('Invoice is')).toBeVisible()
   await request.post('/__fake/payouts/invoices-off', { headers })
+})
+
+test('the system page shows the AI layer: which models, which prompt versions, and how they are doing', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/system')
+  const panel = page.getByRole('region', { name: 'The AI layer' })
+  await expect(panel).toBeVisible()
+  await expect(panel).toContainText('Prompt versions')
+  await expect(panel).toContainText('clerk v1')
+  await expect(panel).toContainText('reviewer v2')
 })
 
 test('a visitor with no key sees what Mandate is first, and can reach the unlock', async ({ page }) => {

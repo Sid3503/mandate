@@ -2,7 +2,9 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
-import { api } from '../lib/api'
+import { api, ApiError, type DraftStage } from '../lib/api'
+import { StageTrail, type StageView } from '../components/ToolTrail'
+import { useToast } from '../components/Toast'
 import { when } from '../lib/format'
 import { useAgentsOn, useIsOwner, useOnline, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
@@ -66,7 +68,8 @@ export function Rules() {
     wip.write(next)
     return next.body || next.result || next.instruction.trim() ? next : null
   })
-  const discard = () => { wip.clear(); setSaved(null); setResume(null); setSeed(null) }
+  const toast = useToast()
+  const discard = () => { wip.clear(); setSaved(null); setResume(null); setSeed(null); toast({ title: 'Unpublished changes discarded', body: 'The live rules were not touched.', tone: 'info' }) }
   useEffect(() => {
     if (selected === null && list[0]) setSelected(list[0].version)
   }, [list, selected])
@@ -97,7 +100,7 @@ export function Rules() {
             <p className="fine">Started {when(new Date(saved.at).toISOString())} from version {saved.baseVersion}. Nothing is live until you publish.</p>
           </div>
           <div className="row gap-s wrap">
-            <button type="button" className="btn btn-ink btn-small" onClick={() => { setSeed(null); setResume(saved.body); setEditing(true) }}>Continue editing</button>
+            <button type="button" className="btn btn-ink btn-small" onClick={() => { setSeed(null); setResume(saved.body); setEditing(true); toast({ title: 'Picked up where you left off', body: 'Still unpublished. Nothing is live until you publish.', tone: 'info', key: 'wip' }) }}>Continue editing</button>
             <button type="button" className="btn btn-ghost btn-small" onClick={discard}>Discard</button>
           </div>
         </div>
@@ -184,6 +187,7 @@ function Changes({ changes, first = false }: { changes: Change[]; first?: boolea
 
 function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; seed: RulesDraft | null; resume: Body | null; onKeep: (body: Body | null) => void; onDone: (version: number | null) => void }) {
   const client = useQueryClient()
+  const toast = useToast()
   const online = useOnline()
   const start = useMemo(() => body(current), [current])
   const from: Body = resume ?? seed?.draft ?? start
@@ -247,6 +251,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
     mutationFn: (next: Body) => api.publishWarrant(next, current.version),
     onSuccess: async (saved) => {
       await Promise.all([client.invalidateQueries({ queryKey: ['versions'] }), client.invalidateQueries({ queryKey: ['warrant'] })])
+      toast({ title: 'Rules published', body: `Version ${saved.version} is signed and in force. Open requests keep the version they were decided against.` })
       onDone(saved.version)
     },
   })
@@ -374,7 +379,31 @@ function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult }:
   const online = useOnline()
   const [text, setText] = useState(prefill ?? initialInstruction)
   const [restored] = useState(initialResult)
-  const make = useMutation({ mutationFn: (instruction: string) => api.draftRules(instruction), onSuccess: (data, instruction) => onKeep(instruction, data) })
+  const toast = useToast()
+  // The steps the server really takes to make a draft, shown as they happen.
+  const [stages, setStages] = useState<Array<DraftStage & { at: number }>>([])
+  const make = useMutation({
+    mutationFn: async (instruction: string) => {
+      setStages([])
+      let draft: RulesDraft | null = null
+      let failure: ApiError | null = null
+      await api.streamDraft(instruction, (event) => {
+        if (event.type === 'stage') setStages((current) => [...current, { ...event, at: Date.now() }])
+        else if (event.type === 'done') draft = event.draft
+        else if (event.type === 'error') failure = new ApiError(422, event.code, event.title, event.message, {})
+      })
+      if (failure) throw failure
+      if (!draft) throw new ApiError(502, 'stream.ended', 'The draft did not finish', 'The connection ended before the draft was complete. Nothing was changed.', {})
+      return draft as RulesDraft
+    },
+    onSuccess: (data, instruction) => {
+      onKeep(instruction, data)
+      toast(data.added.length > 0
+        ? { title: 'Draft ready, with a warning', body: 'The model added something you did not ask for. Read the red note before anything else.', tone: 'bad' }
+        : { title: data.changed ? 'Draft ready' : 'Nothing to change', body: data.changed ? 'Read what it changes. Nothing is published.' : 'That request did not change any rule.', tone: data.changed ? 'good' : 'info' })
+    },
+    onError: () => toast({ title: 'The draft did not work', body: 'Nothing was changed. You can say it another way.', tone: 'bad' }),
+  })
   const ran = useRef(false)
   useEffect(() => {
     if (prefill && agents && !ran.current) { ran.current = true; make.mutate(prefill) }
@@ -393,6 +422,7 @@ function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult }:
         <button type="submit" className="btn btn-ink" disabled={!online || text.trim().length < 3 || make.isPending}>{make.isPending ? 'Drafting…' : 'Draft it'}</button>
       </form>
       <p className="fine">A model drafts the change. It cannot publish. Code, not the model, checks the draft against your words, lists what it loosens and replays your history under it. Then you publish.</p>
+      {make.isPending ? <StageTrail title="Making the draft" stages={stageViews(stages)} /> : null}
       <ProblemCard error={make.error} />
       {result ? (
         <div className="draft-result" role="status">
@@ -471,4 +501,20 @@ function ReplayBody({ replay }: { replay: Replay }) {
       )}
     </div>
   )
+}
+
+/** Turns the server's stages into the slip: everything before the latest is done, the latest is what it is doing now. */
+function stageViews(stages: Array<DraftStage & { at: number }>): StageView[] {
+  const label = (stage: DraftStage): { label: string; detail?: string } => {
+    switch (stage.stage) {
+      case 'reading': return { label: 'Read the live rules', detail: `${stage.people} people and ${stage.standing} standing rule${stage.standing === 1 ? '' : 's'}` }
+      case 'drafting': return { label: stage.attempt === 1 ? 'Asked the model to draft it' : `Asked the model again (try ${stage.attempt})`, detail: stage.model }
+      case 'patch': return { label: 'The model proposed a change', detail: `“${stage.summary}”` }
+      case 'retry': return { label: 'The draft did not fit the rules, so it was sent back', detail: stage.reason }
+      case 'checking': return { label: 'Code is checking the draft against your words', detail: 'What it loosens, what it leaves out, what it adds' }
+      case 'replaying': return { label: 'Replaying your history under the new rules' }
+      case 'reading_back': return { label: 'Writing the read-back in plain words' }
+    }
+  }
+  return stages.map((stage, index) => ({ key: `${index}:${stage.stage}`, ...label(stage), state: stage.stage === 'retry' ? 'retry' : index === stages.length - 1 ? 'active' : 'done' }))
 }

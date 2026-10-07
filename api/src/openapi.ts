@@ -270,6 +270,7 @@ export function buildOpenApi(publicUrl: string) {
   ownerRoute('post', '/v1/proposals/{id}/cancel-payout', 'Cancel a payout PayPal is holding as UNCLAIMED. PayPal returns the money and the reservation is released.', true)
   ownerRoute('post', '/v1/proposals/{id}/remind-invoice', 'Send the client a PayPal reminder for an invoice that is out and unpaid.', true)
   ownerRoute('post', '/v1/proposals/{id}/cancel-invoice', 'Cancel an invoice that is out and unpaid. The milestone can be billed again.', true)
+  ownerRoute('get', '/v1/agents/health', 'How each language model is doing (calls, failures, latency, circuit state, tokens) and which prompt versions are in force.')
   ownerRoute('get', '/v1/paypal/features', 'Which PayPal features this app may use, from its token scopes, with the dashboard steps for any that are off.')
   ownerRoute('post', '/v1/paypal/features/check', 'Same, after asking PayPal for a fresh token.')
   ownerRoute('get', '/v1/today', 'One page of what matters now: what waits for the owner, what is in flight, what was done for them and how, what the rules stopped, the month in money, the next milestones ready to bill, and setup progress. Built from the ledger alone.')

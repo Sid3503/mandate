@@ -1,7 +1,8 @@
 import { MockLanguageModelV4 } from 'ai/test'
 import type { AgentModel } from '../src/agents/model'
+import { streamFromGenerate } from '../src/dev/mock-stream'
 
-export type ScriptedStep = { tool: string; input: Record<string, unknown> } | { tools: Array<{ tool: string; input: Record<string, unknown> }> } | { text: string } | { fail: true }
+export type ScriptedStep = { tool: string; input: Record<string, unknown> } | { tools: Array<{ tool: string; input: Record<string, unknown> }> } | { text: string } | { fail: true; message?: string }
 
 export type ScriptContext = {
   system: string
@@ -22,8 +23,7 @@ export type ScriptContext = {
 export function scriptedModel(decide: (context: ScriptContext) => ScriptedStep, options: { delayMs?: number } = {}): AgentModel & { prompts: string[]; calls: () => number } {
   let calls = 0
   const prompts: string[] = []
-  const model = new MockLanguageModelV4({
-    doGenerate: async (call: { prompt: Array<{ role: string; content: unknown }> }) => {
+  const generate = async (call: { prompt: Array<{ role: string; content: unknown }> }) => {
       if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs))
       const options_ = call
       calls += 1
@@ -36,7 +36,7 @@ export function scriptedModel(decide: (context: ScriptContext) => ScriptedStep, 
       const lastResult = lastTool ? JSON.stringify(lastTool.content) : null
       prompts.push(`${system}\n---\n${options_.prompt.filter((m) => m.role !== 'system').map((m) => JSON.stringify(m.content)).join('\n')}`)
       const step = decide({ system, user, round: toolMessages.length, lastResult, call: calls })
-      if ('fail' in step) throw new Error('model unavailable')
+      if ('fail' in step) throw new Error(step.message ?? 'model unavailable')
       const usage = { inputTokens: { total: 10 }, outputTokens: { total: 5 } }
       if ('text' in step) return { content: [{ type: 'text', text: step.text }], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] } as never
       const list = 'tools' in step ? step.tools : [step]
@@ -46,7 +46,7 @@ export function scriptedModel(decide: (context: ScriptContext) => ScriptedStep, 
         usage,
         warnings: [],
       } as never
-    },
-  })
+    }
+  const model = new MockLanguageModelV4({ doGenerate: generate as never, doStream: streamFromGenerate(generate as never) as never })
   return { model: model as never, name: 'scripted-model', prompts, calls: () => calls }
 }

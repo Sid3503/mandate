@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { AskRoute, ClerkStreamEvent, QuickId, Replay, Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
+import type { AgentHealth, AskRoute, ClerkStreamEvent, QuickId, Replay, Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -49,9 +49,21 @@ async function request<T>(path: string, options: Options = {}): Promise<T> {
   return body as T
 }
 
+/** The stages of making a draft of new rules. Each is a step the server really took, in this order. */
+export type DraftStage =
+  | { stage: 'reading'; people: number; standing: number }
+  | { stage: 'drafting'; attempt: number; model: string }
+  | { stage: 'patch'; summary: string }
+  | { stage: 'retry'; attempt: number; reason: string }
+  | { stage: 'checking' }
+  | { stage: 'replaying' }
+  | { stage: 'reading_back' }
+export type DraftStreamEvent = ({ type: 'stage' } & DraftStage) | { type: 'done'; draft: RulesDraft } | { type: 'error'; code: string; title: string; message: string }
+
 export type NegotiationEvent =
   | { type: 'start'; threadId: string; model: string; maxOffers: number; studio: string; client: string }
   | { type: 'turn_start'; turn: number; side: 'buyer' | 'seller'; company: string }
+  | { type: 'turn_tool'; turn: number; side: 'buyer' | 'seller'; phase: 'start' | 'call' | 'end'; id: string; tool: string; input?: unknown; ok?: boolean; ms?: number }
   | { type: 'turn'; turn: number; side: 'buyer' | 'seller'; runId: string; ms: number; deal: import('./types').Deal }
   | { type: 'turn_error'; turn: number; side: 'buyer' | 'seller'; runId: string; error: string }
   | { type: 'done'; threadId: string; agreed: boolean; dealId: string | null; stopped: boolean }
@@ -103,12 +115,15 @@ async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, sig
   }
 }
 
-/** The clerk, told as it works. Each step arrives as the model finishes it; the last event is the whole reply. */
-async function streamClerk(body: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string } }, onEvent: (event: ClerkStreamEvent) => void, signal?: AbortSignal): Promise<void> {
+/**
+ * POSTs and reads a server-sent-event stream (an EventSource cannot carry the key). Every event's data is JSON with a
+ * `type`. Resolves when the stream ends; a problem before the stream opens is thrown as a normal ApiError.
+ */
+async function postStream<E>(path: string, body: unknown, onEvent: (event: E) => void, signal?: AbortSignal): Promise<void> {
   const key = session.get()
   let response: Response
   try {
-    response = await fetch('/v1/clerk/stream', {
+    response = await fetch(path, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(key ? { authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify(body),
@@ -136,15 +151,23 @@ async function streamClerk(body: { message: string; conversationId?: string; con
       const block = buffer.slice(0, split)
       buffer = buffer.slice(split + 2)
       const data = /^data: (.*)$/m.exec(block)?.[1]
-      if (data) onEvent(JSON.parse(data) as ClerkStreamEvent)
+      if (data) onEvent(JSON.parse(data) as E)
       split = buffer.indexOf('\n\n')
     }
   }
 }
 
+/** The clerk, told as it works: each tool call as it starts and ends, the words as they are written, then the whole reply. */
+const streamClerk = (body: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string } }, onEvent: (event: ClerkStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/clerk/stream', body, onEvent, signal)
+
+/** A draft of new rules, told as it is made: each stage is a real step the server took. */
+const streamDraft = (instruction: string, onEvent: (event: DraftStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/rules/draft/stream', { instruction }, onEvent, signal)
+
 export const api = {
   streamNegotiation,
   streamClerk,
+  streamDraft,
+  agentHealth: () => request<AgentHealth>('/v1/agents/health'),
   ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
   replayRules: (rules: unknown) => request<Replay>('/v1/rules/replay', { method: 'POST', body: rules }),
   health: () => request<Health>('/health'),

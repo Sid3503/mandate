@@ -1,4 +1,5 @@
 import { useMutation } from '@tanstack/react-query'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useToast } from '../components/Toast'
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
@@ -8,6 +9,7 @@ import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, ProblemCard 
 import { api } from '../lib/api'
 import { relative } from '../lib/format'
 import { reviewKey, useLive, type ReviewState } from '../lib/live'
+import { ToolTrail } from '../components/ToolTrail'
 import { dollars } from '../lib/money'
 import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useToday, useWarrant } from '../lib/hooks'
 import type { Delivery, Proposal, Today as TodayData, TodayAction, TodayItem } from '../lib/types'
@@ -82,7 +84,7 @@ export function Today() {
             />
           ))}
         </div>
-        {attention.length > 0 ? <ul className="items" aria-label="Needs your attention">{attention.map((item) => <ItemRow key={item.id} item={item} />)}</ul> : null}
+        {attention.length > 0 ? <ul className="items" aria-label="Needs your attention"><AnimatePresence initial={false}>{attention.map((item) => <ItemRow key={item.id} item={item} />)}</AnimatePresence></ul> : null}
       </section>
 
       {data && data.readyToBill.some((item) => item.delivery?.status !== 'awaiting') ? <ReadyToBill data={data} /> : null}
@@ -91,7 +93,7 @@ export function Today() {
         <section className="section" data-tour="ready" aria-labelledby="h-flight">
           <h2 className="section-title" id="h-flight">In flight · nothing for you to do</h2>
           <p className="fine watcher" role="status">{data.watcher.lastLook ? <>Mandate asks PayPal about these {cadence(data.watcher.everySeconds)}. Last asked {relative(data.watcher.lastLook.at)}, looking at {data.watcher.lastLook.invoices} invoice{data.watcher.lastLook.invoices === 1 ? '' : 's'} and {data.watcher.lastLook.payouts} payout{data.watcher.lastLook.payouts === 1 ? '' : 's'}.</> : <>Mandate asks PayPal about these {cadence(data.watcher.everySeconds)}. It has not asked yet since the server started.</>} Pay an invoice and this page updates by itself the moment PayPal says it was paid.</p>
-          <ul className="items">{data.inFlight.map((item) => <ItemRow key={item.id} item={item} />)}</ul>
+          <ul className="items"><AnimatePresence initial={false}>{data.inFlight.map((item) => <ItemRow key={item.id} item={item} />)}</AnimatePresence></ul>
         </section>
       ) : null}
 
@@ -303,6 +305,7 @@ function ReviewProgress({ buyer, delivery, hosted }: { buyer: string; delivery: 
     { label: 'Invoice sent by your billing rule', state: 'todo' },
   ]
   return (
+    <>
     <ol className="review-steps" role="status" aria-label={`${buyer}’s agent review`}>
       {steps.map((step) => (
         <li key={step.label} className={`review-step review-${step.state}`}>
@@ -312,6 +315,8 @@ function ReviewProgress({ buyer, delivery, hosted }: { buyer: string; delivery: 
         </li>
       ))}
     </ol>
+    {review && review.stream.calls.length > 0 ? <ToolTrail calls={review.stream.calls} title={`What ${buyer}’s agent did`} live={review.stage === 'started'} /> : null}
+    </>
   )
 }
 
@@ -320,13 +325,14 @@ function Done({ data }: { data: TodayData }) {
   return (
     <section className="section" data-tour="today-done" aria-labelledby="h-done">
       <h2 className="section-title" id="h-done">Done for you{data.done.length > 0 ? <span className="section-note"> · last 7 days, {names} of {data.done.length} with no tap</span> : null}</h2>
-      {data.done.length === 0 ? <p className="muted">Nothing has settled this week yet. When it does, it shows here with how it was approved.</p> : <ul className="items">{data.done.map((item) => <ItemRow key={item.id} item={item} />)}</ul>}
+      {data.done.length === 0 ? <p className="muted">Nothing has settled this week yet. When it does, it shows here with how it was approved.</p> : <ul className="items"><AnimatePresence initial={false}>{data.done.map((item) => <ItemRow key={item.id} item={item} />)}</AnimatePresence></ul>}
     </section>
   )
 }
 
 /** One thing that needs attention, is in flight, or is done: words, the amount, and the buttons that act on it. */
 function ItemRow({ item }: { item: TodayItem }) {
+  const reduce = useReducedMotion()
   const owner = useIsOwner()
   const online = useOnline()
   const refresh = useRefreshMoney()
@@ -353,7 +359,14 @@ function ItemRow({ item }: { item: TodayItem }) {
   const buttons = item.actions.filter((action) => action !== 'open')
   const disabled = !owner || !online || act.isPending
   return (
-    <li className={`item item-${item.kind}`}>
+    <motion.li
+      layout={!reduce}
+      className={`item item-${item.kind}`}
+      initial={reduce ? false : { opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={reduce ? { opacity: 0 } : { opacity: 0, x: 28, transition: { duration: 0.2 } }}
+      transition={{ type: 'spring', stiffness: 420, damping: 36 }}
+    >
       <div className="item-main">
         {how ? <Chip tone={how.tone}>{how.label}</Chip> : <Chip tone={label.tone}>{label.label}</Chip>}
         <Link to={`/p/${item.proposalId}`} className="item-title">{item.title}</Link>
@@ -372,7 +385,7 @@ function ItemRow({ item }: { item: TodayItem }) {
         </div>
       ) : null}
       <ProblemCard error={act.error} />
-    </li>
+    </motion.li>
   )
 }
 

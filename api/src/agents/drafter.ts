@@ -233,8 +233,20 @@ export function drafterSystem(current: WarrantBody): string {
   ].join('\n')
 }
 
-export async function draftRules(input: { model: AgentModel; current: WarrantBody; instruction: string; signal?: AbortSignal }): Promise<RulesDraft> {
+/** What a screen is told while a draft is made. Each one is a real step the server took, in order. */
+export type DraftStage =
+  | { stage: 'reading'; people: number; standing: number }
+  | { stage: 'drafting'; attempt: number; model: string }
+  | { stage: 'patch'; summary: string }
+  | { stage: 'retry'; attempt: number; reason: string }
+  | { stage: 'checking' }
+  | { stage: 'replaying' }
+  | { stage: 'reading_back' }
+
+export async function draftRules(input: { model: AgentModel; current: WarrantBody; instruction: string; signal?: AbortSignal; onStage?: (stage: DraftStage) => void }): Promise<RulesDraft> {
   const started = Date.now()
+  const stage = input.onStage ?? (() => undefined)
+  stage({ stage: 'reading', people: input.current.payees.length + input.current.clients.length, standing: input.current.standing.length })
   let patch: RulesPatch | null = null
   let merged: WarrantBody | null = null
   let said = ''
@@ -243,6 +255,7 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
   // A small model sometimes gets a field name or a sum wrong. Up to two retries, each told exactly what was wrong.
   for (let attempt = 0; attempt < 3 && !merged; attempt += 1) {
     patch = null
+    stage({ stage: 'drafting', attempt: attempt + 1, model: input.model.name })
     try {
       const result = await generateText({
         model: input.model.model,
@@ -251,6 +264,7 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
         tools: { propose_rules: tool({ description: 'Propose a patch to the rules. Call it exactly once, with only the fields that change.', inputSchema: RulesPatchSchema }) },
         temperature: 0,
         maxRetries: 1,
+        toolChoice: { type: 'tool', toolName: 'propose_rules' },
         stopWhen: [hasToolCall('propose_rules'), stepCountIs(3)],
         abortSignal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
       })
@@ -258,14 +272,17 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
       const call = result.steps.flatMap((step) => step.toolCalls).find((item) => item.toolName === 'propose_rules')
       if (!call) break
       const parsed = RulesPatchSchema.safeParse(call.input)
-      if (!parsed.success) { complaint = parsed.error.issues.slice(0, 3).map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`).join('; ') + '.'; continue }
+      if (!parsed.success) { complaint = parsed.error.issues.slice(0, 3).map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`).join('; ') + '.'; stage({ stage: 'retry', attempt: attempt + 1, reason: complaint }); continue }
       patch = parsed.data
+      stage({ stage: 'patch', summary: patch.summary })
     } catch (error) {
       const name = (error as Error)?.name ?? ''
+      // A model that answers in words instead of calling the one tool it was given has produced no draft.
+      if (name === 'AI_ToolChoiceViolationError') break
       if (input.signal?.aborted) throw new Problem(499, 'agent.stopped', 'Stopped', 'The draft was stopped. Nothing was changed.')
       if (name === 'TimeoutError' || name === 'AbortError') throw new Problem(504, 'agent.timeout', 'The drafter took too long', 'The model did not finish in time. Nothing was changed. Try again.')
       // The SDK rejects a tool call whose input does not fit. Treat it like any other bad draft and let the retry say why.
-      if (/invalid.*tool.*input|type validation/i.test(`${name} ${(error as Error)?.message ?? ''}`)) { complaint = 'the fields did not match the schema.'; continue }
+      if (/invalid.*tool.*input|type validation/i.test(`${name} ${(error as Error)?.message ?? ''}`)) { complaint = 'the fields did not match the schema.'; stage({ stage: 'retry', attempt: attempt + 1, reason: complaint }); continue }
       throw new Problem(502, 'agent.model_error', 'The model could not be reached', 'The language model failed. Nothing was changed. Try again.')
     }
     // The merged rules must be rules the owner could have written by hand. If not, say why and let the model fix it.
@@ -276,11 +293,13 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
       else {
         const why = checked.error.issues.map((issue) => `${issue.path.join('.') || 'rules'}: ${issue.message}`).join('; ')
         complaint = `${why}.`
+        stage({ stage: 'retry', attempt: attempt + 1, reason: complaint })
         lastProblem = new Problem(422, 'rules.draft_invalid', 'That draft would not be valid rules', `${why}. Nothing was changed.`)
       }
     } catch (error) {
       if (!(error instanceof Problem)) throw error
       complaint = `${error.detail}`
+      stage({ stage: 'retry', attempt: attempt + 1, reason: complaint })
       lastProblem = error
     }
   }
@@ -289,6 +308,7 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
     const detail = said ? `The model did not draft anything. It said: “${said.slice(0, 240)}”. Nothing was changed.` : 'Try saying it another way, for example “let Priya be paid automatically from Northwind, up to 60%”. Nothing was changed.'
     throw new Problem(422, 'rules.draft_unusable', 'The model did not produce a usable draft', detail)
   }
+  stage({ stage: 'checking' })
   const { loosens, tightens, notes } = compareRules(input.current, merged)
   const intent = checkIntent(input.instruction, input.current, merged)
   return { draft: merged, summary: patch.summary, loosens, tightens, notes, ignored: intent.ignored, untrusted: intent.untrusted, added: intent.added, changed: loosens.length + tightens.length + notes.length > 0, model: input.model.name, ms: Date.now() - started }

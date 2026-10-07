@@ -2,6 +2,7 @@ import { useMutation, useQueries } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Chip, GateChip, Loading, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
+import { useToast } from '../components/Toast'
 import { api } from '../lib/api'
 import { newKey } from '../lib/format'
 import { useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useWarrant } from '../lib/hooks'
@@ -92,7 +93,14 @@ export function NewRequest() {
   const [idem, setIdem] = useState(() => newKey('web'))
   useEffect(() => setIdem(newKey('web')), [signature])
 
-  const send = useMutation({ mutationFn: (body: ProposalInput) => api.propose(body, idem), onSuccess: () => void refresh() })
+  const toast = useToast()
+  const send = useMutation({
+    mutationFn: (body: ProposalInput) => api.propose(body, idem),
+    onSuccess: (made) => {
+      toast(made.gate === 'DENY' ? { title: 'Refused by the rules', body: `${made.clause}. Nothing moved.`, tone: 'info' } : made.gate === 'AUTO' ? { title: 'Filed. No tap needed', body: 'It is inside your rules and goes through by itself.' } : { title: 'Filed. Waiting for your tap', body: 'Approve it on Today.', tone: 'warn' })
+      void refresh()
+    },
+  })
   const result: Proposal | undefined = send.data
   const submit = (event: FormEvent) => {
     event.preventDefault()

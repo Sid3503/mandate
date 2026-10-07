@@ -5,7 +5,7 @@ import { FeaturePanel, ToolTiers } from '../components/PayPalFeatures'
 import { Chip, KV, Loading, PageHead } from '../components/ui'
 import { api } from '../lib/api'
 import { when } from '../lib/format'
-import { useSession } from '../lib/hooks'
+import { useIsOwner, useSession } from '../lib/hooks'
 import { session } from '../lib/session'
 
 export function System() {
@@ -13,6 +13,8 @@ export function System() {
   const ready = useQuery({ queryKey: ['ready'], queryFn: api.ready, refetchInterval: 20_000 })
   const me = useSession()
   const keys = useQuery({ queryKey: ['signing-keys'], queryFn: api.signingKeys })
+  const owner = useIsOwner()
+  const agents = useQuery({ queryKey: ['agent-health'], queryFn: api.agentHealth, enabled: owner, refetchInterval: 15_000 })
   const guide = useGuide()
   const navigate = useNavigate()
   const client = useQueryClient()
@@ -28,6 +30,36 @@ export function System() {
         <button type="button" className="btn btn-ghost" onClick={lock}>Lock console</button>
       </PageHead>
       <FeaturePanel />
+      {owner && agents.data?.enabled ? (
+        <section className="panel" aria-labelledby="h-ai-health">
+          <h2 className="panel-title" id="h-ai-health">The AI layer</h2>
+          <div className="kvs">
+            <KV label="Clerk, negotiators, client's reviewer" mono>{agents.data.primary}</KV>
+            <KV label="Rules drafter" mono>{agents.data.drafter}</KV>
+            <KV label="Fallback" mono>{agents.data.fallback ?? 'none'}</KV>
+            <KV label="Prompt versions" mono>{Object.entries(agents.data.prompts).map(([name, version]) => `${name} v${version}`).join(' · ')}</KV>
+          </div>
+          {agents.data.models.length === 0 ? <p className="fine">No model has been called since the server started.</p> : (
+            <table className="diff ai-health">
+              <thead><tr><th scope="col">Model</th><th scope="col">Circuit</th><th scope="col">Calls</th><th scope="col">Failed</th><th scope="col">Median</th><th scope="col">Slowest 5%</th><th scope="col">Tokens in / out</th></tr></thead>
+              <tbody>
+                {agents.data.models.map((model) => (
+                  <tr key={model.name}>
+                    <th scope="row" className="mono">{model.name}</th>
+                    <td><Chip tone={model.circuit === 'closed' ? 'auto' : model.circuit === 'half_open' ? 'need' : 'deny'}>{model.circuit === 'closed' ? 'healthy' : model.circuit === 'half_open' ? 'testing' : 'cooling off'}</Chip></td>
+                    <td>{model.calls}</td>
+                    <td>{model.failures}{model.lastError ? <span className="muted small"> · {model.lastError}</span> : null}</td>
+                    <td>{model.p50Ms === null ? '—' : `${(model.p50Ms / 1000).toFixed(1)} s`}</td>
+                    <td>{model.p95Ms === null ? '—' : `${(model.p95Ms / 1000).toFixed(1)} s`}</td>
+                    <td className="mono">{model.inputTokens.toLocaleString('en-US')} / {model.outputTokens.toLocaleString('en-US')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <p className="fine">A model that fails three times in a row is paused for 30 seconds and the fallback answers instead, so nobody waits through a failure that is coming. The rules are the same whichever model asks.</p>
+        </section>
+      ) : null}
       <ToolTiers />
       <div className="rules-grid">
         <section className="panel" data-tour="system-checks">

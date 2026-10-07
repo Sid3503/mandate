@@ -2,6 +2,9 @@ import { useMutation } from '@tanstack/react-query'
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Chip, GateChip, Money, ProblemCard } from './ui'
+import { Settle, StreamText } from './StreamText'
+import { ToolTrail } from './ToolTrail'
+import { emptyStream, reduceStream, type StreamEvent, type StreamState } from '../lib/agentStream'
 import { useToast } from './Toast'
 import { api, ApiError } from '../lib/api'
 import { useAgentsOn, useOnline, useProposals, useNames, useRefreshMoney, useSession } from '../lib/hooks'
@@ -15,7 +18,7 @@ type Turn = {
   user: string
   pending: boolean
   route?: AskRoute
-  steps: string[]
+  stream: StreamState
   cards: Outcome[]
   reply?: ClerkReply
   error?: unknown
@@ -44,14 +47,6 @@ const GO: Array<{ label: string; to: string; words: string }> = [
   { label: 'New request form', to: '/new', words: 'new request form pay bill refund' },
 ]
 
-const STEP_WORDS: Record<string, string> = {
-  get_jobs: 'Finding the job and the client payment',
-  propose: 'Filing the request with the rules',
-  list_ledger: 'Reading the ledger',
-  get_rules: 'Reading the rules',
-  explain: 'Explaining what happened',
-  offer_deal: 'Offering deal terms',
-}
 
 /**
  * Ask Mandate, in one place. The Ask dialog and the Ask screen both render this.
@@ -75,6 +70,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
   const agents = useAgentsOn()
   const online = useOnline()
   const refresh = useRefreshMoney()
+  const toast = useToast()
   const navigate = useNavigate()
   const proposals = useProposals()
   const names = useNames()
@@ -92,7 +88,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
 
   const ask = async (message: string, quick?: QuickId) => {
     const id = crypto.randomUUID()
-    setTurns((current) => [...current, { id, user: message, pending: true, steps: [], cards: [] }])
+    setTurns((current) => [...current, { id, user: message, pending: true, stream: emptyStream, cards: [] }])
     try {
       const route = await api.ask(quick ? { quick } : { message, context: context?.jobId ? { jobId: context.jobId } : undefined })
       if (route.kind === 'answer' || route.kind === 'action') return patch(id, { pending: false, route })
@@ -106,14 +102,21 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
       patch(id, { route })
       await api.streamClerk({ message, conversationId: conversation, context }, (event) => {
         if (event.type === 'step') {
-          setTurns((current) => current.map((turn) => (turn.id === id ? {
-            ...turn,
-            steps: [...turn.steps, ...event.tools.map((item) => `${STEP_WORDS[item.tool] ?? item.tool}${item.ok ? '' : ' (did not work)'}`)],
-            cards: [...turn.cards, ...event.outcomes.map((item) => item as Outcome)],
-          } : turn)))
+          // The rules' own answer, as soon as the tool returns it, before the model has finished talking.
+          setTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, cards: [...turn.cards, ...event.outcomes.map((item) => item as Outcome)] } : turn)))
+        } else if (event.type === 'retract') {
+          toast({ title: 'Took back a reply', body: 'The words claimed something the rules did not say. Only the rules\' answer stands.', tone: 'warn', key: 'retract' })
+          setTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, stream: reduceStream(turn.stream, event as StreamEvent) } : turn)))
+        } else if (event.type === 'text' || event.type === 'tool_start' || event.type === 'tool_call' || event.type === 'tool_end') {
+          setTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, stream: reduceStream(turn.stream, event as StreamEvent) } : turn)))
         } else if (event.type === 'done') {
           setConversation(event.reply.conversationId)
           patch(id, { pending: false, reply: event.reply })
+          const first = event.reply.outcomes.find((item) => item.tool === 'propose' && item.ok)?.data as { decision?: string; ruleCode?: string; amount?: string } | undefined
+          if (first?.decision === 'NEEDS_APPROVAL') toast({ title: 'Waiting for your tap', body: `${first.amount} is at or above the no-tap line.`, tone: 'warn', action: { label: 'Review and approve', onClick: () => { navigate('/'); onLeave?.() } }, key: 'ask-outcome' })
+          else if (first?.decision === 'AUTO') toast({ title: 'Inside your rules', body: `${first.amount} goes through with no tap.`, key: 'ask-outcome' })
+          else if (first?.decision === 'DENY') toast({ title: 'Refused by the rules', body: `${first.ruleCode}. Nothing moved.`, tone: 'info', key: 'ask-outcome' })
+          if (event.reply.fellBack) toast({ title: 'Answered by the backup model', body: 'The main model failed or is cooling off. The rules decided the same way.', tone: 'warn', key: 'fallback' })
           void refresh()
         } else if (event.type === 'error') {
           patch(id, { pending: false, error: new ApiError(502, event.code, 'The clerk could not finish', event.message, {}) })
@@ -210,27 +213,25 @@ function Exchange({ turn, onLeave }: { turn: Turn; onLeave?: () => void }) {
   return (
     <div className="exchange">
       <div className="bubble me"><span className="said">You</span>{turn.user}</div>
-      {turn.pending && turn.steps.length === 0 && turn.cards.length === 0 ? <div className="bubble clerk thinking" role="status"><span className="said">Mandate</span><span className="dots" aria-label="Working on it"><i /><i /><i /></span></div> : null}
+      {turn.pending && turn.stream.calls.length === 0 && turn.cards.length === 0 && !turn.stream.text ? <div className="bubble clerk thinking" role="status"><span className="said">Mandate</span><span className="dots" aria-label="Working on it"><i /><i /><i /></span></div> : null}
       {turn.error ? <div className="bubble clerk"><ProblemCard error={turn.error} /></div> : null}
       {turn.handoff ? <div className="bubble clerk"><span className="said">Mandate</span><p>That sounds like a change to the rules, not a payment, so I am handing it to the rules drafter. You will read exactly what it changes before anything is published.</p></div> : null}
       {route?.kind === 'answer' ? <AnswerCard route={route} onLeave={onLeave} /> : null}
       {route?.kind === 'action' ? <ActionCard route={route} /> : null}
-      {turn.steps.length > 0 || turn.cards.length > 0 || reply ? (
+      {turn.stream.calls.length > 0 || turn.cards.length > 0 || reply || turn.stream.text ? (
         <div className="bubble clerk">
           <span className="said">Clerk</span>
+          <ToolTrail calls={turn.stream.calls} title="What the clerk did" live={turn.pending} />
           {turn.cards.map((card) => <ResultCard key={card.proposalId} card={card} />)}
-          {turn.pending ? (
-            <ul className="steps-live" aria-label="What the clerk is doing">
-              {turn.steps.map((step, index) => <li key={index}>{step}</li>)}
-              <li className="now">Waiting for the clerk’s words…</li>
-            </ul>
-          ) : null}
+          {turn.pending && turn.stream.text ? <StreamText text={turn.stream.text} streaming /> : null}
+          {turn.pending && !turn.stream.text && turn.stream.calls.length > 0 && !turn.stream.calls.some((call) => call.status === 'preparing' || call.status === 'running') ? <p className="fine" role="status">Waiting for the clerk’s words…</p> : null}
+          {turn.stream.retracted ? <p className="retract-note" role="status">Taken back: those words {turn.stream.retracted === 'money_claim' ? 'claimed money had moved, which the clerk can never know' : 'stated a figure nobody supplied'}. Only the rules’ answer stands.</p> : null}
           {reply ? (
-            <>
+            <Settle id={reply.runId}>
               <p>{reply.reply}</p>
               {reply.guarded ? <p className="fine guard">The clerk’s own words were replaced with the rules’ answer, because they claimed something the rules did not say.</p> : null}
-              <p className="fine">Tools used: {reply.tools.map((item) => item.tool).join(' → ') || 'none'} · {(reply.ms / 1000).toFixed(1)}s · {reply.model}</p>
-            </>
+              <p className="fine">{reply.tools.length} tool call{reply.tools.length === 1 ? '' : 's'} · {(reply.ms / 1000).toFixed(1)}s · <span className="mono">{reply.model}</span>{reply.fellBack ? ' · answered by the fallback model' : ''}</p>
+            </Settle>
           ) : null}
         </div>
       ) : null}

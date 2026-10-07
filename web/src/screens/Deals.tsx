@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useToast } from '../components/Toast'
 import { NegotiationStage } from '../components/NegotiationStage'
@@ -21,6 +21,7 @@ export function Deals() {
   const agents = useAgentsOn()
   const online = useOnline()
   const refresh = useRefreshDeals()
+  const toast = useToast()
   const live = useNegotiation(() => void refresh())
   const [highlight, setHighlight] = useState<string | null>(null)
   const rules = useQuery({ queryKey: ['party-rules'], queryFn: api.partyRules, enabled: owner })
@@ -31,6 +32,19 @@ export function Deals() {
     setHighlight(live.state.agreedDealId)
     document.getElementById(`deal-${live.state.agreedDealId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
+  // Say how a negotiation ended, once, however the person is looking at the screen.
+  const phase = live.state.phase
+  const told = useRef('')
+  useEffect(() => {
+    const id = `${phase}:${live.state.agreedDealId ?? ''}`
+    if (told.current === id || (phase !== 'done' && phase !== 'stopped' && phase !== 'failed')) return
+    told.current = id
+    if (phase === 'done' && live.state.agreedDealId) toast({ title: 'Deal agreed', body: 'Both companies\' rules allow it. The server signed it.', action: { label: 'Go to the signed deal', onClick: jump } })
+    else if (phase === 'done') toast({ title: 'No deal', body: 'The agents ran out of turns without terms that fit both rules. Nothing moved.', tone: 'warn' })
+    else if (phase === 'stopped') toast({ title: 'Negotiation stopped', body: 'Offers so far are kept. Nothing was agreed unless it says Agreed.', tone: 'info' })
+    else toast({ title: 'The negotiation hit an error', body: 'Nothing was agreed and nothing moved.', tone: 'bad' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, live.state.agreedDealId])
   // When the agreed deal appears in the list, bring it into view once.
   useEffect(() => {
     if (live.state.phase === 'done' && live.state.agreedDealId) {

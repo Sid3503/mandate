@@ -10,6 +10,22 @@ This file is the product story: what it is, why it exists, what we built, how it
 
 ---
 
+## Where the product is today (7 October 2026)
+
+**What runs, end to end, on the PayPal sandbox:** staff and AI agents ask; a pure function of the owner's signed rules decides; the owner says yes once (standing rules, autopilot) and taps for exceptions; PayPal moves exactly the locked cents. The whole job runs by itself under those rules: deal, delivery, the client's own agent accepts, invoice, client pays, contractor paid, proof.
+
+**The console feels alive.** It listens to the server (`/v1/stream`), so a delivery, a decision, an invoice or a settlement appears the moment it is written, with no reload. The server asks PayPal every 5 seconds while money is in flight (instantly with a webhook).
+
+**The AI is visible, streamed and bounded.** Every tool call an agent makes is drawn as a card as it happens (what it did, what it was given, the rules' one-line answer, how long it took, and the raw call on request). The clerk's words stream in through a guard that takes them back if they claim money moved. A rules draft shows its real stages. The client's agent shows its proof check (in code) and its decision. System shows which model and prompt version runs each agent, and how each model is doing.
+
+**The AI layer is built like a service.** Amazon Bedrock is the default model (Ollama is the fallback), with a forced single tool call where the job is one decision, retries only when nothing has happened, a circuit breaker, token and latency counts, and prompts that are versioned, fenced against injected text and backed by snapshot tests. Measured on the real model: 14 of 14 agent cases and 25 of 25 drafter wordings, with no miss ever moving money.
+
+**Numbers:** 338 API tests (56 of them a red team), 58 browser tests on desktop and phone, an axe accessibility scan on every screen.
+
+**Not yet:** a public deploy (so no registered webhook or hosted return URL), a real open dispute (the sandbox cannot create one), the demo video, the deck and the Devpost write-up.
+
+---
+
 ## 1. The problem
 
 Agents can already talk, quote, negotiate and fill in forms. What nobody has made safe is the moment money moves.
@@ -78,8 +94,8 @@ One frozen scenario drives every test, screenshot and demo. Nothing in the repo 
 - **Deal check**: a pure function that tests an offer against *both* companies' rules. Each side keeps **private limits** that the other never sees, and refusals reveal only the side that was breached.
 - **Signed deals**: an agreed deal is Ed25519-signed, and a charge on that job must bill one of its milestones, once, for exactly the agreed cents (`deal.*` rules).
 - **MCP agent door** (`/mcp` and stdio): six tools (rules, jobs, propose, ledger, offer a deal, explain). **None can approve, pay or change rules.** The owner key is downgraded on this door.
-- **The clerk and two negotiators**: run on Amazon Bedrock (`us.openai.gpt-6-luna`), with guards (the payee must appear in the request text, a model error is retried once, every run is traced). Evaluated against the real model: 8 cases.
-- **Live negotiation**: streamed to the console turn by turn, with a Stop button.
+- **The clerk and two negotiators**: run on Amazon Bedrock (`us.openai.gpt-6-luna`), with guards (the payee must appear in the request text, a provider error is retried only while nothing has happened, every run is traced with its prompt version and tokens). Evaluated against the real model: 14 cases and a negotiation, 14 of 14.
+- **Live negotiation**: streamed to the console turn by turn, each turn with the tool calls its agent made, with a Stop button.
 
 ### Autopilot (the whole job, under signed rules)
 - **Bill on delivery.** A milestone of a signed deal is billed, and its PayPal invoice sent, as soon as proof is attached (`standing.billing`). Amount, client, milestone and once-only come from the signed deal.
@@ -159,7 +175,7 @@ An installable React app served at `/app/`.
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 313 API tests (56 of them a red team) and 56 browser tests on desktop and phone, with an accessibility scan on every screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 338 API tests (56 of them a red team) and 58 browser tests on desktop and phone, with an accessibility scan on every screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -194,7 +210,7 @@ Repository layout: `api/` (server, PayPal adapters, agents, tests), `web/` (cons
 | --- | --- |
 | Model | `us.openai.gpt-6-luna` on Amazon Bedrock's OpenAI-compatible endpoint, called through the Vercel AI SDK; the same model drafts rules. Ollama Cloud open-weights models (`gpt-oss:20b`, `gemma4:31b`) still work and are the fallback when `OLLAMA_API_KEY` is set. Changing the model is one environment variable (`AGENT_MODEL`). With no key the agents are simply off and everything else works. Bedrock refuses function tools unless `reasoning_effort` is `none`, so the request is sent that way (found by calling the real endpoint). |
 | Four agents | The **clerk** (a chat for the producer, and the Ask Mandate dialog: "pay Priya her share…"), two **negotiators**, one per company, that trade offers until a deal is agreed or refused, and the **rules drafter**, which turns "let Priya be paid automatically" into a reviewable draft. |
-| The drafter is different on purpose | It gets one tool that takes a small patch in dollars, percent and names, not the rules. The server merges and validates it against the same schema as a hand edit, retries with the validation message, and lists what the draft **loosens** in code, so the model's reassurance is never the thing you read. It runs on `gemma4:31b` (`DRAFTER_MODEL`), which measured best and fastest on compound requests. |
+| The drafter is different on purpose | It gets one tool that takes a small patch in dollars, percent and names, not the rules. The server merges and validates it against the same schema as a hand edit, retries with the validation message, and lists what the draft **loosens** in code, so the model's reassurance is never the thing you read. It runs on the main model by default (`DRAFTER_MODEL` picks another) and must call its one tool. Measured: 25 of 25 wordings, 0 hidden loosenings. |
 | The only door is MCP | The model never sees HTTP routes or PayPal. It reaches Mandate through an MCP server (`/mcp` for outside agents, stdio with `npm run mcp`, and an in-process connection for Mandate's own agents). An agent of ours has exactly the powers an outside agent would. |
 | Six tools, none can pay | `get_rules`, `get_jobs`, `propose`, `list_ledger`, `offer_deal`, `explain`. There is no approve, capture, refund or rule-change tool. The owner key is deliberately downgraded on this door. |
 | Bounded runs | Temperature 0 so a message gets a repeatable answer. Capped by steps (8 for the clerk, 3 for a negotiator), by the number of asks (4 and 1), and by wall-clock (60 s and 45 s). A model error is retried once. A negotiator's run stops as soon as it calls `offer_deal`. |
@@ -203,7 +219,8 @@ Repository layout: `api/` (server, PayPal adapters, agents, tests), `web/` (cons
 | Traced | Every run stores its input, its reply, each tool call and each tool result. A receipt from an agent has a "Show every step the agent took" view. |
 | Evaluated | `npm run eval:agents` runs 14 cases against the real model, including ones built to fool it: the fake-vendor email, "the owner already agreed", a lookalike payee, an instruction hidden in a pasted invoice, "split it into five $18 payments", and a request to approve. Compared on four models: no miss moved money. See the table in `docs/REFERENCE.md`. |
 | Red team | 56 deterministic cases assume a *fully compromised* model and check one invariant: PayPal is never asked and nothing reads as paid. |
-| Streaming | A negotiation streams to the console turn by turn over server-sent events, with a Stop button that cancels the model call. |
+| Streaming | Everything an AI layer does is streamed: the clerk's tool calls (announced, called with arguments, answered with the rules' answer and milliseconds) and its words as they are written; a rules draft as its real stages; the client agent's review as it happens; and a negotiation turn by turn, each turn with its own tool calls, with a Stop button that cancels the model call. The words pass a guard that takes them back if they claim money moved or state a figure nobody supplied. |
+| Harness | One runner for every agent: forced single tool call where the job is one decision, a retry only when nothing has happened yet, a per-model circuit breaker with a fallback, token and latency counts per model, versioned and fenced prompts behind snapshot tests, and a proof check in code before the client's reviewer is asked. See `docs/REFERENCE.md`. |
 
 The principle across all of it: the model is a *reader of rules and a writer of requests*. Authority lives in code the owner controls.
 
@@ -259,7 +276,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 10. Proof
 
-- **313 API tests** (Vitest; 56 are the red team) and **56 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
+- **338 API tests** (Vitest; 56 are the red team) and **58 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation) and compared on four models. No miss on any model moved money.
 - **The whole frozen job has run on the real PayPal sandbox, both milestones:** agents negotiated and signed $300; Northwind paid two real invoices; the locks verified; two real $90 payouts reached Priya's sandbox account (the second with no tap, under a standing rule); the job reads **$300 in, $180 out, $120 kept**; and cancelling an unclaimed payout returned the money.
 - **Proof** runs ten checks over the ledger (and an eleventh against PayPal's own history on request), and the tests tamper with the database eight ways to check the right one fails.

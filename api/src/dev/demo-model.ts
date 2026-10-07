@@ -1,5 +1,6 @@
 import { MockLanguageModelV4 } from 'ai/test'
 import type { AgentModel } from '../agents/model'
+import { streamFromGenerate } from './mock-stream'
 
 /**
  * A deterministic stand-in for the language model, used by `npm run demo` and the browser tests when no
@@ -47,8 +48,7 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
   })
   const say = (words: string) => ({ content: [{ type: 'text', text: words }], finishReason: { unified: 'stop', raw: 'stop' }, usage, warnings: [] })
 
-  const model = new MockLanguageModelV4({
-    doGenerate: (async (call_: { prompt: Message[] }) => {
+  const generate = (async (call_: { prompt: Message[] }) => {
       // A real model takes seconds. A little delay keeps the console's "thinking" states visible and testable.
       if (options.delayMs) await new Promise((resolve) => setTimeout(resolve, options.delayMs))
       const prompt = call_.prompt
@@ -61,7 +61,7 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
       // The client's reviewer: accepts a delivery whose proof is a plausible https link, rejects a placeholder.
       if (system.includes('You review deliveries for')) {
         if (seen > 0) return say('Decided.')
-        const proof = /The proof it gave: (\S+)/.exec(system)?.[1] ?? ''
+        const proof = /<untrusted label="proof_url">\s*(\S+)/.exec(system)?.[1] ?? ''
         const dealId = /The deal is ([0-9a-f-]{36})/.exec(system)?.[1]
         const milestone = Number(/milestone number (\d+)/.exec(system)?.[1] ?? 0)
         const bad = /example\.com|localhost|bit\.ly|placeholder/i.test(proof)
@@ -133,7 +133,7 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
       }
       // Say nothing, so the guard states the rules' answer in the rules' own words.
       return say('')
-    }) as never,
-  })
+    }) as never
+  const model = new MockLanguageModelV4({ doGenerate: generate as never, doStream: streamFromGenerate(generate as never, { chunkDelayMs: options.delayMs ? 25 : 0 }) as never })
   return { model: model as never, name: 'demo-script' }
 }

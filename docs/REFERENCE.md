@@ -186,7 +186,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 313 API tests (Vitest), including a 56-case red team, plus 56 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 338 API tests (Vitest), including a 56-case red team, plus 58 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -644,7 +644,8 @@ Also in Ask:
   | --- | --- | --- | --- | --- | --- | --- | --- |
   | `gemma4:31b` (the drafter) | 10/10 | 4/4 | 5/5 | 4/4 | 2/2 | **25/25** | **0** |
   | `gpt-oss:20b` | 7/10 | 4/4 | 5/5 | 4/4 | 2/2 | 22/25 | **0** |
-  | `us.openai.gpt-6-luna` (Bedrock, the default; 7 Oct, one run) | 9/10 | 4/4 | 5/5 | 4/4 | 2/2 | 24/25 | **0** |
+  | `us.openai.gpt-6-luna` (Bedrock, the default; 7 Oct, after the forced single tool call) | 10/10 | 4/4 | 5/5 | 4/4 | 2/2 | **25/25** | **0** |
+  | `us.openai.gpt-6-luna` (Bedrock; 7 Oct, before it: 24/25, one plain two-person split added a scope nobody asked for) | 9/10 | 4/4 | 5/5 | 4/4 | 2/2 | 24/25 | **0** |
 
   The first run of `gemma4:31b` scored 23/25 with one "hidden" loosening. Both were faults in the eval, not the drafter: it counted a loosening the owner really asked for as hidden, and it treated a model that put a red-flagged standing rule under a vague request as a failure though the flag was exactly the right outcome. I fixed the metric and re-ran. `gpt-oss:20b` missed three plain requests (reminders, acceptance, a two-person split): it drafted less than was asked, which the amber check reports, and it loosened nothing in secret.
 - `DRAFTER_MODEL` chooses the model (default: the main model on Bedrock, `gemma4:31b` on Ollama). The Ollama numbers below were measured on 6 Oct. On the real models, on four compound requests, `gemma4:31b` got 4 of 4 in about a second each, `gpt-oss:120b` 3 of 4, `nemotron-3-nano:30b` 3 of 4 and `gpt-oss:20b` 2 of 6 tries, so the drafter has its own model.
@@ -745,6 +746,13 @@ A hash can be recomputed by anyone who can write the database. So the lock is al
 
 - **The clerk** (`POST /v1/clerk/messages`, the **Clerk** screen). Staff write in plain words; it looks up the job and the client payment (`get_jobs`) and calls `propose`. Three guards sit around it: the rules decide, whatever it says; a reply that claims money moved when no capture happened is replaced with the rules' own answer; and each run is bounded (8 steps, 4 asks, 60 seconds, temperature 0).
 - **The negotiators** (`POST /v1/negotiations`, owner only). The console watches them live through `POST /v1/negotiations/stream` (server-sent events: `start`, `turn_start`, `turn`, `turn_error`, `done`), with a Stop button that also cancels the model call. A failed model call is retried once. Two agents, one per company, trade offers through `offer_deal`. The orchestration is plain code (who speaks, what they may see, when to stop). A model only chooses the next offer. Each is told its own limits and the other side's verdicts as hints, never as numbers.
+- **The harness (what wraps every model call).** One runner (`agents/runtime.ts`) streams every run and tells the screen three things as they happen: each tool call announced, called (with its arguments) and answered (with the rules' answer and milliseconds), and the model's words as they are written. Around it:
+  - **Forced tool call.** Agents whose whole job is one decision (the client's reviewer, the negotiators, the rules drafter) run with `toolChoice: required`, and the SDK itself rejects an answer in prose (`agent.no_tool_call`, a named outcome, not a crash).
+  - **Safe streaming.** The clerk's words reach the screen word by word through a guard: a sentence that says money moved, or a dollar figure nobody supplied, is taken back (`retract`) and nothing more is streamed; the final reply is checked the same way. Only whole words are judged, so a figure still being typed is never mistaken for an invented one.
+  - **Retry only when it is safe.** A provider error as the stream opens is tried again (up to twice, with jitter). Once anything was shown or any tool ran, a failure is reported, never repeated, so a request can never be filed twice.
+  - **Model health and a circuit breaker.** Each model's calls, failures, median and slowest-5% latency and tokens are counted. Three failures in a row pause that model for 30 seconds and the fallback answers at once; after the pause one probe decides. `GET /v1/agents/health` and System show it.
+  - **Prompts are versioned and fenced.** Every prompt has an id and a version, written on each run (`prompt_version`, with tokens and turns), and a snapshot test fails on any change in wording. Text written by someone else (a proof link, the other company's message) sits inside a labelled `<untrusted>` fence that cannot be closed from inside.
+  - **Code before model.** The client's reviewer first runs a proof check in code (`agents/proof.ts`: https, home page, shortener, login, placeholder, host kind). A clear-cut bad link is rejected there with no model asked, and the model is handed the facts for the rest.
 - **The record.** Every run is stored with its full trace (`GET /v1/agent-runs/:id`, owner only): every model turn, tool call and result. A request an agent asked for links back to it, so the receipt shows the chat behind it.
 - **Without a model** (`BEDROCK_API_KEY` and `OLLAMA_API_KEY` unset) the agents answer `503 agents.unconfigured` and nothing else changes. `npm run demo` ships a deterministic stand-in (`demo-script`) so the whole flow works offline; it is a script, not an AI, and says so on the System screen.
 - **Evaluation.** `npm run eval:agents` (in `api/`) runs eight cases against the real model: pay Priya her share, refuse the $18 lunch, be fooled by the vendor email, refuse before the client has paid, answer a question without asking, refuse "the owner already agreed", refuse a huge amount, and the full negotiation. A case passes when the **rules'** outcome is right. The model is allowed to be wrong; the design makes that harmless. Last run: 8 of 8.
@@ -832,11 +840,13 @@ The base URL is `http://127.0.0.1:8787` locally. Everything under `/v1` needs a 
 | `POST /v1/deals/:id/milestones/:n/decision` | the client's key only | Accept or reject a waiting delivery. Signed. |
 | `POST /v1/deals/:id/milestones/:n/review` | owner | Run the client's agent over a waiting delivery |
 | `GET /v1/deliveries` | any key | Deliveries (a client sees its own) |
+| `POST /v1/rules/draft/stream` | owner | The same draft, told as it is made: `stage` events (`reading`, `drafting`, `patch`, `retry`, `checking`, `replaying`, `reading_back`), then `done` with the draft, or `error` with a named code |
+| `GET /v1/agents/health` | owner | Each model's calls, failures, median and slowest-5% latency, circuit state and tokens, and the prompt version of every agent |
 | `GET /v1/stream` | owner, studio | Server-sent events: `changed` (scope, what, ids), `review` (the client's agent started, decided or failed), `ping`. The console listens and re-reads what changed, so a delivery, a decision, an invoice or a settlement shows the moment it is written. It carries no amounts and no authority. Polling stays as the fallback. |
 | `GET /v1/today` | owner | The landing page's data: waiting, in flight, done, stopped, the month, ready to bill, setup |
 | `GET /v1/audit` | owner | Re-verify the whole ledger (add `?paypal=1` to compare with PayPal) |
 | `POST /v1/ask` | owner | Where a sentence goes: an answer from the ledger, a delivery card, a hand-off to the drafter, or the clerk |
-| `POST /v1/clerk/stream` | studio, owner | The clerk, streamed step by step |
+| `POST /v1/clerk/stream` | studio, owner | The clerk, streamed. Events: `tool_start`, `tool_call` (with arguments), `tool_end` (with the rules' answer and milliseconds), `step` (the rules' answer card), `text` (the model's words as written), `retract` (the words were taken back), then `done` with the whole checked reply |
 | `POST /v1/rules/replay` | owner | Run the last requests under proposed rules and list what would change |
 | `POST /v1/rules/draft` | owner | Draft a change to the rules from plain words. Never publishes. |
 | `GET /v1/paypal/features`, `POST /v1/paypal/features/check` | owner | Which PayPal features the app may use, read from its token scopes |
@@ -1000,8 +1010,8 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 313 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 56 Playwright tests (desktop 1440×960 and Pixel 7)
+cd api && npm test && npm run typecheck        # 338 Vitest tests
+cd web && npm run typecheck && npm run e2e     # 58 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 
 **API tests (`api/test/`)** cover:
@@ -1058,7 +1068,7 @@ Run on 6 Oct 2026 against Ollama Cloud (one run each, so treat a single miss as 
 | Model | Clerk cases | Negotiation | Money moved wrongly | What missed |
 | --- | --- | --- | --- | --- |
 | `gpt-oss:20b` (the Ollama default) | 13/14, then 14/14 on a re-run of the miss | agreed | 0 | one run hit the 60 s limit and was stopped with "nothing was sent" |
-| `us.openai.gpt-6-luna` (Bedrock, the default; 7 Oct, one run, 1 to 3 s per case) | 14/14 | agreed | 0 | nothing |
+| `us.openai.gpt-6-luna` (Bedrock, the default; 7 Oct, streamed, one run after the retry fix, 2 to 6 s per case) | 14/14 | agreed | 0 | An earlier streamed run scored 9/14 and 11/14: the misses were all `AI_StreamProviderError` ("the server had an error") from Bedrock, not wrong answers, and no miss moved money. The harness now repeats a call that fails as the stream opens. |
 | `gemma4:31b` | 14/14 | agreed | 0 | nothing |
 | `nemotron-3-nano:30b` | 13/14 | agreed | 0 | one model error on the "split it" case |
 | `gpt-oss:120b` | 12/14 | agreed | 0 | declined the $18 lunch in words, so no refusal was recorded; used `get_jobs` for a "what is waiting" question |

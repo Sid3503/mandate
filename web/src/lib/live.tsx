@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useToast } from '../components/Toast'
+import { emptyStream, fromAgentCall, reduceStream, type StreamState } from './agentStream'
 import { session } from './session'
 
 /** What the server said about the client's agent reviewing a delivery, as it happened. */
@@ -12,6 +13,8 @@ export type ReviewState = {
   decision?: 'accepted' | 'rejected'
   note?: string | null
   ms?: number
+  /** The client agent's tool calls, as they happen. */
+  stream: StreamState
 }
 
 type Live = { connected: boolean; reviews: Record<string, ReviewState> }
@@ -23,6 +26,7 @@ export const useLive = () => useContext(LiveContext)
 type ServerEvent =
   | { type: 'changed'; scope: 'ledger' | 'delivery' | 'deal' | 'rules'; what: string; id?: string; dealId?: string; milestone?: number }
   | { type: 'review'; stage: 'started' | 'decided' | 'failed'; dealId: string; milestone: number; model?: string; decision?: 'accepted' | 'rejected'; note?: string | null; ms?: number }
+  | { type: 'agent'; agent: 'reviewer'; dealId: string; milestone: number; call: { phase: 'start' | 'call' | 'end'; id: string; tool: string; source: 'code' | 'model'; input?: unknown; ok?: boolean; ms?: number; note?: string } }
   | { type: 'hello' }
 
 const KEYS: Record<string, string[][]> = {
@@ -42,6 +46,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const toast = useToast()
   const toastRef = useRef(toast)
   toastRef.current = toast
+  const wasUp = useRef<boolean | null>(null)
   const [connected, setConnected] = useState(false)
   const [reviews, setReviews] = useState<Record<string, ReviewState>>({})
 
@@ -64,12 +69,21 @@ export function LiveProvider({ children }: { children: ReactNode }) {
 
     const handle = (event: ServerEvent) => {
       if (event.type === 'hello') return
+      if (event.type === 'agent') {
+        setReviews((current) => {
+          const id = reviewKey(event.dealId, event.milestone)
+          const now = Date.now()
+          const before = current[id] ?? { stage: 'started' as const, startedAt: now, at: now, stream: emptyStream }
+          return { ...current, [id]: { ...before, at: now, stream: reduceStream(before.stream, fromAgentCall(event.call), now) } }
+        })
+        return
+      }
       if (event.type === 'review') {
         setReviews((current) => {
           const id = reviewKey(event.dealId, event.milestone)
           const now = Date.now()
           const before = current[id]
-          return { ...current, [id]: { stage: event.stage, startedAt: event.stage === 'started' ? now : before?.startedAt ?? now, at: now, model: event.model ?? before?.model, decision: event.decision, note: event.note, ms: event.ms } }
+          return { ...current, [id]: { stage: event.stage, startedAt: event.stage === 'started' ? now : before?.startedAt ?? now, at: now, model: event.model ?? before?.model, decision: event.decision, note: event.note, ms: event.ms, stream: event.stage === 'started' ? emptyStream : before?.stream ?? emptyStream } }
         })
         if (event.stage === 'decided') {
           toastRef.current(event.decision === 'accepted'
@@ -92,6 +106,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           const response = await fetch('/v1/stream', { headers: { accept: 'text/event-stream', authorization: `Bearer ${key}` }, cache: 'no-store', signal: abort.signal })
           if (response.status === 401 || response.status === 403) return
           if (!response.ok || !response.body) throw new Error(String(response.status))
+          if (wasUp.current === false) toastRef.current({ title: 'Live again', body: 'Updates are arriving the moment they happen.', key: 'live', ms: 3200 })
+          wasUp.current = true
           setConnected(true)
           wait = 1000
           // Anything that happened while we were not listening.
@@ -117,6 +133,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         } catch {
           if (abort.signal.aborted) return
         }
+        if (wasUp.current) toastRef.current({ title: 'Live updates paused', body: 'Reconnecting. The page still refreshes every few seconds.', tone: 'warn', key: 'live' })
+        wasUp.current = false
         setConnected(false)
         await new Promise((resolve) => window.setTimeout(resolve, wait))
         wait = Math.min(wait * 2, 10_000)

@@ -1,4 +1,5 @@
 import { useLive } from '../lib/live'
+import { useToast } from './Toast'
 import { motion } from 'framer-motion'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { PageTransition } from './PageTransition'
@@ -60,9 +61,11 @@ function ShellFrame() {
   const client = useQueryClient()
   const waiting = today.data?.waiting.length ?? 0
   const live = useLive()
+  const toast = useToast()
   const lock = () => {
     session.clear()
     client.clear()
+    toast({ title: 'Locked', body: 'The key is gone from this tab.', tone: 'info', key: 'lock' })
     navigate('/unlock', { replace: true })
   }
   return (

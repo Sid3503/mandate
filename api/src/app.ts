@@ -88,10 +88,11 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/party-rules$/ },
   { method: 'PUT', pattern: /^\/v1\/party-rules\/[^/]+$/ },
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
-  { method: 'POST', pattern: /^\/v1\/rules\/(draft|replay)$/ },
+  { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay)$/ },
   { method: 'POST', pattern: /^\/v1\/ask$/ },
   { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
+  { method: 'GET', pattern: /^\/v1\/agents\/health$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit)$/ },
   { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
@@ -420,6 +421,8 @@ export function createApp(deps: AppDeps) {
       const send = (event: { type: string }) => stream.writeSSE({ event: event.type, data: JSON.stringify(event) })
       try {
         const reply = await agents.clerk(parsed.data, principal, {
+          // Tool calls and the model's words, as they happen. The rules' answer card still arrives as a `step`.
+          onEvent: (event) => { void send(event).catch(() => undefined) },
           onStep: (step) => { void send({ type: 'step', tools: step.toolResults.map((item) => ({ tool: item.tool, ok: item.ok })), outcomes: step.toolResults.filter((item) => item.tool === 'propose' && item.ok).map((item) => item.output) } as { type: string }) },
         })
         await send({ type: 'done', reply } as { type: string })
@@ -441,6 +444,25 @@ export function createApp(deps: AppDeps) {
     if (!parsed.success) throw invalidRequest(parsed.error)
     return c.json(await agents.draftRules(parsed.data.instruction, c.get('principal')))
   })
+  // The same draft, told as it is made: each stage is a real step the server took, in order.
+  app.post('/v1/rules/draft/stream', async (c) => {
+    assertJson(c)
+    const parsed = DraftRulesSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const principal = c.get('principal')
+    return streamSSE(c, async (stream) => {
+      const send = (name: string, data: unknown) => stream.writeSSE({ event: name, data: JSON.stringify({ type: name, ...(data as object) }) })
+      try {
+        const draft = await agents.draftRules(parsed.data.instruction, principal, { onStage: (stage) => { void send('stage', stage).catch(() => undefined) } })
+        await send('done', { draft })
+      } catch (error) {
+        const problem = error instanceof Problem ? error : null
+        await send('error', { code: problem?.code ?? 'internal', title: problem?.title ?? 'The draft failed', message: problem?.detail ?? 'The draft failed. Nothing was changed.' })
+      }
+    })
+  })
+  // How each model is doing, which wording each agent runs on, and what has been spent in tokens.
+  app.get('/v1/agents/health', (c) => c.json(agents.healthReport()))
   app.get('/v1/clerk/conversations/:id', (c) => c.json(agents.conversation(c.req.param('id'))))
   app.post('/v1/negotiations', async (c) => {
     assertJson(c)

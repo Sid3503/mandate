@@ -1,4 +1,5 @@
 import { Chip, Money } from './ui'
+import { ToolTrail } from './ToolTrail'
 import { dollars } from '../lib/money'
 import type { LiveTurn, Negotiation, Seat } from '../lib/useNegotiation'
 import { DEAL_RULE } from '../lib/words'
@@ -149,6 +150,7 @@ function TurnCard({ item, company, now }: { item: LiveTurn; company: string; now
         <div className="skeleton" />
         <div className="skeleton short" />
         <span className="fine">Thinking… {seconds(waited)}s</span>
+        {item.calls.length > 0 ? <div aria-hidden="false"><ToolTrail calls={item.calls} title="What this agent is doing" live /></div> : null}
       </li>
     )
   }
@@ -171,6 +173,7 @@ function TurnCard({ item, company, now }: { item: LiveTurn; company: string; now
         <p key={violation.code} className="turn-why"><code>{violation.code}</code> <b>{DEAL_RULE[violation.code] ?? violation.code}.</b> <span className="muted">{violation.detail}</span> <em>{violation.hint}</em></p>
       ))}
       {agreed ? <p className="turn-why">Inside both companies’ rules. Signed by the server, listed below.</p> : null}
+      {item.calls.length > 0 ? <ToolTrail calls={item.calls} title="What this agent did" /> : null}
     </li>
   )
 }

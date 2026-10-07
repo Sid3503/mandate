@@ -102,7 +102,18 @@ export type ClerkReply = {
   outcomes: Array<{ tool: string; ok: boolean; data: Record<string, unknown> }>
   tools: Array<{ tool: string; ok: boolean }>
   model: string
+  /** True when the main model failed or was cooling off and the fallback answered. */
+  fellBack?: boolean
   ms: number
+}
+
+export type AgentHealth = {
+  enabled: boolean
+  primary: string | null
+  drafter: string | null
+  fallback: string | null
+  prompts: Record<string, number>
+  models: Array<{ name: string; calls: number; failures: number; consecutiveFailures: number; p50Ms: number | null; p95Ms: number | null; circuit: 'closed' | 'open' | 'half_open'; openUntil: string | null; lastError: string | null; lastAt: string | null; inputTokens: number; outputTokens: number }>
 }
 
 export type AgentRun = {
@@ -318,5 +329,10 @@ export type QuickId = 'waiting' | 'refused' | 'month' | 'inflight' | 'ready' | '
 
 export type ClerkStreamEvent =
   | { type: 'step'; tools: Array<{ tool: string; ok: boolean }>; outcomes: Array<Record<string, any>> }
+  | { type: 'text'; delta: string }
+  | { type: 'retract'; reason: 'money_claim' | 'unsupported_amount' }
+  | { type: 'tool_start'; id: string; tool: string }
+  | { type: 'tool_call'; id: string; tool: string; input?: unknown }
+  | { type: 'tool_end'; id: string; tool: string; ok: boolean; output?: unknown; ms?: number }
   | { type: 'done'; reply: ClerkReply }
   | { type: 'error'; code: string; message: string }
