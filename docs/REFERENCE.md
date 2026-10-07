@@ -186,7 +186,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 312 API tests (Vitest), including a 56-case red team, plus 56 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 313 API tests (Vitest), including a 56-case red team, plus 56 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -901,7 +901,7 @@ Import `api/postman/Mandate.postman_collection.json` and `api/postman/Mandate.lo
 | `refund.unlinked` | DENY | A refund must point at a payment that was actually settled. |
 | `refund.exceeds` | DENY | More than is left to refund. |
 | `job.missing` | DENY | Money in must name its job. |
-| `funding.missing` | DENY or 409 | The client has not paid for this yet, so nothing funds the payout. |
+| `funding.missing` | DENY or 409 | No client payment has money left to fund this payout. |
 | `funding.job_mismatch` | DENY | That client payment belongs to a different job. |
 | `standing.billing` | AUTO | The owner switched on billing signed deals when proof is attached, and this is exactly a milestone of one, so the invoice goes out without a tap. |
 | `standing.matched` | AUTO | A standing rule the owner signed covers this payout, so it goes to PayPal without a tap. Every other rule still passed. |
@@ -1000,7 +1000,7 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 312 Vitest tests
+cd api && npm test && npm run typecheck        # 313 Vitest tests
 cd web && npm run typecheck && npm run e2e     # 56 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 

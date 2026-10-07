@@ -91,6 +91,25 @@ describe('after a refusal: what would pass', () => {
     expect((await call(h.app, 'GET', `/v1/proposals/${fine.json.id}/packet`)).json.whatWouldPass).toEqual([])
   })
 
+  it('tells apart "the client has not paid" from "the client has paid and the share is all paid out"', async () => {
+    const h = harness()
+    const deal = await agree(h.app)
+    // Nothing paid yet: the client has to pay.
+    const early = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: payout(undefined as unknown as string, { fundingCaptureId: undefined }) })
+    expect(early.json).toMatchObject({ gate: 'DENY', clause: 'funding.missing' })
+    expect((await call(h.app, 'GET', `/v1/proposals/${early.json.id}/packet`)).json.whatWouldPass[0].text).toContain('The client has to pay first')
+    // Paid, and the whole contractor share paid out: say that, not "the client has not paid".
+    const paid = await collect(h.app, deal.id, 0)
+    const sent = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: payout(paid.captureId) })
+    await call(h.app, 'POST', `/v1/proposals/${sent.json.id}/approve`)
+    await call(h.app, 'POST', `/v1/proposals/${sent.json.id}/capture`)
+    const again = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: payout(undefined as unknown as string, { fundingCaptureId: undefined }) })
+    expect(again.json).toMatchObject({ gate: 'DENY', clause: 'funding.missing' })
+    const text = (await call(h.app, 'GET', `/v1/proposals/${again.json.id}/packet`)).json.whatWouldPass[0].text as string
+    expect(text).toContain('has already been paid out')
+    expect(text).not.toContain('has to pay first')
+  })
+
   it('offers what is left of the cap, and the date the month rolls over', async () => {
     const h = harness()
     const deal = await agree(h.app)

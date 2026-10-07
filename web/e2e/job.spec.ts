@@ -61,7 +61,7 @@ test('the frozen job, end to end, from the owner console', async ({ page }) => {
     await page.getByLabel('Link to the work').fill('https://www.figma.com/file/northwind-logo')
   })
   await expect(answer).toContainText('funding.missing')
-  await expect(answer).toContainText('The client has not paid for this yet')
+  await expect(answer).toContainText('No client payment has money left to fund this payout')
   await shots(page, '03-refused-unfunded')
 
   // Money in: bill Northwind $150 for milestone 1.

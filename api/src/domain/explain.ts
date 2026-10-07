@@ -36,7 +36,7 @@ export function explainClause(input: ExplainInput): string {
     case 'refund.unlinked': return 'A refund must point at a payment that was actually settled.'
     case 'refund.exceeds': return 'That is more than is left to refund on the payment.'
     case 'job.missing': return 'Money in has to name the job it pays for.'
-    case 'funding.missing': return 'The client has not paid for this yet, so nothing funds the payout.'
+    case 'funding.missing': return 'No client payment has money left to fund this payout.'
     case 'funding.job_mismatch': return 'That client payment belongs to a different job.'
     case 'funding.disputed': return 'The client has disputed that payment with PayPal, so it cannot fund a payout until the dispute is resolved.'
     case 'funding.exceeds': return `That client payment cannot fund this much at a ${share} contractor share.`

@@ -1466,9 +1466,16 @@ export class MandateService {
         if (fits.length > 0) out.push({ text: `It would pass as ${fits.join(' or ')} work. Those are the kinds of work the rules allow.`, tested: true })
         break
       }
-      case Clause.fundingMissing:
-        out.push({ text: 'The client has to pay first. Bill the next milestone, and once the client has paid, this payout can be asked for.', tested: false })
+      case Clause.fundingMissing: {
+        // Two different situations hide behind this one code: the client has not paid, or the client has paid and every cent
+        // the contractor may take from it is already paid out. Say which, from the ledger.
+        const paid = row.job_id ? this.repo.proposalsForJob(row.job_id).filter((item) => item.kind === 'charge' && item.phase === 'captured') : []
+        const left = paid.reduce((sum, item) => sum + fundableCents(body, this.fundingState(item, row.payee_id)), 0)
+        if (paid.length === 0) out.push({ text: 'The client has to pay first. Bill the next milestone, and once the client has paid, this payout can be asked for.', tested: false })
+        else if (left <= 0) out.push({ text: `The client has paid ${dollars(paid.reduce((sum, item) => sum + (item.captured_amount_cents ?? 0), 0))} on this job, and the contractor's whole share of it has already been paid out. Nothing is left to fund another payout until the client pays again, for example the next milestone.`, tested: false })
+        else out.push({ text: `A client payment on this job can still fund ${dollars(left)}. Ask for that payout and cite that payment.`, tested: false })
         break
+      }
       case Clause.fundingDisputed:
         out.push({ text: 'It would pass once PayPal resolves the client’s dispute on that payment.', tested: false })
         break
