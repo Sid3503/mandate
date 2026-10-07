@@ -1039,10 +1039,11 @@ export class MandateService {
     }
   }
 
-  private proposeNew(input: ProposalCreate, now: string, actor: Role, runId: string | null = null): HttpResult {
-    if (input.proposalId) return this.amend(input, now)
-    const warrant = this.repo.latestWarrant()
-    if (!warrant) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+  /**
+   * The gate's answer to a request under a set of rules, against the ledger as it is now. Nothing is stored. It is the one
+   * place a request is read into the gate's terms, used both to file a request and to try one without filing it.
+   */
+  private judge(input: ProposalCreate, warrant: { id: string; version: number; body: WarrantBody }, now: string, actor: string) {
     const parent = input.kind === 'refund' && input.parentCaptureId ? this.repo.paymentByCapture(input.parentCaptureId) : null
     const payee = input.kind === 'charge' || parent?.kind === 'charge'
       ? resolveClient(warrant.body, input.payee)
@@ -1081,6 +1082,42 @@ export class MandateService {
       milestone,
       deal,
     }, cap), this.options.safety?.state() ?? NOT_PAUSED, actor)
+    return { decision, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap }
+  }
+
+  /** A settled client payment with money left to fund a payout, for the try-it cases to cite. Null when there is none yet. */
+  tryFunding(): { captureId: string; jobId: string | null; canStillFundCents: number } | null {
+    const warrant = this.repo.latestWarrant()
+    if (!warrant) return null
+    let best: { captureId: string; jobId: string | null; canStillFundCents: number } | null = null
+    for (const row of this.repo.allProposals()) {
+      if (row.kind !== 'charge' || row.phase !== 'captured' || !row.capture_id) continue
+      const left = fundableCents(warrant.body, this.fundingState(row))
+      if (left > 0 && (!best || left > best.canStillFundCents)) best = { captureId: row.capture_id, jobId: row.job_id, canStillFundCents: left }
+    }
+    return best
+  }
+
+  /**
+   * "What would happen if..."  The same decision the gate would give, for a request the owner types in, under the live rules
+   * or under a draft of new ones. It files nothing, locks nothing and never touches PayPal.
+   */
+  tryRequest(input: ProposalCreate, rules?: WarrantBody) {
+    const live = this.repo.latestWarrant()
+    if (!live) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+    const now = this.iso()
+    const under = (body: WarrantBody) => {
+      const made = this.judge(input, { id: live.id, version: live.version, body }, now, 'owner')
+      return { gate: made.decision.gate, clause: made.decision.clause, detail: made.decision.detail }
+    }
+    return { live: under(live.body), draft: rules ? under(rules) : null }
+  }
+
+  private proposeNew(input: ProposalCreate, now: string, actor: Role, runId: string | null = null): HttpResult {
+    if (input.proposalId) return this.amend(input, now)
+    const warrant = this.repo.latestWarrant()
+    if (!warrant) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+    const { decision, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap } = this.judge(input, warrant, now, actor)
     const id = randomUUID()
     const lockNow = decision.gate === 'AUTO'
     const fields: CartFields | null = lockNow && payee && category && evidenceUrl ? {

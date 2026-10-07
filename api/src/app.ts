@@ -18,6 +18,7 @@ import { AgentService, logReviewFailure } from './agents/service'
 import { live } from './services/live'
 import { StudioTurnSchema } from './agents/studio'
 import { DEEP_RUN, EVERY_CHANGE_RUN, GUARANTEES } from './domain/guarantees'
+import { generateCases } from './domain/cases'
 import { paypalProblem } from './services/paypalProblem'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
@@ -93,7 +94,7 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/party-rules$/ },
   { method: 'PUT', pattern: /^\/v1\/party-rules\/[^/]+$/ },
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
-  { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay)$/ },
+  { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay|try|cases)$/ },
   { method: 'POST', pattern: /^\/v1\/ask$/ },
   { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
@@ -117,6 +118,9 @@ function buyerMayCall(method: string, path: string): boolean {
 function isWeb(path: string): boolean {
   return path === '/app' || path.startsWith('/app/')
 }
+
+const TrySchema = z.object({ request: ProposalCreateSchema, rules: WarrantBodySchema.optional() }).strict()
+const CasesSchema = z.object({ rules: WarrantBodySchema.optional() }).strict()
 
 const ClientErrorSchema = z.object({
   scope: z.string().regex(/^[a-z0-9:_-]{1,40}$/),
@@ -504,6 +508,24 @@ export function createApp(deps: AppDeps) {
         await send({ type: 'error', code: problem?.code ?? 'internal', message: problem?.detail ?? 'The clerk failed. Nothing was sent to PayPal.' } as { type: string })
       }
     })
+  })
+  // Try a request, or the cases made from the rules, without filing anything. Under the live rules, and under a draft if one is given.
+  app.post('/v1/rules/try', async (c) => {
+    assertJson(c)
+    const parsed = TrySchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return c.json({ ...service.tryRequest(parsed.data.request, parsed.data.rules), funding: service.tryFunding() })
+  })
+  app.post('/v1/rules/cases', async (c) => {
+    assertJson(c)
+    const parsed = CasesSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const live = service.currentWarrant()
+    const funding = service.tryFunding()
+    const { id: _id, version: _version, createdAt: _createdAt, ...liveBody } = live
+    const body = parsed.data.rules ?? WarrantBodySchema.parse(liveBody)
+    const cases = generateCases(body, funding).map((item) => ({ id: item.id, label: item.label, request: item.request, ...service.tryRequest(ProposalCreateSchema.parse(item.request), parsed.data.rules) }))
+    return c.json({ cases, funding })
   })
   app.post('/v1/rules/replay', async (c) => {
     assertJson(c)

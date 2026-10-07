@@ -620,6 +620,34 @@ test('the Proof page lists what Mandate promises, with the live check or the tes
   await expect(promises.locator('.chip', { hasText: 'Random months' }).first()).toBeVisible()
 })
 
+test('the owner can try a request and check the rules with cases, under the live rules and under a draft, and nothing is filed', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  await unlock(page, OWNER)
+  await page.goto('/app/rules')
+  const before = (await (await request.get('/v1/proposals', { headers })).json()).data.length
+  await page.getByText('Try a request, or check the rules with cases').click()
+  const panel = page.getByTestId('try-rules').first()
+  await expect(panel).toContainText('Cases made from the rules')
+  await expect(panel.locator('table.try-cases')).toContainText('Someone who is not on the rules', { timeout: 20_000 })
+  await expect(panel.locator('table.try-cases')).toContainText('payee.unknown')
+  await panel.locator('.try-form select').first().selectOption('A. Stranger')
+  await panel.getByRole('button', { name: 'Try it' }).click()
+  const result = panel.getByTestId('try-result')
+  await expect(result).toContainText('payee.unknown')
+  await expect(result).toContainText('Nothing was filed and PayPal was not called')
+  await shots(page, '43-try-it')
+  expect((await (await request.get('/v1/proposals', { headers })).json()).data.length).toBe(before)
+
+  // With a draft open, the cases show the live rules and the draft side by side.
+  await page.getByLabel('Describe the change you want to the rules').fill('Lower the monthly cap to $120.')
+  await page.getByRole('button', { name: 'Draft it' }).click()
+  await page.getByRole('button', { name: 'Review this draft' }).click()
+  await page.getByRole('button', { name: 'Review changes' }).click()
+  const draftPanel = page.locator('.editor').getByTestId('try-rules')
+  await expect(draftPanel).toContainText('This draft')
+  await expect(draftPanel.locator('table.try-cases')).toContainText('Live rules')
+})
+
 test('the ledger can be exported as CSV, and points to the control room', async ({ page }) => {
   await unlock(page, OWNER)
   await page.goto('/app/ledger')

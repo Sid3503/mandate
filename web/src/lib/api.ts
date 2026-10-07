@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { AgentHealth, ClientErrorRow, Guarantees, Safety, SystemStatus, AskRoute, ClerkStreamEvent, QuickId, Replay, Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
+import type { AgentHealth, ClientErrorRow, Guarantees, TryCases, TryOne, Safety, SystemStatus, AskRoute, ClerkStreamEvent, QuickId, Replay, Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -198,6 +198,8 @@ export const api = {
   status: () => request<SystemStatus>('/v1/status'),
   safety: () => request<Safety>('/v1/safety'),
   guarantees: () => request<Guarantees>('/v1/guarantees'),
+  tryRequest: (requestBody: Record<string, unknown>, rules?: unknown) => request<TryOne>('/v1/rules/try', { method: 'POST', body: { request: requestBody, ...(rules ? { rules } : {}) } }),
+  tryCases: (rules?: unknown) => request<TryCases>('/v1/rules/cases', { method: 'POST', body: rules ? { rules } : {} }),
   pause: (reason: string) => request<Safety>('/v1/safety/pause', { method: 'POST', body: { reason } }),
   resume: () => request<Safety>('/v1/safety/resume', { method: 'POST' }),
   clientErrors: () => request<{ data: ClientErrorRow[] }>('/v1/client-errors'),

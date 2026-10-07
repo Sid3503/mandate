@@ -4,6 +4,7 @@ import { useLocation } from 'react-router-dom'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
 import { api, ApiError, type DraftStage } from '../lib/api'
 import { StageTrail, type StageView } from '../components/ToolTrail'
+import { TryRules } from '../components/TryRules'
 import { useToast } from '../components/Toast'
 import { when } from '../lib/format'
 import { useAgentsOn, useIsOwner, useOnline, useVersions } from '../lib/hooks'
@@ -130,6 +131,8 @@ export function Rules() {
           }}
         />
       ) : null}
+
+      {owner && !editing ? <details className="try-details"><summary>Try a request, or check the rules with cases</summary><TryRules /></details> : null}
 
       <div className="rules-grid">
         <section className="panel" data-tour="rules-words">
@@ -306,6 +309,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
           <p>Version {current.version} → {current.version + 1}. Open requests stay judged by version {current.version}.</p>
           <Changes changes={changes} />
           {draft ? <ReplayPanel rules={draft} seed={seed?.replay ?? null} /> : null}
+          {draft ? <TryRules rules={draft} /> : null}
           <div className="row gap-s wrap">
             <button type="button" className="btn btn-ghost" onClick={() => setReview(false)}>Back</button>
             <button type="button" className="btn btn-lime btn-big" disabled={!draft || !online || publish.isPending} onClick={() => draft && publish.mutate(draft)}>

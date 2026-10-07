@@ -117,6 +117,12 @@ export type Safety = {
   events: Array<{ id: string; at: string; type: 'paused' | 'resumed'; by: 'owner' | 'breaker'; reason: string | null; detail: string | null; signed: boolean }>
 }
 
+export type TryVerdict = { gate: Gate; clause: string; detail: string }
+export type TryFunding = { captureId: string; jobId: string | null; canStillFundCents: number } | null
+export type TryCaseResult = { id: string; label: string; request: Record<string, unknown>; live: TryVerdict; draft: TryVerdict | null }
+export type TryCases = { cases: TryCaseResult[]; funding: TryFunding }
+export type TryOne = { live: TryVerdict; draft: TryVerdict | null; funding: TryFunding }
+
 export type Guarantees = {
   guarantees: Array<{ id: string; promise: string; audit?: string; tests: string[]; random?: boolean }>
   deepRun: { months: number; stepsPerMonth: number; violations: number; recordedOn: string }
