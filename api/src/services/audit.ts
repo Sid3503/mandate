@@ -220,7 +220,7 @@ export class AuditService {
     const tools = toolSummary()
     return {
       id: 'agents.no_reach',
-      title: 'Agents can reach none of PayPal\'s tools',
+      title: 'No AI can use PayPal\'s tools to move money',
       why: 'The agent door has six tools and none can approve, pay or change rules. Of PayPal\'s Agent Toolkit, the server runs only the few it names, and refuses the rest.',
       status: tools.agentCanCallDirectly === 0 ? 'pass' : 'fail',
       checked: tools.total,

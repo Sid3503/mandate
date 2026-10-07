@@ -463,7 +463,7 @@ export const TOURS: Record<TourId, TourStep[]> = {
     },
     {
       target: '[data-tour="proof-reach"]',
-      title: 'What an agent can reach',
+      title: 'How the toolkit is used',
       placement: 'top',
       content: p('Of PayPal’s agent tools, zero can be called by an agent. The server runs a handful, and refuses the rest.'),
     },

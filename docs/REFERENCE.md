@@ -864,7 +864,7 @@ PayPal's Agent Toolkit has 47 tools, built so a model can call them. Mandate's p
 | `propose` | Changes state or moves money, so an agent may only ask Mandate, and the rules and the owner decide | 24 |
 | `out_of_scope` | Unrelated to a company that bills clients and pays contractors (products, shipping, plans) | 5 |
 
-Nine tools are marked **used by the server**: `create_invoice`, `send_invoice`, `get_invoice`, `list_invoices`, `send_invoice_reminder`, `cancel_sent_invoice`, `list_transactions`, `list_disputes`, `get_dispute`. The runner in `paypal/toolkit.ts` refuses any other, even if the toolkit was built with every action on, so a bug or a dependency bump cannot reach `pay_order`, `create_refund`, `accept_dispute_claim` or `record_payment_for_invoice`. A test fails when the toolkit gains a tool that has no tier. The owner can see the table on **System → What an agent can reach in PayPal** (`GET /v1/paypal/tools`); the number of tools an agent can call directly is `0`.
+Nine tools are marked **used by the server**: `create_invoice`, `send_invoice`, `get_invoice`, `list_invoices`, `send_invoice_reminder`, `cancel_sent_invoice`, `list_transactions`, `list_disputes`, `get_dispute`. The runner in `paypal/toolkit.ts` refuses any other, even if the toolkit was built with every action on, so a bug or a dependency bump cannot reach `pay_order`, `create_refund`, `accept_dispute_claim` or `record_payment_for_invoice`. A test fails when the toolkit gains a tool that has no tier. The owner can see the table on **System → How Mandate uses PayPal's Agent Toolkit** (`GET /v1/paypal/tools`); the number of tools an agent can call directly is `0`.
 
 ### The balance
 

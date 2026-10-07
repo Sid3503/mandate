@@ -47,9 +47,9 @@ export function Proof() {
           </section>
 
           <section className="panel" data-tour="proof-reach">
-            <h2 className="panel-title">What an agent can reach</h2>
-            <p className="payout-lead"><strong>{report.agentReach.agentCanCallDirectly} of PayPal’s {report.agentReach.toolkitTools} agent tools.</strong></p>
-            <p className="fine">The agent door has {report.agentReach.mcpTools} tools and none can approve, pay or change the rules. The server itself runs {report.agentReach.serverUses} of PayPal’s tools and refuses the rest. Every tool and why is on the <Link to="/system" className="link">System</Link> screen.</p>
+            <h2 className="panel-title">How Mandate uses PayPal’s Agent Toolkit</h2>
+            <p className="payout-lead"><strong>PayPal’s Agent Toolkit has {report.agentReach.toolkitTools} tools. Mandate’s server uses {report.agentReach.serverUses}. The AI can call {report.agentReach.agentCanCallDirectly === 0 ? 'none' : report.agentReach.agentCanCallDirectly} of them to move money.</strong></p>
+            <p className="fine">The server calls those {report.agentReach.serverUses} (invoices, reminders, transactions, disputes) from a locked, signed request or from what PayPal reports, never from text a model wrote, and refuses the rest. The AI’s own door has {report.agentReach.mcpTools} tools and none can approve, pay or change the rules. Every tool and why is on the <Link to="/system" className="link">System</Link> screen.</p>
           </section>
 
           <section className="panel">

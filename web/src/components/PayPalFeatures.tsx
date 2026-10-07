@@ -98,11 +98,11 @@ export function ToolTiers() {
   const data = tools.data
   return (
     <section className="panel" data-tour="system-tools">
-      <h2 className="panel-title">What an agent can reach in PayPal</h2>
+      <h2 className="panel-title">How Mandate uses PayPal’s Agent Toolkit</h2>
       {tools.isLoading ? <Loading /> : null}
       {data ? (
         <>
-          <p className="payout-lead"><strong>{data.agentCanCallDirectly} of PayPal’s {data.total} agent tools.</strong> An agent can only ask Mandate, and the rules answer.</p>
+          <p className="payout-lead"><strong>PayPal’s Agent Toolkit has {data.total} tools. Mandate’s server uses {data.usedByMandate}. The AI can call {data.agentCanCallDirectly === 0 ? 'none' : data.agentCanCallDirectly} of them to move money.</strong> An agent can only ask Mandate, and the rules answer.</p>
           <div className="kvs">
             <KV label="Read only">{data.read} tools: cannot change anything at PayPal</KV>
             <KV label="Propose only">{data.propose} tools: change state or move money, so only the rules and the owner can cause them</KV>
