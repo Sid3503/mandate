@@ -103,7 +103,7 @@ export function Loading({ label = 'Loading' }: { label?: string }) {
 }
 
 /** Shows a server problem exactly: plain words, the code, and the server's own sentence. */
-export function ProblemCard({ error, children }: { error: unknown; children?: ReactNode }) {
+export function ProblemCard({ error, children, onRetry }: { error: unknown; children?: ReactNode; /** When the failure is one where trying again is sensible, the card offers to. */ onRetry?: () => void }) {
   if (!error) return null
   const problem = error instanceof ApiError ? error : null
   const words = problem ? problemWords(problem.code) : ''
@@ -122,7 +122,9 @@ export function ProblemCard({ error, children }: { error: unknown; children?: Re
         </ul>
       ) : null}
       {typeof problem?.body.debugId === 'string' ? <p className="server-words"><span>PayPal debug id</span>{String(problem.body.debugId)}</p> : null}
+      {problem?.requestId && problem.status >= 500 ? <p className="server-words"><span>Reference</span><code>{problem.requestId}</code></p> : null}
       {children}
+      {problem?.retryable && onRetry ? <div className="row gap-s"><button type="button" className="btn btn-ghost btn-small" onClick={onRetry}>Try again</button></div> : null}
     </div>
   )
 }

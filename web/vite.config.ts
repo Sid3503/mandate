@@ -5,6 +5,8 @@ import { VitePWA } from 'vite-plugin-pwa'
 const api = process.env.MANDATE_API ?? 'http://127.0.0.1:8787'
 
 export default defineConfig({
+  // Which build this tab is running, written on every error it reports.
+  define: { __RELEASE__: JSON.stringify(`1.0.0-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}`) },
   base: '/app/',
   plugins: [
     react(),

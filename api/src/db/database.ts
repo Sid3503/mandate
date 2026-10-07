@@ -165,6 +165,19 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 );
 CREATE INDEX IF NOT EXISTS agent_runs_conversation ON agent_runs(conversation_id, created_at);
 
+CREATE TABLE IF NOT EXISTS client_errors (
+  id TEXT PRIMARY KEY,
+  at TEXT NOT NULL,
+  role TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  message TEXT NOT NULL,
+  stack TEXT,
+  url TEXT,
+  agent TEXT,
+  release_id TEXT
+);
+CREATE INDEX IF NOT EXISTS client_errors_at ON client_errors(at);
+
 CREATE TABLE IF NOT EXISTS idempotency (
   key TEXT PRIMARY KEY,
   request_hash TEXT NOT NULL,

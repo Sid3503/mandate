@@ -12,6 +12,7 @@ import type { LiveDispute, WatchPort } from '../paypal/watch'
 import { assessFeatures } from '../domain/paypalFeatures'
 import { reconcile } from '../domain/reconcile'
 import { Problem } from '../http/problem'
+import { paypalProblem } from './paypalProblem'
 import { runIdempotent } from './idempotency'
 
 export type HttpResult = { status: number; body: unknown }
@@ -27,7 +28,7 @@ const INVOICE_PHASES = ['invoice_draft', 'invoice_sent']
 const PAYOUT_LIVE_PHASES = ['payout_sent', 'payout_unclaimed']
 const INFLIGHT_MS = 30_000
 /** Reasons a standing-rule payout may wait rather than die: the trouble is outside Mandate and may pass. */
-const STANDING_WAITS = new Set(['funding.disputed', 'funding.unverifiable', 'paypal.upstream', 'paypal.unconfigured', 'capture.inflight', 'paypal.buyer_pending'])
+const STANDING_WAITS = new Set(['funding.disputed', 'funding.unverifiable', 'paypal.upstream', 'paypal.unavailable', 'paypal.unconfigured', 'capture.inflight', 'paypal.buyer_pending'])
 const STANDING_CLAUSES: string[] = [Clause.standingMatched, Clause.standingBilling]
 
 export type ProposalView = {
@@ -430,10 +431,7 @@ export class MandateService {
     } catch (error) {
       if (this.require(id).phase === 'capture_inflight') this.repo.setPhase(id, resume, this.iso())
       if (error instanceof PayPalError) {
-        throw new Problem(502, 'paypal.upstream', 'PayPal rejected the call', error.paypalName, {
-          proposalId: id,
-          debugId: error.debugId,
-        })
+        throw paypalProblem(error, 'to settle this request', { proposalId: id })
       }
       throw error
     }
@@ -511,7 +509,7 @@ export class MandateService {
       return { available: true as const, ...found, currency: warrant?.body.currency ?? 'USD' }
     } catch (error) {
       if (error instanceof PayPalError && (error.httpStatus === 401 || error.httpStatus === 403)) return { available: false as const, reason: 'The PayPal app has no permission to read the balance (Transaction search).' }
-      throw new Problem(502, 'paypal.upstream', 'PayPal could not report the balance', error instanceof PayPalError ? error.paypalName : 'unknown')
+      throw paypalProblem(error, 'to read the balance')
     }
   }
 
@@ -528,7 +526,7 @@ export class MandateService {
       if (error instanceof PayPalError && (error.httpStatus === 401 || error.httpStatus === 403)) {
         return { available: false as const, reason: 'The PayPal app has no Transaction Search permission.' }
       }
-      throw new Problem(502, 'paypal.upstream', 'PayPal could not list transactions', error instanceof PayPalError ? error.paypalName : 'unknown')
+      throw paypalProblem(error, 'to list transactions')
     }
   }
 
@@ -601,7 +599,7 @@ export class MandateService {
       if (error instanceof PayPalError && error.paypalName === 'BATCH_NOT_COMPLETED') {
         throw new Problem(409, 'payout.batch_processing', 'PayPal is still finishing this payout', 'PayPal only cancels an unclaimed payout once its batch has finished processing. Wait a minute, press Check PayPal, then try again. Nothing was changed.', { proposalId: id })
       }
-      if (error instanceof PayPalError) throw new Problem(502, 'paypal.upstream', 'PayPal rejected the cancel', error.paypalName, { proposalId: id, debugId: error.debugId })
+      if (error instanceof PayPalError) throw paypalProblem(error, 'to cancel the payout', { proposalId: id })
       throw error
     }
     const now = this.iso()
@@ -615,7 +613,7 @@ export class MandateService {
     try {
       await invoices.remind(row.invoice_id!, `Reminder: ${row.description}`)
     } catch (error) {
-      if (error instanceof PayPalError) throw new Problem(502, 'paypal.upstream', 'PayPal rejected the reminder', error.paypalName, { proposalId: id, debugId: error.debugId })
+      if (error instanceof PayPalError) throw paypalProblem(error, 'to send the reminder', { proposalId: id })
       throw error
     }
     this.repo.insertEvent(randomUUID(), row.id, 'invoice.reminded', row.clause, { invoiceId: row.invoice_id, via }, this.iso())
@@ -628,7 +626,7 @@ export class MandateService {
     try {
       await invoices.cancel(row.invoice_id!, `Cancelled: ${row.description}`)
     } catch (error) {
-      if (error instanceof PayPalError) throw new Problem(502, 'paypal.upstream', 'PayPal rejected the cancel', error.paypalName, { proposalId: id, debugId: error.debugId })
+      if (error instanceof PayPalError) throw paypalProblem(error, 'to cancel the invoice', { proposalId: id })
       throw error
     }
     const now = this.iso()

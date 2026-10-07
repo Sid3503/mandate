@@ -17,6 +17,7 @@ import { handleMcp } from './mcp/http'
 import { AgentService, logReviewFailure } from './agents/service'
 import { live } from './services/live'
 import { StudioTurnSchema } from './agents/studio'
+import { paypalProblem } from './services/paypalProblem'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
 import type { WatchPort } from './paypal/watch'
@@ -41,6 +42,8 @@ export type AppDeps = {
   model?: AgentModel | null
   /** A separate model for drafting rules. Falls back to `model`. */
   drafterModel?: AgentModel | null
+  /** True while the process is shutting down: /ready then says so and the load balancer stops sending traffic. */
+  draining?: () => boolean
   /** Built by the caller when something outside the app (the timers in main.ts) must share it. */
   agents?: AgentService
   config: {
@@ -94,6 +97,7 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'GET', pattern: /^\/v1\/agents\/health$/ },
+  { method: 'GET', pattern: /^\/v1\/client-errors$/ },
   { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit)$/ },
@@ -112,12 +116,21 @@ function isWeb(path: string): boolean {
   return path === '/app' || path.startsWith('/app/')
 }
 
+const ClientErrorSchema = z.object({
+  scope: z.string().regex(/^[a-z0-9:_-]{1,40}$/),
+  message: z.string().min(1).max(500),
+  stack: z.string().max(4_000).optional(),
+  url: z.string().max(300).optional(),
+  release: z.string().max(40).optional(),
+})
+
 export function createApp(deps: AppDeps) {
   const app = new Hono<{ Variables: { requestId: string; principal: Principal } }>()
   const services = deps.services ?? buildServices({ ...deps, publicUrl: deps.config.publicUrl })
   const { mandate: service, deals } = services
   const agents = deps.agents ?? new AgentService(services, deps.model ?? null, deps.now, deps.drafterModel ?? null)
   const buckets = new Map<string, { count: number; reset: number }>()
+  const clientErrorWindow = new Map<string, number[]>()
   const openapi = buildOpenApi(deps.config.publicUrl)
 
   app.use('*', async (c, next) => {
@@ -216,6 +229,7 @@ export function createApp(deps: AppDeps) {
   }))
 
   app.get('/ready', (c) => {
+    if (deps.draining?.()) return health(c, 'fail', { 'process:draining': [{ status: 'fail', componentType: 'system', observedValue: 'shutting down', time: deps.now().toISOString() }] }, 503)
     const dbOk = databaseReady(deps.db)
     const paypalStatus = deps.config.paypalConfigured ? 'pass' : 'warn'
     const status = dbOk ? 'pass' : 'fail'
@@ -238,6 +252,40 @@ export function createApp(deps: AppDeps) {
 
   app.get('/openapi.json', (c) => c.json(openapi))
 
+  // What is degraded right now, for the banner at the top of every screen. Read-only and cheap: it never calls PayPal.
+  app.get('/v1/status', (c) => {
+    const upstream = deps.paypal?.upstream?.() ?? null
+    const ai = agents.healthReport()
+    const primary = ai.models.find((model) => model.name === ai.primary)
+    const degraded: string[] = []
+    if (upstream && upstream.circuit !== 'closed') degraded.push('paypal')
+    if (ai.enabled && primary && primary.circuit !== 'closed' && !ai.fallback) degraded.push('ai')
+    return c.json({ time: deps.now().toISOString(), degraded, paypal: upstream, ai: { enabled: ai.enabled, primary: ai.primary, fallback: ai.fallback, circuit: primary?.circuit ?? 'closed' } })
+  })
+  // Errors the console hit on a person's screen, so an operator can see them. Rate limited, size capped, never trusted.
+  app.post('/v1/client-errors', async (c) => {
+    assertJson(c)
+    const raw = await c.req.text()
+    if (raw.length > 12_000) throw new Problem(413, 'request.too_large', 'Report is too large', 'Send less.')
+    let body: unknown
+    try {
+      body = JSON.parse(raw)
+    } catch {
+      throw new Problem(400, 'request.invalid', 'Request is invalid', 'Body is not JSON.')
+    }
+    const parsed = ClientErrorSchema.safeParse(body)
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const principal = c.get('principal')
+    const key = `client-errors:${principal.role}:${principal.side ?? ''}`
+    const now = deps.now().getTime()
+    const recent = (clientErrorWindow.get(key) ?? []).filter((at) => now - at < 60_000)
+    if (recent.length >= 20) return c.json({ stored: false, reason: 'rate_limited' }, 202)
+    clientErrorWindow.set(key, [...recent, now])
+    const clip = (value: string | undefined, max: number) => (value ? value.slice(0, max) : null)
+    services.repo.insertClientError({ id: randomUUID(), at: deps.now().toISOString(), role: principal.role, scope: parsed.data.scope, message: parsed.data.message, stack: clip(parsed.data.stack, 4_000), url: clip(parsed.data.url, 300), agent: clip(c.req.header('user-agent'), 200), releaseId: clip(parsed.data.release, 40) })
+    return c.json({ stored: true }, 201)
+  })
+  app.get('/v1/client-errors', (c) => c.json({ data: services.repo.recentClientErrors(50).map((row) => ({ id: row.id, at: row.at, role: row.role, scope: row.scope, message: row.message, stack: row.stack, url: row.url, agent: row.agent, release: row.release_id })) }))
   app.get('/v1/session', (c) => c.json({ role: c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName } }))
   app.get('/.well-known/mandate-keys.json', (c) => c.json(service.publicKeys()))
   app.get('/v1/warrant', (c) => c.json(service.currentWarrant()))
@@ -389,7 +437,7 @@ export function createApp(deps: AppDeps) {
       if (error instanceof PayPalError && (error.httpStatus === 401 || error.httpStatus === 403)) {
         return c.json({ checked: false, open: 0, disputes: services.repo.listDisputes(50), reason: 'The PayPal app has no Disputes permission.' })
       }
-      throw new Problem(502, 'paypal.upstream', 'PayPal could not list disputes', error instanceof PayPalError ? error.paypalName : 'unknown')
+      throw paypalProblem(error, 'to list disputes')
     }
   })
 

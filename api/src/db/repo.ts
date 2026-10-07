@@ -643,6 +643,16 @@ export class Repo {
     return this.db.prepare('SELECT * FROM agent_runs WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(conversationId, limit) as AgentRunRow[]
   }
 
+  insertClientError(row: { id: string; at: string; role: string; scope: string; message: string; stack: string | null; url: string | null; agent: string | null; releaseId: string | null }): void {
+    this.db.prepare('INSERT INTO client_errors (id, at, role, scope, message, stack, url, agent, release_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(row.id, row.at, row.role, row.scope, row.message, row.stack, row.url, row.agent, row.releaseId)
+    // Keep the newest 500. This is a diagnostic, not a record.
+    this.db.prepare('DELETE FROM client_errors WHERE id IN (SELECT id FROM client_errors ORDER BY at DESC, rowid DESC LIMIT -1 OFFSET 500)').run()
+  }
+
+  recentClientErrors(limit: number): Array<{ id: string; at: string; role: string; scope: string; message: string; stack: string | null; url: string | null; agent: string | null; release_id: string | null }> {
+    return this.db.prepare('SELECT * FROM client_errors ORDER BY at DESC, rowid DESC LIMIT ?').all(limit) as never
+  }
+
   recentAgentRuns(limit: number): AgentRunRow[] {
     return this.db.prepare('SELECT * FROM agent_runs ORDER BY created_at DESC, rowid DESC LIMIT ?').all(limit) as AgentRunRow[]
   }

@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { AgentHealth, AskRoute, ClerkStreamEvent, QuickId, Replay, Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
+import type { AgentHealth, ClientErrorRow, SystemStatus, AskRoute, ClerkStreamEvent, QuickId, Replay, Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -12,6 +12,20 @@ export class ApiError extends Error {
   ) {
     super(detail || title)
     this.name = 'ApiError'
+  }
+
+  /** The id the server gave this request. Quote it and the log line for it can be found. */
+  get requestId(): string | null {
+    return typeof this.body.requestId === 'string' ? this.body.requestId : null
+  }
+
+  /**
+   * Is trying the same thing again a sensible next step? A refusal by the rules is not: it will say the same. A server that
+   * did not answer is. For a button that moves money the screen still says "check Today first", because a dropped
+   * connection does not say whether the server got the request.
+   */
+  get retryable(): boolean {
+    return this.body.retryable === true || this.status === 0 || this.status === 429 || this.status === 502 || this.status === 503 || this.status === 504
   }
 }
 
@@ -26,24 +40,37 @@ async function request<T>(path: string, options: Options = {}): Promise<T> {
   if (options.headers) Object.assign(headers, options.headers)
   let response: Response
   try {
+    // A server that does not answer in 30 seconds is treated as not answering, not waited on forever.
     response = await fetch(path, {
       method: options.method ?? 'GET',
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       cache: 'no-store',
+      signal: AbortSignal.timeout(30_000),
     })
-  } catch {
+  } catch (error) {
+    if ((error as Error)?.name === 'TimeoutError') {
+      throw new ApiError(0, 'network.timeout', 'The server did not answer', 'No answer in 30 seconds. If you pressed a button that moves money, look at Today before pressing it again: the request may have gone through.', {})
+    }
     throw new ApiError(0, 'network.offline', 'No connection', 'The server could not be reached. Nothing was sent.', {})
   }
   const text = await response.text()
-  const body = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+  // A proxy or a crashed server can answer with a page of HTML. That is a failure to describe, not a crash to throw.
+  let body: Record<string, unknown> = {}
+  try {
+    body = text ? (JSON.parse(text) as Record<string, unknown>) : {}
+  } catch {
+    if (response.ok) throw new ApiError(502, 'response.unreadable', 'The answer could not be read', 'The server sent something that was not JSON. Reload and try again.', {})
+    body = { detail: text.slice(0, 160).replace(/<[^>]+>/g, ' ').trim() }
+  }
   if (!response.ok) {
+    const id = response.headers.get('x-request-id')
     throw new ApiError(
       response.status,
-      String(body.code ?? 'http.error'),
+      String(body.code ?? (response.status >= 500 ? 'server.error' : 'http.error')),
       String(body.title ?? response.statusText),
       String(body.detail ?? ''),
-      body,
+      id && !body.requestId ? { ...body, requestId: id } : body,
     )
   }
   return body as T
@@ -168,6 +195,8 @@ export const api = {
   streamClerk,
   streamDraft,
   agentHealth: () => request<AgentHealth>('/v1/agents/health'),
+  status: () => request<SystemStatus>('/v1/status'),
+  clientErrors: () => request<{ data: ClientErrorRow[] }>('/v1/client-errors'),
   ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
   replayRules: (rules: unknown) => request<Replay>('/v1/rules/replay', { method: 'POST', body: rules }),
   health: () => request<Health>('/health'),

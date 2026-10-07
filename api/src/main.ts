@@ -9,6 +9,7 @@ import { loadConfig } from './config'
 import { migrate, openDatabase, seed } from './db/database'
 import { loadSigner } from './domain/signing'
 import { buildModels } from './agents/model'
+import { installProcessGuards } from './http/process'
 import { createToolkitInvoices } from './paypal/invoices'
 import { createPayPalClient } from './paypal/client'
 import { createToolkitWatch } from './paypal/watch'
@@ -45,7 +46,10 @@ const { primary: model, drafter: drafterModel, fallback: fallbackModel } = build
 // If the main model errors, the fallback is tried once before the person sees a failure.
 const agents = new AgentService(services, model, () => new Date(), drafterModel, fallbackModel)
 
+installProcessGuards()
+let draining = false
 const app = createApp({
+  draining: () => draining,
   db,
   signer,
   services,
@@ -96,13 +100,32 @@ reviewTimer?.unref()
 const disputeTimer = watch ? setInterval(() => { void services.mandate.syncDisputes().catch(() => undefined) }, 60_000) : null
 disputeTimer?.unref()
 
+// Slow clients and half-open connections are cut off instead of held forever.
+const http = server as unknown as { requestTimeout?: number; headersTimeout?: number; keepAliveTimeout?: number; close: (done?: () => void) => void; closeIdleConnections?: () => void; closeAllConnections?: () => void }
+http.requestTimeout = 120_000
+http.headersTimeout = 30_000
+http.keepAliveTimeout = 10_000
+
+/**
+ * Shutting down without cutting anything off: say so on /ready (so traffic moves away), stop the timers, let requests
+ * already running finish for up to 15 seconds, then close the database. A second signal exits at once.
+ */
+let stopping = false
 function shutdown() {
+  if (stopping) process.exit(1)
+  stopping = true
+  draining = true
   if (disputeTimer) clearInterval(disputeTimer)
   clearInterval(standingTimer)
   if (reviewTimer) clearInterval(reviewTimer)
-  server.close()
-  db.close()
-  process.exit(0)
+  console.log(JSON.stringify({ level: 'info', message: 'draining' }))
+  const done = () => {
+    try { db.close() } catch { /* already closed */ }
+    process.exit(0)
+  }
+  http.close(done)
+  http.closeIdleConnections?.()
+  setTimeout(() => { http.closeAllConnections?.(); done() }, 15_000).unref()
 }
 
 process.on('SIGINT', shutdown)

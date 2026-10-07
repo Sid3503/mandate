@@ -208,6 +208,7 @@ const HELD: Record<string, string> = {
   'funding.disputed': 'The client has an open PayPal dispute on the payment that funds it. It goes out by itself when PayPal resolves the dispute.',
   'funding.unverifiable': 'PayPal could not say whether the client payment is disputed, so it is waiting. Mandate asks again every minute.',
   'paypal.upstream': 'PayPal could not be reached. Mandate tries again every minute.',
+  'paypal.unavailable': 'PayPal is not answering. The request keeps its place and Mandate tries again by itself.',
   'paypal.unconfigured': 'PayPal is not configured on this server.',
   'capture.inflight': 'A PayPal call is already in progress.',
 }

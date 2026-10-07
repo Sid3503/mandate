@@ -1,8 +1,10 @@
 import { useLive } from '../lib/live'
 import { useToast } from './Toast'
 import { motion } from 'framer-motion'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { PageTransition } from './PageTransition'
+import { ErrorBoundary } from './ErrorBoundary'
+import { StatusBanner } from './StatusBanner'
 import { useQueryClient } from '@tanstack/react-query'
 import { useOnline, useSession, useToday } from '../lib/hooks'
 import { AskProvider, useAsk } from './Ask'
@@ -60,8 +62,9 @@ function ShellFrame() {
   const ask = useAsk()
   const navigate = useNavigate()
   const client = useQueryClient()
-  const waiting = today.data?.waiting.length ?? 0
+  const waiting = Array.isArray(today.data?.waiting) ? today.data.waiting.length : 0
   const live = useLive()
+  const location = useLocation()
   const toast = useToast()
   const lock = () => {
     session.clear()
@@ -117,7 +120,10 @@ function ShellFrame() {
           </div>
         ) : null}
         <main id="main" className="main" tabIndex={-1}>
-          <PageTransition />
+          <StatusBanner />
+          <ErrorBoundary key={location.pathname} scope={location.pathname.split('/')[1] || 'today'}>
+            <PageTransition />
+          </ErrorBoundary>
         </main>
       </div>
 

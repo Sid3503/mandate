@@ -15,6 +15,7 @@ export function System() {
   const keys = useQuery({ queryKey: ['signing-keys'], queryFn: api.signingKeys })
   const owner = useIsOwner()
   const agents = useQuery({ queryKey: ['agent-health'], queryFn: api.agentHealth, enabled: owner, refetchInterval: 15_000 })
+  const errors = useQuery({ queryKey: ['client-errors'], queryFn: api.clientErrors, enabled: owner, refetchInterval: 60_000 })
   const guide = useGuide()
   const navigate = useNavigate()
   const client = useQueryClient()
@@ -30,6 +31,17 @@ export function System() {
         <button type="button" className="btn btn-ghost" onClick={lock}>Lock console</button>
       </PageHead>
       <FeaturePanel />
+      {owner && (errors.data?.data.length ?? 0) > 0 ? (
+        <section className="panel" aria-labelledby="h-screen-errors">
+          <h2 className="panel-title" id="h-screen-errors">Recent screen errors</h2>
+          <p className="fine">Things that broke on a screen, as the console reported them. Each one was shown to the person as a card, not a blank page, and none of them sent anything to PayPal.</p>
+          <ul className="runs">
+            {errors.data!.data.slice(0, 8).map((row) => (
+              <li key={row.id}><Chip tone="muted">{row.scope}</Chip> <span>{row.message.slice(0, 110)}</span> <span className="muted small">{when(row.at)} · {row.release ?? 'dev'}</span></li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
       {owner && agents.data?.enabled ? (
         <section className="panel" aria-labelledby="h-ai-health">
           <h2 className="panel-title" id="h-ai-health">The AI layer</h2>

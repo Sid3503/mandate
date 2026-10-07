@@ -958,3 +958,11 @@ html { scroll-behavior: smooth; }
 /* ---- Control room: AG Studio on the ledger ---- */
 .control-room .cr-note { margin: 0 0 12px; max-width: 110ch; }
 .cr-stage { border: 1.5px solid var(--ink); background: var(--paper); box-shadow: var(--shadow-s); min-height: 760px; position: relative; }
+
+/* ---- When a screen fails ---- */
+.boundary { max-width: 640px; margin: 8vh auto 0; }
+.boundary-full { margin-top: 18vh; }
+.boundary-title { font: 800 40px/1 var(--display); text-transform: uppercase; margin: 4px 0 8px; }
+
+.degraded { border: 1.5px solid var(--ink); background: var(--lime-soft); padding: 10px 14px; margin: 0 0 14px; display: grid; gap: 4px; font-size: 14px; }
+.degraded p { margin: 0; }

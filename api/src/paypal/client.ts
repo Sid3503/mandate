@@ -1,6 +1,7 @@
 import { centsToPayPal, payPalToCents } from '../domain/money'
 import { paypalRequestId } from '../domain/hash'
 import { arr, obj, str } from './toolkit'
+import { UpstreamGuard, type GuardOptions } from './resilience'
 import { PayPalError, type CapturedPayment, type CreatedOrder, type LiveOrder, type LivePayout, type PayPalPort, type RefundedPayment, type SentPayout } from './port'
 
 type Token = { value: string; expiresAt: number }
@@ -10,7 +11,10 @@ export function createPayPalClient(options: {
   clientSecret: string
   baseUrl: string
   fetch?: typeof fetch
+  /** For tests: tighter retries and a fake clock. */
+  guard?: GuardOptions
 }): PayPalPort {
+  const guard = new UpstreamGuard(options.guard)
   const fetchImpl = options.fetch ?? fetch
   const baseUrl = options.baseUrl.replace(/\/$/, '')
   let token: Token | null = null
@@ -18,41 +22,56 @@ export function createPayPalClient(options: {
 
   async function accessToken(): Promise<string> {
     if (token && token.expiresAt > Date.now() + 60_000) return token.value
-    const response = await fetchImpl(`${baseUrl}/v1/oauth2/token`, {
-      method: 'POST',
-      headers: {
-        authorization: `Basic ${Buffer.from(`${options.clientId}:${options.clientSecret}`).toString('base64')}`,
-        'content-type': 'application/x-www-form-urlencoded',
-      },
-      body: 'grant_type=client_credentials',
-      signal: AbortSignal.timeout(20_000),
-    })
-    const json = await readJson(response)
-    if (!response.ok || typeof json.access_token !== 'string') {
-      throw paypalError(response.status, json)
-    }
+    const json = await guard.run(async () => {
+      const made = await fetchImpl(`${baseUrl}/v1/oauth2/token`, {
+        method: 'POST',
+        headers: {
+          authorization: `Basic ${Buffer.from(`${options.clientId}:${options.clientSecret}`).toString('base64')}`,
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        body: 'grant_type=client_credentials',
+        signal: AbortSignal.timeout(20_000),
+      })
+      const body = await readJson(made)
+      if (!made.ok || typeof body.access_token !== 'string') throw withRetryAfter(paypalError(made.status, body), made)
+      return body
+    }, { repeatable: true })
+    const value = String(json.access_token)
     const expiresIn = typeof json.expires_in === 'number' ? json.expires_in : 300
-    token = { value: json.access_token, expiresAt: Date.now() + expiresIn * 1000 }
+    token = { value, expiresAt: Date.now() + expiresIn * 1000 }
     scope = typeof json.scope === 'string' ? json.scope.split(' ').filter(Boolean) : []
-    return token.value
+    return value
   }
 
   async function call(path: string, init: { method: string; requestId?: string; body?: unknown }): Promise<{ status: number; json: Json }> {
-    const headers: Record<string, string> = {
-      authorization: `Bearer ${await accessToken()}`,
-      'content-type': 'application/json',
-      prefer: 'return=representation',
-    }
-    if (init.requestId) headers['paypal-request-id'] = init.requestId
-    const response = await fetchImpl(`${baseUrl}${path}`, {
-      method: init.method,
-      headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-      signal: AbortSignal.timeout(20_000),
-    })
-    const json = await readJson(response)
-    if (!response.ok) throw paypalError(response.status, json)
-    return { status: response.status, json }
+    // A read, or a write that carries PayPal's own request id (PayPal answers a repeat with the first answer), is safe to
+    // try again. Anything else is tried once.
+    const repeatable = init.method === 'GET' || Boolean(init.requestId)
+    return guard.run(async () => {
+      const send = async (): Promise<{ response: Response; json: Json }> => {
+        const headers: Record<string, string> = {
+          authorization: `Bearer ${await accessToken()}`,
+          'content-type': 'application/json',
+          prefer: 'return=representation',
+        }
+        if (init.requestId) headers['paypal-request-id'] = init.requestId
+        const response = await fetchImpl(`${baseUrl}${path}`, {
+          method: init.method,
+          headers,
+          body: init.body === undefined ? undefined : JSON.stringify(init.body),
+          signal: AbortSignal.timeout(20_000),
+        })
+        return { response, json: await readJson(response) }
+      }
+      let made = await send()
+      // The token was revoked or expired early. Take a new one and send the same call again, once.
+      if (made.response.status === 401) {
+        token = null
+        made = await send()
+      }
+      if (!made.response.ok) throw withRetryAfter(paypalError(made.response.status, made.json), made.response)
+      return { status: made.response.status, json: made.json }
+    }, { repeatable })
   }
 
   async function createOnce(input: {
@@ -96,6 +115,7 @@ export function createPayPalClient(options: {
   }
 
   return {
+    upstream: () => guard.status(),
     async createOrder(input) {
       const attach = Boolean(input.payeeEmail)
       try {
@@ -239,6 +259,13 @@ async function readJson(response: Response): Promise<Json> {
   } catch {
     return {}
   }
+}
+
+/** A 429 or 503 may say how long to wait. The guard honours it, up to a few seconds. */
+function withRetryAfter(error: PayPalError, response: Response): PayPalError {
+  const seconds = Number(response.headers.get('retry-after'))
+  if (Number.isFinite(seconds) && seconds > 0) Object.assign(error, { retryAfterMs: seconds * 1000 })
+  return error
 }
 
 function paypalError(status: number, json: Json): PayPalError {

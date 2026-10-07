@@ -536,6 +536,43 @@ test('the system page shows the AI layer: which models, which prompt versions, a
   await expect(panel).toContainText('reviewer v2')
 })
 
+test('a screen that crashes becomes a card with a reference, is reported, and the rest of the console still works', async ({ page, request }) => {
+  await unlock(page, OWNER)
+  // The server answers with something the screen cannot draw: it must not become a blank page.
+  await page.route('**/v1/today', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ unexpected: true }) }))
+  await page.goto('/app/')
+  const card = page.getByTestId('error-boundary')
+  await expect(card).toContainText('Something went wrong here')
+  await expect(card).toContainText('Nothing on it sent anything to PayPal')
+  await expect(card).toContainText('Reference')
+  await shots(page, '41-screen-crashed')
+  // The navigation is still there, and another screen works.
+  await page.unroute('**/v1/today')
+  await page.getByRole('link', { name: 'Jobs' }).first().click()
+  await expect(page.getByRole('heading', { name: /Jobs/ }).first()).toBeVisible()
+  // The crash was reported, and the owner can see it.
+  await expect.poll(async () => JSON.stringify(await (await request.get('/v1/client-errors', { headers: { authorization: `Bearer ${OWNER}` } })).json())).toContain('screen:')
+})
+
+test('when PayPal is not answering, every screen says so and says what is safe', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.route('**/v1/status', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ time: new Date().toISOString(), degraded: ['paypal'], paypal: { circuit: 'open', consecutiveFailures: 5, lastError: '503 SERVICE_UNAVAILABLE', lastOkAt: null, openUntil: null }, ai: { enabled: true, primary: 'x', fallback: null, circuit: 'closed' } }) }))
+  await page.goto('/app/jobs')
+  const banner = page.getByTestId('degraded')
+  await expect(banner).toContainText('PayPal is not answering')
+  await expect(banner).toContainText('keep their place')
+  await page.getByRole('link', { name: 'Ledger' }).first().click()
+  await expect(page.getByTestId('degraded')).toBeVisible()
+})
+
+test('a server that answers with a page of HTML, or not at all, is described instead of crashing the screen', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.route('**/v1/proposals?**', (route) => route.fulfill({ status: 502, contentType: 'text/html', body: '<html><body><h1>Bad gateway</h1></body></html>' }))
+  await page.goto('/app/ledger')
+  await expect(page.getByRole('alert').filter({ hasText: 'server.error' }).first()).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('error-boundary')).toHaveCount(0)
+})
+
 test('the ledger can be exported as CSV, and points to the control room', async ({ page }) => {
   await unlock(page, OWNER)
   await page.goto('/app/ledger')

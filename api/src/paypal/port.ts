@@ -48,7 +48,11 @@ export type LivePayout = {
   } | null
 }
 
+import type { UpstreamStatus } from './resilience'
+
 export type PayPalPort = {
+  /** How PayPal has been answering lately. Absent on a fake. */
+  upstream?(): UpstreamStatus
   createOrder(input: {
     proposalId: string
     amountCents: number

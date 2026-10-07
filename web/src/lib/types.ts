@@ -107,6 +107,15 @@ export type ClerkReply = {
   ms: number
 }
 
+export type SystemStatus = {
+  time: string
+  degraded: Array<'paypal' | 'ai'>
+  paypal: { circuit: 'closed' | 'open' | 'half_open'; consecutiveFailures: number; lastError: string | null; lastOkAt: string | null; openUntil: string | null } | null
+  ai: { enabled: boolean; primary: string | null; fallback: string | null; circuit: 'closed' | 'open' | 'half_open' }
+}
+
+export type ClientErrorRow = { id: string; at: string; role: string; scope: string; message: string; stack: string | null; url: string | null; agent: string | null; release: string | null }
+
 export type AgentHealth = {
   enabled: boolean
   primary: string | null
