@@ -241,7 +241,9 @@ export function createApp(deps: AppDeps) {
   app.get('/v1/warrant/versions', (c) => c.json(service.warrantVersions()))
   app.put('/v1/warrant', async (c) => {
     assertJson(c)
-    const result = service.publishWarrant(await readJson(c))
+    const header = c.req.header('x-expected-version')
+    if (header !== undefined && !/^\d{1,6}$/.test(header)) throw new Problem(400, 'rules.expected_version_invalid', 'X-Expected-Version is invalid', 'Send the version number you started from, for example 3.')
+    const result = service.publishWarrant(await readJson(c), header === undefined ? undefined : Number(header))
     return send(c, result)
   })
 

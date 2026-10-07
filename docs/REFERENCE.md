@@ -186,7 +186,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 311 API tests (Vitest), including a 56-case red team, plus 54 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 312 API tests (Vitest), including a 56-case red team, plus 56 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -1000,8 +1000,8 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 311 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 54 Playwright tests (desktop 1440×960 and Pixel 7)
+cd api && npm test && npm run typecheck        # 312 Vitest tests
+cd web && npm run typecheck && npm run e2e     # 56 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 
 **API tests (`api/test/`)** cover:

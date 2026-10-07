@@ -823,6 +823,53 @@ test('a sentence that sounds like a rule is handed from Ask to the drafter', asy
   void request
 })
 
+test('a change you were writing is still there after you leave the screen or reload, and a blocked save says why and fixes it', async ({ page, request }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/rules')
+  const box = page.locator('[data-tour="rules-draft"]')
+  const words = 'Pay Priya 60% of what Northwind pays, never more than $180 a month, and only after I have seen the work.'
+  await box.getByLabel('Describe the change you want to the rules').fill(words)
+  await box.getByRole('button', { name: 'Draft it' }).click()
+  await expect(box.locator('.draft-readback')).toContainText('Priya Shah gets $90 (60%) with no tap from you')
+
+  // Reload: the words and the drafted result are still there, and still unpublished.
+  await page.reload()
+  await expect(page.locator('[data-tour="rules-draft"]').getByLabel('Describe the change you want to the rules')).toHaveValue(words)
+  await expect(page.locator('[data-tour="rules-draft"] .draft-readback')).toContainText('Priya Shah gets $90 (60%) with no tap from you')
+
+  // Open it in the editor, leave the screen, come back: the editor's work is offered back, not lost.
+  await page.locator('[data-tour="rules-draft"]').getByRole('button', { name: 'Review this draft' }).click()
+  await expect(page.locator('.editor')).toContainText('Drafted by')
+  await page.goto('/app/jobs')
+  await page.goto('/app/rules')
+  const banner = page.getByTestId('wip-banner')
+  await expect(banner).toContainText('You have unpublished changes to the rules')
+  await banner.getByRole('button', { name: 'Continue editing' }).click()
+  const editor = page.locator('.editor')
+  await expect(editor.getByText('Standing rule', { exact: false }).first()).toBeVisible()
+
+  // The exact trap: "pay when the client pays" with no standing rule cannot be reviewed. It says why, and offers the fix.
+  await editor.getByRole('button', { name: 'Cancel' }).click()
+  await expect(page.getByTestId('wip-banner')).toHaveCount(0)
+  await page.getByRole('button', { name: /Write version/ }).click()
+  const fresh = page.locator('.editor')
+  await fresh.getByLabel(/When a client payment settles, pay each contractor/).check()
+  await expect(fresh.getByRole('alert')).toContainText('needs at least one standing rule')
+  await expect(fresh.getByRole('button', { name: 'Review changes' })).toBeDisabled()
+  await fresh.getByRole('button', { name: 'Add the standing rule it needs' }).click()
+  await expect(fresh.getByRole('alert')).toHaveCount(0)
+  await expect(fresh.getByRole('button', { name: 'Review changes' })).toBeEnabled()
+  await fresh.getByRole('button', { name: 'Cancel' }).click()
+
+  // Publishing from a version that is no longer live is refused, so nobody undoes a newer change by accident.
+  const headers = { authorization: `Bearer ${OWNER}`, 'content-type': 'application/json' }
+  const live = await (await request.get('/v1/warrant', { headers })).json()
+  const { id: _id, version, createdAt: _createdAt, ...rest } = live
+  const stale = await request.put('/v1/warrant', { headers: { ...headers, 'x-expected-version': String(version - 1) }, data: rest })
+  expect(stale.status()).toBe(409)
+  expect((await stale.json()).code).toBe('rules.stale')
+})
+
 test('billing waits for the client: delivered, accepted by the client\'s agent, and only then invoiced', async ({ page, request }) => {
   const headers = { authorization: `Bearer ${OWNER}` }
   await fake(request, 'invoices-on')

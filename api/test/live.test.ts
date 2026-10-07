@@ -67,3 +67,25 @@ describe('how often the server looks at PayPal', () => {
     expect(h.services.mandate.watcher().everySeconds).toBe(5)
   })
 })
+
+describe('publishing rules you started editing earlier', () => {
+  it('is refused when someone else published first, and allowed when you started from the live version', async () => {
+    const h = harness()
+    const current = (await call(h.app, 'GET', '/v1/warrant')).json
+    const { id: _id, version, createdAt: _createdAt, ...body } = current
+    const put = (expected?: number) => h.app.request('http://mandate.test/v1/warrant', {
+      method: 'PUT',
+      headers: { authorization: `Bearer ${OWNER_KEY}`, 'content-type': 'application/json', ...(expected === undefined ? {} : { 'x-expected-version': String(expected) }) },
+      body: JSON.stringify({ ...body, monthlyCapCents: 19_000 }),
+    })
+    const first = await put(version)
+    expect(first.status).toBe(201)
+    const stale = await put(version)
+    expect(stale.status).toBe(409)
+    expect((await stale.json()).code).toBe('rules.stale')
+    expect((await put(version + 1)).status).toBe(201)
+    expect((await put()).status).toBe(201)
+    const bad = await h.app.request('http://mandate.test/v1/warrant', { method: 'PUT', headers: { authorization: `Bearer ${OWNER_KEY}`, 'content-type': 'application/json', 'x-expected-version': 'abc' }, body: JSON.stringify(body) })
+    expect(bad.status).toBe(400)
+  })
+})

@@ -208,12 +208,19 @@ export class MandateService {
     return { data: this.repo.warrantVersions().map((warrant) => ({ id: warrant.id, version: warrant.version, createdAt: warrant.createdAt, ...warrant.body })) }
   }
 
-  publishWarrant(input: unknown): HttpResult {
+  /**
+   * Publishes the next version of the rules. A caller that says which version it started from (`expectedVersion`) is
+   * refused if someone has published since: two people editing never silently overwrite each other.
+   */
+  publishWarrant(input: unknown, expectedVersion?: number): HttpResult {
     const parsed = WarrantBodySchema.safeParse(input)
     if (!parsed.success) throw parsed.error
     const now = this.iso()
     const saved = this.repo.transaction(() => {
       const current = this.repo.latestWarrant()
+      if (expectedVersion !== undefined && (current?.version ?? 0) !== expectedVersion) {
+        throw new Problem(409, 'rules.stale', 'The rules changed while you were editing', `You started from version ${expectedVersion}, but version ${current?.version ?? 0} is live now. Nothing was published. Start again from the live version so you do not undo someone else's change.`)
+      }
       const version = current ? current.version + 1 : 1
       const id = current?.id ?? WARRANT_ID
       this.repo.insertWarrant(id, version, parsed.data, now)

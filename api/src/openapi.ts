@@ -181,9 +181,9 @@ export function buildOpenApi(publicUrl: string) {
     path: '/v1/warrant',
     tags: ['warrant'],
     security: bearer,
-    summary: 'Owner only. Write the next warrant version. In-flight proposals keep the version they were decided against.',
-    request: { body: { content: { 'application/json': { schema: WarrantBodySchema } } } },
-    responses: { 201: { description: 'Stored', content: { 'application/json': { schema: WarrantViewSchema } } }, 400: problem, 401: problem },
+    summary: 'Owner only. Write the next warrant version. In-flight proposals keep the version they were decided against. Send X-Expected-Version (the version you started from) to be refused with 409 rules.stale if someone has published since.',
+    request: { headers: z.object({ 'X-Expected-Version': z.string().regex(/^\d{1,6}$/).optional() }), body: { content: { 'application/json': { schema: WarrantBodySchema } } } },
+    responses: { 201: { description: 'Stored', content: { 'application/json': { schema: WarrantViewSchema } } }, 400: problem, 401: problem, 409: problem },
   })
   registry.registerPath({
     method: 'post',

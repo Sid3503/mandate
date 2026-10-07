@@ -15,7 +15,7 @@ export class ApiError extends Error {
   }
 }
 
-type Options = { method?: string; body?: unknown; idempotencyKey?: string; key?: string }
+type Options = { method?: string; body?: unknown; idempotencyKey?: string; key?: string; headers?: Record<string, string> }
 
 async function request<T>(path: string, options: Options = {}): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' }
@@ -23,6 +23,7 @@ async function request<T>(path: string, options: Options = {}): Promise<T> {
   if (key) headers.authorization = `Bearer ${key}`
   if (options.body !== undefined) headers['content-type'] = 'application/json'
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey
+  if (options.headers) Object.assign(headers, options.headers)
   let response: Response
   try {
     response = await fetch(path, {
@@ -151,7 +152,7 @@ export const api = {
   session: (key?: string) => request<Session>('/v1/session', { key }),
   warrant: () => request<Warrant>('/v1/warrant'),
   warrantVersions: () => request<{ data: Warrant[] }>('/v1/warrant/versions'),
-  publishWarrant: (body: unknown) => request<Warrant>('/v1/warrant', { method: 'PUT', body }),
+  publishWarrant: (body: unknown, expectedVersion?: number) => request<Warrant>('/v1/warrant', { method: 'PUT', body, headers: expectedVersion === undefined ? undefined : { 'x-expected-version': String(expectedVersion) } }),
   proposals: (cursor?: string | null) => request<Page<Proposal>>(`/v1/proposals?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
   proposal: (id: string) => request<Proposal>(`/v1/proposals/${id}`),
   packet: (id: string) => request<Packet>(`/v1/proposals/${id}/packet`),

@@ -7,6 +7,7 @@ import { when } from '../lib/format'
 import { useAgentsOn, useIsOwner, useOnline, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { Party, Replay, RulesDraft, Warrant } from '../lib/types'
+import { wip, type RulesWip } from '../lib/wip'
 import { ruleSentences } from '../lib/words'
 import { useQueryClient } from '@tanstack/react-query'
 
@@ -55,9 +56,27 @@ export function Rules() {
   const [selected, setSelected] = useState<number | null>(null)
   const [editing, setEditing] = useState(false)
   const [seed, setSeed] = useState<RulesDraft | null>(null)
+  // Unpublished work survives leaving the screen and reloading (for this tab), and is set aside if the rules move on.
+  const [resume, setResume] = useState<Body | null>(null)
+  const [saved, setSaved] = useState<RulesWip | null>(() => wip.read())
+  const [notice, setNotice] = useState<string | null>(null)
+  const liveVersion = list[0]?.version
+  const keep = (patch: Partial<RulesWip>) => setSaved((before) => {
+    const next: RulesWip = { baseVersion: liveVersion ?? 0, instruction: '', result: null, body: null, at: Date.now(), ...before, ...patch }
+    wip.write(next)
+    return next.body || next.result || next.instruction.trim() ? next : null
+  })
+  const discard = () => { wip.clear(); setSaved(null); setResume(null); setSeed(null) }
   useEffect(() => {
     if (selected === null && list[0]) setSelected(list[0].version)
   }, [list, selected])
+  useEffect(() => {
+    if (saved && liveVersion !== undefined && saved.baseVersion !== liveVersion) {
+      wip.clear()
+      setSaved(null)
+      setNotice(`The rules moved to version ${liveVersion} after you started that draft (it began from version ${saved.baseVersion}), so it was set aside rather than undo the newer change. Say it again to start from the live rules.`)
+    }
+  }, [saved, liveVersion])
   if (versions.isLoading) return <div className="page"><Loading /></div>
   const current = list[0]
   const shown = list.find((item) => item.version === selected) ?? current
@@ -67,11 +86,47 @@ export function Rules() {
   return (
     <div className="page">
       <PageHead eyebrow={`Rules · version ${current.version} is live`} title="The rules">
-        {owner && !editing ? <button type="button" className="btn btn-ink" data-tour="rules-write" onClick={() => { setSeed(null); setEditing(true) }}>Write version {current.version + 1}</button> : null}
+        {owner && !editing ? <button type="button" className="btn btn-ink" data-tour="rules-write" onClick={() => { setSeed(null); setResume(null); keep({ body: null }); setEditing(true) }}>Write version {current.version + 1}</button> : null}
       </PageHead>
 
-      {owner && !editing ? <DraftBox prefill={(location.state as { draft?: string } | null)?.draft} onUse={(result) => { setSeed(result); setEditing(true) }} /> : null}
-      {editing ? <Editor key={seed?.runId ?? 'blank'} current={current} seed={seed} onDone={(version) => { setEditing(false); setSeed(null); if (version) setSelected(version) }} /> : null}
+      {notice ? <div className="panel wip-note" role="status"><p className="fine">{notice}</p><button type="button" className="link" onClick={() => setNotice(null)}>Dismiss</button></div> : null}
+      {owner && !editing && saved?.body ? (
+        <div className="panel panel-lime wip-note" role="status" data-testid="wip-banner">
+          <div>
+            <strong>You have unpublished changes to the rules.</strong>
+            <p className="fine">Started {when(new Date(saved.at).toISOString())} from version {saved.baseVersion}. Nothing is live until you publish.</p>
+          </div>
+          <div className="row gap-s wrap">
+            <button type="button" className="btn btn-ink btn-small" onClick={() => { setSeed(null); setResume(saved.body); setEditing(true) }}>Continue editing</button>
+            <button type="button" className="btn btn-ghost btn-small" onClick={discard}>Discard</button>
+          </div>
+        </div>
+      ) : null}
+
+      {owner && !editing ? (
+        <DraftBox
+          prefill={(location.state as { draft?: string } | null)?.draft}
+          initialInstruction={saved?.instruction ?? ''}
+          initialResult={saved?.result ?? null}
+          onKeep={(instruction, result) => keep({ instruction, result })}
+          onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }}
+        />
+      ) : null}
+      {editing ? (
+        <Editor
+          key={resume ? 'resume' : seed?.runId ?? 'blank'}
+          current={current}
+          seed={seed}
+          resume={resume}
+          onKeep={(next) => keep({ body: next })}
+          onDone={(version) => {
+            setEditing(false)
+            setSeed(null)
+            setResume(null)
+            if (version) { wip.clear(); setSaved(null); setSelected(version) } else keep({ body: null })
+          }}
+        />
+      ) : null}
 
       <div className="rules-grid">
         <section className="panel" data-tour="rules-words">
@@ -127,11 +182,11 @@ function Changes({ changes, first = false }: { changes: Change[]; first?: boolea
   )
 }
 
-function Editor({ current, seed, onDone }: { current: Warrant; seed: RulesDraft | null; onDone: (version: number | null) => void }) {
+function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; seed: RulesDraft | null; resume: Body | null; onKeep: (body: Body | null) => void; onDone: (version: number | null) => void }) {
   const client = useQueryClient()
   const online = useOnline()
   const start = useMemo(() => body(current), [current])
-  const from: Body = seed?.draft ?? start
+  const from: Body = resume ?? seed?.draft ?? start
   const [auto, setAuto] = useState(centsInput(from.autoSettleUnderCents))
   const [cap, setCap] = useState(centsInput(from.monthlyCapCents))
   const [ceiling, setCeiling] = useState(centsInput(from.perPaymentCeilingCents))
@@ -178,8 +233,18 @@ function Editor({ current, seed, onDone }: { current: Warrant; seed: RulesDraft 
   })()
   const problem = draft && draft.automation?.payOnSettle && draft.standing.length === 0 ? 'Paying when the client pays needs at least one standing rule, to say whom to pay.' : null
   const changes = draft ? diff(start, draft) : []
+  // Keep the work: leave the screen or reload and it is still here, marked unpublished.
+  const snapshot = draft ? JSON.stringify(draft) : null
+  useEffect(() => {
+    onKeep(draft && changes.length > 0 ? draft : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot])
+  const addStanding = () => {
+    setFunding(true)
+    setStanding((list) => [...list, { id: `standing_${list.length + 1}`, payeeId: payees[0]?.id ?? '', clientIds: clients[0] ? [clients[0].id] : [], requireDeal: true }])
+  }
   const publish = useMutation({
-    mutationFn: (next: Body) => api.publishWarrant(next),
+    mutationFn: (next: Body) => api.publishWarrant(next, current.version),
     onSuccess: async (saved) => {
       await Promise.all([client.invalidateQueries({ queryKey: ['versions'] }), client.invalidateQueries({ queryKey: ['warrant'] })])
       onDone(saved.version)
@@ -216,8 +281,16 @@ function Editor({ current, seed, onDone }: { current: Warrant; seed: RulesDraft 
               <label className="field"><span>Remind unpaid invoices after (days)</span><input inputMode="numeric" value={remindDays} placeholder="off" onChange={(e) => setRemindDays(e.target.value)} /></label>
               <label className="field"><span>At most this many reminders</span><input inputMode="numeric" value={maxReminders} onChange={(e) => setMaxReminders(e.target.value)} /></label>
             </div>
-            {problem ? <p className="fine" role="alert"><strong>{problem}</strong></p> : null}
           </fieldset>
+          {problem ? (
+            <div className="editor-problem" role="alert">
+              <strong>{problem}</strong>
+              <span className="row gap-s wrap">
+                <button type="button" className="btn btn-ink btn-small" onClick={addStanding}>Add the standing rule it needs</button>
+                <button type="button" className="btn btn-ghost btn-small" onClick={() => setPaySettle(false)}>Or turn off “pay when the client pays”</button>
+              </span>
+            </div>
+          ) : null}
           <div className="row between wrap gap-s">
             <span className="muted">{draft ? `${changes.length} change${changes.length === 1 ? '' : 's'}` : 'Some amounts are not valid money'}</span>
             <button type="button" className="btn btn-ink" disabled={!draft || changes.length === 0 || Boolean(problem)} onClick={() => setReview(true)}>Review changes</button>
@@ -296,18 +369,19 @@ function Parties({ title, prefix, list, onChange }: { title: string; prefix: str
 }
 
 /** Describe a change in your own words. A model drafts it; you read the before-and-after and publish it yourself. */
-function DraftBox({ onUse, prefill }: { onUse: (result: RulesDraft) => void; prefill?: string }) {
+function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult }: { onUse: (result: RulesDraft) => void; onKeep: (instruction: string, result: RulesDraft | null) => void; prefill?: string; initialInstruction: string; initialResult: RulesDraft | null }) {
   const agents = useAgentsOn()
   const online = useOnline()
-  const [text, setText] = useState(prefill ?? '')
-  const make = useMutation({ mutationFn: (instruction: string) => api.draftRules(instruction) })
+  const [text, setText] = useState(prefill ?? initialInstruction)
+  const [restored] = useState(initialResult)
+  const make = useMutation({ mutationFn: (instruction: string) => api.draftRules(instruction), onSuccess: (data, instruction) => onKeep(instruction, data) })
   const ran = useRef(false)
   useEffect(() => {
     if (prefill && agents && !ran.current) { ran.current = true; make.mutate(prefill) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill, agents])
   if (!agents) return null
-  const result = make.data
+  const result = make.data ?? restored
   const blocked = Boolean(result && result.added.length > 0)
   return (
     <section className="panel draft-box" data-tour="rules-draft" aria-labelledby="h-draft">
@@ -315,7 +389,7 @@ function DraftBox({ onUse, prefill }: { onUse: (result: RulesDraft) => void; pre
       <ol className="draft-steps" aria-label="How a change is made"><li>Say it</li><li>See it</li><li>Check it</li><li>Replay it</li><li>Sign it</li></ol>
       <form className="draft-form" onSubmit={(event) => { event.preventDefault(); if (text.trim().length >= 3) make.mutate(text.trim()) }}>
         <label className="sr-only" htmlFor="draft-text">Describe the change you want to the rules</label>
-        <textarea id="draft-text" rows={2} maxLength={1000} value={text} placeholder="e.g. pay Priya 60% of what Northwind pays, never more than $180 a month, and only after the client accepts" onChange={(event) => setText(event.target.value)} />
+        <textarea id="draft-text" rows={2} maxLength={1000} value={text} placeholder="e.g. pay Priya 60% of what Northwind pays, never more than $180 a month, and only after the client accepts" onChange={(event) => { setText(event.target.value); onKeep(event.target.value, make.data ?? restored) }} />
         <button type="submit" className="btn btn-ink" disabled={!online || text.trim().length < 3 || make.isPending}>{make.isPending ? 'Drafting…' : 'Draft it'}</button>
       </form>
       <p className="fine">A model drafts the change. It cannot publish. Code, not the model, checks the draft against your words, lists what it loosens and replays your history under it. Then you publish.</p>
