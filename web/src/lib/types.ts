@@ -42,6 +42,7 @@ export type Packet = {
   } | null
   job: string | null
   dispute?: { id: string; status: string; reason: string | null; amountCents: number | null } | null
+  acceptance?: { id: string; dealId: string; milestone: number; proofUrl: string; status: string; note: string | null; decidedBy: string | null; decidedAt: string | null; signature: string | null; keyId: string | null; signatureValid: boolean | null } | null
   funding: {
     captureId: string
     proposalId: string | null
@@ -221,15 +222,39 @@ export type TodayItem = {
   actions: TodayAction[]
 }
 
+export type Delivery = {
+  id: string
+  dealId: string
+  jobId: string | null
+  milestone: number
+  title: string
+  scope: string
+  amountCents: number
+  currency: string
+  buyerId: string | null
+  buyerName: string | null
+  proofUrl: string
+  status: 'awaiting' | 'accepted' | 'rejected' | 'superseded'
+  note: string | null
+  decidedBy: string | null
+  createdAt: string
+  decidedAt: string | null
+  proposalId: string | null
+  signatureValid: boolean | null
+  keyId: string | null
+}
+
+export type Delivered = { mode: 'billed'; charge: Proposal; delivery: null } | { mode: 'awaiting'; charge: null; delivery: Delivery }
+
 export type Today = {
   asOf: string
   month: { label: string; inCents: number; outCents: number; keptCents: number; refundedCents: number; reservedCents: number; capCents: number; currency: string } | null
-  automation: { billSignedDeals: boolean; payOnSettle: boolean; remindUnpaidAfterDays: number | null; maxReminders: number; standingRules: number; any: boolean } | null
+  automation: { billSignedDeals: boolean; requireAcceptance: boolean; payOnSettle: boolean; remindUnpaidAfterDays: number | null; maxReminders: number; standingRules: number; any: boolean } | null
   waiting: TodayItem[]
   inFlight: TodayItem[]
   done: TodayItem[]
   stopped: { count: number; cents: number; recent: TodayItem[] }
-  readyToBill: Array<{ dealId: string; jobId: string; buyerId: string; buyerName: string; scope: string; milestone: number; title: string; amountCents: number; currency: string; billed: number; total: number }>
+  readyToBill: Array<{ dealId: string; jobId: string; buyerId: string; buyerName: string; scope: string; milestone: number; title: string; amountCents: number; currency: string; billed: number; total: number; delivery: Delivery | null }>
   stats: { last30Days: { requests: number; refused: number; automatic: number; tapped: number; automaticShare: number | null } }
   setup: { complete: boolean; steps: Array<{ id: string; label: string; hint: string; href: string; done: boolean }> }
 }

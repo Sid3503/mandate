@@ -106,6 +106,25 @@ CREATE TABLE IF NOT EXISTS deals (
 CREATE INDEX IF NOT EXISTS deals_thread ON deals(thread_id, created_at);
 CREATE INDEX IF NOT EXISTS deals_created ON deals(created_at DESC, id DESC);
 
+CREATE TABLE IF NOT EXISTS deliveries (
+  id TEXT PRIMARY KEY,
+  deal_id TEXT NOT NULL REFERENCES deals(id),
+  milestone INTEGER NOT NULL,
+  proof_url TEXT NOT NULL,
+  proof_hash TEXT NOT NULL,
+  delivered_by TEXT NOT NULL,
+  status TEXT NOT NULL,
+  note TEXT,
+  decided_by TEXT,
+  run_id TEXT,
+  sig TEXT,
+  key_id TEXT,
+  proposal_id TEXT,
+  created_at TEXT NOT NULL,
+  decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS deliveries_deal ON deliveries(deal_id, milestone, created_at);
+
 CREATE TABLE IF NOT EXISTS webhook_events (
   event_id TEXT PRIMARY KEY,
   event_type TEXT NOT NULL,

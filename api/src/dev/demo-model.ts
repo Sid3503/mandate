@@ -58,6 +58,16 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
       const seen = prompt.filter((item) => item.role === 'tool').length
       const result = lastToolJson(prompt)
 
+      // The client's reviewer: accepts a delivery whose proof is a plausible https link, rejects a placeholder.
+      if (system.includes('You review deliveries for')) {
+        if (seen > 0) return say('Decided.')
+        const proof = /The proof it gave: (\S+)/.exec(system)?.[1] ?? ''
+        const dealId = /The deal is ([0-9a-f-]{36})/.exec(system)?.[1]
+        const milestone = Number(/milestone number (\d+)/.exec(system)?.[1] ?? 0)
+        const bad = /example\.com|localhost|bit\.ly|placeholder/i.test(proof)
+        return call('decide_delivery', { dealId, milestone, decision: bad ? 'rejected' : 'accepted', note: bad ? 'That link does not look like the delivered work.' : 'The link points at the design file for this milestone.' })
+      }
+
       // The rules drafter: a few phrases, turned into the same patch a real model would write.
       if (system.includes('rules drafter for Mandate')) {
         if (seen > 0) return say('Drafted.')

@@ -71,6 +71,10 @@ function keyIdOf(publicKey: KeyObject): string {
 }
 
 export const lockMessage = (proposalId: string, cartHash: string) => `mandate:lock:v1\n${proposalId}\n${cartHash}`
+/** What the client's acceptance signs: this delivery, of this milestone of this deal, with exactly this proof, decided this way. */
+export const acceptanceMessage = (row: { id: string; deal_id: string; milestone: number; proof_hash: string; status: string }) =>
+  `mandate:accept:v1\n${row.id}\n${row.deal_id}\n${row.milestone}\n${row.proof_hash}\n${row.status}`
+export const proofHash = (url: string) => createHash('sha256').update(url.trim()).digest('hex')
 export const dealMessage = (dealId: string, termsHash: string) => `mandate:deal:v1\n${dealId}\n${termsHash}`
 
 export function ephemeralSigner(): Signer {

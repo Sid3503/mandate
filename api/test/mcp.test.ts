@@ -38,10 +38,10 @@ describe('the MCP door', () => {
     await client.close()
   })
 
-  it('offers a client\'s agent two tools and only its own rules', async () => {
+  it('offers a client\'s agent five tools, none of which can pay, and only its own rules', async () => {
     const { app } = harness()
     const { client, use } = await connect(app, BUYER_KEY)
-    expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(['explain', 'get_rules', 'offer_deal'])
+    expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(['decide_delivery', 'explain', 'get_deliveries', 'get_rules', 'offer_deal'])
     const rules = await use('get_rules')
     expect(rules.data.yourDealRules).toMatchObject({ role: 'buyer', partyId: 'client_northwind' })
     expect(JSON.stringify(rules.data)).not.toContain('minTotalCents')

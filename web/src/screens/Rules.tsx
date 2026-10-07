@@ -14,7 +14,7 @@ type Change = { field: string; before: string; after: string }
 type Standing = NonNullable<Warrant['standing']>[number]
 
 const automationWords = (a: Body['automation'] | undefined) => {
-  const on = [a?.billSignedDeals ? 'bill signed-deal milestones on delivery' : null, a?.payOnSettle ? 'pay contractors when the client pays' : null, a?.remindUnpaidAfterDays ? `remind after ${a.remindUnpaidAfterDays} days (max ${a.maxReminders})` : null].filter(Boolean)
+  const on = [a?.billSignedDeals ? (a.requireAcceptance ? 'bill signed-deal milestones once the client accepts the delivery' : 'bill signed-deal milestones on delivery') : null, a?.payOnSettle ? 'pay contractors when the client pays' : null, a?.remindUnpaidAfterDays ? `remind after ${a.remindUnpaidAfterDays} days (max ${a.maxReminders})` : null].filter(Boolean)
   return on.length > 0 ? on.join(', ') : 'off'
 }
 
@@ -141,6 +141,7 @@ function Editor({ current, seed, onDone }: { current: Warrant; seed: RulesDraft 
   const [clients, setClients] = useState<Party[]>(from.clients ?? [])
   const [standing, setStanding] = useState<Standing[]>(from.standing ?? [])
   const [billSigned, setBillSigned] = useState(from.automation?.billSignedDeals ?? false)
+  const [needAccept, setNeedAccept] = useState(from.automation?.requireAcceptance ?? false)
   const [paySettle, setPaySettle] = useState(from.automation?.payOnSettle ?? false)
   const [remindDays, setRemindDays] = useState(from.automation?.remindUnpaidAfterDays ? String(from.automation.remindUnpaidAfterDays) : '')
   const [maxReminders, setMaxReminders] = useState(String(from.automation?.maxReminders ?? 2))
@@ -166,6 +167,7 @@ function Editor({ current, seed, onDone }: { current: Warrant; seed: RulesDraft 
       standing: funding ? standing : [],
       automation: {
         billSignedDeals: billSigned,
+        requireAcceptance: billSigned && needAccept,
         payOnSettle: paySettle,
         remindUnpaidAfterDays: remindDays.trim() === '' ? null : Math.max(1, Math.min(60, Math.round(Number(remindDays)) || 1)),
         maxReminders: Math.max(0, Math.min(5, Math.round(Number(maxReminders)) || 0)),
@@ -206,6 +208,7 @@ function Editor({ current, seed, onDone }: { current: Warrant; seed: RulesDraft 
             <legend>Autopilot · what runs without you</legend>
             <p className="fine">Each switch only removes a tap or sends a nudge. None of them lets a payment be bigger, go to someone new, or skip proof, the cap, or the dispute check.</p>
             <label className="check"><input type="checkbox" checked={billSigned} onChange={(e) => setBillSigned(e.target.checked)} /> Bill a milestone of a signed deal, and send the invoice, as soon as proof of the work is attached</label>
+            <label className="check sub"><input type="checkbox" checked={needAccept} disabled={!billSigned} onChange={(e) => setNeedAccept(e.target.checked)} /> …but only after the client’s own agent has accepted the delivery (recommended: it makes the proof link something the client has looked at)</label>
             <label className="check"><input type="checkbox" checked={paySettle} onChange={(e) => setPaySettle(e.target.checked)} /> When a client payment settles, pay each contractor whose standing rule covers it</label>
             <div className="field-row three">
               <label className="field"><span>Remind unpaid invoices after (days)</span><input inputMode="numeric" value={remindDays} placeholder="off" onChange={(e) => setRemindDays(e.target.value)} /></label>

@@ -173,6 +173,7 @@ export interface paths {
                         /**
                          * @default {
                          *       "billSignedDeals": false,
+                         *       "requireAcceptance": false,
                          *       "payOnSettle": false,
                          *       "remindUnpaidAfterDays": null,
                          *       "maxReminders": 2
@@ -181,6 +182,8 @@ export interface paths {
                         automation?: {
                             /** @default false */
                             billSignedDeals?: boolean;
+                            /** @default false */
+                            requireAcceptance?: boolean;
                             /** @default false */
                             payOnSettle?: boolean;
                             /** @default null */
@@ -2825,6 +2828,7 @@ export interface components {
             /**
              * @default {
              *       "billSignedDeals": false,
+             *       "requireAcceptance": false,
              *       "payOnSettle": false,
              *       "remindUnpaidAfterDays": null,
              *       "maxReminders": 2
@@ -2833,6 +2837,8 @@ export interface components {
             automation: {
                 /** @default false */
                 billSignedDeals: boolean;
+                /** @default false */
+                requireAcceptance: boolean;
                 /** @default false */
                 payOnSettle: boolean;
                 /** @default null */

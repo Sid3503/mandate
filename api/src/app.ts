@@ -5,7 +5,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { VERSION } from './config'
 import { databaseReady } from './db/database'
 import { z } from 'zod'
-import { BillMilestoneSchema, DealOfferSchema } from './domain/deal'
+import { BillMilestoneSchema, DealOfferSchema, DecideDeliverySchema } from './domain/deal'
 import type { Signer } from './domain/signing'
 import { IdempotencyKeySchema, ProposalCreateSchema, CaptureSchema, ListQuerySchema } from './domain/schemas'
 import { onError, Problem, sendProblem, invalidRequest } from './http/problem'
@@ -73,6 +73,7 @@ const OWNER_ONLY = [
   { method: 'PUT', pattern: /^\/v1\/party-rules\/[^/]+$/ },
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
   { method: 'POST', pattern: /^\/v1\/rules\/draft$/ },
+  { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit)$/ },
@@ -83,7 +84,8 @@ const OWNER_ONLY = [
 /** A client's agent may do only this. Everything else is the studio's business. */
 function buyerMayCall(method: string, path: string): boolean {
   return (method === 'GET' && (path === '/v1/session' || path === '/v1/deals' || path === '/v1/party-rules/mine' || /^\/v1\/deals\/[^/]+$/.test(path)))
-    || (method === 'POST' && (path === '/v1/deals/offers' || path === '/mcp'))
+    || (method === 'GET' && path === '/v1/deliveries')
+    || (method === 'POST' && (path === '/v1/deals/offers' || path === '/mcp' || /^\/v1\/deals\/[^/]+\/milestones\/\d+\/decision$/.test(path)))
 }
 
 function isWeb(path: string): boolean {
@@ -422,6 +424,29 @@ export function createApp(deps: AppDeps) {
     return c.json(deals.list(limit, c.get('principal')))
   })
   app.get('/v1/deals/:id', (c) => c.json(deals.get(c.req.param('id'), c.get('principal'))))
+  app.get('/v1/deliveries', (c) => c.json(deals.deliveries(c.get('principal'))))
+  app.post('/v1/deals/:id/milestones/:n/deliver', async (c) => {
+    assertJson(c)
+    const milestone = Number(c.req.param('n'))
+    if (!Number.isInteger(milestone) || milestone < 0 || milestone > 11) throw new Problem(404, 'deal.milestone_unknown', 'No such milestone', 'Milestones are numbered from 0.')
+    const parsed = BillMilestoneSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return send(c, await deals.deliver(c.req.param('id'), milestone, parsed.data, c.get('principal')))
+  })
+  app.post('/v1/deals/:id/milestones/:n/decision', async (c) => {
+    assertJson(c)
+    const milestone = Number(c.req.param('n'))
+    if (!Number.isInteger(milestone) || milestone < 0 || milestone > 11) throw new Problem(404, 'deal.milestone_unknown', 'No such milestone', 'Milestones are numbered from 0.')
+    const parsed = DecideDeliverySchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return send(c, await deals.decide(c.req.param('id'), milestone, parsed.data, c.get('principal')))
+  })
+  app.post('/v1/deals/:id/milestones/:n/review', async (c) => {
+    await assertEmpty(c)
+    const milestone = Number(c.req.param('n'))
+    if (!Number.isInteger(milestone) || milestone < 0 || milestone > 11) throw new Problem(404, 'deal.milestone_unknown', 'No such milestone', 'Milestones are numbered from 0.')
+    return c.json(await agents.reviewDelivery(c.req.param('id'), milestone, c.get('principal')))
+  })
   app.get('/v1/deals/:id/verify', (c) => c.json(deals.verify(c.req.param('id'))))
   app.post('/v1/deals/:id/milestones/:n/bill', async (c) => {
     assertJson(c)

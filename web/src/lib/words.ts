@@ -73,6 +73,7 @@ export const EVENT: Record<string, string> = {
   'payout.completed': 'Paid by PayPal',
   'payout.unclaimed': 'Sent · receiver has no PayPal account yet',
   'payout.failed': 'PayPal failed the payout',
+  'delivery.accepted': 'Client’s agent accepted the delivery · signed',
   'standing.waiting': 'Held for now · Mandate will retry',
   'autopilot.payout_asked': 'Autopilot asked to pay the contractor',
   'payout.cancelled': 'Unclaimed payout cancelled · money returned',
@@ -106,7 +107,7 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
   const share = warrant?.contractorShareBps !== undefined ? `${warrant.contractorShareBps / 100}%` : 'the contractor share'
   switch (clause) {
     case 'amount.needs_approval': return `${who} is on the rules, but ${amount} is at or above ${line}, so the owner has to tap.`
-    case 'standing.billing': return `${who}’s milestone is exactly what the signed deal says, and you switched on billing signed deals when proof is attached, so the invoice goes out without a tap.`
+    case 'standing.billing': return `${who}’s milestone is exactly what the signed deal says, and you switched on billing signed deals (after the client accepts, if you asked for that), so the invoice goes out without a tap.`
     case 'standing.matched': return `${who} is covered by a standing rule you signed, so ${amount} goes to PayPal without a tap. Every other rule still had to pass.`
     case 'amount.auto': return `${who} is on the rules and ${amount} is under ${line}, so it settles without a tap.`
     case 'payee.unknown': return proposal?.kind === 'charge' ? 'That client is not on the rules. Nobody new can be billed.' : 'That account is not on the rules. Being under the line never adds a new payee.'
@@ -166,7 +167,7 @@ export function automationSentences(warrant: Warrant): string[] {
   const a = warrant.automation
   if (!a) return []
   return [
-    a.billSignedDeals ? 'Autopilot bills a milestone of a signed deal, and sends the invoice, as soon as proof of the work is attached.' : null,
+    a.billSignedDeals ? (a.requireAcceptance ? 'Autopilot bills a milestone of a signed deal, and sends the invoice, once the client’s own agent has accepted the delivery. Until then a bill waits for your tap.' : 'Autopilot bills a milestone of a signed deal, and sends the invoice, as soon as proof of the work is attached.') : null,
     a.payOnSettle ? 'Autopilot asks to pay each contractor with a standing rule the moment a client payment settles.' : null,
     a.remindUnpaidAfterDays ? `Autopilot reminds a client about an invoice that is still unpaid after ${a.remindUnpaidAfterDays} days, at most ${a.maxReminders} times.` : null,
   ].filter((line): line is string => line !== null)

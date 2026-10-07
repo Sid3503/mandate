@@ -183,6 +183,11 @@ export const BillMilestoneSchema = z.object({
   prompt: z.string().trim().max(4000).optional(),
 }).strict()
 
+export const DecideDeliverySchema = z.object({
+  decision: z.enum(['accepted', 'rejected']),
+  note: z.string().trim().max(500).optional(),
+}).strict()
+
 export const DEMO_BUYER_RULES: PartyRules = {
   role: 'buyer',
   displayName: 'Northwind',

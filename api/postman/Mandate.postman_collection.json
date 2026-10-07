@@ -998,6 +998,48 @@
             },
             "url": "{{baseUrl}}/v1/rules/draft"
           }
+        },
+        {
+          "name": "Deliver a milestone (bills, or waits for the client)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"evidenceUrl\":\"https://www.figma.com/file/northwind-logo\"}"
+            },
+            "url": "{{baseUrl}}/v1/deals/{{dealId}}/milestones/0/deliver"
+          }
+        },
+        {
+          "name": "Client's decision on a delivery (use the client agent key)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"decision\":\"accepted\",\"note\":\"The link is the concept file.\"}"
+            },
+            "url": "{{baseUrl}}/v1/deals/{{dealId}}/milestones/0/decision"
+          }
+        },
+        {
+          "name": "Deliveries",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/deliveries"
+          }
         }
       ]
     }

@@ -181,31 +181,47 @@ function ReadyToBill({ data }: { data: TodayData }) {
     <section className="section" data-tour="today-bill" aria-labelledby="h-bill">
       <h2 className="section-title" id="h-bill">Ready to bill</h2>
       <ul className="items">
-        {data.readyToBill.map((item) => <BillRow key={`${item.dealId}:${item.milestone}`} item={item} auto={auto} />)}
+        {data.readyToBill.map((item) => <BillRow key={`${item.dealId}:${item.milestone}`} item={item} auto={auto} accept={data.automation?.requireAcceptance ?? false} />)}
       </ul>
     </section>
   )
 }
 
-function BillRow({ item, auto }: { item: TodayData['readyToBill'][number]; auto: boolean }) {
+function BillRow({ item, auto, accept }: { item: TodayData['readyToBill'][number]; auto: boolean; accept: boolean }) {
   const owner = useIsOwner()
   const online = useOnline()
+  const agents = useAgentsOn()
   const refresh = useRefreshMoney()
   const toast = useToast()
   const [link, setLink] = useState('')
-  const bill = useMutation({
-    mutationFn: () => api.billMilestone(item.dealId, item.milestone, link.trim()),
+  const delivery = item.delivery
+  const deliver = useMutation({
+    mutationFn: () => api.deliverMilestone(item.dealId, item.milestone, link.trim()),
     onSuccess: (made) => {
       setLink('')
-      toast(made.gate === 'DENY'
-        ? { title: 'Refused', body: `${made.clause}. Nothing was billed.`, tone: 'bad' }
-        : made.phase === 'invoice_sent' || made.phase === 'captured'
+      if (made.mode === 'awaiting') {
+        toast({ title: `Sent to ${item.buyerName} to accept`, body: 'Nothing is billed until the client’s agent accepts this delivery.', tone: 'info' })
+        return
+      }
+      const charge = made.charge
+      toast(charge.gate === 'DENY'
+        ? { title: 'Refused', body: `${charge.clause}. Nothing was billed.`, tone: 'bad' }
+        : charge.phase === 'invoice_sent' || charge.phase === 'captured'
           ? { title: `Invoice sent to ${item.buyerName}`, body: `${dollars(item.amountCents)} for ${item.title}. It settles only when PayPal says it was paid.` }
           : { title: 'Billed', body: 'It is waiting for your tap.', tone: 'info' })
     },
     onSettled: () => void refresh(),
   })
-  const submit = (event: FormEvent) => { event.preventDefault(); if (link.trim()) bill.mutate() }
+  const review = useMutation({
+    mutationFn: () => api.reviewDelivery(item.dealId, item.milestone),
+    onSuccess: (done) => toast(done.delivery.status === 'accepted'
+      ? { title: `${item.buyerName}’s agent accepted it`, body: done.charge ? `The invoice for ${dollars(item.amountCents)} went out under your rule. No tap.` : 'Accepted and signed.' }
+      : { title: `${item.buyerName}’s agent rejected it`, body: done.delivery.note ?? 'Nothing was billed.', tone: 'bad' }),
+    onSettled: () => void refresh(),
+  })
+  const submit = (event: FormEvent) => { event.preventDefault(); if (link.trim()) deliver.mutate() }
+  const waiting = delivery?.status === 'awaiting'
+  const rejected = delivery?.status === 'rejected'
   return (
     <li className="item bill">
       <div className="item-main">
@@ -213,13 +229,27 @@ function BillRow({ item, auto }: { item: TodayData['readyToBill'][number]; auto:
         <strong>{item.buyerName} · {item.title}</strong>
         <Money cents={item.amountCents} currency={item.currency} />
       </div>
-      <p className="fine">{item.scope}. {auto ? 'Your rule bills signed-deal milestones without a tap: press the button and the invoice goes out.' : 'You will approve it on this page next.'}</p>
-      <form className="bill-form" onSubmit={submit}>
-        <label className="sr-only" htmlFor={`proof-${item.dealId}-${item.milestone}`}>Link to the delivered work for {item.buyerName}, {item.title}</label>
-        <input id={`proof-${item.dealId}-${item.milestone}`} type="url" required placeholder="https://… link to the delivered work" value={link} onChange={(event) => setLink(event.target.value)} />
-        <button type="submit" className="btn btn-ink" disabled={!owner || !online || !link.trim() || bill.isPending}>{bill.isPending ? 'Billing…' : 'Delivered · bill it'}</button>
-      </form>
-      <ProblemCard error={bill.error} />
+      {waiting ? (
+        <>
+          <p className="fine"><Chip tone="need">Waiting for {item.buyerName} to accept</Chip> Delivered with <a href={delivery.proofUrl} target="_blank" rel="noreferrer noopener">{delivery.proofUrl.replace(/^https:\/\/(www\.)?/, '')}</a>. Nothing is billed until the client’s own agent accepts it, and then the invoice goes out by itself.</p>
+          <div className="row gap-s wrap">
+            <button type="button" className="btn btn-ink btn-small" disabled={!owner || !online || !agents || review.isPending} onClick={() => review.mutate()} title={agents ? undefined : 'The client’s agent needs OLLAMA_API_KEY'}>{review.isPending ? `Asking ${item.buyerName}’s agent…` : `Ask ${item.buyerName}’s agent to review`}</button>
+            <span className="fine">In production the client’s own agent calls <code>decide_delivery</code> on its own key. This runs the hosted stand-in.</span>
+          </div>
+          <ProblemCard error={review.error} />
+        </>
+      ) : (
+        <>
+          {rejected ? <p className="fine"><Chip tone="deny">{item.buyerName}’s agent rejected it</Chip> {delivery.note ?? ''} Deliver again with the right link.</p> : null}
+          <p className="fine">{item.scope}. {accept ? `Your rule bills this once ${item.buyerName}’s own agent accepts the delivery: paste the proof and send it for acceptance.` : auto ? 'Your rule bills signed-deal milestones without a tap: paste the proof and press the button.' : 'You will approve it on this page next.'}</p>
+          <form className="bill-form" onSubmit={submit}>
+            <label className="sr-only" htmlFor={`proof-${item.dealId}-${item.milestone}`}>Link to the delivered work for {item.buyerName}, {item.title}</label>
+            <input id={`proof-${item.dealId}-${item.milestone}`} type="url" required placeholder="https://… link to the delivered work" value={link} onChange={(event) => setLink(event.target.value)} />
+            <button type="submit" className="btn btn-ink" disabled={!owner || !online || !link.trim() || deliver.isPending}>{deliver.isPending ? 'Sending…' : accept ? 'Delivered · send for acceptance' : 'Delivered · bill it'}</button>
+          </form>
+          <ProblemCard error={deliver.error} />
+        </>
+      )}
     </li>
   )
 }

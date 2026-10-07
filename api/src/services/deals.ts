@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import type { DealRow, Repo } from '../db/repo'
+import type { DealRow, DeliveryRow, Repo } from '../db/repo'
 import { checkDeal, DealClause, PartyRulesSchema, scrubNote, secretsOf, verdictFor, type DealOffer, type DealTerms, type DealVerdict, type PartyRules, type Side } from '../domain/deal'
 import { resolveClient } from '../domain/gate'
 import { stableHash } from '../domain/hash'
 import { ProposalCreateSchema, WARRANT_ID } from '../domain/schemas'
-import { dealMessage, type Signer } from '../domain/signing'
+import { acceptanceMessage, dealMessage, proofHash, type Signer } from '../domain/signing'
 import { Problem } from '../http/problem'
 import { runIdempotent } from './idempotency'
 import type { HttpResult, MandateService } from './mandate'
@@ -157,17 +157,121 @@ export class DealService {
     return this.mandate.proposeAndDispatch(input, `bill-${row.id}-${milestone}-${stableHash(body).slice(0, 16)}`, who.role)
   }
 
+  // ---------- delivery and the client's acceptance ----------
+
+  /**
+   * The studio says a milestone is delivered, with the proof. If the owner's rules ask for the client's acceptance
+   * first, the delivery waits for the client's own agent. If not, it is billed straight away exactly as before.
+   * Either way the deal checks and the gate decide whether a bill may exist.
+   */
+  async deliver(dealId: string, milestone: number, body: { evidenceUrl: string; prompt?: string }, who: Principal) {
+    if (who.side === 'buyer') throw new Problem(403, 'auth.forbidden', 'Not available to a client agent', 'Only the studio says its work is delivered.')
+    const row = this.repo.deal(dealId)
+    if (!row || row.status !== 'agreed' || !row.job_id) throw new Problem(404, 'deal.missing', 'No agreed deal', 'Only an agreed deal can be delivered against.')
+    const terms = JSON.parse(row.terms_json) as StoredTerms
+    const item = terms.milestones[milestone]
+    if (!item) throw new Problem(404, 'deal.milestone_unknown', 'No such milestone', `The deal has ${terms.milestones.length} milestones.`)
+    const automation = this.repo.latestWarrant()?.body.automation
+    if (!automation?.requireAcceptance) {
+      const billed = await this.bill(dealId, milestone, body, who)
+      return { status: billed.status, body: { mode: 'billed' as const, charge: billed.body, delivery: null } }
+    }
+    if (this.repo.chargeForMilestone(dealId, milestone)) throw new Problem(409, 'deal.milestone_billed', 'Already billed', 'This milestone has already been billed.')
+    let url: URL
+    try { url = new URL(body.evidenceUrl) } catch { throw new Problem(422, 'evidence.missing', 'Proof is not a link', 'Give an https link to the delivered work.') }
+    if (url.protocol !== 'https:' || url.username || url.password) throw new Problem(422, 'evidence.missing', 'Proof must be an https link', 'Give an https link to the delivered work, with no user or password in it.')
+    const now = this.now().toISOString()
+    const hash = proofHash(body.evidenceUrl)
+    return this.repo.transaction(() => {
+      const current = this.repo.currentDelivery(dealId, milestone)
+      if (current && current.proof_hash === hash && current.status !== 'rejected') return { status: 200, body: { mode: 'awaiting' as const, charge: null, delivery: this.deliveryView(current) } }
+      this.repo.supersedeAwaiting(dealId, milestone)
+      const made: DeliveryRow = { id: randomUUID(), deal_id: dealId, milestone, proof_url: body.evidenceUrl.trim(), proof_hash: hash, delivered_by: who.role, status: 'awaiting', note: null, decided_by: null, run_id: null, sig: null, key_id: null, proposal_id: null, created_at: now, decided_at: null }
+      this.repo.insertDelivery(made)
+      return { status: 201, body: { mode: 'awaiting' as const, charge: null, delivery: this.deliveryView(made) } }
+    })
+  }
+
+  /**
+   * The client's own agent decides. Only the key bound to that client can: not the studio, and not the owner. The
+   * decision is signed over this exact proof, so an acceptance for one link can never bill another. An acceptance
+   * then bills the milestone through the same gate as any bill; the owner's rules made it automatic, nothing else did.
+   */
+  async decide(dealId: string, milestone: number, input: { decision: 'accepted' | 'rejected'; note?: string }, who: Principal, runId: string | null = null) {
+    const row = this.repo.deal(dealId)
+    if (who.side !== 'buyer' || !row || row.buyer_id !== who.buyerId) throw new Problem(403, 'auth.forbidden', 'Only the client can decide this', 'A delivery is accepted or rejected by the client\'s own agent, using the key bound to that client.')
+    if (row.status !== 'agreed') throw new Problem(404, 'deal.missing', 'No agreed deal', 'Only an agreed deal has deliveries.')
+    const current = this.repo.currentDelivery(dealId, milestone)
+    if (!current || current.status !== 'awaiting') throw new Problem(409, 'delivery.not_awaiting', 'Nothing is waiting for your decision', current ? `The latest delivery for this milestone is ${current.status}.` : 'The studio has not delivered this milestone.')
+    if (this.repo.chargeForMilestone(dealId, milestone)) throw new Problem(409, 'deal.milestone_billed', 'Already billed', 'This milestone has already been billed.')
+    const now = this.now().toISOString()
+    const note = input.note?.trim() ? input.note.trim().slice(0, 500) : null
+    const signed = this.signer.sign(acceptanceMessage({ id: current.id, deal_id: dealId, milestone, proof_hash: current.proof_hash, status: input.decision }))
+    this.repo.decideDelivery(current.id, input.decision, note, who.buyerId!, runId, signed.signature, signed.keyId, now)
+    let charge: unknown = null
+    if (input.decision === 'accepted') {
+      const terms = JSON.parse(row.terms_json) as StoredTerms
+      const item = terms.milestones[milestone]!
+      const made = await this.mandate.proposeAndDispatch(ProposalCreateSchema.parse({
+        kind: 'charge', payee: row.buyer_id, amountCents: item.amountCents, currency: terms.currency, category: terms.category,
+        description: `${terms.scope}: ${item.title}`.slice(0, 500), evidenceUrl: current.proof_url,
+        prompt: `Milestone ${milestone + 1} of deal ${row.id.slice(0, 8)} was accepted by the client's agent`, jobId: row.job_id!, dealId: row.id, milestone,
+      }), `accept-${current.id}`, 'autopilot')
+      charge = made.body
+      const id = (made.body as { id?: string }).id
+      if (id) {
+        this.repo.linkDelivery(current.id, id)
+        this.repo.insertEvent(randomUUID(), id, 'delivery.accepted', 'deal.accepted', { deliveryId: current.id, decidedBy: who.buyerId, proofHash: current.proof_hash, keyId: signed.keyId, note }, now)
+      }
+    }
+    return { status: 200, body: { delivery: this.deliveryView(this.repo.delivery(current.id)!), charge } }
+  }
+
+  /** The deliveries a caller may see: a client sees its own, the owner and the studio see all. */
+  deliveries(who: Principal, limit = 50) {
+    return { data: this.repo.deliveriesFor(who.buyerId, limit).map((row) => this.deliveryView(row)) }
+  }
+
+  deliveryView(row: DeliveryRow) {
+    const deal = this.repo.deal(row.deal_id)
+    const terms = deal ? (JSON.parse(deal.terms_json) as StoredTerms) : null
+    const item = terms?.milestones[row.milestone]
+    const warrant = this.repo.latestWarrant()
+    return {
+      id: row.id,
+      dealId: row.deal_id,
+      jobId: deal?.job_id ?? null,
+      milestone: row.milestone,
+      title: item?.title ?? `Milestone ${row.milestone + 1}`,
+      scope: terms?.scope ?? '',
+      amountCents: item?.amountCents ?? 0,
+      currency: terms?.currency ?? 'USD',
+      buyerId: deal?.buyer_id ?? null,
+      buyerName: warrant?.body.clients.find((client) => client.id === deal?.buyer_id)?.displayName ?? deal?.buyer_id ?? null,
+      proofUrl: row.proof_url,
+      status: row.status,
+      note: row.note,
+      decidedBy: row.decided_by,
+      createdAt: row.created_at,
+      decidedAt: row.decided_at,
+      proposalId: row.proposal_id,
+      signatureValid: row.sig ? this.signer.verify(acceptanceMessage(row), row.sig, row.key_id) : null,
+      signature: row.sig,
+      keyId: row.key_id,
+    }
+  }
+
   /** The next milestone of each agreed deal that has not been billed: work the studio can bill as soon as it is delivered. */
   readyToBill() {
     const warrant = this.repo.latestWarrant()
     const name = (id: string) => warrant?.body.clients.find((client) => client.id === id)?.displayName ?? id
-    const out: Array<{ dealId: string; jobId: string; buyerId: string; buyerName: string; scope: string; milestone: number; title: string; amountCents: number; currency: string; billed: number; total: number }> = []
+    const out: Array<{ dealId: string; jobId: string; buyerId: string; buyerName: string; scope: string; milestone: number; title: string; amountCents: number; currency: string; billed: number; total: number; delivery: ReturnType<DealService['deliveryView']> | null }> = []
     for (const row of this.repo.agreedDeals()) {
       if (!row.job_id) continue
       const terms = JSON.parse(row.terms_json) as StoredTerms
       const next = terms.milestones.findIndex((_, index) => !this.repo.chargeForMilestone(row.id, index))
       if (next === -1) continue
-      out.push({ dealId: row.id, jobId: row.job_id, buyerId: row.buyer_id, buyerName: name(row.buyer_id), scope: terms.scope, milestone: next, title: terms.milestones[next]!.title, amountCents: terms.milestones[next]!.amountCents, currency: terms.currency, billed: next, total: terms.milestones.length })
+      out.push({ dealId: row.id, jobId: row.job_id, buyerId: row.buyer_id, buyerName: name(row.buyer_id), scope: terms.scope, milestone: next, title: terms.milestones[next]!.title, amountCents: terms.milestones[next]!.amountCents, currency: terms.currency, billed: next, total: terms.milestones.length, delivery: (() => { const d = this.repo.currentDelivery(row.id, next); return d ? this.deliveryView(d) : null })() })
     }
     return out
   }

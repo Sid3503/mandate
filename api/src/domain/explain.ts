@@ -24,7 +24,7 @@ export function explainClause(input: ExplainInput): string {
   const share = input.warrant ? `${input.warrant.contractorShareBps / 100}%` : 'the contractor share'
   switch (input.clause) {
     case 'amount.needs_approval': return `${who} is on the rules, but ${amount} is at or above ${line}, so the owner has to tap.`
-    case 'standing.billing': return `${who}'s milestone is exactly what the signed deal says, and the owner switched on billing signed deals when proof is attached, so the invoice goes out without a tap.`
+    case 'standing.billing': return `${who}'s milestone is exactly what the signed deal says, and the owner switched on billing signed deals when proof is attached (and, if asked for, the client has accepted it), so the invoice goes out without a tap.`
     case 'standing.matched': return `${who} is covered by a standing rule the owner signed, so ${amount} goes to PayPal without a tap. Every other rule still had to pass.`
     case 'amount.auto': return `${who} is on the rules and ${amount} is under ${line}, so it goes through without a tap.`
     case 'payee.unknown': return input.kind === 'charge' ? 'That client is not on the rules. Nobody new can be billed.' : 'That account is not on the rules. Being under the line never adds a new payee.'

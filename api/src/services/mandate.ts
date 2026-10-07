@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Repo, ProposalRow, ProposalKind, PayoutUpdate } from '../db/repo'
 import { Clause, decide, fundableCents, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
 import { cartHash, stableHash, type CartFields } from '../domain/hash'
-import { lockMessage, type Signer } from '../domain/signing'
+import { acceptanceMessage, lockMessage, proofHash, type Signer } from '../domain/signing'
 import { monthWindow } from '../domain/period'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
 import { NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
@@ -939,6 +939,10 @@ export class MandateService {
         feeCents: row.payout_fee_cents,
         receiver: payee?.email ?? null,
       } : null,
+      acceptance: (() => {
+        const d = this.repo.deliveryByProposal(row.id)
+        return d ? { id: d.id, dealId: d.deal_id, milestone: d.milestone, proofUrl: d.proof_url, status: d.status, note: d.note, decidedBy: d.decided_by, decidedAt: d.decided_at, signature: d.sig, keyId: d.key_id, signatureValid: d.sig ? this.signer.verify(acceptanceMessage(d), d.sig, d.key_id) : null } : null
+      })(),
       dispute: this.disputeOn(row.kind === 'payment' ? row.funding_capture_id : row.capture_id),
       job: row.job_id,
       funding: row.funding_capture_id ? this.fundingSummary(row.funding_capture_id) : null,
@@ -993,7 +997,7 @@ export class MandateService {
     const cap = this.reservation(warrant.id, warrant.body, now)
     const dealId = input.kind === 'charge' ? input.dealId ?? null : null
     const milestone = dealId ? input.milestone ?? null : null
-    const deal = input.kind === 'charge' ? this.dealContext(dealId, milestone, jobId) : null
+    const deal = input.kind === 'charge' ? this.dealContext(dealId, milestone, jobId, evidenceUrl) : null
     const decision = decide(warrant.body, {
       kind: input.kind,
       payeeId: payee?.id ?? null,
@@ -1245,14 +1249,21 @@ export class MandateService {
   }
 
   /** The deal facts the gate needs for a charge. Resolved here so the gate itself stays a pure function. */
-  private dealContext(dealId: string | null, milestone: number | null, jobId: string | null): DealContext {
+  private dealContext(dealId: string | null, milestone: number | null, jobId: string | null, evidenceUrl: string | null = null): DealContext {
     const row = dealId ? this.repo.deal(dealId) : null
     const terms = row && row.status === 'agreed' ? (JSON.parse(row.terms_json) as { milestones: Array<{ amountCents: number }> }) : null
     return {
       agreed: row && terms && row.job_id ? { id: row.id, jobId: row.job_id, buyerId: row.buyer_id, milestoneCents: terms.milestones.map((item) => item.amountCents) } : null,
       jobHasDeal: jobId ? this.repo.agreedDealByJob(jobId) !== null : false,
       milestoneBilled: dealId && milestone !== null ? this.repo.chargeForMilestone(dealId, milestone) !== null : false,
+      accepted: dealId && milestone !== null && evidenceUrl ? this.acceptedDelivery(dealId, milestone, evidenceUrl) : false,
     }
+  }
+
+  /** An accepted delivery for exactly this proof, whose signature still verifies. A row edited after signing does not count. */
+  private acceptedDelivery(dealId: string, milestone: number, evidenceUrl: string): boolean {
+    const row = this.repo.acceptedDelivery(dealId, milestone)
+    return Boolean(row && row.proof_hash === proofHash(evidenceUrl) && this.signer.verify(acceptanceMessage(row), row.sig, row.key_id))
   }
 
   private fundingState(row: ProposalRow, payeeId: string | null = null): FundingCharge {

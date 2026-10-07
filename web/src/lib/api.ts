@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { Activity, AuditReport, Balance, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
+import type { Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -139,6 +139,10 @@ export const api = {
     request<Deal>('/v1/deals/offers', { method: 'POST', body, idempotencyKey }),
   billMilestone: (dealId: string, milestone: number, evidenceUrl: string) =>
     request<Proposal>(`/v1/deals/${dealId}/milestones/${milestone}/bill`, { method: 'POST', body: { evidenceUrl } }),
+  deliverMilestone: (dealId: string, milestone: number, evidenceUrl: string) =>
+    request<Delivered>(`/v1/deals/${dealId}/milestones/${milestone}/deliver`, { method: 'POST', body: { evidenceUrl } }),
+  reviewDelivery: (dealId: string, milestone: number) =>
+    request<{ runId: string; model: string; ms: number; delivery: Delivery; charge: Proposal | null }>(`/v1/deals/${dealId}/milestones/${milestone}/review`, { method: 'POST' }),
   partyRules: () => request<{ data: PartyRulesView[] }>('/v1/party-rules'),
   negotiate: (body: { buyerBrief?: string; sellerBrief?: string } = {}) => request<Negotiation>('/v1/negotiations', { method: 'POST', body }),
   clerk: (message: string, conversationId?: string) => request<ClerkReply>('/v1/clerk/messages', { method: 'POST', body: { message, conversationId } }),

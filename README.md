@@ -25,6 +25,8 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 | Deal | The two companies' agents agree $300 in two milestones. $450 and $200 are refused by a pure function that checks **both** companies' rules. The agreed deal is signed. | built |
 | Agents | A clerk Arun can talk to, and two negotiators, on `gpt-oss:20b` through an MCP server whose six tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
 | Autopilot | With the owner's rules signed, the job runs itself: proof attached → PayPal invoice sent; client pays → the contractor's share is asked for and paid; unpaid invoices get PayPal's reminder. The server re-reads PayPal every minute, so it finishes without anyone pressing anything. | built, tested in the browser and in pieces live |
+| Client acceptance | Optionally, the studio's delivery waits for the client's own agent to accept it (signed over the exact proof link) before the invoice goes out. | built, tested |
+| Verify a receipt | A public page checks a downloaded receipt's lock and signatures in the browser, against the public keys, without asking the server. | built, tested |
 | Today, Ask, Proof | A landing page of what waits for the owner, what is in flight and what was done for them (and how); a clerk on Cmd/Ctrl + K; and a Proof page that re-verifies every lock, every yes and every amount from the ledger. | built |
 | Standing rules | The owner signs one rule for Priya's share. The $90 is then sent with no tap, after the same checks: funding, share, cap, proof, dispute hold, signed lock. Anything that does not match still waits. | built, red-teamed, real Payouts call verified |
 | Invoices | A client charge is billed as a PayPal invoice through the Agent Toolkit, and settled only when PayPal says it was paid. Falls back to checkout where the app lacks the permission. | built, live in sandbox |
@@ -79,7 +81,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-247 API tests (including a 56-case red team), 46 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
+265 API tests (including a 56-case red team), 50 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
 
 ## Where to read next
 

@@ -32,6 +32,8 @@ export const StandingRuleSchema = z.object({
 export const AutomationSchema = z.object({
   /** A milestone of a signed deal is billed, and its invoice sent, as soon as proof of the work is attached. */
   billSignedDeals: z.boolean().default(false),
+  /** Bill only after the client's own agent has accepted the delivery. Without its acceptance a bill still needs the owner's tap. */
+  requireAcceptance: z.boolean().default(false),
   /** When a client payment settles, the server asks to pay each contractor whose standing rule covers it. */
   payOnSettle: z.boolean().default(false),
   /** Send PayPal's own reminder for an invoice that is still unpaid after this many days. */
@@ -41,7 +43,7 @@ export const AutomationSchema = z.object({
 }).strict()
 
 export type Automation = z.infer<typeof AutomationSchema>
-export const NO_AUTOMATION: Automation = { billSignedDeals: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 }
+export const NO_AUTOMATION: Automation = { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 }
 
 export const WarrantBodySchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
@@ -85,6 +87,9 @@ export const WarrantBodySchema = z.object({
     })
     if (!warrant.fundingRequired) ctx.addIssue({ code: 'custom', path: ['standing', index], message: 'standing rules need "payouts need client money first" switched on' })
   })
+  if (warrant.automation.requireAcceptance && !warrant.automation.billSignedDeals) {
+    ctx.addIssue({ code: 'custom', path: ['automation', 'requireAcceptance'], message: 'requiring the client\'s acceptance only means something when billing signed deals is switched on' })
+  }
   if (warrant.automation.payOnSettle && warrant.standing.length === 0) {
     ctx.addIssue({ code: 'custom', path: ['automation', 'payOnSettle'], message: 'paying on settle needs at least one standing rule to say whom to pay' })
   }

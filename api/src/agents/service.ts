@@ -9,7 +9,7 @@ import { buyerPrincipal, OWNER, STUDIO, type Principal } from '../services/princ
 import { draftRules, type RulesDraft } from './drafter'
 import { composeReply, type Outcome } from './guard'
 import type { AgentModel } from './model'
-import { clerkSystem, negotiatorSystem } from './prompts'
+import { clerkSystem, negotiatorSystem, reviewerSystem } from './prompts'
 import { runAgent, type RunOutput, type TraceStep } from './runtime'
 
 export type ClerkReply = {
@@ -120,6 +120,41 @@ export class AgentService {
       model: model.name,
       ms: run.ms,
     }
+  }
+
+  // ---------- the client's reviewer ----------
+
+  /**
+   * Runs the client's own agent over a delivery that is waiting for it. The agent has the client's two tools and
+   * nothing else, so the most it can do is accept or reject, and only for its own client. Its decision is signed and
+   * then billed (or not) by the rules, exactly as if the client's agent had called from outside over MCP.
+   */
+  async reviewDelivery(dealId: string, milestone: number, who: Principal) {
+    const model = this.need()
+    this.limit(who, 'review', 6)
+    const deal = this.services.repo.deal(dealId)
+    const delivery = deal ? this.services.repo.currentDelivery(dealId, milestone) : null
+    if (!deal || !delivery || delivery.status !== 'awaiting') throw new Problem(409, 'delivery.not_awaiting', 'Nothing is waiting for the client', delivery ? `The latest delivery for this milestone is ${delivery.status}.` : 'The studio has not delivered this milestone.')
+    const view = this.services.deals.deliveryView(delivery)
+    const principal = buyerPrincipal(deal.buyer_id)
+    const runId = randomUUID()
+    const system = reviewerSystem({ company: view.buyerName ?? deal.buyer_id, studio: this.services.repo.partyRules(WARRANT_ID)?.body.displayName ?? 'the studio', scope: view.scope, milestone, title: view.title, amount: `$${(view.amountCents / 100).toFixed(2)}`, proofUrl: view.proofUrl, dealId })
+    const prompt = 'Decide now with decide_delivery.'
+    let run: RunOutput
+    try {
+      run = await runAgent({ model, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'decide_delivery', timeoutMs: 45_000 })
+    } catch (error) {
+      this.record({ id: runId, agent: 'reviewer', who, conversationId: runId, model: model.name, input: prompt, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0 })
+      throw error
+    }
+    const decided = run.steps.flatMap((step) => step.toolResults).find((item) => item.tool === 'decide_delivery')
+    this.record({ id: runId, agent: 'reviewer', who, conversationId: runId, model: model.name, input: prompt, output: decided ? JSON.stringify(decided.output) : run.text, steps: run.steps, status: decided?.ok ? 'ok' : 'error', error: decided?.ok ? null : 'no_decision', ms: run.ms })
+    if (!decided || !decided.ok) {
+      const error = (decided?.output as { error?: { code?: string; message?: string } } | undefined)?.error
+      throw new Problem(422, 'delivery.no_decision', 'The client\'s agent did not decide', error?.message ?? 'The model did not accept or reject the delivery. Nothing was billed. Try again.')
+    }
+    const after = this.services.repo.delivery(delivery.id)!
+    return { runId, model: model.name, ms: run.ms, delivery: this.services.deals.deliveryView(after), charge: after.proposal_id ? this.services.mandate.packet(after.proposal_id).proposal : null }
   }
 
   // ---------- the rules drafter ----------

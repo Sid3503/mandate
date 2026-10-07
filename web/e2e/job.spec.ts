@@ -763,3 +763,79 @@ test('the owner says a change in words, reads what it would loosen, and publishe
 
   await publishRules(request, { standing: [], automation: OFF })
 })
+
+
+test('billing waits for the client: delivered, accepted by the client\'s agent, and only then invoiced', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  await fake(request, 'invoices-on')
+  const job = `job_accept_${test.info().project.name}`
+  const deal = await (await request.post('/v1/deals/offers', {
+    headers: { ...headers, 'idempotency-key': `deal-${job}-0001` },
+    data: { buyer: 'Northwind', terms: { scope: 'Accepted logo', category: 'design', currency: 'USD', totalCents: 30000, milestones: [{ title: 'Concepts', amountCents: 15000 }, { title: 'Final files', amountCents: 15000 }], proofRequired: true, jobId: job } },
+  })).json()
+  expect(deal.status).toBe('agreed')
+  await publishRules(request, { automation: { billSignedDeals: true, requireAcceptance: true, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 } })
+  await unlock(page, OWNER)
+
+  const proof = page.locator(`#proof-${deal.id}-0`)
+  await proof.fill('https://www.figma.com/file/accepted-concepts')
+  const row = page.locator('li.bill', { hasText: 'Northwind · Concepts' })
+  await row.getByRole('button', { name: 'Delivered · send for acceptance' }).click()
+  await expect(row).toContainText('Waiting for Northwind to accept')
+  await shots(page, '39-waiting-for-acceptance')
+  // Nothing has been billed: the client has not spoken.
+  const before = await (await request.get('/v1/proposals', { headers })).json()
+  expect(before.data.filter((item: { jobId: string }) => item.jobId === job)).toHaveLength(0)
+
+  await row.getByRole('button', { name: /Ask Northwind.s agent to review/ }).click()
+  await expect(page.getByText('Northwind’s agent accepted it')).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-tour="ready"]')).toContainText('Waiting for Northwind to pay $150.00')
+  const after = await (await request.get('/v1/proposals', { headers })).json()
+  const charge = after.data.find((item: { jobId: string }) => item.jobId === job)
+  expect(charge).toMatchObject({ clause: 'standing.billing', phase: 'invoice_sent' })
+
+  await page.goto('/app/proof')
+  await expect(page.locator('.check-row', { hasText: 'Billing waited for the client' })).toContainText('Pass')
+  await expect(page.locator('.verdict.ok')).toBeVisible()
+  await publishRules(request, { automation: OFF })
+  await fake(request, 'invoices-off')
+})
+
+
+test('a receipt can be checked in the browser without a key, and a tampered one is caught', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  const job = `job_verify_${test.info().project.name}`
+  const asked = await (await request.post('/v1/proposals', {
+    headers: { ...headers, 'idempotency-key': `verify-${job}-0001` },
+    data: { kind: 'charge', payee: 'Northwind', amountCents: 15000, currency: 'USD', category: 'design', description: 'Verify me', evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job },
+  })).json()
+  await request.post(`/v1/proposals/${asked.id}/approve`, { headers })
+  const packet = await (await request.get(`/v1/proposals/${asked.id}/packet`, { headers })).json()
+
+  // No key, no login: this page is for whoever was sent the receipt.
+  await page.goto('/app/verify')
+  await expect(page.getByText(/public keys? loaded from this server/)).toBeVisible()
+  await page.getByLabel('Receipt JSON').fill(JSON.stringify(packet))
+  await page.getByRole('button', { name: 'Verify this receipt' }).click()
+  const verdict = page.getByTestId('verdict')
+  await expect(verdict).toContainText('This receipt is genuine.')
+  await expect(verdict).toContainText('The lock was signed by the server')
+  await shots(page, '40-verify-receipt')
+  const { default: AxeBuilder } = await import('@axe-core/playwright')
+  const scan = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
+  expect(scan.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
+
+  // The same receipt with the amount edited to $1,500: the lock no longer recomputes.
+  packet.proposal.amountCents = 150000
+  await page.getByLabel('Receipt JSON').fill(JSON.stringify(packet))
+  await page.getByRole('button', { name: 'Verify this receipt' }).click()
+  await expect(verdict).toContainText('Do not rely on this receipt.')
+  await expect(verdict).toContainText('was changed after it was locked')
+  await shots(page, '41-verify-tampered')
+
+  // And from the receipt itself, one click carries it over.
+  await unlock(page, OWNER)
+  await page.goto(`/app/p/${asked.id}`)
+  await page.getByRole('link', { name: /Check it in your browser instead/ }).click()
+  await expect(page.getByTestId('verdict')).toContainText('This receipt is genuine.')
+})

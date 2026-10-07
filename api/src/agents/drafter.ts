@@ -46,6 +46,7 @@ export const RulesPatchSchema = z.object({
   }))).max(20).optional().describe('The COMPLETE list of standing rules after your change. A standing rule lets a payout that matches it go with no tap. Include the ones that already exist that you are keeping.'),
   autopilot: z.object({
     billSignedDeals: z.boolean().optional().describe('Bill a milestone of a signed deal, and send the invoice, as soon as proof of the work is attached.'),
+    requireAcceptance: z.boolean().optional().describe('Bill only after the CLIENT\'s own agent has accepted the delivery. Only meaningful with billSignedDeals.'),
     payOnSettle: z.boolean().optional().describe('When a client payment settles, pay each contractor whose standing rule covers it.'),
     remindUnpaidAfterDays: z.number().int().min(1).max(60).nullable().optional().describe('Send PayPal\'s reminder for an invoice still unpaid after this many days. null turns reminders off.'),
     maxReminders: z.number().int().min(0).max(5).optional().describe('The most reminders for one invoice.'),
@@ -121,8 +122,9 @@ export function applyPatch(current: WarrantBody, patch: RulesPatch): WarrantBody
     })
   }
   if (patch.autopilot) {
-    const { billSignedDeals, payOnSettle, remindUnpaidAfterDays, maxReminders } = patch.autopilot
+    const { billSignedDeals, requireAcceptance, payOnSettle, remindUnpaidAfterDays, maxReminders } = patch.autopilot
     if (billSignedDeals !== undefined) next.automation.billSignedDeals = billSignedDeals
+    if (requireAcceptance !== undefined) next.automation.requireAcceptance = requireAcceptance
     if (payOnSettle !== undefined) next.automation.payOnSettle = payOnSettle
     if (remindUnpaidAfterDays !== undefined) next.automation.remindUnpaidAfterDays = remindUnpaidAfterDays
     if (maxReminders !== undefined) next.automation.maxReminders = maxReminders
@@ -178,6 +180,10 @@ export function compareRules(before: WarrantBody, after: WarrantBody): { loosens
   }
   const flag = (on: boolean, was: boolean, yes: string, no: string) => { if (on && !was) loosens.push(yes); if (!on && was) tightens.push(no) }
   flag(after.automation.billSignedDeals, before.automation.billSignedDeals, 'Milestones of signed deals would be billed, and the invoice sent, with no tap once proof is attached.', 'Milestones of signed deals would need a tap to bill again.')
+  if (after.automation.billSignedDeals && before.automation.billSignedDeals) {
+    if (before.automation.requireAcceptance && !after.automation.requireAcceptance) loosens.push('Milestones would be billed without waiting for the client\'s agent to accept the delivery.')
+    if (!before.automation.requireAcceptance && after.automation.requireAcceptance) tightens.push('Milestones would be billed only after the client\'s agent accepts the delivery.')
+  }
   flag(after.automation.payOnSettle, before.automation.payOnSettle, 'Contractors would be asked for and paid automatically when a client payment settles.', 'Contractors would no longer be paid automatically when a client pays.')
   // Reminders only nudge a client. They move no money and widen nothing, so they are reported but never called a loosening.
   if (after.automation.remindUnpaidAfterDays !== before.automation.remindUnpaidAfterDays || after.automation.maxReminders !== before.automation.maxReminders) {
@@ -193,7 +199,7 @@ function rulesInWords(body: WarrantBody): string {
     `Proof link required: ${body.evidenceRequired ? 'yes' : 'no'}. Payouts need client money first: ${body.fundingRequired ? 'yes' : 'no'}. Allowed work: ${body.categories.join(', ')}.`,
     `Contractors: ${body.payees.map((p) => p.displayName).join(', ') || 'none'}. Clients: ${body.clients.map((p) => p.displayName).join(', ') || 'none'}.`,
     `Standing rules: ${body.standing.length === 0 ? 'none' : body.standing.map((r) => `${name(r.payeeId)} from ${r.clientIds.map(name).join(' or ')}${r.requireDeal ? ' (signed deals only)' : ''}${r.shareBps ? `, share ${r.shareBps / 100}%` : ''}`).join('; ')}.`,
-    `Autopilot: bill signed deals ${body.automation.billSignedDeals ? 'on' : 'off'}; pay when the client pays ${body.automation.payOnSettle ? 'on' : 'off'}; remind unpaid invoices ${body.automation.remindUnpaidAfterDays ? `after ${body.automation.remindUnpaidAfterDays} days, up to ${body.automation.maxReminders}` : 'off'}.`,
+    `Autopilot: bill signed deals ${body.automation.billSignedDeals ? (body.automation.requireAcceptance ? 'on, only after the client accepts' : 'on') : 'off'}; pay when the client pays ${body.automation.payOnSettle ? 'on' : 'off'}; remind unpaid invoices ${body.automation.remindUnpaidAfterDays ? `after ${body.automation.remindUnpaidAfterDays} days, up to ${body.automation.maxReminders}` : 'off'}.`,
   ].join('\n')
 }
 

@@ -2,6 +2,7 @@ import type { ProposalRow, Repo } from '../db/repo'
 import { fundableCents } from '../domain/gate'
 import { monthWindow } from '../domain/period'
 import type { WarrantBody } from '../domain/schemas'
+import { proofHash } from '../domain/signing'
 import { toolSummary } from '../paypal/tiers'
 import type { DealService } from './deals'
 import type { MandateService } from './mandate'
@@ -69,6 +70,7 @@ export class AuditService {
       this.jobs(proposals),
       this.history(proposals, byProposal),
       this.dealsCheck(agreed, proposals),
+      this.acceptance(proposals, versions),
       this.reach(),
     ]
     if (options.paypal) checks.push(await this.paypalAgrees(proposals))
@@ -213,6 +215,31 @@ export class AuditService {
       }
     }
     return this.check('deals.signed', 'Deals are signed, and billing followed them', 'An agreed deal\'s signature still verifies, and every charge on it is for exactly the agreed milestone, to the client who agreed.', looked, failures)
+  }
+
+  /**
+   * When the owner's rules asked for the client's acceptance, no invoice went out on the rules' say-so without a signed
+   * acceptance of exactly that proof. And no acceptance or rejection, anywhere, carries a signature that fails.
+   */
+  private acceptance(proposals: ProposalRow[], versions: Map<number, WarrantBody>): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    const deliveries = this.repo.allDeliveries()
+    let looked = 0
+    for (const row of deliveries) {
+      if (!row.sig) continue
+      looked += 1
+      if (!this.deals.deliveryView(row).signatureValid) failures.push({ proposalId: row.proposal_id, detail: `the client's ${row.status === 'accepted' ? 'acceptance' : 'rejection'} of milestone ${row.milestone + 1} does not verify (it was changed after it was signed)` })
+    }
+    for (const charge of proposals) {
+      if (charge.kind !== 'charge' || charge.clause !== 'standing.billing') continue
+      if (!versions.get(charge.warrant_version)?.automation.requireAcceptance) continue
+      looked += 1
+      const accepted = deliveries.find((row) => row.proposal_id === charge.id)
+      if (!accepted || accepted.status !== 'accepted') failures.push({ proposalId: charge.id, detail: 'billed without the tap because the client would accept, but there is no acceptance for it' })
+      else if (accepted.proof_hash !== proofHash(charge.evidence_url ?? '')) failures.push({ proposalId: charge.id, detail: 'the client accepted a different proof link than the one billed' })
+      else if (accepted.deal_id !== charge.deal_id || accepted.milestone !== charge.milestone) failures.push({ proposalId: charge.id, detail: 'the acceptance is for a different milestone than the one billed' })
+    }
+    return this.check('billing.accepted', 'Billing waited for the client when the rules said so', 'When the owner asked for the client\'s acceptance, every invoice sent without a tap has a signed acceptance of exactly that proof, for exactly that milestone, and no signed decision has been altered.', looked, failures)
   }
 
   /** The agents' reach is a fact about the code, listed here so it can be read next to the rest. */

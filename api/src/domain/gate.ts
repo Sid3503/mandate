@@ -73,6 +73,8 @@ export type DealContext = {
   jobHasDeal: boolean
   /** True when the named milestone already has a live charge. */
   milestoneBilled: boolean
+  /** True when the client's agent accepted a delivery whose proof is exactly the proof on this charge. */
+  accepted?: boolean
 }
 
 export type GateProposal = {
@@ -253,6 +255,7 @@ export function matchBilling(warrant: WarrantBody, proposal: GateProposal): bool
     && Boolean(proposal.dealId)
     && proposal.milestone !== null && proposal.milestone !== undefined
     && Boolean(proposal.deal?.agreed)
+    && (!warrant.automation.requireAcceptance || proposal.deal?.accepted === true)
 }
 
 export function resolvePayee(warrant: WarrantBody, raw: string) {

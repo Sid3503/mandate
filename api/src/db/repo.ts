@@ -88,6 +88,25 @@ export type DisputeRow = { disputeId: string; transactionId: string; status: str
 type DisputeRecord = { dispute_id: string; transaction_id: string; status: string; reason: string | null; amount_cents: number | null; currency: string | null; opened_at: string | null; updated_at: string }
 const disputeRow = (row: DisputeRecord): DisputeRow => ({ disputeId: row.dispute_id, transactionId: row.transaction_id, status: row.status, reason: row.reason, amountCents: row.amount_cents, currency: row.currency, openedAt: row.opened_at, updatedAt: row.updated_at })
 
+export type DeliveryRow = {
+  id: string
+  deal_id: string
+  milestone: number
+  proof_url: string
+  proof_hash: string
+  delivered_by: string
+  /** awaiting, accepted, rejected or superseded. The signature covers accepted and rejected. */
+  status: 'awaiting' | 'accepted' | 'rejected' | 'superseded'
+  note: string | null
+  decided_by: string | null
+  run_id: string | null
+  sig: string | null
+  key_id: string | null
+  proposal_id: string | null
+  created_at: string
+  decided_at: string | null
+}
+
 export type PartyRulesRecord = { partyId: string; version: number; body: PartyRules; createdAt: string }
 
 /** Phases in which a payout's money is spoken for: locked, sent to PayPal, or paid. */
@@ -499,6 +518,52 @@ export class Repo {
 
   agreedDeals(): DealRow[] {
     return this.db.prepare(`SELECT * FROM deals WHERE status = 'agreed' ORDER BY created_at ASC`).all() as DealRow[]
+  }
+
+  // ---------- deliveries and the client's acceptance ----------
+
+  insertDelivery(row: DeliveryRow): void {
+    this.db.prepare(`INSERT INTO deliveries (id, deal_id, milestone, proof_url, proof_hash, delivered_by, status, note, decided_by, run_id, sig, key_id, proposal_id, created_at, decided_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.deal_id, row.milestone, row.proof_url, row.proof_hash, row.delivered_by, row.status, row.note, row.decided_by, row.run_id, row.sig, row.key_id, row.proposal_id, row.created_at, row.decided_at)
+  }
+
+  delivery(id: string): DeliveryRow | null {
+    return (this.db.prepare('SELECT * FROM deliveries WHERE id = ?').get(id) as DeliveryRow | undefined) ?? null
+  }
+
+  /** The newest delivery for a milestone that is still live: awaiting, accepted or rejected. */
+  currentDelivery(dealId: string, milestone: number): DeliveryRow | null {
+    return (this.db.prepare(`SELECT * FROM deliveries WHERE deal_id = ? AND milestone = ? AND status != 'superseded' ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(dealId, milestone) as DeliveryRow | undefined) ?? null
+  }
+
+  deliveryByProposal(proposalId: string): DeliveryRow | null {
+    return (this.db.prepare('SELECT * FROM deliveries WHERE proposal_id = ? ORDER BY created_at DESC LIMIT 1').get(proposalId) as DeliveryRow | undefined) ?? null
+  }
+
+  acceptedDelivery(dealId: string, milestone: number): DeliveryRow | null {
+    return (this.db.prepare(`SELECT * FROM deliveries WHERE deal_id = ? AND milestone = ? AND status = 'accepted' ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(dealId, milestone) as DeliveryRow | undefined) ?? null
+  }
+
+  supersedeAwaiting(dealId: string, milestone: number): void {
+    this.db.prepare(`UPDATE deliveries SET status = 'superseded' WHERE deal_id = ? AND milestone = ? AND status IN ('awaiting', 'rejected')`).run(dealId, milestone)
+  }
+
+  decideDelivery(id: string, status: 'accepted' | 'rejected', note: string | null, decidedBy: string, runId: string | null, sig: string, keyId: string, now: string): void {
+    this.db.prepare(`UPDATE deliveries SET status = ?, note = ?, decided_by = ?, run_id = ?, sig = ?, key_id = ?, decided_at = ? WHERE id = ?`).run(status, note, decidedBy, runId, sig, keyId, now, id)
+  }
+
+  linkDelivery(id: string, proposalId: string): void {
+    this.db.prepare('UPDATE deliveries SET proposal_id = ? WHERE id = ?').run(proposalId, id)
+  }
+
+  deliveriesFor(buyerId: string | null, limit: number): DeliveryRow[] {
+    return (buyerId
+      ? this.db.prepare(`SELECT d.* FROM deliveries d JOIN deals e ON e.id = d.deal_id WHERE e.buyer_id = ? ORDER BY d.created_at DESC, d.rowid DESC LIMIT ?`).all(buyerId, limit)
+      : this.db.prepare('SELECT * FROM deliveries ORDER BY created_at DESC, rowid DESC LIMIT ?').all(limit)) as DeliveryRow[]
+  }
+
+  allDeliveries(): DeliveryRow[] {
+    return this.db.prepare('SELECT * FROM deliveries ORDER BY created_at ASC, rowid ASC').all() as DeliveryRow[]
   }
 
   // ---------- PayPal disputes and reconciliation ----------
