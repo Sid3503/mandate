@@ -186,7 +186,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 308 API tests (Vitest), including a 56-case red team, plus 54 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 311 API tests (Vitest), including a 56-case red team, plus 54 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -832,6 +832,7 @@ The base URL is `http://127.0.0.1:8787` locally. Everything under `/v1` needs a 
 | `POST /v1/deals/:id/milestones/:n/decision` | the client's key only | Accept or reject a waiting delivery. Signed. |
 | `POST /v1/deals/:id/milestones/:n/review` | owner | Run the client's agent over a waiting delivery |
 | `GET /v1/deliveries` | any key | Deliveries (a client sees its own) |
+| `GET /v1/stream` | owner, studio | Server-sent events: `changed` (scope, what, ids), `review` (the client's agent started, decided or failed), `ping`. The console listens and re-reads what changed, so a delivery, a decision, an invoice or a settlement shows the moment it is written. It carries no amounts and no authority. Polling stays as the fallback. |
 | `GET /v1/today` | owner | The landing page's data: waiting, in flight, done, stopped, the month, ready to bill, setup |
 | `GET /v1/audit` | owner | Re-verify the whole ledger (add `?paypal=1` to compare with PayPal) |
 | `POST /v1/ask` | owner | Where a sentence goes: an answer from the ledger, a delivery card, a hand-off to the drafter, or the clerk |
@@ -999,7 +1000,7 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 308 Vitest tests
+cd api && npm test && npm run typecheck        # 311 Vitest tests
 cd web && npm run typecheck && npm run e2e     # 54 Playwright tests (desktop 1440×960 and Pixel 7)
 ```
 

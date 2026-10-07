@@ -236,7 +236,7 @@ export const TOURS: Record<TourId, TourStep[]> = {
       target: '[data-tour="ready"]',
       title: 'In flight',
       placement: 'top',
-      content: p('Invoices waiting for a client, payouts PayPal is processing, and things Mandate is sending. The server asks PayPal about these every minute, so they finish on their own. You can also check or nudge from here.'),
+      content: p('Invoices waiting for a client, payouts PayPal is processing, and things Mandate is sending. The server asks PayPal about these every few seconds while they are open, and a PayPal webhook makes it instant, so they finish on their own and this page updates without a reload. You can also check or nudge from here.'),
     },
     {
       target: '[data-tour="today-done"]',

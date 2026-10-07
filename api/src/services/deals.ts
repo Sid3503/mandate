@@ -1,3 +1,4 @@
+import { live, stamp } from './live'
 import { randomUUID } from 'node:crypto'
 import type { DealRow, DeliveryRow, Repo } from '../db/repo'
 import { checkDeal, DealClause, PartyRulesSchema, scrubNote, secretsOf, verdictFor, type DealOffer, type DealTerms, type DealVerdict, type PartyRules, type Side } from '../domain/deal'
@@ -208,6 +209,8 @@ export class DealService {
     const note = input.note?.trim() ? input.note.trim().slice(0, 500) : null
     const signed = this.signer.sign(acceptanceMessage({ id: current.id, deal_id: dealId, milestone, proof_hash: current.proof_hash, status: input.decision }))
     this.repo.decideDelivery(current.id, input.decision, note, who.buyerId!, runId, signed.signature, signed.keyId, now)
+    // The moment the client decides, whoever decided (the hosted stand-in or an outside agent), the console hears it.
+    live.publish({ type: 'review', stage: 'decided', dealId, milestone, decision: input.decision, note, at: stamp() })
     let charge: unknown = null
     if (input.decision === 'accepted') {
       const terms = JSON.parse(row.terms_json) as StoredTerms

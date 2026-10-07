@@ -1,3 +1,4 @@
+import { live, stamp } from '../services/live'
 import { randomUUID } from 'node:crypto'
 import type { ModelMessage } from 'ai'
 import { verdictFor, type Side } from '../domain/deal'
@@ -171,16 +172,19 @@ export class AgentService {
     const system = reviewerSystem({ company: view.buyerName ?? deal.buyer_id, studio: this.services.repo.partyRules(WARRANT_ID)?.body.displayName ?? 'the studio', scope: view.scope, milestone, title: view.title, amount: `$${(view.amountCents / 100).toFixed(2)}`, proofUrl: view.proofUrl, dealId })
     const prompt = 'Decide now with decide_delivery.'
     let run: RunOutput
+    live.publish({ type: 'review', stage: 'started', dealId, milestone, model: model.name, at: stamp() })
     try {
       run = await runAgent({ model, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'decide_delivery', timeoutMs: 45_000 })
     } catch (error) {
       this.record({ id: runId, agent: 'reviewer', who, conversationId: runId, model: model.name, input: prompt, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0 })
+      live.publish({ type: 'review', stage: 'failed', dealId, milestone, model: model.name, note: error instanceof Problem ? error.detail : 'The model call failed.', at: stamp() })
       throw error
     }
     const decided = run.steps.flatMap((step) => step.toolResults).find((item) => item.tool === 'decide_delivery')
     this.record({ id: runId, agent: 'reviewer', who, conversationId: runId, model: model.name, input: prompt, output: decided ? JSON.stringify(decided.output) : run.text, steps: run.steps, status: decided?.ok ? 'ok' : 'error', error: decided?.ok ? null : 'no_decision', ms: run.ms })
     if (!decided || !decided.ok) {
       const error = (decided?.output as { error?: { code?: string; message?: string } } | undefined)?.error
+      live.publish({ type: 'review', stage: 'failed', dealId, milestone, model: model.name, note: error?.message ?? 'The model did not decide.', at: stamp() })
       throw new Problem(422, 'delivery.no_decision', 'The client\'s agent did not decide', error?.message ?? 'The model did not accept or reject the delivery. Nothing was billed. Try again.')
     }
     const after = this.services.repo.delivery(delivery.id)!

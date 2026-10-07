@@ -1,3 +1,4 @@
+import { live, stamp } from '../services/live'
 import type { DatabaseSync } from 'node:sqlite'
 import type { PartyRules } from '../domain/deal'
 import { PartyRulesSchema } from '../domain/deal'
@@ -227,6 +228,7 @@ export class Repo {
     this.db.prepare('INSERT INTO warrants (id, version, body_json, created_at) VALUES (?, ?, ?, ?)').run(
       id, version, JSON.stringify(body), now,
     )
+    live.publish({ type: 'changed', scope: 'rules', what: 'rules.published', at: stamp() })
   }
 
   insertProposal(input: NewProposal): void {
@@ -317,6 +319,7 @@ export class Repo {
     this.db.prepare(
       'INSERT INTO events (id, proposal_id, type, clause, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run(id, proposalId, type, clause, JSON.stringify(payload), now)
+    live.publish({ type: 'changed', scope: 'ledger', what: type, id: proposalId, at: stamp() })
   }
 
   listEvents(limit: number, cursor: { createdAt: string; id: string } | null): EventRow[] {
@@ -425,6 +428,7 @@ export class Repo {
       row.verdict_json, row.buyer_rules_version, row.seller_rules_version, row.terms_hash, row.sig, row.key_id, row.run_id,
       row.prompt, row.created_at,
     )
+    live.publish({ type: 'changed', scope: 'deal', what: `deal.${row.status}`, dealId: row.id, at: stamp() })
   }
 
   deal(id: string): DealRow | null {
@@ -525,6 +529,7 @@ export class Repo {
   insertDelivery(row: DeliveryRow): void {
     this.db.prepare(`INSERT INTO deliveries (id, deal_id, milestone, proof_url, proof_hash, delivered_by, status, note, decided_by, run_id, sig, key_id, proposal_id, created_at, decided_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.deal_id, row.milestone, row.proof_url, row.proof_hash, row.delivered_by, row.status, row.note, row.decided_by, row.run_id, row.sig, row.key_id, row.proposal_id, row.created_at, row.decided_at)
+    live.publish({ type: 'changed', scope: 'delivery', what: `delivery.${row.status}`, dealId: row.deal_id, milestone: row.milestone, at: stamp() })
   }
 
   delivery(id: string): DeliveryRow | null {
@@ -550,6 +555,8 @@ export class Repo {
 
   decideDelivery(id: string, status: 'accepted' | 'rejected', note: string | null, decidedBy: string, runId: string | null, sig: string, keyId: string, now: string): void {
     this.db.prepare(`UPDATE deliveries SET status = ?, note = ?, decided_by = ?, run_id = ?, sig = ?, key_id = ?, decided_at = ? WHERE id = ?`).run(status, note, decidedBy, runId, sig, keyId, now, id)
+    const delivery = this.delivery(id)
+    if (delivery) live.publish({ type: 'changed', scope: 'delivery', what: `delivery.${status}`, dealId: delivery.deal_id, milestone: delivery.milestone, at: stamp() })
   }
 
   linkDelivery(id: string, proposalId: string): void {
@@ -637,6 +644,7 @@ export class Repo {
 
   setPhase(id: string, phase: string, now: string): void {
     this.db.prepare('UPDATE proposals SET phase = ?, updated_at = ? WHERE id = ?').run(phase, now, id)
+    live.publish({ type: 'changed', scope: 'ledger', what: `phase.${phase}`, id, at: stamp() })
   }
 
   saveOrder(id: string, orderId: string, approveUrl: string | null, now: string): void {

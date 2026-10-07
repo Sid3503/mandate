@@ -1,15 +1,16 @@
 import { useMutation } from '@tanstack/react-query'
 import { useToast } from '../components/Toast'
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAsk } from '../components/Ask'
 import { BalanceNote } from '../components/PayPalFeatures'
 import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { relative } from '../lib/format'
+import { reviewKey, useLive, type ReviewState } from '../lib/live'
 import { dollars } from '../lib/money'
 import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useToday, useWarrant } from '../lib/hooks'
-import type { Proposal, Today as TodayData, TodayAction, TodayItem } from '../lib/types'
+import type { Delivery, Proposal, Today as TodayData, TodayAction, TodayItem } from '../lib/types'
 import { explain, isPayout, KIND, type Names } from '../lib/words'
 
 const HOW: Record<NonNullable<TodayItem['how']>, { label: string; tone: 'auto' | 'ink' }> = {
@@ -89,7 +90,7 @@ export function Today() {
       {data && data.inFlight.length > 0 ? (
         <section className="section" data-tour="ready" aria-labelledby="h-flight">
           <h2 className="section-title" id="h-flight">In flight · nothing for you to do</h2>
-          <p className="fine watcher" role="status">{data.watcher.lastLook ? <>Mandate asks PayPal about these every minute. Last asked {relative(data.watcher.lastLook.at)}, looking at {data.watcher.lastLook.invoices} invoice{data.watcher.lastLook.invoices === 1 ? '' : 's'} and {data.watcher.lastLook.payouts} payout{data.watcher.lastLook.payouts === 1 ? '' : 's'}.</> : <>Mandate asks PayPal about these every minute. It has not asked yet since the server started.</>} Pay an invoice and leave this page open: it settles here by itself.</p>
+          <p className="fine watcher" role="status">{data.watcher.lastLook ? <>Mandate asks PayPal about these {cadence(data.watcher.everySeconds)}. Last asked {relative(data.watcher.lastLook.at)}, looking at {data.watcher.lastLook.invoices} invoice{data.watcher.lastLook.invoices === 1 ? '' : 's'} and {data.watcher.lastLook.payouts} payout{data.watcher.lastLook.payouts === 1 ? '' : 's'}.</> : <>Mandate asks PayPal about these {cadence(data.watcher.everySeconds)}. It has not asked yet since the server started.</>} Pay an invoice and this page updates by itself the moment PayPal says it was paid.</p>
           <ul className="items">{data.inFlight.map((item) => <ItemRow key={item.id} item={item} />)}</ul>
         </section>
       ) : null}
@@ -231,9 +232,10 @@ function BillRow({ item, auto, accept, hosted = false }: { item: TodayData['read
     },
     onSettled: () => void refresh(),
   })
+  const live = useLive()
   const review = useMutation({
     mutationFn: () => api.reviewDelivery(item.dealId, item.milestone),
-    onSuccess: (done) => toast(done.delivery.status === 'accepted'
+    onSuccess: (done) => live.connected ? undefined : toast(done.delivery.status === 'accepted'
       ? { title: `${item.buyerName}’s agent accepted it`, body: done.charge ? `The invoice for ${dollars(item.amountCents)} went out under your rule. No tap.` : 'Accepted and signed.' }
       : { title: `${item.buyerName}’s agent rejected it`, body: done.delivery.note ?? 'Nothing was billed.', tone: 'bad' }),
     onSettled: () => void refresh(),
@@ -252,7 +254,7 @@ function BillRow({ item, auto, accept, hosted = false }: { item: TodayData['read
         <>
           <p className="fine"><Chip tone="need">Waiting for {item.buyerName} to accept</Chip> Delivered with <a href={delivery.proofUrl} target="_blank" rel="noreferrer noopener">{delivery.proofUrl.replace(/^https:\/\/(www\.)?/, '')}</a>. Nothing is billed until the client’s own agent accepts it, and then the invoice goes out by itself.</p>
           <div className="row gap-s wrap">
-            {hosted ? <span className="fine" role="status"><Chip tone="muted">{item.buyerName}’s agent is reviewing</Chip></span> : null}
+            <ReviewProgress buyer={item.buyerName} delivery={delivery} hosted={hosted} />
             <button type="button" className="btn btn-ink btn-small" disabled={!owner || !online || !agents || review.isPending} onClick={() => review.mutate()} title={agents ? undefined : 'The client’s agent needs BEDROCK_API_KEY'}>{review.isPending ? `Asking ${item.buyerName}’s agent…` : hosted ? 'Nudge now' : `Ask ${item.buyerName}’s agent to review`}</button>
             <span className="fine">In production the client’s own agent calls <code>decide_delivery</code> on its own key. This runs the hosted stand-in.</span>
           </div>
@@ -271,6 +273,45 @@ function BillRow({ item, auto, accept, hosted = false }: { item: TodayData['read
         </>
       )}
     </li>
+  )
+}
+
+const cadence = (seconds: number) => (seconds <= 10 ? `every ${seconds} seconds while they are open` : 'every minute')
+
+/**
+ * What the client's agent is doing right now, as it happens: handed over, reviewing (with the clock), then the
+ * decision, then the invoice. Every step shown is one the server actually reported; nothing here is a spinner for show.
+ */
+function ReviewProgress({ buyer, delivery, hosted }: { buyer: string; delivery: Delivery; hosted: boolean }) {
+  const live = useLive()
+  const found = live.reviews[reviewKey(delivery.dealId, delivery.milestone)]
+  const since = Date.parse(delivery.createdAt)
+  const review: ReviewState | undefined = found && found.at >= since - 2000 ? found : undefined
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  const seconds = Math.max(0, Math.round((now - (review?.startedAt ?? since)) / 1000))
+  const clock = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
+  if (!hosted) return <p className="fine" role="status"><Chip tone="muted">Waiting for {buyer}’s own agent</Chip> It answers on its own key, from outside.</p>
+  const failed = review?.stage === 'failed'
+  const steps: Array<{ label: string; state: 'done' | 'active' | 'todo' | 'bad'; note?: string }> = [
+    { label: 'Delivered and signed', state: 'done' },
+    { label: review ? `${buyer}’s agent is reviewing the proof${review.model ? ` (${review.model})` : ''}` : `Handing it to ${buyer}’s agent`, state: failed ? 'bad' : 'active', note: failed ? review?.note ?? 'The review failed. Nothing was billed. Press Nudge now to try again.' : clock },
+    { label: 'Decision, signed over this exact proof', state: 'todo' },
+    { label: 'Invoice sent by your billing rule', state: 'todo' },
+  ]
+  return (
+    <ol className="review-steps" role="status" aria-label={`${buyer}’s agent review`}>
+      {steps.map((step) => (
+        <li key={step.label} className={`review-step review-${step.state}`}>
+          <span className="review-dot" aria-hidden="true" />
+          <span>{step.label}</span>
+          {step.note ? <span className="review-note mono">{step.note}</span> : null}
+        </li>
+      ))}
+    </ol>
   )
 }
 

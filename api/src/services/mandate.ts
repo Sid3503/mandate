@@ -20,6 +20,8 @@ export type Role = 'owner' | 'proposer' | 'autopilot'
 
 const RESUME_PHASES = new Set(['locked', 'order_created', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'])
 /** Charge phases where a PayPal invoice exists. The client may already have paid it. */
+export const FAST_SWEEP_MS = 5_000
+export const IDLE_SWEEP_MS = 60_000
 const INVOICE_PHASES = ['invoice_draft', 'invoice_sent']
 /** Payout phases where PayPal already holds the batch, so money may already have left. */
 const PAYOUT_LIVE_PHASES = ['payout_sent', 'payout_unclaimed']
@@ -271,12 +273,22 @@ export class MandateService {
   /** When the server last asked PayPal about money in flight, and how much it looked at. Shown on Today so the automation is visible. */
   private lastLook: { at: string; payouts: number; invoices: number; reminded: number } | null = null
 
+  /** How many invoices and payouts are still waiting on PayPal. While there are any, the server looks often. */
+  inFlightCount(): number {
+    return this.repo.openPayoutBatches().length + (this.invoices ? this.repo.openInvoices().length : 0)
+  }
+
+  /** Quick while money is in flight (so a payment shows within seconds), slow when nothing is. */
+  nextSweepMs(): number {
+    return this.inFlightCount() > 0 ? FAST_SWEEP_MS : IDLE_SWEEP_MS
+  }
+
   watcher() {
-    return { everySeconds: 60, lastLook: this.lastLook }
+    return { everySeconds: Math.round(this.nextSweepMs() / 1000), lastLook: this.lastLook }
   }
 
   /**
-   * The server's own once-a-minute look at money in flight: payouts PayPal is still processing and invoices still
+   * The server's own look at money in flight (every few seconds while something is waiting, once a minute otherwise): payouts PayPal is still processing and invoices still
    * out. It re-reads PayPal (the same read the Check PayPal button does), so a payout or an invoice settles without
    * anyone pressing anything, and without needing a webhook. One failing item never stops the others.
    */

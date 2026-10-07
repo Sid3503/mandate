@@ -1,3 +1,4 @@
+import { useLive } from '../lib/live'
 import { motion } from 'framer-motion'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { PageTransition } from './PageTransition'
@@ -58,6 +59,7 @@ function ShellFrame() {
   const navigate = useNavigate()
   const client = useQueryClient()
   const waiting = today.data?.waiting.length ?? 0
+  const live = useLive()
   const lock = () => {
     session.clear()
     client.clear()
@@ -100,6 +102,7 @@ function ShellFrame() {
             <button type="button" className="btn btn-ghost btn-small ask-top" onClick={() => ask.open()} disabled={!me.data?.agents.enabled} title="Ask the clerk (Cmd or Ctrl + K)">Ask <kbd aria-hidden="true">⌘K</kbd></button>
             <GuideButton />
             {me.data?.role === 'proposer' ? <Chip tone="need">Proposer · can ask, not approve</Chip> : null}
+            <Chip tone={live.connected ? 'auto' : 'muted'}><span title={live.connected ? 'Updates arrive the moment they happen' : 'Reconnecting. The page still refreshes every few seconds.'}>{live.connected ? 'Live' : 'Reconnecting'}</span></Chip>
             {me.data ? <Chip tone={me.data.paypalConfigured ? 'auto' : 'muted'}>{me.data.paypalConfigured ? 'PayPal sandbox' : 'PayPal not set'}</Chip> : null}
             <NavLink to="/system" className="topbar-sys" aria-label="System">v{me.data?.version ?? '—'}</NavLink>
           </div>

@@ -77,7 +77,16 @@ const server = serve({ fetch: app.fetch, hostname: config.host, port: config.por
 
 // A client dispute is news that can arrive between taps. Look for it every minute so a payout never leaves on stale news.
 // A standing-rule payout that PayPal could not take, or a dispute held, is sent as soon as it can be.
-const standingTimer = setInterval(() => { void services.mandate.sweepStanding().then(() => services.mandate.sweepPending()).catch(() => undefined) }, 60_000)
+// Look at PayPal every few seconds while an invoice or payout is in flight, once a minute when nothing is. A webhook
+// (when the server has a public URL) makes it instant; this is what makes a payment show up without one.
+let lastSweep = 0
+let sweeping = false
+const standingTimer = setInterval(() => {
+  // Check every second whether it is time: 5 s apart while something is in flight, a minute apart otherwise.
+  if (sweeping || Date.now() - lastSweep < services.mandate.nextSweepMs()) return
+  sweeping = true
+  void services.mandate.sweepStanding().then(() => services.mandate.sweepPending()).catch(() => undefined).finally(() => { lastSweep = Date.now(); sweeping = false })
+}, 1_000)
 standingTimer.unref()
 
 // A delivery the client's stand-in has not answered (the model hiccuped, or the server restarted) is picked up here.

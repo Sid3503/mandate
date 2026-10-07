@@ -881,3 +881,19 @@ html { scroll-behavior: smooth; }
 .draft-readback, .draft-replay { border: 1.5px solid var(--ink); background: var(--sheet); padding: 10px 12px; }
 .draft-added ul, .draft-ignored ul, .draft-untrusted ul, .draft-readback ul, .draft-replay ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; }
 .draft-added li span, .draft-ignored li span { display: block; color: var(--ink); font-size: 14px; }
+
+/* Live progress: what the client's agent is doing right now. */
+.review-steps { list-style: none; margin: 4px 0 2px; padding: 0; display: grid; gap: 6px; font-size: 14px; }
+.review-step { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; color: var(--mute); }
+.review-dot { width: 10px; height: 10px; border: 1.5px solid var(--ink); background: transparent; flex: none; align-self: center; }
+.review-done { color: var(--ink); }
+.review-done .review-dot { background: var(--ink); }
+.review-active { color: var(--ink); font-weight: 600; }
+.review-active .review-dot { background: var(--lime); animation: review-pulse 1s ease-in-out infinite; }
+.review-bad { color: var(--ink); }
+.review-bad .review-dot { background: #c0392b; border-color: #c0392b; }
+.review-note { font-size: 12px; font-weight: 400; color: var(--mute); }
+@keyframes review-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.5); } }
+@keyframes item-in { from { opacity: 0; transform: translateY(8px); background: var(--lime); } to { opacity: 1; transform: none; } }
+.items > .item { animation: item-in 0.6s ease-out; }
+@media (prefers-reduced-motion: reduce) { .items > .item, .review-active .review-dot { animation: none; } }

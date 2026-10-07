@@ -15,6 +15,7 @@ import type { InvoicePort } from './paypal/invoices'
 import { PayPalError, type PayPalPort } from './paypal/port'
 import { handleMcp } from './mcp/http'
 import { AgentService, logReviewFailure } from './agents/service'
+import { live } from './services/live'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
 import type { WatchPort } from './paypal/watch'
@@ -354,6 +355,20 @@ export function createApp(deps: AppDeps) {
   app.post('/v1/paypal/features/check', async (c) => {
     await assertEmpty(c)
     return c.json(await service.features(true))
+  })
+  // The console listens here, so a payment, a decision or a settlement shows the moment it is written. Events only
+  // say what changed; the console re-reads the real thing through the normal routes. Owner and studio only.
+  app.get('/v1/stream', (c) => {
+    const principal = c.get('principal')
+    if (principal.role !== 'owner' && principal.role !== 'proposer') throw new Problem(403, 'auth.forbidden', 'Not for this key', 'The live stream is for the owner and the studio.')
+    return streamSSE(c, async (stream) => {
+      const unsubscribe = live.subscribe((event) => { void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).catch(() => undefined) })
+      await stream.writeSSE({ event: 'hello', data: JSON.stringify({ type: 'hello', at: deps.now().toISOString() }) })
+      const beat = setInterval(() => { void stream.writeSSE({ event: 'ping', data: '{}' }).catch(() => undefined) }, 15_000)
+      await new Promise<void>((resolve) => stream.onAbort(resolve))
+      clearInterval(beat)
+      unsubscribe()
+    })
   })
   app.get('/v1/today', (c) => c.json({ ...services.today.build(), clientAgent: { mode: deps.config.clientAgent ?? 'manual', ready: agents.enabled } }))
   app.get('/v1/audit', async (c) => c.json(await services.audit.run({ paypal: c.req.query('paypal') === '1' })))

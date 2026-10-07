@@ -120,6 +120,7 @@ An installable React app served at `/app/`.
 - **Transaction reconciliation**: the Ledger lists the last 30 days of PayPal activity, matches it to the ledger, and flags anything Mandate did not create as **Not in Mandate**. Read-only.
 - **Balance advice**: the account balance PayPal reports, with its age, shown on System and beside a payout about to be sent, with a "may be short" warning. Advice only, because PayPal's report lags.
 - **Tool tiers**: all 47 tools in PayPal's Agent Toolkit are put in a tier (read, propose only, out of scope). The server runs only nine, refuses any other, and an agent can call none of them. A test fails when PayPal adds a tool that has no tier.
+- **Live, with or without a webhook**: the console listens to `GET /v1/stream` and updates the moment anything is written (a delivery, the client agent's review, an invoice, a settlement). The server asks PayPal every 5 seconds while an invoice or payout is open, so a payment shows within seconds even without a public URL; a webhook makes it instant (`npm run webhook:register -- <public url>` registers it).
 - **Webhooks**: payout, invoice and dispute events only *nudge* a re-read. With `PAYPAL_WEBHOOK_ID` set, each delivery must carry a signature PayPal confirms. Repeated events are ignored.
 
 ## 6. How it works
@@ -158,7 +159,7 @@ An installable React app served at `/app/`.
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 308 API tests (56 of them a red team) and 54 browser tests on desktop and phone, with an accessibility scan on every screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 311 API tests (56 of them a red team) and 54 browser tests on desktop and phone, with an accessibility scan on every screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -258,7 +259,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 10. Proof
 
-- **308 API tests** (Vitest; 56 are the red team) and **54 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
+- **311 API tests** (Vitest; 56 are the red team) and **54 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation) and compared on four models. No miss on any model moved money.
 - **The whole frozen job has run on the real PayPal sandbox, both milestones:** agents negotiated and signed $300; Northwind paid two real invoices; the locks verified; two real $90 payouts reached Priya's sandbox account (the second with no tap, under a standing rule); the job reads **$300 in, $180 out, $120 kept**; and cancelling an unclaimed payout returned the money.
 - **Proof** runs ten checks over the ledger (and an eleventh against PayPal's own history on request), and the tests tamper with the database eight ways to check the right one fails.

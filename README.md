@@ -24,7 +24,7 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 | Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | built |
 | Deal | The two companies' agents agree $300 in two milestones. $450 and $200 are refused by a pure function that checks **both** companies' rules. The agreed deal is signed. | built |
 | Agents | A clerk Arun can talk to, and two negotiators, on Amazon Bedrock (`us.openai.gpt-6-luna`) through an MCP server whose six tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
-| Autopilot | With the owner's rules signed, the job runs itself: proof attached → PayPal invoice sent; client pays → the contractor's share is asked for and paid; unpaid invoices get PayPal's reminder. The server re-reads PayPal every minute, so it finishes without anyone pressing anything. | built, tested in the browser and in pieces live |
+| Autopilot | With the owner's rules signed, the job runs itself: proof attached → PayPal invoice sent; client pays → the contractor's share is asked for and paid; unpaid invoices get PayPal's reminder. The server re-reads PayPal every few seconds while money is in flight (instantly with a webhook), and the console updates live, so it finishes without anyone pressing or reloading anything. | built, tested in the browser and in pieces live |
 | Client acceptance | Optionally, the studio's delivery waits for the client's own agent to accept it (signed over the exact proof link) before the invoice goes out. | built, tested |
 | Verify a receipt | A public page checks a downloaded receipt's lock and signatures in the browser, against the public keys, without asking the server. | built, tested |
 | Ask Mandate | One box (Cmd/Ctrl + K): questions answered from the ledger with no model, "delivered" prepared as a button, rule-like sentences handed to the drafter, and a refusal that says what would pass. | built, tested |
@@ -83,7 +83,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-308 API tests (including a 56-case red team), 54 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
+311 API tests (including a 56-case red team), 54 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
 
 ## Where to read next
 

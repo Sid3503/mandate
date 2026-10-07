@@ -11,6 +11,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import type { ReactNode } from 'react'
 import { Shell } from './components/Shell'
 import { ToastProvider } from './components/Toast'
+import { LiveProvider } from './lib/live'
 import { ApiError } from './lib/api'
 import { session } from './lib/session'
 import { Today } from './screens/Today'
@@ -63,7 +64,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/welcome" element={<Landing />} />
           <Route path="/unlock" element={<Unlock />} />
           <Route path="/verify" element={<Verify />} />
-          <Route element={<RequireKey><Shell /></RequireKey>}>
+          <Route element={<RequireKey><LiveProvider><Shell /></LiveProvider></RequireKey>}>
             <Route index element={<Today />} />
             <Route path="p/:id" element={<Receipt />} />
             <Route path="jobs" element={<Jobs />} />

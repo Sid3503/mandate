@@ -360,12 +360,18 @@ test('a first-time visitor is walked through the console, and it stays out of th
   await page.keyboard.press('Escape')
 })
 
+/** The signed-in console keeps a live connection open, so the network never goes idle. Settled means loaded and no loading placeholder left. */
+async function settled(page: import('@playwright/test').Page) {
+  await page.waitForLoadState('load')
+  await expect(page.locator('.loading')).toHaveCount(0, { timeout: 15_000 })
+}
+
 test('every screen has a guide that walks to its last step', async ({ page }) => {
   await unlock(page, OWNER)
   const screens = ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/proof', '/app/system']
   for (const path of screens) {
     await page.goto(path)
-    await page.waitForLoadState('networkidle')
+    await settled(page)
     await page.getByRole('button', { name: /Guide/ }).click()
     const tour = page.getByRole('dialog')
     await expect(tour).toBeVisible()
@@ -600,7 +606,7 @@ test('every signed-in screen passes axe (WCAG 2.1 AA)', async ({ page }) => {
   await unlock(page, OWNER)
   for (const path of ['/app/', '/app/new', '/app/jobs', '/app/deals', '/app/clerk', '/app/ledger', '/app/rules', '/app/proof', '/app/system']) {
     await page.goto(path)
-    await page.waitForLoadState('networkidle')
+    await settled(page)
     await page.waitForTimeout(1000)
     const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).exclude('.ag-root-wrapper').analyze()
     expect(results.violations.map((v) => `${path} ${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
@@ -836,15 +842,23 @@ test('billing waits for the client: delivered, accepted by the client\'s agent, 
   await expect(row).toContainText('Waiting for Northwind to accept')
   await shots(page, '39-waiting-for-acceptance')
   // Nothing has been billed: the client has not spoken.
-  const before = await (await request.get('/v1/proposals', { headers })).json()
-  expect(before.data.filter((item: { jobId: string }) => item.jobId === job)).toHaveLength(0)
+  const unbilled = await (await request.get('/v1/proposals', { headers })).json()
+  expect(unbilled.data.filter((item: { jobId: string }) => item.jobId === job)).toHaveLength(0)
 
   await row.getByRole('button', { name: /Ask Northwind.s agent to review/ }).click()
-  await expect(page.getByText('Northwind’s agent accepted it')).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText('The client’s agent accepted the delivery')).toBeVisible({ timeout: 30_000 })
   await expect(page.locator('[data-tour="ready"]')).toContainText('Waiting for Northwind to pay $150.00')
+  // The console is listening: a payment PayPal reports shows up on this page with no reload and no click.
+  await expect(page.getByText('Live', { exact: true })).toBeVisible()
+  const inFlight = page.locator('[data-tour="ready"] li.item')
+  const before = await inFlight.count()
+  await fake(request, 'invoices-pay')
+  await fake(request, 'sweep')
+  await expect(page.locator('.toast', { hasText: 'PayPal confirmed the payment' })).toBeVisible({ timeout: 10_000 })
+  await expect(inFlight).toHaveCount(before - 1, { timeout: 10_000 })
   const after = await (await request.get('/v1/proposals', { headers })).json()
   const charge = after.data.find((item: { jobId: string }) => item.jobId === job)
-  expect(charge).toMatchObject({ clause: 'standing.billing', phase: 'invoice_sent' })
+  expect(charge).toMatchObject({ clause: 'standing.billing', phase: 'captured' })
 
   await page.goto('/app/proof')
   await expect(page.locator('.check-row', { hasText: 'Billing waited for the client' })).toContainText('Pass')
