@@ -19,6 +19,7 @@ const EnvSchema = z.object({
   OLLAMA_BASE_URL: z.string().url().optional(),
   AGENT_MODEL: z.string().min(1).optional(),
   DRAFTER_MODEL: z.string().min(1).optional(),
+  CLIENT_AGENT: z.enum(['auto', 'manual']).default('auto'),
   SIGNING_KEYS_PREVIOUS: z.string().optional(),
   WEB_DIST: z.string().min(1).optional(),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).max(10_000).default(120),
@@ -45,6 +46,8 @@ export type AppConfig = {
   ollamaBaseUrl: string | undefined
   agentModel: string | undefined
   drafterModel: string | undefined
+  /** `auto`: the hosted stand-in for the client's agent reviews each delivery as soon as it arrives. `manual`: only when asked. */
+  clientAgent: 'auto' | 'manual'
   previousPublicKeys: string[]
   webDist: string | null
   rateLimitPerMinute: number
@@ -97,6 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     ollamaBaseUrl: value.OLLAMA_BASE_URL,
     agentModel: value.AGENT_MODEL,
     drafterModel: value.DRAFTER_MODEL,
+    clientAgent: value.CLIENT_AGENT,
     previousPublicKeys: (value.SIGNING_KEYS_PREVIOUS ?? '').split('|').map((item) => item.trim()).filter(Boolean),
     webDist: value.WEB_DIST ?? null,
     rateLimitPerMinute: value.RATE_LIMIT_PER_MINUTE,

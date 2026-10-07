@@ -23,7 +23,7 @@ export function closeAll() {
 
 export type Requester = { request: (input: string, init?: RequestInit) => Response | Promise<Response> }
 
-export function harness(options: { invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null } = {}) {
+export function harness(options: { invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual' } = {}) {
   const db = openDatabase(':memory:')
   open.push(db)
   migrate(db)
@@ -53,6 +53,7 @@ export function harness(options: { invoices?: InvoicePort | null; model?: AgentM
       log: false,
       publicUrl: 'http://127.0.0.1:8787',
       webhookId: options.webhookId,
+      clientAgent: options.clientAgent,
     },
   })
   const app = build()

@@ -38,6 +38,8 @@ export type AppDeps = {
   model?: AgentModel | null
   /** A separate model for drafting rules. Falls back to `model`. */
   drafterModel?: AgentModel | null
+  /** Built by the caller when something outside the app (the timers in main.ts) must share it. */
+  agents?: AgentService
   config: {
     apiKey: string
     proposerKey?: string | null
@@ -51,6 +53,8 @@ export type AppDeps = {
     publicUrl: string
     /** PayPal's id for the registered webhook. When set, a webhook must carry a signature PayPal confirms. */
     webhookId?: string | null
+    /** `auto` lets the hosted stand-in for the client's agent answer a delivery as soon as it arrives. */
+    clientAgent?: 'auto' | 'manual'
   }
 }
 
@@ -96,7 +100,7 @@ export function createApp(deps: AppDeps) {
   const app = new Hono<{ Variables: { requestId: string; principal: Principal } }>()
   const services = deps.services ?? buildServices({ ...deps, publicUrl: deps.config.publicUrl })
   const { mandate: service, deals } = services
-  const agents = new AgentService(services, deps.model ?? null, deps.now, deps.drafterModel ?? null)
+  const agents = deps.agents ?? new AgentService(services, deps.model ?? null, deps.now, deps.drafterModel ?? null)
   const buckets = new Map<string, { count: number; reset: number }>()
   const openapi = buildOpenApi(deps.config.publicUrl)
 
@@ -339,7 +343,7 @@ export function createApp(deps: AppDeps) {
     await assertEmpty(c)
     return c.json(await service.features(true))
   })
-  app.get('/v1/today', (c) => c.json(services.today.build()))
+  app.get('/v1/today', (c) => c.json({ ...services.today.build(), clientAgent: { mode: deps.config.clientAgent ?? 'manual', ready: agents.enabled } }))
   app.get('/v1/audit', async (c) => c.json(await services.audit.run({ paypal: c.req.query('paypal') === '1' })))
   app.get('/v1/paypal/balance', async (c) => c.json(await service.balance()))
   app.get('/v1/paypal/tools', (c) => c.json(toolSummary()))
@@ -431,7 +435,12 @@ export function createApp(deps: AppDeps) {
     if (!Number.isInteger(milestone) || milestone < 0 || milestone > 11) throw new Problem(404, 'deal.milestone_unknown', 'No such milestone', 'Milestones are numbered from 0.')
     const parsed = BillMilestoneSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
-    return send(c, await deals.deliver(c.req.param('id'), milestone, parsed.data, c.get('principal')))
+    const made = await deals.deliver(c.req.param('id'), milestone, parsed.data, c.get('principal'))
+    // The client's agent is a separate party. When the hosted stand-in is on auto, it answers by itself, as an outside agent polling get_deliveries would.
+    if (deps.config.clientAgent === 'auto' && agents.enabled && made.status === 201 && (made.body as { mode?: string }).mode === 'awaiting') {
+      void agents.reviewDelivery(c.req.param('id'), milestone, OWNER).catch(() => undefined)
+    }
+    return send(c, made)
   })
   app.post('/v1/deals/:id/milestones/:n/decision', async (c) => {
     assertJson(c)

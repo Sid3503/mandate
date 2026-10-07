@@ -157,6 +157,15 @@ export class AgentService {
     return { runId, model: model.name, ms: run.ms, delivery: this.services.deals.deliveryView(after), charge: after.proposal_id ? this.services.mandate.packet(after.proposal_id).proposal : null }
   }
 
+  /** Deliveries nobody has answered for a little while. Used when the hosted stand-in for the client's agent is on `auto`. */
+  async reviewWaiting(olderThanMs = 20_000, max = 2): Promise<number> {
+    if (!this.model) return 0
+    const cutoff = this.now().getTime() - olderThanMs
+    const waiting = this.services.repo.deliveriesFor(null, 50).filter((row) => row.status === 'awaiting' && Date.parse(row.created_at) <= cutoff).slice(0, max)
+    for (const row of waiting) await this.reviewDelivery(row.deal_id, row.milestone, OWNER).catch(() => undefined)
+    return waiting.length
+  }
+
   // ---------- the rules drafter ----------
 
   /** A draft of new rules from the owner's own words. It is a draft only: nothing is published, and the owner reads a diff first. */

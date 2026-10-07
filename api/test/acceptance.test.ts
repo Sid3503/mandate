@@ -198,6 +198,26 @@ describe('the client\'s reviewer agent', () => {
   })
 })
 
+describe('the client\'s stand-in answers by itself when it is on auto', () => {
+  const accepting = () => scriptedModel(({ round, system }) => round > 0 ? { text: 'Decided.' } : { tool: 'decide_delivery', input: { dealId: /The deal is ([0-9a-f-]{36})/.exec(system)?.[1], milestone: 0, decision: 'accepted', note: 'Fits.' } })
+
+  it('reviews the delivery as soon as it arrives, with nobody pressing anything, and the invoice goes out', async () => {
+    const h = await world({ model: accepting(), clientAgent: 'auto' })
+    expect((await deliver(h)).status).toBe(201)
+    for (let i = 0; i < 50 && h.invoices.createCalls === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(h.invoices.createCalls).toBe(1)
+    expect((await call(h.app, 'GET', '/v1/deliveries')).json.data[0]).toMatchObject({ status: 'accepted', signatureValid: true })
+  })
+
+  it('does nothing on its own when it is on manual', async () => {
+    const h = await world({ model: accepting(), clientAgent: 'manual' })
+    await deliver(h)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(h.invoices.createCalls).toBe(0)
+    expect((await call(h.app, 'GET', '/v1/today')).json.clientAgent).toEqual({ mode: 'manual', ready: true })
+  })
+})
+
 describe('proof of the acceptance', () => {
   it('passes the audit, and the audit catches an acceptance that was edited, removed, or pointed at another proof', async () => {
     const h = await world()

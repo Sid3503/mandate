@@ -61,7 +61,8 @@ export function Today() {
       <ProblemCard error={proposals.error ?? today.error} />
 
       {data ? <MonthStrip data={data} /> : null}
-      {data && !data.setup.complete ? <Setup data={data} /> : null}
+      {data ? <WaitingOnClient data={data} /> : null}
+      {data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length < 4 ? <Setup data={data} /> : null}
 
       <section className="section" data-tour="today-waiting" aria-labelledby="h-waiting">
         <h2 className="section-title" id="h-waiting">Waiting for you</h2>
@@ -83,7 +84,7 @@ export function Today() {
         {attention.length > 0 ? <ul className="items" aria-label="Needs your attention">{attention.map((item) => <ItemRow key={item.id} item={item} />)}</ul> : null}
       </section>
 
-      {data && data.readyToBill.length > 0 ? <ReadyToBill data={data} /> : null}
+      {data && data.readyToBill.some((item) => item.delivery?.status !== 'awaiting') ? <ReadyToBill data={data} /> : null}
 
       {data && data.inFlight.length > 0 ? (
         <section className="section" data-tour="ready" aria-labelledby="h-flight">
@@ -94,6 +95,7 @@ export function Today() {
       ) : null}
 
       {data ? <Done data={data} /> : null}
+      {data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length >= 4 ? <Setup data={data} /> : null}
 
       {refused.length > 0 || (data?.stopped.count ?? 0) > 0 ? (
         <section className="section" data-tour="refused" aria-labelledby="h-stopped">
@@ -176,19 +178,35 @@ function Setup({ data }: { data: TodayData }) {
 }
 
 /** The next milestone of each signed deal. Paste the proof and press: with autopilot on, the invoice is on its way. */
+/** A delivery the client's agent has not answered. It sits at the top, because until it is answered nothing else moves. */
+function WaitingOnClient({ data }: { data: TodayData }) {
+  const waiting = data.readyToBill.filter((item) => item.delivery?.status === 'awaiting')
+  if (waiting.length === 0) return null
+  const auto = data.clientAgent.mode === 'auto' && data.clientAgent.ready
+  return (
+    <section className="section waiting-client" data-tour="today-client" aria-labelledby="h-client">
+      <h2 className="section-title" id="h-client">Waiting for the client</h2>
+      <p className="fine" role="status">{auto ? 'The client’s agent reviews a delivery by itself, usually within a few seconds. When it accepts, the invoice goes out under your rule and this moves down to In flight.' : 'Nothing is billed until the client’s agent accepts. In production it calls decide_delivery on its own key; here you can run the hosted stand-in.'}</p>
+      <ul className="items">
+        {waiting.map((item) => <BillRow key={`${item.dealId}:${item.milestone}`} item={item} auto accept hosted={auto} />)}
+      </ul>
+    </section>
+  )
+}
+
 function ReadyToBill({ data }: { data: TodayData }) {
   const auto = data.automation?.billSignedDeals ?? false
   return (
     <section className="section" data-tour="today-bill" aria-labelledby="h-bill">
       <h2 className="section-title" id="h-bill">Ready to bill</h2>
       <ul className="items">
-        {data.readyToBill.map((item) => <BillRow key={`${item.dealId}:${item.milestone}`} item={item} auto={auto} accept={data.automation?.requireAcceptance ?? false} />)}
+        {data.readyToBill.filter((item) => item.delivery?.status !== 'awaiting').map((item) => <BillRow key={`${item.dealId}:${item.milestone}`} item={item} auto={auto} accept={data.automation?.requireAcceptance ?? false} />)}
       </ul>
     </section>
   )
 }
 
-function BillRow({ item, auto, accept }: { item: TodayData['readyToBill'][number]; auto: boolean; accept: boolean }) {
+function BillRow({ item, auto, accept, hosted = false }: { item: TodayData['readyToBill'][number]; auto: boolean; accept: boolean; hosted?: boolean }) {
   const owner = useIsOwner()
   const online = useOnline()
   const agents = useAgentsOn()
@@ -234,7 +252,8 @@ function BillRow({ item, auto, accept }: { item: TodayData['readyToBill'][number
         <>
           <p className="fine"><Chip tone="need">Waiting for {item.buyerName} to accept</Chip> Delivered with <a href={delivery.proofUrl} target="_blank" rel="noreferrer noopener">{delivery.proofUrl.replace(/^https:\/\/(www\.)?/, '')}</a>. Nothing is billed until the client’s own agent accepts it, and then the invoice goes out by itself.</p>
           <div className="row gap-s wrap">
-            <button type="button" className="btn btn-ink btn-small" disabled={!owner || !online || !agents || review.isPending} onClick={() => review.mutate()} title={agents ? undefined : 'The client’s agent needs OLLAMA_API_KEY'}>{review.isPending ? `Asking ${item.buyerName}’s agent…` : `Ask ${item.buyerName}’s agent to review`}</button>
+            {hosted ? <span className="fine" role="status"><Chip tone="muted">{item.buyerName}’s agent is reviewing</Chip></span> : null}
+            <button type="button" className="btn btn-ink btn-small" disabled={!owner || !online || !agents || review.isPending} onClick={() => review.mutate()} title={agents ? undefined : 'The client’s agent needs OLLAMA_API_KEY'}>{review.isPending ? `Asking ${item.buyerName}’s agent…` : hosted ? 'Nudge now' : `Ask ${item.buyerName}’s agent to review`}</button>
             <span className="fine">In production the client’s own agent calls <code>decide_delivery</code> on its own key. This runs the hosted stand-in.</span>
           </div>
           <ProblemCard error={review.error} />
