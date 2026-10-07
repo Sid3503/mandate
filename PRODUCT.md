@@ -31,7 +31,8 @@ An agent gets **a wallet of authority, not a wallet of money.**
 - **Say yes to the rule once, not to each payment.** The owner can sign a **standing rule**: "Priya is paid from settled Northwind payments on a signed deal, up to her 60% share and inside the monthly cap." A payout that matches it needs no tap. Everything else still does.
 - When a payment is approved (by the tap, or by a standing rule), the exact payment is **locked** into one SHA-256 hash and **signed** with an Ed25519 key. PayPal may move that and nothing else.
 - A contractor is paid only from **client money that already settled** on the same job.
-- Every dollar that moved, and every dollar that was refused, has a **receipt**.
+- **Autopilot** carries the rest of the job under the same signed rules: bill a signed-deal milestone when proof is attached, pay the contractor when the client pays, remind unpaid invoices. Each switch only removes a tap or sends a nudge.
+- Every dollar that moved, and every dollar that was refused, has a **receipt**, and a **Proof** page re-verifies the whole ledger on demand.
 
 The design rule behind everything: **AI may only add friction.** A model can make something need a tap. It can never remove a refusal, approve, or pay.
 
@@ -54,7 +55,8 @@ One frozen scenario drives every test, screenshot and demo. Nothing in the repo 
 | Client pays | Settled **only** when PayPal reports the invoice `PAID` for exactly the locked cents. |
 | Pay Priya | $90 is proposed and cites the settled $150. Without a standing rule the owner taps; with one, Mandate sends it itself. PayPal Payouts sends exactly $90 to Priya's own account. It is called *paid* only when PayPal says `SUCCESS`. |
 | Refusals | $18 team lunch (`category.missing`). Fake vendor "P. Shah" $480 (`payee.unknown`). Payout before the client paid (`funding.missing`). A $250 retry after the tap (`cart.immutable`). A third $90 past the cap (`cap.monthly`). |
-| The job | **$150 in, $90 out, $60 kept.** |
+| The job | **$150 in, $90 out, $60 kept** after milestone 1, and **$300 in, $180 out, $120 kept** after milestone 2 (the cap is then fully used). |
+| Autopilot | With the owner's rules signed, the same job runs from a proof link to Priya's payout with nobody tapping, and Today shows it under *Done for you*. |
 
 ## 5. What we built
 
@@ -124,9 +126,10 @@ An installable React app served at `/app/`.
 
 1. **Ask.** A person, the console, the clerk or an agent over MCP files a proposal. Each has its own key. The ask carries an idempotency key, so a retry replays the first answer.
 2. **Decide.** The gate returns a rule code and a plain-words reason. A denial is stored and is the end of it.
-3. **Tap, or a standing rule.** For anything at or above the automatic line, only the owner key can approve, unless the owner's standing rule covers that exact kind of payout. Either way the lock is signed.
+3. **Tap, or a rule the owner signed** (a standing rule, or billing a signed deal). For anything at or above the automatic line, only the owner key can approve, unless the owner's standing rule covers that exact kind of payout. Either way the lock is signed.
 4. **Settle.** Only the server talks to PayPal, and only from the locked cart. It re-reads the live PayPal object (order, invoice or payout) and refuses if the amount, currency or reference differ. A different amount sent by a client is only ever a *claim*, never the amount sent. A payout under a standing rule is sent by the server and takes this same path.
-5. **Receipt.** Every step is an event in an append-only ledger.
+5. **Finish.** Once a minute the server re-reads PayPal for invoices still out and payouts still processing, so they settle on their own, and with `payOnSettle` on, the contractor's share is then asked for and paid (through steps 2 to 4 again).
+6. **Receipt.** Every step is an event in an append-only ledger. **Proof** recomputes the checks from it on demand.
 
 **Three keys:** the owner key approves and settles. The studio key (staff and agents) can only ask and read. A client's agent key can only make offers for its own client.
 
@@ -211,12 +214,15 @@ The principle across all of it: the model is a *reader of rules and a writer of 
 | **Orders v2** | Checkout fallback for money in; return URL | **Yes** for create, approve and capture (earlier runs). The return URL order creates live; a buyer landing back on the receipt is tested with the fake. |
 | **Payouts v1** | Pay the contractor | **Yes.** `PENDING` then `SUCCESS` to a real sandbox account, fee recorded. |
 | **Payout item cancel** | Return an unclaimed payout | **Yes.** `RETURNED`, three times. The real run showed PayPal refuses the cancel until the whole batch is processed, so the console now says to wait. |
-| **Payouts sent by a standing rule** | A payout approved by the owner's rule, sent with no tap | **Yes.** The server sent a real payout under the rule (`AUTO`, `standing.matched`); the account was unregistered so it was `UNCLAIMED`, then returned. The client payment in that run was simulated. |
+| **Payouts sent by a standing rule** | A payout approved by the owner's rule, sent with no tap | **Yes.** Priya's second $90 was asked for in the Clerk, answered `AUTO · standing.matched`, and sent by the server to her real sandbox account with no tap (`PENDING`, then paid). The job then read $300 in, $180 out, $120 kept. An earlier run showed the unregistered-account case (`UNCLAIMED`, returned). |
+| **Autopilot billing** | A signed-deal milestone billed with no tap once proof is attached | **Yes** for the invoice: a real auto-billed invoice was created, sent, shown on Today and Proof, and cancelled. The client paying it and the auto payout following, in one unbroken run, has not been done. |
 | **Payments v2 refunds** | Refund a settled payment | Fake-tested through the gated route. |
 | **Transaction Search** (Agent Toolkit) | Reconciliation | **Yes** for the read, with paging. Matching depends on PayPal's report refresh, which lags by hours. |
 | **Reporting balances** | Balance advice | **Yes** for the read ($5,341.24 reported). It is advice because the report lags. |
 | **Disputes** (Agent Toolkit) | Dispute hold | The read is live (200, none open), and the hold is tested with PayPal's documented shapes and every open status. A real open dispute could not be produced in the sandbox: PayPal refused the buyer-side create call, and a Resolution Center case opened by the buyer on a real payment never appeared in the Disputes API (it is a message thread, not yet a claim). Mandate holds a payout for disputes the API lists, and says so. Details in `docs/REFERENCE.md`. |
 | **Webhooks** | Nudge a re-read, signature check | Code and tests are done. Needs a public URL (deploy) to prove end to end. |
+
+**What an agent can reach: 0 of 47.** The agent door has six tools of Mandate's own and none can approve, pay or change the rules. Every one of the Agent Toolkit's 47 tools is tiered (18 read-only, 24 propose-only, 5 not used), a test fails when PayPal adds one nobody classified, and the server refuses to run any tool it has not written down as its own. The Proof and System screens show the number and the reason for each tool.
 
 Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never exposed to a model: `create_invoice`, `send_invoice`, `get_invoice`, `list_invoices`, `send_invoice_reminder`, `cancel_sent_invoice`, `list_transactions`, `list_disputes`, `get_dispute`. The toolkit has no payouts tool, so Payouts uses the REST API directly.
 
@@ -244,14 +250,18 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 - **247 API tests** (Vitest; 56 are the red team) and **46 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation) and compared on four models. No miss on any model moved money.
-- **The whole frozen job has run on the real PayPal sandbox:** agents negotiated and signed $300; Northwind paid a real $150 invoice; the lock verified; a real $90 payout reached Priya's sandbox account (`SUCCESS`, $0.25 fee); the job reads $150 in, $90 out, $60 kept; and cancelling an unclaimed payout returned the money.
+- **The whole frozen job has run on the real PayPal sandbox, both milestones:** agents negotiated and signed $300; Northwind paid two real invoices; the locks verified; two real $90 payouts reached Priya's sandbox account (the second with no tap, under a standing rule); the job reads **$300 in, $180 out, $120 kept**; and cancelling an unclaimed payout returned the money.
+- **Proof** runs nine checks over the ledger (and a tenth against PayPal's own history on request), and the tests tamper with the database eight ways to check the right one fails.
+- **Autopilot** has 13 tests of its own plus a browser test of the whole chain, and 14 autopilot cases in the red team.
 
 ## 11. Honest limits
 
 - **Sandbox only.** No real money.
 - **Not deployed yet.** There is no public URL, so the webhook is not registered and the checkout return URL is only proven locally.
 - **Fake-tested, not live:** refunds, a dispute that PayPal's API lists as open (a first-stage Resolution Center case is not listed, so Mandate cannot see it), and signed webhook deliveries.
-- **Standing rules were run live only in part:** the real Payouts call and the dispute read ran against PayPal, with a simulated client payment. A full run (real invoice paid, then a standing-rule payout to a real account) has not been done yet.
+- **Autopilot's full chain was not run live in one go.** Each live piece has run on the real sandbox (the auto-billed invoice, the reminder, the standing-rule payout to Priya's real account after a real paid invoice), and the whole chain runs in the browser and in tests against the fake PayPal.
+- **`billSignedDeals` trusts the proof link to exist, not to be true.** Anyone who can attach an https link to a milestone sends the client a real invoice, for exactly the agreed amount. An unpaid invoice can be cancelled from Today and the milestone billed again. If proof must be checked by a person first, leave the switch off.
+- **The 20B model is weak at compound rule drafting,** so the drafter has its own model (`gemma4:31b`) and the server validates and retries. The owner always reads a diff, and code, not the model, lists what a draft loosens.
 - **PayPal's transaction report lags** by a few hours, so the newest payments can show as unmatched for a while.
 - **Model dependence:** the agents use a hosted `gpt-oss:20b`. Two larger models could not be measured because Ollama's free plan does not include them. Everything except the agents works without a model.
 - **Single-process SQLite.** Right for one owner; a hosted multi-tenant version would move to Postgres (a driver change, not a redesign).
@@ -262,7 +272,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 2. Prove a real refund on the sandbox, and run the full standing-rule payout to Priya's real account. A formal dispute can only be seen once PayPal escalates a case to a claim.
 3. A public Postman workspace, and a read-only AG Grid agent query ("show me what the rules refused").
 4. The pitch: demo video, a short deck, and the Devpost write-up.
-5. One complete live run of autopilot. The billing and reminder steps and the auto payout have each run on the real sandbox, and the full chain runs in the browser and in tests against the fake PayPal, but a real auto-billed invoice paid by the sandbox buyer and then followed by the auto payout has not yet been done in one go.
+5. One complete live run of autopilot: an auto-billed invoice paid by the sandbox buyer, followed by the auto payout, in one go. Every piece has run live; the unbroken chain has not.
 
 Deliberately cut: passkeys, a multi-round human negotiation UI, a 90-day backtest.
 
