@@ -268,6 +268,13 @@ export class MandateService {
     return toView(this.require(id))
   }
 
+  /** When the server last asked PayPal about money in flight, and how much it looked at. Shown on Today so the automation is visible. */
+  private lastLook: { at: string; payouts: number; invoices: number; reminded: number } | null = null
+
+  watcher() {
+    return { everySeconds: 60, lastLook: this.lastLook }
+  }
+
   /**
    * The server's own once-a-minute look at money in flight: payouts PayPal is still processing and invoices still
    * out. It re-reads PayPal (the same read the Check PayPal button does), so a payout or an invoice settles without
@@ -276,9 +283,10 @@ export class MandateService {
   async sweepPending(): Promise<{ payouts: number; invoices: number; reminded: number }> {
     const payouts = this.repo.openPayoutBatches()
     const invoices = this.invoices ? this.repo.openInvoices() : []
-    for (const batch of payouts) await this.refreshPayoutBatch(batch).catch(() => undefined)
-    for (const invoice of invoices) await this.refreshInvoice(invoice).catch(() => undefined)
+    for (const batch of payouts) await this.refreshPayoutBatch(batch, 'server').catch(() => undefined)
+    for (const invoice of invoices) await this.refreshInvoice(invoice, 'server').catch(() => undefined)
     const reminded = await this.remindOverdueInvoices().catch(() => 0)
+    this.lastLook = { at: this.iso(), payouts: payouts.length, invoices: invoices.length, reminded }
     return { payouts: payouts.length, invoices: invoices.length, reminded }
   }
 
@@ -656,7 +664,7 @@ export class MandateService {
     return this.applyLivePayout(saved, live)
   }
 
-  private applyLivePayout(row: ProposalRow, live: LivePayout): HttpResult {
+  private applyLivePayout(row: ProposalRow, live: LivePayout, by: 'server' | null = null): HttpResult {
     const item = live.item
     if (!item) return { status: 200, body: toView(this.require(row.id)) }
     if (item.amountCents !== row.amount_cents || item.currency !== row.currency || (item.senderItemId !== null && item.senderItemId !== row.id)) {
@@ -697,6 +705,7 @@ export class MandateService {
           amountCents: item.amountCents,
           feeCents: item.feeCents,
           error: item.errorName,
+          ...(by ? { by } : {}),
         }, now)
       }
     })
@@ -704,12 +713,12 @@ export class MandateService {
   }
 
   /** PayPal reports on a payout batch. The body is never trusted: the batch is re-read from PayPal. */
-  async refreshPayoutBatch(batchId: string): Promise<{ refreshed: boolean }> {
+  async refreshPayoutBatch(batchId: string, by: 'server' | null = null): Promise<{ refreshed: boolean }> {
     if (!this.paypal) return { refreshed: false }
     const row = this.repo.proposalByPayoutBatch(batchId)
     if (!row || !['payout_sent', 'payout_unclaimed'].includes(row.phase)) return { refreshed: false }
     const live = await this.paypal.getPayout(batchId)
-    this.applyLivePayout(row, live)
+    this.applyLivePayout(row, live, by)
     return { refreshed: true }
   }
 
@@ -771,7 +780,7 @@ export class MandateService {
     return this.applyLiveInvoice(row, await invoices.get(row.invoice_id!))
   }
 
-  private applyLiveInvoice(row: ProposalRow, live: LiveInvoice): HttpResult {
+  private applyLiveInvoice(row: ProposalRow, live: LiveInvoice, by: 'server' | null = null): HttpResult {
     const paid = live.status === 'PAID' || live.status === 'PARTIALLY_PAID' || live.paidCents > 0
     const mismatch = live.totalCents !== row.amount_cents || live.currency !== row.currency || (live.reference !== null && live.reference !== row.id)
     if (mismatch) {
@@ -783,7 +792,7 @@ export class MandateService {
       this.repo.transaction(() => {
         this.repo.markCaptured(row.id, live.transactionId!, live.paidCents, now)
         this.repo.setInvoiceStatus(row.id, live.status, now)
-        this.repo.insertEvent(randomUUID(), row.id, 'capture.completed', row.clause, { invoiceId: live.invoiceId, captureId: live.transactionId, amountCents: live.paidCents, via: 'invoice' }, now)
+        this.repo.insertEvent(randomUUID(), row.id, 'capture.completed', row.clause, { invoiceId: live.invoiceId, captureId: live.transactionId, amountCents: live.paidCents, via: 'invoice', ...(by ? { by } : {}) }, now)
       })
       return { status: 200, body: toView(this.require(row.id)) }
     }
@@ -807,11 +816,11 @@ export class MandateService {
   }
 
   /** A PayPal invoice event names an invoice. Re-read it from PayPal and settle only on what PayPal says. */
-  async refreshInvoice(invoiceId: string): Promise<{ refreshed: boolean }> {
+  async refreshInvoice(invoiceId: string, by: 'server' | null = null): Promise<{ refreshed: boolean }> {
     if (!this.invoices) return { refreshed: false }
     const row = this.repo.proposalByInvoice(invoiceId)
     if (!row || !INVOICE_PHASES.includes(row.phase)) return { refreshed: false }
-    this.applyLiveInvoice(row, await this.invoices.get(invoiceId))
+    this.applyLiveInvoice(row, await this.invoices.get(invoiceId), by)
     if (this.repo.proposal(row.id)?.phase === 'captured') await this.afterMoney(row.id).catch(() => undefined)
     return { refreshed: true }
   }

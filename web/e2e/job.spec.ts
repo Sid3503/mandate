@@ -440,8 +440,8 @@ test('two agents negotiate a deal, it is signed, and billing a milestone follows
   await card.getByRole('button', { name: 'Verify' }).click()
   await expect(card.locator('.sig-result')).toContainText('Valid')
 
-  await card.getByLabel('Link to the work for the next milestone').fill('https://www.figma.com/file/northwind-logo')
-  await card.getByRole('button', { name: /Bill milestone 1/ }).click()
+  await card.getByLabel('Link to the delivered work for the next milestone').fill('https://www.figma.com/file/northwind-logo')
+  await card.getByRole('button', { name: /Deliver milestone 1/ }).click()
   await expect(page).toHaveURL(/\/app\/p\//)
   await expect(page.locator('.page-head')).toContainText('$150.00')
   // Until the owner taps there is no lock, so there is nothing to sign.

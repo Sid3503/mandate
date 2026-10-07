@@ -23,6 +23,11 @@ describe('Today', () => {
     expect((await call(h.app, 'GET', '/v1/today', { key: STUDIO_KEY })).status).toBe(403)
   })
 
+  it('says the server has not looked yet before its first check', async () => {
+    const h = harness()
+    expect((await today(h.app)).watcher).toEqual({ everySeconds: 60, lastLook: null })
+  })
+
   it('starts as a setup checklist on a fresh ledger, and every step can be ticked off', async () => {
     const h = harness()
     const fresh = await today(h.app)
@@ -78,6 +83,10 @@ describe('Today', () => {
     expect(page.month).toMatchObject({ label: 'October 2026', inCents: 15_000, outCents: 9_000, keptCents: 6_000, capCents: 18_000, reservedCents: 9_000 })
     expect(page.stats.last30Days).toMatchObject({ requests: 2, refused: 0, automatic: 2, tapped: 0, automaticShare: 100 })
     expect(page.automation).toMatchObject({ billSignedDeals: true, payOnSettle: true, standingRules: 1, any: true })
+    // The client's payment was found by Mandate's own look at PayPal, and the page says so; Priya's cleared on the spot. The look itself is visible too.
+    expect(page.done.find((item: { title: string }) => item.title === 'Northwind paid $150.00').detail).toContain('Mandate’s own check')
+    expect(page.done.find((item: { title: string }) => item.title === 'Priya Shah was paid $90.00').detail).not.toContain('own check')
+    expect(page.watcher).toMatchObject({ everySeconds: 60, lastLook: { payouts: expect.any(Number), invoices: expect.any(Number) } })
     expect(page.setup.steps.find((step: { id: string }) => step.id === 'first').done).toBe(true)
   })
 

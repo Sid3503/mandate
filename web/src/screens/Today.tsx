@@ -88,6 +88,7 @@ export function Today() {
       {data && data.inFlight.length > 0 ? (
         <section className="section" data-tour="ready" aria-labelledby="h-flight">
           <h2 className="section-title" id="h-flight">In flight · nothing for you to do</h2>
+          <p className="fine watcher" role="status">{data.watcher.lastLook ? <>Mandate asks PayPal about these every minute. Last asked {relative(data.watcher.lastLook.at)}, looking at {data.watcher.lastLook.invoices} invoice{data.watcher.lastLook.invoices === 1 ? '' : 's'} and {data.watcher.lastLook.payouts} payout{data.watcher.lastLook.payouts === 1 ? '' : 's'}.</> : <>Mandate asks PayPal about these every minute. It has not asked yet since the server started.</>} Pay an invoice and leave this page open: it settles here by itself.</p>
           <ul className="items">{data.inFlight.map((item) => <ItemRow key={item.id} item={item} />)}</ul>
         </section>
       ) : null}

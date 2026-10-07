@@ -25,7 +25,7 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   const mandate = new MandateService(repo, deps.paypal, deps.now, signer, deps.invoices ?? null, { publicUrl: deps.publicUrl, watch: deps.watch ?? null })
   const deals = new DealService(repo, signer, deps.now, mandate)
   mandate.prepareSigning()
-  const today = new TodayService(repo, deals, deps.now, () => deps.paypal !== null)
+  const today = new TodayService(repo, deals, mandate, deps.now, () => deps.paypal !== null)
   const audit = new AuditService(repo, mandate, deals, deps.now)
   return { repo, signer, mandate, deals, today, audit }
 }

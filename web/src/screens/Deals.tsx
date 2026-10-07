@@ -146,8 +146,19 @@ function Agreed({ deal, owner }: { deal: Deal; owner: boolean }) {
   const [proof, setProof] = useState('')
   const toast = useToast()
   const bill = useMutation({
-    mutationFn: (milestone: number) => api.billMilestone(deal.id, milestone, proof.trim()),
-    onSuccess: (proposal) => { toast({ title: `Milestone billed · ${dollars(proposal.amountCents)}`, body: proposal.gate === 'DENY' ? 'The rules refused it.' : 'Approve it on the Waiting page.', tone: proposal.gate === 'DENY' ? 'bad' : 'good' }); void refresh(); navigate(`/p/${proposal.id}`) },
+    // Delivering goes through the owner's rules: it bills at once, or waits for the client's agent, or waits for the owner's tap.
+    mutationFn: (milestone: number) => api.deliverMilestone(deal.id, milestone, proof.trim()),
+    onSuccess: (made) => {
+      void refresh()
+      if (made.mode === 'awaiting') {
+        toast({ title: 'Sent to the client to accept', body: 'Nothing is billed until the client’s agent accepts. You can follow it on Today.', tone: 'info' })
+        navigate('/')
+        return
+      }
+      const proposal = made.charge
+      toast({ title: `Milestone billed · ${dollars(proposal.amountCents)}`, body: proposal.gate === 'DENY' ? 'The rules refused it.' : proposal.gate === 'AUTO' ? 'Your rule covers it: the invoice is on its way, no tap.' : 'Approve it on Today.', tone: proposal.gate === 'DENY' ? 'bad' : 'good' })
+      navigate(`/p/${proposal.id}`)
+    },
   })
   const milestones = deal.billing?.milestones ?? []
   return (
@@ -169,13 +180,13 @@ function Agreed({ deal, owner }: { deal: Deal; owner: boolean }) {
           {owner ? (
             <div className="bill">
               <label className="field">
-                <span>Link to the work for the next milestone</span>
+                <span>Link to the delivered work for the next milestone</span>
                 <input type="url" value={proof} onChange={(event) => setProof(event.target.value)} placeholder="https://www.figma.com/file/northwind-logo" />
               </label>
               <div className="row gap-s wrap">
                 {milestones.filter((item) => !item.chargeId).slice(0, 1).map((item) => (
                   <button key={item.index} type="button" className="btn btn-ink" disabled={!online || !proof.trim() || bill.isPending} onClick={() => bill.mutate(item.index)}>
-                    {bill.isPending ? 'Billing…' : `Bill milestone ${item.index + 1} · ${dollars(item.amountCents)}`}
+                    {bill.isPending ? 'Sending…' : `Deliver milestone ${item.index + 1} · ${dollars(item.amountCents)}`}
                   </button>
                 ))}
               </div>

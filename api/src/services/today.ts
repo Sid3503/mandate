@@ -3,6 +3,7 @@ import { explainClause } from '../domain/explain'
 import { monthWindow } from '../domain/period'
 import type { WarrantBody } from '../domain/schemas'
 import type { DealService } from './deals'
+import type { MandateService } from './mandate'
 
 /**
  * "Today": everything the owner needs on one page, worked out from the ledger alone (no PayPal call), so it is fast
@@ -43,6 +44,7 @@ export class TodayService {
   constructor(
     private readonly repo: Repo,
     private readonly deals: DealService,
+    private readonly mandate: MandateService,
     private readonly now: () => Date,
     private readonly paypalConfigured: () => boolean,
   ) {}
@@ -125,11 +127,13 @@ export class TodayService {
     const done: TodayItem[] = this.repo.settledProposals(since7, 12).map((row) => {
       const who = names(row.payee_id)
       const money = dollars(row.amount_cents)
-      const how = howItWent(row, createdBy.get(row.id), this.repo.eventsFor(row.id).some((event) => event.type === 'proposal.approved'))
+      const events = this.repo.eventsFor(row.id)
+      const how = howItWent(row, createdBy.get(row.id), events.some((event) => event.type === 'proposal.approved'))
+      const byServer = events.some((event) => ['capture.completed', 'payout.completed'].includes(event.type) && (JSON.parse(event.payload_json) as { by?: string }).by === 'server')
       return {
         id: `${row.id}:done`, kind: 'done' as const, proposalId: row.id, proposalKind: row.kind,
         title: row.kind === 'charge' ? `${who} paid ${money}` : row.kind === 'refund' ? `Refunded ${money} to ${who}` : `${who} was paid ${money}`,
-        detail: HOW[how] ?? '', amountCents: row.amount_cents, currency: row.currency, phase: row.phase, clause: row.clause, at: row.updated_at, how, actions: ['open'] as TodayAction[],
+        detail: `${HOW[how] ?? ''}${byServer ? ' PayPal’s answer was found by Mandate’s own check, with nobody pressing anything.' : ''}`, amountCents: row.amount_cents, currency: row.currency, phase: row.phase, clause: row.clause, at: row.updated_at, how, actions: ['open'] as TodayAction[],
       }
     })
 
@@ -157,6 +161,7 @@ export class TodayService {
       done,
       stopped,
       readyToBill: this.deals.readyToBill(),
+      watcher: this.mandate.watcher(),
       stats: { last30Days: { requests: recent.length, refused: refused.length + recent.filter((row) => row.gate === 'DENY' && createdBy.get(row.id) === 'autopilot').length, automatic, tapped: decided.length - automatic, automaticShare: decided.length === 0 ? null : Math.round((automatic / decided.length) * 100) } },
       setup: this.setup(body),
     }
