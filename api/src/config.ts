@@ -15,6 +15,9 @@ const EnvSchema = z.object({
   BUYER_AGENT_PARTY: z.string().min(1).default('client_northwind'),
   SIGNING_KEY: z.string().min(1).optional(),
   INVOICES: z.enum(['auto', 'off']).default('auto'),
+  BEDROCK_API_KEY: z.string().min(1).optional(),
+  BEDROCK_REGION: z.string().min(1).optional(),
+  AWS_REGION: z.string().min(1).optional(),
   OLLAMA_API_KEY: z.string().min(1).optional(),
   OLLAMA_BASE_URL: z.string().url().optional(),
   AGENT_MODEL: z.string().min(1).optional(),
@@ -42,6 +45,8 @@ export type AppConfig = {
   buyerAgentParty: string
   signingKey: string | null
   invoices: boolean
+  bedrockApiKey: string | undefined
+  bedrockRegion: string | undefined
   ollamaApiKey: string | undefined
   ollamaBaseUrl: string | undefined
   agentModel: string | undefined
@@ -96,6 +101,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     buyerAgentParty: value.BUYER_AGENT_PARTY,
     signingKey: value.SIGNING_KEY ?? null,
     invoices: value.INVOICES === 'auto' && Boolean(paypal),
+    bedrockApiKey: value.BEDROCK_API_KEY,
+    bedrockRegion: value.BEDROCK_REGION ?? value.AWS_REGION,
     ollamaApiKey: value.OLLAMA_API_KEY,
     ollamaBaseUrl: value.OLLAMA_BASE_URL,
     agentModel: value.AGENT_MODEL,

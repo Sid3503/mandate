@@ -23,7 +23,7 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 | Refusals | $18 team lunch (`category.missing`). Fake vendor "P. Shah" $480 (`payee.unknown`). Payout before the client paid (`funding.missing`). Retry at $250 after the tap (`cart.immutable`). A third $90 past the $180 monthly cap (`cap.monthly`). | built |
 | Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | built |
 | Deal | The two companies' agents agree $300 in two milestones. $450 and $200 are refused by a pure function that checks **both** companies' rules. The agreed deal is signed. | built |
-| Agents | A clerk Arun can talk to, and two negotiators, on `gpt-oss:20b` through an MCP server whose six tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
+| Agents | A clerk Arun can talk to, and two negotiators, on Amazon Bedrock (`us.openai.gpt-6-luna`) through an MCP server whose six tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
 | Autopilot | With the owner's rules signed, the job runs itself: proof attached → PayPal invoice sent; client pays → the contractor's share is asked for and paid; unpaid invoices get PayPal's reminder. The server re-reads PayPal every minute, so it finishes without anyone pressing anything. | built, tested in the browser and in pieces live |
 | Client acceptance | Optionally, the studio's delivery waits for the client's own agent to accept it (signed over the exact proof link) before the invoice goes out. | built, tested |
 | Verify a receipt | A public page checks a downloaded receipt's lock and signatures in the browser, against the public keys, without asking the server. | built, tested |
@@ -37,7 +37,7 @@ Job totals for the live sandbox run: **$150 in, $90 out, $60 kept.**
 
 ## Run it (real PayPal sandbox, real AI model)
 
-Needs Node.js 22+ (24 recommended) and Chrome. Put your PayPal sandbox app credentials and an Ollama Cloud key in a repo-root `.env` (see [`api/.env.example`](api/.env.example)). It is gitignored; never commit it.
+Needs Node.js 22+ (24 recommended) and Chrome. Put your PayPal sandbox app credentials and an Amazon Bedrock API key (`BEDROCK_API_KEY`; Ollama Cloud works too) in a repo-root `.env` (see [`api/.env.example`](api/.env.example)). It is gitignored; never commit it.
 
 ```bash
 npm run setup && npm run build
@@ -83,7 +83,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-299 API tests (including a 56-case red team), 54 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
+308 API tests (including a 56-case red team), 54 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
 
 ## Where to read next
 

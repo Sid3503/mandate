@@ -78,7 +78,7 @@ One frozen scenario drives every test, screenshot and demo. Nothing in the repo 
 - **Deal check**: a pure function that tests an offer against *both* companies' rules. Each side keeps **private limits** that the other never sees, and refusals reveal only the side that was breached.
 - **Signed deals**: an agreed deal is Ed25519-signed, and a charge on that job must bill one of its milestones, once, for exactly the agreed cents (`deal.*` rules).
 - **MCP agent door** (`/mcp` and stdio): six tools (rules, jobs, propose, ledger, offer a deal, explain). **None can approve, pay or change rules.** The owner key is downgraded on this door.
-- **The clerk and two negotiators**: run on `gpt-oss:20b`, with guards (the payee must appear in the request text, a model error is retried once, every run is traced). Evaluated against the real model: 8 cases.
+- **The clerk and two negotiators**: run on Amazon Bedrock (`us.openai.gpt-6-luna`), with guards (the payee must appear in the request text, a model error is retried once, every run is traced). Evaluated against the real model: 8 cases.
 - **Live negotiation**: streamed to the console turn by turn, with a Stop button.
 
 ### Autopilot (the whole job, under signed rules)
@@ -154,11 +154,11 @@ An installable React app served at `/app/`.
 | Database | SQLite through `node:sqlite`, WAL mode, foreign keys on | One owner, one writer. Money steps run inside `BEGIN IMMEDIATE`. The ledger is append-only events. Moving to Postgres would be a driver change. |
 | Money | Integer cents everywhere; PayPal decimal strings only at the edge | No floating point near money. |
 | Crypto | `node:crypto`: SHA-256 for the lock hash, Ed25519 for signatures | No third-party crypto. Public keys are served at `/.well-known/mandate-keys.json`; rotation keeps old receipts verifiable. |
-| Agents | Vercel AI SDK 7 (`ai`), `ai-sdk-ollama`, `@ai-sdk/mcp`, `@modelcontextprotocol/sdk` | See the AI section below. |
+| Agents | Vercel AI SDK 7 (`ai`), `@ai-sdk/openai-compatible` (Bedrock), `ai-sdk-ollama`, `@ai-sdk/mcp`, `@modelcontextprotocol/sdk` | See the AI section below. |
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 299 API tests (56 of them a red team) and 54 browser tests on desktop and phone, with an accessibility scan on every screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 308 API tests (56 of them a red team) and 54 browser tests on desktop and phone, with an accessibility scan on every screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -191,7 +191,7 @@ Repository layout: `api/` (server, PayPal adapters, agents, tests), `web/` (cons
 
 | Piece | Detail |
 | --- | --- |
-| Model | `gpt-oss:20b`, an open-weights model, on Ollama Cloud, called through the Vercel AI SDK. Changing the model is one environment variable (`AGENT_MODEL`). With no `OLLAMA_API_KEY` the agents are simply off and everything else works. |
+| Model | `us.openai.gpt-6-luna` on Amazon Bedrock's OpenAI-compatible endpoint, called through the Vercel AI SDK; the same model drafts rules. Ollama Cloud open-weights models (`gpt-oss:20b`, `gemma4:31b`) still work and are the fallback when `OLLAMA_API_KEY` is set. Changing the model is one environment variable (`AGENT_MODEL`). With no key the agents are simply off and everything else works. Bedrock refuses function tools unless `reasoning_effort` is `none`, so the request is sent that way (found by calling the real endpoint). |
 | Four agents | The **clerk** (a chat for the producer, and the Ask Mandate dialog: "pay Priya her share…"), two **negotiators**, one per company, that trade offers until a deal is agreed or refused, and the **rules drafter**, which turns "let Priya be paid automatically" into a reviewable draft. |
 | The drafter is different on purpose | It gets one tool that takes a small patch in dollars, percent and names, not the rules. The server merges and validates it against the same schema as a hand edit, retries with the validation message, and lists what the draft **loosens** in code, so the model's reassurance is never the thing you read. It runs on `gemma4:31b` (`DRAFTER_MODEL`), which measured best and fastest on compound requests. |
 | The only door is MCP | The model never sees HTTP routes or PayPal. It reaches Mandate through an MCP server (`/mcp` for outside agents, stdio with `npm run mcp`, and an in-process connection for Mandate's own agents). An agent of ours has exactly the powers an outside agent would. |
@@ -258,7 +258,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 10. Proof
 
-- **299 API tests** (Vitest; 56 are the red team) and **54 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
+- **308 API tests** (Vitest; 56 are the red team) and **54 end-to-end tests** (Playwright, desktop and phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation) and compared on four models. No miss on any model moved money.
 - **The whole frozen job has run on the real PayPal sandbox, both milestones:** agents negotiated and signed $300; Northwind paid two real invoices; the locks verified; two real $90 payouts reached Priya's sandbox account (the second with no tap, under a standing rule); the job reads **$300 in, $180 out, $120 kept**; and cancelling an unclaimed payout returned the money.
 - **Proof** runs ten checks over the ledger (and an eleventh against PayPal's own history on request), and the tests tamper with the database eight ways to check the right one fails.
@@ -273,7 +273,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 - **Without `requireAcceptance`, `billSignedDeals` trusts the proof link to exist, not to be true.** Anyone who can attach an https link to a milestone sends the client a real invoice, for exactly the agreed amount. With it on, the client's own agent must accept first. The hosted stand-in for the client's agent cannot open the link, so it judges whether the link plausibly fits the milestone, not whether the work is good; a real client agent, or a person, is a stronger check. An unpaid invoice can be cancelled from Today and the milestone billed again.
 - **The 20B model is weaker at compound rule drafting** (22/25 against 25/25 on the eval), so the drafter has its own model (`gemma4:31b`) and the server validates and retries. The intent checker is plain code (numbers, percents, days, emails and a list of phrases): it will miss a cleverly worded request, and a fair reading of "zero hidden loosenings" is on 25 wordings, not on all possible ones. The first eval run showed two faults in the eval itself, which I fixed and re-ran; the write-up says so.
 - **PayPal's transaction report lags** by a few hours, so the newest payments can show as unmatched for a while.
-- **Model dependence:** the agents use a hosted `gpt-oss:20b`. Two larger models could not be measured because Ollama's free plan does not include them. Everything except the agents works without a model.
+- **Model dependence:** the agents use a hosted model (Bedrock `us.openai.gpt-6-luna` by default). With reasoning off (required for tools on Bedrock) the model does less thinking per call; the rules do not depend on it. Everything except the agents works without a model.
 - **Single-process SQLite.** Right for one owner; a hosted multi-tenant version would move to Postgres (a driver change, not a redesign).
 
 ## 12. What is next

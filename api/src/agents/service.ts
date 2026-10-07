@@ -73,7 +73,7 @@ export class AgentService {
   }
 
   private need(): AgentModel {
-    if (!this.model) throw new Problem(503, 'agents.unconfigured', 'No language model is configured', 'Set OLLAMA_API_KEY to turn the agents on. The rules and the console work without it.')
+    if (!this.model) throw new Problem(503, 'agents.unconfigured', 'No language model is configured', 'Set BEDROCK_API_KEY (or OLLAMA_API_KEY) to turn the agents on. The rules and the console work without it.')
     return this.model
   }
 
@@ -192,7 +192,7 @@ export class AgentService {
     if (!this.model) return 0
     const cutoff = this.now().getTime() - olderThanMs
     const waiting = this.services.repo.deliveriesFor(null, 50).filter((row) => row.status === 'awaiting' && Date.parse(row.created_at) <= cutoff).slice(0, max)
-    for (const row of waiting) await this.reviewDelivery(row.deal_id, row.milestone, OWNER).catch(() => undefined)
+    for (const row of waiting) await this.reviewDelivery(row.deal_id, row.milestone, OWNER).catch((error) => logReviewFailure(row.deal_id, row.milestone, error))
     return waiting.length
   }
 
@@ -362,4 +362,10 @@ export class AgentService {
       created_at: this.now().toISOString(),
     })
   }
+}
+
+/** The client's stand-in answers in the background, so a failure has nobody to tell. Say it in the server log. */
+export function logReviewFailure(dealId: string, milestone: number, error: unknown) {
+  const detail = error instanceof Problem ? `${error.code}: ${error.detail}` : error instanceof Error ? error.message : String(error)
+  console.error(JSON.stringify({ level: 'warn', message: 'client agent could not review a delivery', dealId, milestone, detail }))
 }

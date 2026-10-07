@@ -14,7 +14,7 @@ import { buildOpenApi } from './openapi'
 import type { InvoicePort } from './paypal/invoices'
 import { PayPalError, type PayPalPort } from './paypal/port'
 import { handleMcp } from './mcp/http'
-import { AgentService } from './agents/service'
+import { AgentService, logReviewFailure } from './agents/service'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
 import type { WatchPort } from './paypal/watch'
@@ -483,7 +483,7 @@ export function createApp(deps: AppDeps) {
     const made = await deals.deliver(c.req.param('id'), milestone, parsed.data, c.get('principal'))
     // The client's agent is a separate party. When the hosted stand-in is on auto, it answers by itself, as an outside agent polling get_deliveries would.
     if (deps.config.clientAgent === 'auto' && agents.enabled && made.status === 201 && (made.body as { mode?: string }).mode === 'awaiting') {
-      void agents.reviewDelivery(c.req.param('id'), milestone, OWNER).catch(() => undefined)
+      void agents.reviewDelivery(c.req.param('id'), milestone, OWNER).catch((error) => logReviewFailure(c.req.param('id'), milestone, error))
     }
     return send(c, made)
   })

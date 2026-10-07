@@ -4,13 +4,13 @@
 //   dropped flagged    when the words hold a wish the rules cannot keep, code flags it (amber) instead of letting it vanish
 //   hidden loosenings  a draft that loosens something nobody asked for, and is NOT flagged red. The target is 0.
 // The model never grades itself: every verdict here comes from the same code the console uses.
-import { createAgentModel } from '../src/agents/model'
+import { buildModels } from '../src/agents/model'
 import { draftRules, type RulesDraft } from '../src/agents/drafter'
 import { LINE_STUDIO_WARRANT, WarrantBodySchema } from '../src/domain/schemas'
 
-const model = createAgentModel({ apiKey: process.env.OLLAMA_API_KEY, baseUrl: process.env.OLLAMA_BASE_URL, name: process.env.DRAFTER_MODEL ?? process.env.AGENT_MODEL ?? 'gemma4:31b' })
+const model = buildModels(process.env).drafter
 if (!model) {
-  console.error('OLLAMA_API_KEY is not set')
+  console.error('Set BEDROCK_API_KEY (or OLLAMA_API_KEY) to run the eval')
   process.exit(2)
 }
 const current = WarrantBodySchema.parse(LINE_STUDIO_WARRANT)

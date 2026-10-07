@@ -8,7 +8,7 @@ import { AgentService } from './agents/service'
 import { loadConfig } from './config'
 import { migrate, openDatabase, seed } from './db/database'
 import { loadSigner } from './domain/signing'
-import { createAgentModel } from './agents/model'
+import { buildModels } from './agents/model'
 import { createToolkitInvoices } from './paypal/invoices'
 import { createPayPalClient } from './paypal/client'
 import { createToolkitWatch } from './paypal/watch'
@@ -33,10 +33,17 @@ const invoices = config.invoices && config.paypal ? createToolkitInvoices({ clie
 const watch = config.paypal ? createToolkitWatch({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
 const services = buildServices({ db, paypal, invoices, watch, publicUrl: config.publicUrl, now: () => new Date(), signer })
 
-const model = createAgentModel({ apiKey: config.ollamaApiKey, baseUrl: config.ollamaBaseUrl, name: config.agentModel })
-const drafterModel = createAgentModel({ apiKey: config.ollamaApiKey, baseUrl: config.ollamaBaseUrl, name: config.drafterModel ?? 'gemma4:31b' })
-// If the main model errors, the drafter's model (measured best on this work) is tried once before the person sees a failure.
-const agents = new AgentService(services, model, () => new Date(), drafterModel, drafterModel)
+// Amazon Bedrock (OpenAI-compatible endpoint) is the default model; Ollama Cloud is optional and is the fallback.
+const { primary: model, drafter: drafterModel, fallback: fallbackModel } = buildModels({
+  BEDROCK_API_KEY: config.bedrockApiKey,
+  BEDROCK_REGION: config.bedrockRegion,
+  OLLAMA_API_KEY: config.ollamaApiKey,
+  OLLAMA_BASE_URL: config.ollamaBaseUrl,
+  AGENT_MODEL: config.agentModel,
+  DRAFTER_MODEL: config.drafterModel,
+})
+// If the main model errors, the fallback is tried once before the person sees a failure.
+const agents = new AgentService(services, model, () => new Date(), drafterModel, fallbackModel)
 
 const app = createApp({
   db,
@@ -74,7 +81,7 @@ const standingTimer = setInterval(() => { void services.mandate.sweepStanding().
 standingTimer.unref()
 
 // A delivery the client's stand-in has not answered (the model hiccuped, or the server restarted) is picked up here.
-const reviewTimer = config.clientAgent === 'auto' ? setInterval(() => { void agents.reviewWaiting().catch(() => undefined) }, 30_000) : null
+const reviewTimer = config.clientAgent === 'auto' ? setInterval(() => { void agents.reviewWaiting().catch((error) => console.error(JSON.stringify({ level: 'warn', message: 'review sweep failed', detail: String(error) }))) }, 30_000) : null
 reviewTimer?.unref()
 
 const disputeTimer = watch ? setInterval(() => { void services.mandate.syncDisputes().catch(() => undefined) }, 60_000) : null

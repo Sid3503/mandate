@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { createApp } from '../app'
 import { buildServices } from '../services/container'
 import { migrate, openDatabase, seed } from '../db/database'
-import { createAgentModel } from '../agents/model'
+import { modelByName } from '../agents/model'
 import { FakeInvoices, FakePayPal, FakeWatch } from '../paypal/fake'
 import { demoModel } from './demo-model'
 
@@ -18,7 +18,7 @@ const paypal = new FakePayPal()
 // billing falls back to checkout. That lets one server show both paths.
 const invoices = new FakeInvoices()
 invoices.unauthorised = true
-const model = createAgentModel({ apiKey: process.env.OLLAMA_API_KEY, name: process.env.AGENT_MODEL }) ?? demoModel({ delayMs: Number(process.env.DEMO_MODEL_DELAY_MS ?? 0) })
+const model = (process.env.E2E_LIVE_MODEL ? modelByName(process.env.AGENT_MODEL ?? 'us.openai.gpt-6-luna', process.env) : null) ?? demoModel({ delayMs: Number(process.env.DEMO_MODEL_DELAY_MS ?? 0) })
 paypal.autoApprove = process.env.FAKE_BUYER !== 'manual'
 
 const watch = new FakeWatch()

@@ -2,12 +2,12 @@
 // It uses an in-memory ledger and a fake PayPal, so it costs model tokens and nothing else.
 // A case passes when the RULES' outcome is right, which is the only thing that matters: the model is allowed to be
 // wrong, and the point of the design is that being wrong is harmless.
-import { createAgentModel } from '../src/agents/model'
+import { buildModels } from '../src/agents/model'
 import { agree, call, collect, EVIDENCE, harness, JOB, STUDIO_KEY } from '../test/support'
 
-const model = createAgentModel({ apiKey: process.env.OLLAMA_API_KEY, baseUrl: process.env.OLLAMA_BASE_URL, name: process.env.AGENT_MODEL })
+const model = buildModels(process.env).primary
 if (!model) {
-  console.error('OLLAMA_API_KEY is not set')
+  console.error('Set BEDROCK_API_KEY (or OLLAMA_API_KEY) to run the eval')
   process.exit(2)
 }
 
