@@ -117,6 +117,12 @@ export type Safety = {
   events: Array<{ id: string; at: string; type: 'paused' | 'resumed'; by: 'owner' | 'breaker'; reason: string | null; detail: string | null; signed: boolean }>
 }
 
+export type Guarantees = {
+  guarantees: Array<{ id: string; promise: string; audit?: string; tests: string[]; random?: boolean }>
+  deepRun: { months: number; stepsPerMonth: number; violations: number; recordedOn: string }
+  everyChange: { months: number; stepsPerMonth: number }
+}
+
 export type SystemStatus = {
   time: string
   paused: { reason: string | null; since: string | null; by: 'owner' | 'breaker' | null } | null

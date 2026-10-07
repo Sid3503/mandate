@@ -332,7 +332,16 @@ export class Repo {
     return row.cents
   }
 
+  /**
+   * Facts about the moment that every event should carry, set by the container. Today it says "Mandate was paused when this
+   * happened", so the audit can check what ran during a pause without comparing clocks (two things in the same millisecond
+   * have no order by timestamp, but each knows the state it saw).
+   */
+  stampEvents: (() => Record<string, unknown>) | null = null
+
   insertEvent(id: string, proposalId: string, type: string, clause: string | null, payload: unknown, now: string): void {
+    const extra = this.stampEvents?.()
+    if (extra && Object.keys(extra).length > 0 && payload && typeof payload === 'object' && !Array.isArray(payload)) payload = { ...(payload as object), ...extra }
     this.db.prepare(
       'INSERT INTO events (id, proposal_id, type, clause, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     ).run(id, proposalId, type, clause, JSON.stringify(payload), now)

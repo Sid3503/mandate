@@ -29,6 +29,7 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   const safety = new SafetyService(repo, signer, deps.now, { ...DEFAULT_SAFETY, ...(deps.safety ?? {}) })
   const mandate = new MandateService(repo, deps.paypal, deps.now, signer, deps.invoices ?? null, { publicUrl: deps.publicUrl, watch: deps.watch ?? null, safety })
   const deals = new DealService(repo, signer, deps.now, mandate)
+  repo.stampEvents = () => (safety.paused() ? { paused: true } : {})
   safety.onResume = async () => {
     await mandate.resumeAutopilot()
     await deals.billAcceptedWhilePaused()

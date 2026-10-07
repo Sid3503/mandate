@@ -74,7 +74,7 @@ export class AuditService {
       this.dealsCheck(agreed, proposals),
       this.acceptance(proposals, versions),
       this.reach(),
-      this.respectedPauses(proposals, events),
+      this.respectedPauses(proposals, byProposal),
     ]
     if (options.paypal) checks.push(await this.paypalAgrees(proposals))
 
@@ -249,29 +249,19 @@ export class AuditService {
    * While Mandate was paused nothing ran on its own: no request was approved by a rule, and no payout the rules had approved
    * was sent. The pause history is itself signed, so a pause cannot be written into the past or removed.
    */
-  private respectedPauses(proposals: ProposalRow[], events: ReturnType<Repo['allEvents']>): AuditCheck {
+  private respectedPauses(proposals: ProposalRow[], byProposal: Map<string, Array<{ type: string; clause: string | null; payload: Record<string, unknown> }>>): AuditCheck {
     const history = this.repo.allSafetyEvents()
     const failures: AuditCheck['failures'] = []
     const forged = this.safety ? this.safety.events(500).filter((event) => !event.signed) : []
     for (const event of forged) failures.push({ proposalId: null, detail: `the ${event.type} event of ${event.at} is not signed by this server's key` })
-    const intervals: Array<[string, string]> = []
-    let from: string | null = null
-    for (const event of history) {
-      if (event.type === 'paused' && from === null) from = event.at
-      else if (event.type === 'resumed' && from !== null) { intervals.push([from, event.at]); from = null }
-    }
-    if (from !== null) intervals.push([from, '9999'])
-    const inside = (at: string) => intervals.some(([start, end]) => at >= start && at < end)
+    let pauses = 0
+    for (const event of history) if (event.type === 'paused') pauses += 1
+    const wasPaused = (id: string, types: string[]) => (byProposal.get(id) ?? []).filter((event) => types.includes(event.type) && event.payload.paused === true)
     for (const row of proposals) {
-      if (inside(row.created_at) && row.gate === 'AUTO') failures.push({ proposalId: row.id, detail: 'a request was approved by a rule (no tap) while Mandate was paused' })
+      if (row.gate === 'AUTO' && wasPaused(row.id, ['proposal.created']).length > 0) failures.push({ proposalId: row.id, detail: 'a request was approved by a rule (no tap) while Mandate was paused' })
+      if ((row.clause === 'standing.matched' || row.clause === 'standing.billing') && wasPaused(row.id, ['payout.sent', 'order.created', 'invoice.sent', 'invoice.created']).length > 0) failures.push({ proposalId: row.id, detail: 'a rule-approved request was sent to PayPal while Mandate was paused' })
     }
-    const byId = new Map(proposals.map((row) => [row.id, row]))
-    for (const event of events) {
-      if (event.type !== 'payout.sent' && event.type !== 'order.created' && event.type !== 'invoice.sent') continue
-      const row = byId.get(event.proposal_id)
-      if (row && inside(event.created_at) && (row.clause === 'standing.matched' || row.clause === 'standing.billing')) failures.push({ proposalId: row.id, detail: `a rule-approved request was sent to PayPal (${event.type}) while Mandate was paused` })
-    }
-    return this.check('safety.respected', 'Nothing ran on its own while Mandate was paused', 'A pause is the owner\'s emergency stop, or the breaker\'s. During one, no rule may approve a request and no rule-approved payout may be sent. The history of pauses is signed, so it cannot be edited away.', history.length, failures, history.length === 0 ? 'Mandate has never been paused.' : `${intervals.length} pause${intervals.length === 1 ? '' : 's'} on record.`)
+    return this.check('safety.respected', 'Nothing ran on its own while Mandate was paused', 'A pause is the owner\'s emergency stop, or the breaker\'s. During one, no rule may approve a request and no rule-approved payout may be sent. The history of pauses is signed, so it cannot be edited away.', history.length, failures, pauses === 0 ? 'Mandate has never been paused.' : `${pauses} pause${pauses === 1 ? '' : 's'} on record.`)
   }
 
   /** The agents' reach is a fact about the code, listed here so it can be read next to the rest. */

@@ -610,6 +610,16 @@ test('the owner can stop everything with one button; agents are refused with the
   await expect(page.locator('.check-row', { hasText: 'Nothing ran on its own while Mandate was paused' })).toContainText('Pass')
 })
 
+test('the Proof page lists what Mandate promises, with the live check or the tests behind each', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/proof')
+  const promises = page.getByTestId('promises')
+  await expect(promises).toContainText('No payout is ever larger than the contractor', { timeout: 20_000 })
+  await expect(promises).toContainText('3,000 months')
+  await expect(promises.locator('.chip', { hasText: 'Pass now' }).first()).toBeVisible()
+  await expect(promises.locator('.chip', { hasText: 'Random months' }).first()).toBeVisible()
+})
+
 test('the ledger can be exported as CSV, and points to the control room', async ({ page }) => {
   await unlock(page, OWNER)
   await page.goto('/app/ledger')

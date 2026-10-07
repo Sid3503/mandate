@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { AgentHealth, ClientErrorRow, Safety, SystemStatus, AskRoute, ClerkStreamEvent, QuickId, Replay, Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
+import type { AgentHealth, ClientErrorRow, Guarantees, Safety, SystemStatus, AskRoute, ClerkStreamEvent, QuickId, Replay, Activity, AuditReport, Balance, Delivered, Delivery, RulesDraft, Today, ToolSummary, AgentRun, ClerkReply, Features, Deal, DealCheck, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, Session, SigningKey, Warrant } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -197,6 +197,7 @@ export const api = {
   agentHealth: () => request<AgentHealth>('/v1/agents/health'),
   status: () => request<SystemStatus>('/v1/status'),
   safety: () => request<Safety>('/v1/safety'),
+  guarantees: () => request<Guarantees>('/v1/guarantees'),
   pause: (reason: string) => request<Safety>('/v1/safety/pause', { method: 'POST', body: { reason } }),
   resume: () => request<Safety>('/v1/safety/resume', { method: 'POST' }),
   clientErrors: () => request<{ data: ClientErrorRow[] }>('/v1/client-errors'),

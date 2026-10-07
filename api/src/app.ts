@@ -17,6 +17,7 @@ import { handleMcp } from './mcp/http'
 import { AgentService, logReviewFailure } from './agents/service'
 import { live } from './services/live'
 import { StudioTurnSchema } from './agents/studio'
+import { DEEP_RUN, EVERY_CHANGE_RUN, GUARANTEES } from './domain/guarantees'
 import { paypalProblem } from './services/paypalProblem'
 import type { AgentModel } from './agents/model'
 import { buildServices, type Services } from './services/container'
@@ -288,6 +289,8 @@ export function createApp(deps: AppDeps) {
     return c.json({ stored: true }, 201)
   })
   app.get('/v1/client-errors', (c) => c.json({ data: services.repo.recentClientErrors(50).map((row) => ({ id: row.id, at: row.at, role: row.role, scope: row.scope, message: row.message, stack: row.stack, url: row.url, agent: row.agent, release: row.release_id })) }))
+  // What Mandate promises and where each promise is checked. Static, so it answers when everything else does not.
+  app.get('/v1/guarantees', (c) => c.json({ guarantees: GUARANTEES, deepRun: DEEP_RUN, everyChange: EVERY_CHANGE_RUN }))
   // The emergency stop. Anyone with a key can see whether Mandate is paused; only the owner can pause or resume it.
   app.get('/v1/safety', (c) => c.json({ ...services.safety.state(), breaker: { tripAfter: services.safety.config.tripAfter, windowSeconds: services.safety.config.windowSeconds }, events: services.safety.events(20) }))
   app.post('/v1/safety/pause', async (c) => {

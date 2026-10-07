@@ -16,6 +16,7 @@ export function Proof() {
   const [withPayPal, setWithPayPal] = useState(false)
   const audit = useQuery({ queryKey: ['audit', withPayPal], queryFn: () => api.audit(withPayPal), enabled: owner, staleTime: 0 })
   const report = audit.data
+  const promises = useQuery({ queryKey: ['guarantees'], queryFn: api.guarantees, staleTime: 5 * 60_000 })
 
   return (
     <div className="page proof">
@@ -45,6 +46,28 @@ export function Proof() {
               {report.checks.map((check) => <Check key={check.id} check={check} />)}
             </ul>
           </section>
+
+          {promises.data ? (
+            <section className="section" aria-labelledby="h-promises" data-testid="promises">
+              <h2 className="section-title" id="h-promises">What Mandate promises, and where each promise is held up</h2>
+              <p className="fine">Every promise below names the live check that re-verifies it on this ledger, the tests that guard it on every change, or both. {promises.data.everyChange.months} random months of {promises.data.everyChange.stepsPerMonth} requests are played against the rules on every change; the deepest run recorded played {promises.data.deepRun.months.toLocaleString('en-US')} months ({(promises.data.deepRun.months * promises.data.deepRun.stepsPerMonth).toLocaleString('en-US')} requests, bills, payments, approvals, refunds, rule changes and pauses) and found {promises.data.deepRun.violations} violations.</p>
+              <ul className="checks-list">
+                {promises.data.guarantees.map((item) => {
+                  const live = item.audit ? report.checks.find((check) => check.id === item.audit) : undefined
+                  return (
+                    <li key={item.id} className="check-row">
+                      <div className="check-head">
+                        <strong>{item.promise}</strong>
+                        {live ? <Chip tone={live.status === 'pass' ? 'auto' : live.status === 'fail' ? 'deny' : 'muted'}>{live.status === 'pass' ? 'Pass now' : live.status === 'fail' ? 'Fails now' : 'Info'}</Chip> : <Chip tone="muted">By test</Chip>}
+                        {item.random ? <Chip tone="ink">Random months</Chip> : null}
+                      </div>
+                      <p className="fine">Tests: {item.tests.map((test) => test.replace('test/', '').replace('.test.ts', '')).join(', ')}.</p>
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          ) : null}
 
           <section className="panel" data-tour="proof-reach">
             <h2 className="panel-title">How Mandate uses PayPal’s Agent Toolkit</h2>

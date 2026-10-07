@@ -61,3 +61,18 @@ describe('what a failed PayPal call means', () => {
     expect(paypalProblem(new TypeError('fetch failed'), 'to settle')).toMatchObject({ code: 'paypal.unavailable' })
   })
 })
+
+describe('the promises Mandate lists', () => {
+  it('lists only promises that name a check or a test that exists', async () => {
+    const { existsSync } = await import('node:fs')
+    const h = harness()
+    const { json } = await call(h.app, 'GET', '/v1/guarantees', { key: STUDIO_KEY })
+    expect(json.guarantees.length).toBeGreaterThan(10)
+    const audit = (await call(h.app, 'GET', '/v1/audit')).json.checks.map((check: { id: string }) => check.id)
+    for (const item of json.guarantees as Array<{ id: string; audit?: string; tests: string[] }>) {
+      if (item.audit) expect(audit, `${item.id} names an audit check that does not exist`).toContain(item.audit)
+      for (const test of item.tests) expect(existsSync(new URL(`../${test}`, import.meta.url)), `${item.id} names ${test}, which does not exist`).toBe(true)
+    }
+    expect(json.deepRun).toMatchObject({ months: 3000, violations: 0 })
+  })
+})
