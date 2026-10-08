@@ -12,7 +12,7 @@ export type SafetyConfig = {
 
 export const DEFAULT_SAFETY: SafetyConfig = { tripAfter: 3, windowSeconds: 120 }
 
-export type SafetyEventView = { id: string; at: string; type: 'paused' | 'resumed'; by: 'owner' | 'breaker'; reason: string | null; detail: string | null; signed: boolean }
+export type SafetyEventView = { id: string; at: string; type: 'paused' | 'resumed' | 'agent_suspended'; by: 'owner' | 'breaker'; reason: string | null; detail: string | null; signed: boolean }
 
 /** The message each safety event signs, so the history of pauses can be shown to be the server's own. */
 export const safetyMessage = (event: { id: string; at: string; type: string; by: string; reason: string | null }) => `safety:${event.id}:${event.type}:${event.by}:${event.at}:${event.reason ?? ''}`
@@ -42,7 +42,7 @@ export class SafetyService {
   }
 
   events(limit = 20): SafetyEventView[] {
-    return this.repo.safetyEvents(limit).map((row) => ({ id: row.id, at: row.at, type: row.type as 'paused' | 'resumed', by: row.by as 'owner' | 'breaker', reason: row.reason, detail: row.detail, signed: this.signer.verify(safetyMessage(row), row.sig, row.key_id) }))
+    return this.repo.safetyEvents(limit).map((row) => ({ id: row.id, at: row.at, type: row.type as 'paused' | 'resumed' | 'agent_suspended', by: row.by as 'owner' | 'breaker', reason: row.reason, detail: row.detail, signed: this.signer.verify(safetyMessage(row), row.sig, row.key_id) }))
   }
 
   /** Pauses everything automatic. Pausing a paused Mandate changes nothing and writes nothing. */
@@ -80,12 +80,20 @@ export class SafetyService {
     if (this.paused()) return false
     const tripped = this.counter.record(askerKey, clause, this.now().getTime())
     if (!tripped) return false
+    const at = this.now().toISOString()
+    if (askerKey.startsWith('agent:')) {
+      const agentId = askerKey.slice('agent:'.length)
+      this.repo.setAgentStatus(agentId, 'suspended', at)
+      this.record('agent_suspended', 'breaker', `Agent ${agentId.slice(0, 8)} suspended`, `Rules that refused it: ${tripped.clauses.join(', ')}.`, at)
+      live.publish({ type: 'changed', scope: 'safety', what: 'agent.suspended', at: stamp() })
+      return true
+    }
     const who = askerKey === 'proposer' ? 'the studio\'s key' : askerKey === 'autopilot' ? 'the autopilot' : askerKey
     this.pause('breaker', `${tripped.count} refusals from ${who} in ${Math.round(this.config.windowSeconds / 60)} minutes`, `Rules that refused them: ${tripped.clauses.join(', ')}.`)
     return true
   }
 
-  private record(type: 'paused' | 'resumed', by: 'owner' | 'breaker', reason: string | null, detail: string | null, at: string): void {
+  private record(type: 'paused' | 'resumed' | 'agent_suspended', by: 'owner' | 'breaker', reason: string | null, detail: string | null, at: string): void {
     const id = randomUUID()
     const signed = this.signer.sign(safetyMessage({ id, at, type, by, reason }))
     this.repo.insertSafetyEvent({ id, at, type, by, reason, detail, sig: signed.signature, keyId: signed.keyId })

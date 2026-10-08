@@ -28,7 +28,7 @@ import type { WatchPort } from './paypal/watch'
 import { QUICK_IDS, type QuickId } from './services/ask'
 import { toolSummary } from './paypal/tiers'
 import { decodeCursor, type HttpResult } from './services/mandate'
-import { buyerPrincipal, OWNER, STUDIO, type Principal } from './services/principal'
+import { actorLabel, buyerPrincipal, OWNER, STUDIO, type AgentLimits, type AgentScope, type Principal } from './services/principal'
 
 export type AppDeps = {
   db: DatabaseSync
@@ -102,6 +102,9 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'GET', pattern: /^\/v1\/agents\/health$/ },
+  { method: 'GET', pattern: /^\/v1\/agents$/ },
+  { method: 'POST', pattern: /^\/v1\/agents$/ },
+  { method: 'POST', pattern: /^\/v1\/agents\/[^/]+\/(revoke|resume)$/ },
   { method: 'GET', pattern: /^\/v1\/client-errors$/ },
   { method: 'GET', pattern: /^\/v1\/suggestions$/ },
   { method: 'POST', pattern: /^\/v1\/safety\/(pause|resume)$/ },
@@ -111,6 +114,16 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
   { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
 ]
+
+/** The scope an agent key needs for this route; null if it has no path to it. */
+function requiredAgentScope(method: string, path: string): AgentScope | null {
+  if (path === '/mcp' || path.startsWith('/mcp/')) return 'mcp'
+  if (method === 'GET' && path === '/v1/stream') return 'stream'
+  if (path.startsWith('/v1/deals') || path.startsWith('/v1/deliveries') || path.startsWith('/v1/party-rules')) return 'deals'
+  if (method === 'GET') return 'read'
+  if (method === 'POST' && path === '/v1/proposals') return 'propose'
+  return null
+}
 
 /** A client's agent may do only this. Everything else is the studio's business. */
 function buyerMayCall(method: string, path: string): boolean {
@@ -122,6 +135,12 @@ function buyerMayCall(method: string, path: string): boolean {
 function isWeb(path: string): boolean {
   return path === '/app' || path.startsWith('/app/')
 }
+
+const AgentCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  scopes: z.array(z.enum(['read', 'propose', 'stream', 'mcp', 'deals'])).min(1),
+  limits: z.object({ proposalsPerHour: z.number().int().min(1).max(10_000).optional(), centsPerHour: z.number().int().min(1).optional() }).strict().optional(),
+}).strict()
 
 const TrySchema = z.object({ request: ProposalCreateSchema, rules: WarrantBodySchema.optional() }).strict()
 const CasesSchema = z.object({ rules: WarrantBodySchema.optional() }).strict()
@@ -189,11 +208,26 @@ export function createApp(deps: AppDeps) {
     const owner = token !== '' && sameSecret(token, deps.config.apiKey)
     const studio = !owner && token !== '' && Boolean(deps.config.proposerKey) && sameSecret(token, deps.config.proposerKey!)
     const buyer = !owner && !studio && token !== '' && Boolean(deps.config.buyerAgentKey) && sameSecret(token, deps.config.buyerAgentKey!)
-    if (!owner && !studio && !buyer) {
-      throw new Problem(401, 'auth.unauthorized', 'Unauthorized', 'Provide Authorization: Bearer <api key>.')
+    let principal: Principal
+    if (owner) principal = OWNER
+    else if (studio) principal = STUDIO
+    else if (buyer) principal = buyerPrincipal(deps.config.buyerAgentParty ?? 'client_northwind')
+    else {
+      // Agents have their own keys: look them up by hash, enforce status, and carry their scopes and limits.
+      const agent = services.repo.getAgentByKeyHash(createHash('sha256').update(token).digest('hex'))
+      if (!agent) throw new Problem(401, 'auth.unauthorized', 'Unauthorized', 'Provide a valid owner key or agent key.')
+      if (agent.status === 'revoked') throw new Problem(403, 'agent.revoked', 'This agent key is revoked', 'Ask the owner for a new agent key.')
+      if (agent.status === 'suspended') throw new Problem(403, 'agent.suspended', 'This agent is suspended', 'The agent tripped the breaker. The owner can resume it from the System page.')
+      services.repo.setAgentSeen(agent.id, new Date().toISOString())
+      principal = { role: 'agent', side: null, buyerId: null, agentId: agent.id, name: agent.name, scopes: JSON.parse(agent.scopes_json) as AgentScope[], limits: JSON.parse(agent.limits_json) as AgentLimits }
     }
-    const principal: Principal = owner ? OWNER : studio ? STUDIO : buyerPrincipal(deps.config.buyerAgentParty ?? 'client_northwind')
     c.set('principal', principal)
+    if (principal.role === 'agent') {
+      const scope = requiredAgentScope(c.req.method, c.req.path)
+      if (scope === null || !principal.scopes.includes(scope)) {
+        throw new Problem(403, 'agent.scope', 'This agent key lacks the scope for this route', `Granted scopes: ${principal.scopes.join(', ') || 'none'}. The owner can issue a new key with it.`)
+      }
+    }
     if (principal.role !== 'owner' && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
       throw new Problem(403, 'auth.forbidden', 'Owner key required', 'A proposer key can propose and read. Only the owner can approve, reject, capture, or change the warrant.')
     }
@@ -306,6 +340,18 @@ export function createApp(deps: AppDeps) {
     const input = { warrant: warrant.body, now: deps.now(), proposals, decisions }
     return c.json({ suggestions: suggestRules(input), taps: countTaps(input) })
   })
+  // ---------- agent keys ----------
+  app.get('/v1/agents', (c) => c.json(services.agents.list()))
+  app.post('/v1/agents', async (c) => {
+    assertJson(c)
+    const parsed = AgentCreateSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const created = services.agents.create(parsed.data)
+    return c.json(created, 201)
+  })
+  app.post('/v1/agents/:id/revoke', (c) => c.json(services.agents.revoke(c.req.param('id'))))
+  app.post('/v1/agents/:id/resume', (c) => c.json(services.agents.resume(c.req.param('id'))))
+
   // What Mandate promises and where each promise is checked. Static, so it answers when everything else does not.
   app.get('/v1/guarantees', (c) => c.json({ guarantees: GUARANTEES, deepRun: DEEP_RUN, everyChange: EVERY_CHANGE_RUN }))
   // The emergency stop. Anyone with a key can see whether Mandate is paused; only the owner can pause or resume it.
@@ -344,7 +390,8 @@ export function createApp(deps: AppDeps) {
     if (!key.success) throw new Problem(400, 'idempotency.missing', 'Idempotency-Key is missing', 'POST /v1/proposals requires an Idempotency-Key of 8 to 255 token characters.')
     const parsed = ProposalCreateSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
-    return send(c, await service.proposeAndDispatch(parsed.data, key.data, c.get('principal').role))
+    const principal = c.get('principal')
+    return send(c, await service.proposeAndDispatch(parsed.data, key.data, actorLabel(principal)))
   })
 
   app.get('/v1/proposals', (c) => {

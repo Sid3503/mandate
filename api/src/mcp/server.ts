@@ -8,7 +8,7 @@ import { ProposalCreateSchema } from '../domain/schemas'
 import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
 import type { ProposalView } from '../services/mandate'
-import type { Principal } from '../services/principal'
+import { actorLabel, type Principal } from '../services/principal'
 
 /**
  * Mandate's MCP server: the one door an agent, ours or anyone's, uses to touch the company's money.
@@ -241,7 +241,7 @@ export function createMandateMcpServer(context: McpContext): McpServer {
         }
         const over = spend(context)
         if (over) return over
-        const result = await services.mandate.proposeAndDispatch(input, key(context, 'propose', args), 'proposer', context.runId)
+        const result = await services.mandate.proposeAndDispatch(input, key(context, 'propose', args), actorLabel(context.principal), context.runId)
         const view = result.body as ProposalView
         const { warrant, names } = nameLookup(services)
         return json(outcome(view, names, warrant, view.gate === 'DENY' ? services.mandate.whatWouldPass(view.id).map((item) => item.text) : []))

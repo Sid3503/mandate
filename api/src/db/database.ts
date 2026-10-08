@@ -187,6 +187,18 @@ CREATE TABLE IF NOT EXISTS safety_events (
 );
 CREATE INDEX IF NOT EXISTS safety_events_at ON safety_events(at);
 
+CREATE TABLE IF NOT EXISTS agents (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  scopes_json TEXT NOT NULL,
+  limits_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  key_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT
+);
+CREATE INDEX IF NOT EXISTS agents_status ON agents(status);
+
 CREATE TABLE IF NOT EXISTS client_errors (
   id TEXT PRIMARY KEY,
   at TEXT NOT NULL,

@@ -114,8 +114,11 @@ export type Safety = {
   by: 'owner' | 'breaker' | null
   epoch: number
   breaker: { tripAfter: number; windowSeconds: number }
-  events: Array<{ id: string; at: string; type: 'paused' | 'resumed'; by: 'owner' | 'breaker'; reason: string | null; detail: string | null; signed: boolean }>
+  events: Array<{ id: string; at: string; type: 'paused' | 'resumed' | 'agent_suspended'; by: 'owner' | 'breaker'; reason: string | null; detail: string | null; signed: boolean }>
 }
+
+export type AgentScope = 'read' | 'propose' | 'stream' | 'mcp' | 'deals'
+export type AgentRow = { id: string; name: string; scopes: AgentScope[]; limits: { proposalsPerHour: number; centsPerHour: number }; status: 'active' | 'suspended' | 'revoked'; createdAt: string; lastSeenAt: string | null }
 
 export type Suggestion = { id: string; payeeId: string; payeeName: string; clientId: string; clientName: string; approved: number; totalCents: number; largestCents: number; firstAt: string; draft: string }
 export type Suggestions = { suggestions: Suggestion[]; taps: { thisMonth: number; lastMonth: number; byRule: number } }

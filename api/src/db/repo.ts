@@ -70,6 +70,17 @@ export type DealRow = {
   created_at: string
 }
 
+export type AgentRow = {
+  id: string
+  name: string
+  scopes_json: string
+  limits_json: string
+  status: string
+  key_hash: string
+  created_at: string
+  last_seen_at: string | null
+}
+
 export type AgentRunRow = {
   id: string
   agent: string
@@ -88,6 +99,7 @@ export type AgentRunRow = {
   output_tokens?: number | null
   turns?: number | null
 }
+
 
 export type DisputeRow = { disputeId: string; transactionId: string; status: string; reason: string | null; amountCents: number | null; currency: string | null; openedAt: string | null; updatedAt: string }
 type DisputeRecord = { dispute_id: string; transaction_id: string; status: string; reason: string | null; amount_cents: number | null; currency: string | null; opened_at: string | null; updated_at: string }
@@ -693,6 +705,31 @@ export class Repo {
 
   recentClientErrors(limit: number): Array<{ id: string; at: string; role: string; scope: string; message: string; stack: string | null; url: string | null; agent: string | null; release_id: string | null }> {
     return this.db.prepare('SELECT * FROM client_errors ORDER BY at DESC, rowid DESC LIMIT ?').all(limit) as never
+  }
+
+  createAgent(row: AgentRow): void {
+    this.db.prepare(`INSERT INTO agents (id, name, scopes_json, limits_json, status, key_hash, created_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.scopes_json, row.limits_json, row.status, row.key_hash, row.created_at, row.last_seen_at)
+  }
+
+  listAgents(): AgentRow[] {
+    return this.db.prepare('SELECT * FROM agents ORDER BY created_at ASC, rowid ASC').all() as AgentRow[]
+  }
+
+  getAgent(id: string): AgentRow | null {
+    return (this.db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as AgentRow | undefined) ?? null
+  }
+
+  getAgentByKeyHash(keyHash: string): AgentRow | null {
+    return (this.db.prepare('SELECT * FROM agents WHERE key_hash = ?').get(keyHash) as AgentRow | undefined) ?? null
+  }
+
+  setAgentStatus(id: string, status: string, at: string): void {
+    this.db.prepare('UPDATE agents SET status = ?, last_seen_at = ? WHERE id = ?').run(status, at, id)
+  }
+
+  setAgentSeen(id: string, at: string): void {
+    this.db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(at, id)
   }
 
   recentAgentRuns(limit: number): AgentRunRow[] {

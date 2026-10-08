@@ -9,7 +9,7 @@ import { acceptanceMessage, dealMessage, proofHash, type Signer } from '../domai
 import { Problem } from '../http/problem'
 import { runIdempotent } from './idempotency'
 import type { HttpResult, MandateService } from './mandate'
-import type { Principal } from './principal'
+import { actorLabel, type Principal } from './principal'
 
 type StoredTerms = DealTerms & { jobId?: string }
 
@@ -82,7 +82,7 @@ export class DealService {
       buyer_id: buyer.id,
       seller_id: WARRANT_ID,
       offered_by: side,
-      actor: who.role,
+      actor: actorLabel(who),
       status: agreed ? 'agreed' : 'refused',
       job_id: agreed ? jobId : null,
       terms_json: JSON.stringify(terms),
@@ -155,7 +155,7 @@ export class DealService {
       milestone,
     })
     // If the owner has switched on "bill signed deals when proof is attached", the rules answer AUTO and the invoice goes out now.
-    return this.mandate.proposeAndDispatch(input, `bill-${row.id}-${milestone}-${stableHash(body).slice(0, 16)}`, who.role)
+    return this.mandate.proposeAndDispatch(input, `bill-${row.id}-${milestone}-${stableHash(body).slice(0, 16)}`, actorLabel(who))
   }
 
   // ---------- delivery and the client's acceptance ----------

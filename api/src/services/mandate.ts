@@ -19,7 +19,7 @@ import { runIdempotent } from './idempotency'
 
 export type HttpResult = { status: number; body: unknown }
 /** Who asked. `autopilot` is the server itself, acting under a rule the owner signed. */
-export type Role = 'owner' | 'proposer' | 'autopilot'
+export type Role = 'owner' | 'proposer' | 'autopilot' | `agent:${string}`
 
 const RESUME_PHASES = new Set(['locked', 'order_created', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'])
 /** Charge phases where a PayPal invoice exists. The client may already have paid it. */
@@ -137,6 +137,7 @@ export class MandateService {
       watch?: WatchPort | null
       /** The emergency stop and the breaker. Absent in tests that do not need it. */
       safety?: SafetyService
+      agents?: import('./agents').AgentService
     } = {},
   ) {}
 
@@ -249,6 +250,7 @@ export class MandateService {
   async proposeAndDispatch(input: ProposalCreate, idempotencyKey: string, actor: Role = 'owner', runId: string | null = null): Promise<HttpResult> {
     // Look for a client dispute first, so a disputed payment is refused at the gate instead of waiting at the door.
     if (input.kind === 'payment' && input.fundingCaptureId) await this.refreshDisputesFor(input.fundingCaptureId).catch(() => undefined)
+    if (typeof actor === 'string' && actor.startsWith('agent:')) this.options.agents?.chargeUsage(actor.slice('agent:'.length), input.amountCents)
     const result = this.propose(input, idempotencyKey, actor, runId)
     const body = result.body as { id?: string } | null
     if (!body?.id || (result.status !== 201 && result.status !== 200)) return result
