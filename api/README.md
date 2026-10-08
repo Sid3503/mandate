@@ -102,7 +102,7 @@ The full description is in [docs/REFERENCE.md](../docs/REFERENCE.md#deals-signed
 - `GET /v1/proposals/:id/verify` and `GET /v1/deals/:id/verify` re-check a signature. `GET /.well-known/mandate-keys.json` publishes the public keys.
 - A charge on a job with an agreed deal must send `dealId` and `milestone`, for exactly the agreed cents (`POST /v1/deals/:id/milestones/:n/bill` fills that in).
 - `POST /mcp` is the agent door; `npm run mcp` serves it over stdio. Tools: `get_rules`, `get_jobs`, `propose`, `list_ledger`, `offer_deal`, `explain`. No tool can approve or pay.
-- `POST /v1/clerk/messages` and `POST /v1/negotiations` need `BEDROCK_API_KEY` (or `OLLAMA_API_KEY`). `npm run eval:agents` tests them against the real model.
+- `POST /v1/clerk/messages` and `POST /v1/negotiations` need `OLLAMA_API_KEY`. `npm run eval:agents` tests them against the real model.
 - Billing a client by invoice needs **Invoicing** enabled on the PayPal app; without it charges fall back to checkout and record `invoice.unavailable`.
 - Copy `.env.example` for the variables.
 

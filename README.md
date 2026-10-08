@@ -23,7 +23,7 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 | Refusals | $18 team lunch (`category.missing`). Fake vendor "P. Shah" $480 (`payee.unknown`). Payout before the client paid (`funding.missing`). Retry at $250 after the tap (`cart.immutable`). A third $90 past the $180 monthly cap (`cap.monthly`). | built |
 | Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | built |
 | Deal | The two companies' agents agree $300 in two milestones. $450 and $200 are refused by a pure function that checks **both** companies' rules. The agreed deal is signed. | built |
-| Agents | A clerk Arun can talk to, and two negotiators, on Amazon Bedrock (`us.openai.gpt-6-luna`) through an MCP server whose six tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
+| Agents | A clerk Arun can talk to, and two negotiators, on Ollama Cloud (`gpt-oss:20b`) through an MCP server whose six tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
 | Control room | A second screen built with AG Studio (`/app/control-room`): tiles, charts and grids on a copy of the ledger, a layout the owner can save, and a chat analyst that can change the dashboard and nothing else. The Ledger is an AG Grid with CSV export. | built, tested in the browser |
 | Autopilot | With the owner's rules signed, the job runs itself: proof attached → PayPal invoice sent; client pays → the contractor's share is asked for and paid; unpaid invoices get PayPal's reminder. The server re-reads PayPal every few seconds while money is in flight (instantly with a webhook), and the console updates live, so it finishes without anyone pressing or reloading anything. | built, tested in the browser and in pieces live |
 | Client acceptance | Optionally, the studio's delivery waits for the client's own agent to accept it (signed over the exact proof link) before the invoice goes out. | built, tested |
@@ -38,7 +38,7 @@ Job totals for the live sandbox run: **$150 in, $90 out, $60 kept.**
 
 ## Run it (real PayPal sandbox, real AI model)
 
-Needs Node.js 22+ (24 recommended) and Chrome. Put your PayPal sandbox app credentials and an Amazon Bedrock API key (`BEDROCK_API_KEY`; Ollama Cloud works too) in a repo-root `.env` (see [`api/.env.example`](api/.env.example)). It is gitignored; never commit it.
+Needs Node.js 22+ (24 recommended) and Chrome. Put your PayPal sandbox app credentials and an Ollama Cloud API key (`OLLAMA_API_KEY`) in a repo-root `.env` (see [`api/.env.example`](api/.env.example)). It is gitignored; never commit it.
 
 ```bash
 npm run setup && npm run build

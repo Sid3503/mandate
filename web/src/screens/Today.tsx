@@ -131,7 +131,7 @@ function AskButton() {
   const ask = useAsk()
   const agents = useAgentsOn()
   return (
-    <button type="button" className="btn btn-ink ask-button" data-tour="today-ask" onClick={() => ask.open()} disabled={!agents} title={agents ? 'Ask the clerk anything' : 'The clerk needs BEDROCK_API_KEY'}>
+    <button type="button" className="btn btn-ink ask-button" data-tour="today-ask" onClick={() => ask.open()} disabled={!agents} title={agents ? 'Ask the clerk anything' : 'The clerk needs OLLAMA_API_KEY'}>
       Ask Mandate <kbd aria-hidden="true">⌘K</kbd>
     </button>
   )
@@ -280,7 +280,7 @@ function BillRow({ item, auto, accept, hosted = false }: { item: TodayData['read
           <p className="fine"><Chip tone="need">Waiting for {item.buyerName} to accept</Chip> Delivered with <a href={delivery.proofUrl} target="_blank" rel="noreferrer noopener">{delivery.proofUrl.replace(/^https:\/\/(www\.)?/, '')}</a>. Nothing is billed until the client’s own agent accepts it, and then the invoice goes out by itself.</p>
           <div className="row gap-s wrap">
             <ReviewProgress buyer={item.buyerName} delivery={delivery} hosted={hosted} />
-            <button type="button" className="btn btn-ink btn-small" disabled={!owner || !online || !agents || review.isPending} onClick={() => review.mutate()} title={agents ? undefined : 'The client’s agent needs BEDROCK_API_KEY'}>{review.isPending ? `Asking ${item.buyerName}’s agent…` : hosted ? 'Nudge now' : `Ask ${item.buyerName}’s agent to review`}</button>
+            <button type="button" className="btn btn-ink btn-small" disabled={!owner || !online || !agents || review.isPending} onClick={() => review.mutate()} title={agents ? undefined : 'The client’s agent needs OLLAMA_API_KEY'}>{review.isPending ? `Asking ${item.buyerName}’s agent…` : hosted ? 'Nudge now' : `Ask ${item.buyerName}’s agent to review`}</button>
             <span className="fine">In production the client’s own agent calls <code>decide_delivery</code> on its own key. This runs the hosted stand-in.</span>
           </div>
           <ProblemCard error={review.error} />

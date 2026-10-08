@@ -11,7 +11,7 @@ import { LINE_STUDIO_WARRANT, WarrantBodySchema } from '../src/domain/schemas'
 
 const model = buildModels(process.env).drafter
 if (!model) {
-  console.error('Set BEDROCK_API_KEY (or OLLAMA_API_KEY) to run the eval')
+  console.error('Set OLLAMA_API_KEY to run the eval')
   process.exit(2)
 }
 const current = WarrantBodySchema.parse(LINE_STUDIO_WARRANT)

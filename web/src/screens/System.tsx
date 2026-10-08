@@ -114,7 +114,7 @@ export function System() {
             <KV label="Key">{me.data?.role === 'owner' ? 'Owner · can approve, settle, change rules' : 'Proposer · can ask and read'}</KV>
             <KV label="API version" mono>{me.data?.version ?? '—'}</KV>
             <KV label="PayPal">{me.data?.paypalConfigured ? 'Sandbox credentials set' : 'Not configured'}</KV>
-            <KV label="Agents">{me.data?.agents.enabled ? `On · ${me.data.agents.model}` : 'Off · set BEDROCK_API_KEY'}</KV>
+            <KV label="Agents">{me.data?.agents.enabled ? `On · ${me.data.agents.model}` : 'Off · set OLLAMA_API_KEY'}</KV>
             <KV label="Origin" mono>{location.origin}</KV>
             <KV label="Offline">App shell only. Money calls are never cached or queued.</KV>
           </div>

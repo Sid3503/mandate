@@ -97,7 +97,7 @@ export default function ControlRoom() {
       <ProblemCard error={proposals.error} />
       <p className="fine cr-note" data-tour="cr-note">
         <Chip tone="muted">no path to PayPal</Chip> Studio is handed {rows.length} plain rows copied from the ledger and can only display them. Money in and out count only what PayPal confirmed.
-        {agents ? <> Ask the analyst in the chat panel, for example “show what the rules refused”. It can change this dashboard and nothing else.</> : <> Set <span className="mono">BEDROCK_API_KEY</span> to turn the dashboard agent on.</>}
+        {agents ? <> Ask the analyst in the chat panel, for example “show what the rules refused”. It can change this dashboard and nothing else.</> : <> Set <span className="mono">OLLAMA_API_KEY</span> to turn the dashboard agent on.</>}
         {LICENSE ? null : <> Running without a Studio licence key: fine for local work, with a watermark.</>}
       </p>
       <div className="cr-stage" data-tour="cr-stage" data-testid="control-room" style={{ height: 'max(760px, calc(100vh - 250px))' }}>

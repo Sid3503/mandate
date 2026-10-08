@@ -245,8 +245,8 @@ Also built: the deal check, Ed25519 signed locks and deals, the MCP agent door, 
 | Web | React 19, Vite 8, TanStack Query 5, React Router 7, AG Grid Community 36, `vite-plugin-pwa` | Types generated from our OpenAPI, so the console cannot drift from the API. |
 | Type | Barlow Condensed, Inter, JetBrains Mono, self-hosted | Works offline and under a strict CSP. |
 | Tests | Vitest, Playwright with the local Chrome, `@axe-core/playwright`, Lighthouse | Unit, API and end-to-end on two viewports, plus accessibility. |
-| Model | `us.openai.gpt-6-luna` on Amazon Bedrock (OpenAI-compatible endpoint); Ollama Cloud open-weights models as fallback and for comparison | It holds no authority, so the choice of model changes quality, never what can be paid. |
-| Agent runtime | Vercel AI SDK, `@ai-sdk/openai-compatible` pointed at Bedrock (and `ai-sdk-ollama`) | Tool calls, structured output and an MCP client in one library. |
+| Model | Ollama Cloud open-weights models (`gpt-oss:20b`, `gemma4:31b`) | It holds no authority, so the choice of model changes quality, never what can be paid. |
+| Agent runtime | Vercel AI SDK, `ai-sdk-ollama` | Tool calls, structured output and an MCP client in one library. |
 | Agent ↔ Mandate (planned) | `@modelcontextprotocol/sdk`, Streamable HTTP and stdio | Our agents get exactly the same door as anyone else's. |
 | PayPal | Our REST client today; `@paypal/agent-toolkit` server-side next | The Toolkit has no Payouts tool, so Payouts uses our client. |
 | Hosting | Render free tier | Public HTTPS for webhooks and for judges. |
@@ -339,11 +339,9 @@ npm run setup            # npm ci in api/ and web/, including dev dependencies
 | `BUYER_AGENT_PARTY` | `client_northwind` | The client that key speaks for. |
 | `SIGNING_KEY` | dev: created beside the database | Ed25519 private key (PKCS8 PEM). **Required in production.** |
 | `SIGNING_KEYS_PREVIOUS` | unset | Retired public PEMs separated by `\|`. Old keys are also remembered in the ledger. |
-| `BEDROCK_API_KEY` | unset | Turns the clerk, negotiators, client reviewer and drafter on (Bedrock OpenAI-compatible endpoint, Bearer key). |
-| `BEDROCK_REGION` (or `AWS_REGION`) | `us-east-1` | Region of `bedrock-runtime.<region>.amazonaws.com/openai/v1`. |
-| `OLLAMA_API_KEY` | unset | Optional. Ollama Cloud: the fallback model, and the only model if there is no Bedrock key. |
-| `AGENT_MODEL` | `us.openai.gpt-6-luna` (Bedrock), `gpt-oss:20b` (Ollama only) | A Bedrock inference-profile id (`us.openai.gpt-6-luna`, `global.openai.gpt-6-sol`) or an Ollama model name that supports tool calls. The name decides the provider. |
-| `DRAFTER_MODEL` | same as `AGENT_MODEL` (Bedrock), `gemma4:31b` (Ollama only) | The model that drafts rules from plain words. |
+| `OLLAMA_API_KEY` | unset | Turns the clerk, negotiators, client reviewer and drafter on (Ollama Cloud, Bearer key). |
+| `AGENT_MODEL` | `gpt-oss:20b` | An Ollama Cloud open-weights model that supports tool calls. |
+| `DRAFTER_MODEL` | `gemma4:31b` | The model that drafts rules from plain words. |
 | `OLLAMA_BASE_URL` | `https://ollama.com` | Use `http://127.0.0.1:11434` for a local Ollama. |
 | `PAYPAL_WEBHOOK_ID` | unset | The id PayPal gives a registered webhook. When set, every call to `POST /v1/webhooks/paypal` must carry a signature PayPal confirms (`verify-webhook-signature`); otherwise it gets 401. Deliveries are de-duplicated by event id either way. |
 | `INVOICES` | `auto` | `auto` bills clients by PayPal invoice when the app may, else by checkout. `off` is checkout only. |
@@ -644,11 +642,11 @@ Also in Ask:
   | --- | --- | --- | --- | --- | --- | --- | --- |
   | `gemma4:31b` (the drafter) | 10/10 | 4/4 | 5/5 | 4/4 | 2/2 | **25/25** | **0** |
   | `gpt-oss:20b` | 7/10 | 4/4 | 5/5 | 4/4 | 2/2 | 22/25 | **0** |
-  | `us.openai.gpt-6-luna` (Bedrock, the default; 7 Oct, after the forced single tool call) | 10/10 | 4/4 | 5/5 | 4/4 | 2/2 | **25/25** | **0** |
-  | `us.openai.gpt-6-luna` (Bedrock; 7 Oct, before it: 24/25, one plain two-person split added a scope nobody asked for) | 9/10 | 4/4 | 5/5 | 4/4 | 2/2 | 24/25 | **0** |
+  | `us.openai.gpt-6-luna` (historical, on Amazon Bedrock; 7 Oct, after the forced single tool call) | 10/10 | 4/4 | 5/5 | 4/4 | 2/2 | **25/25** | **0** |
+  | `us.openai.gpt-6-luna` (historical, on Amazon Bedrock; 7 Oct, before it: 24/25, one plain two-person split added a scope nobody asked for) | 9/10 | 4/4 | 5/5 | 4/4 | 2/2 | 24/25 | **0** |
 
   The first run of `gemma4:31b` scored 23/25 with one "hidden" loosening. Both were faults in the eval, not the drafter: it counted a loosening the owner really asked for as hidden, and it treated a model that put a red-flagged standing rule under a vague request as a failure though the flag was exactly the right outcome. I fixed the metric and re-ran. `gpt-oss:20b` missed three plain requests (reminders, acceptance, a two-person split): it drafted less than was asked, which the amber check reports, and it loosened nothing in secret.
-- `DRAFTER_MODEL` chooses the model (default: the main model on Bedrock, `gemma4:31b` on Ollama). The Ollama numbers below were measured on 6 Oct. On the real models, on four compound requests, `gemma4:31b` got 4 of 4 in about a second each, `gpt-oss:120b` 3 of 4, `nemotron-3-nano:30b` 3 of 4 and `gpt-oss:20b` 2 of 6 tries, so the drafter has its own model.
+- `DRAFTER_MODEL` chooses the model (default: `gemma4:31b`). The Ollama numbers below were measured on 6 Oct. On the real models, on four compound requests, `gemma4:31b` got 4 of 4 in about a second each, `gpt-oss:120b` 3 of 4, `nemotron-3-nano:30b` 3 of 4 and `gpt-oss:20b` 2 of 6 tries, so the drafter has its own model.
 
 ---
 
@@ -742,7 +740,7 @@ A hash can be recomputed by anyone who can write the database. So the lock is al
 
 ### The agents
 
-`us.openai.gpt-6-luna` on Amazon Bedrock (or an Ollama Cloud model), through the Vercel AI SDK, as an MCP client of the door above. Nothing is wired around the door: the agents hold a proposer's tools and nothing else.
+An Ollama Cloud open-weights model, through the Vercel AI SDK, as an MCP client of the door above. Nothing is wired around the door: the agents hold a proposer's tools and nothing else.
 
 - **The clerk** (`POST /v1/clerk/messages`, the **Clerk** screen). Staff write in plain words; it looks up the job and the client payment (`get_jobs`) and calls `propose`. Three guards sit around it: the rules decide, whatever it says; a reply that claims money moved when no capture happened is replaced with the rules' own answer; and each run is bounded (8 steps, 4 asks, 60 seconds, temperature 0).
 - **The negotiators** (`POST /v1/negotiations`, owner only). The console watches them live through `POST /v1/negotiations/stream` (server-sent events: `start`, `turn_start`, `turn`, `turn_error`, `done`), with a Stop button that also cancels the model call. A failed model call is retried once. Two agents, one per company, trade offers through `offer_deal`. The orchestration is plain code (who speaks, what they may see, when to stop). A model only chooses the next offer. Each is told its own limits and the other side's verdicts as hints, never as numbers.
@@ -754,7 +752,7 @@ A hash can be recomputed by anyone who can write the database. So the lock is al
   - **Prompts are versioned and fenced.** Every prompt has an id and a version, written on each run (`prompt_version`, with tokens and turns), and a snapshot test fails on any change in wording. Text written by someone else (a proof link, the other company's message) sits inside a labelled `<untrusted>` fence that cannot be closed from inside.
   - **Code before model.** The client's reviewer first runs a proof check in code (`agents/proof.ts`: https, home page, shortener, login, placeholder, host kind). A clear-cut bad link is rejected there with no model asked, and the model is handed the facts for the rest.
 - **The record.** Every run is stored with its full trace (`GET /v1/agent-runs/:id`, owner only): every model turn, tool call and result. A request an agent asked for links back to it, so the receipt shows the chat behind it.
-- **Without a model** (`BEDROCK_API_KEY` and `OLLAMA_API_KEY` unset) the agents answer `503 agents.unconfigured` and nothing else changes. `npm run demo` ships a deterministic stand-in (`demo-script`) so the whole flow works offline; it is a script, not an AI, and says so on the System screen.
+- **Without a model** (`OLLAMA_API_KEY` unset) the agents answer `503 agents.unconfigured` and nothing else changes. `npm run demo` ships a deterministic stand-in (`demo-script`) so the whole flow works offline; it is a script, not an AI, and says so on the System screen.
 - **Evaluation.** `npm run eval:agents` (in `api/`) runs eight cases against the real model: pay Priya her share, refuse the $18 lunch, be fooled by the vendor email, refuse before the client has paid, answer a question without asking, refuse "the owner already agreed", refuse a huge amount, and the full negotiation. A case passes when the **rules'** outcome is right. The model is allowed to be wrong; the design makes that harmless. Last run: 8 of 8.
 
 ### Invoices (PayPal Agent Toolkit)
@@ -1069,13 +1067,15 @@ Run on 6 Oct 2026 against Ollama Cloud (one run each, so treat a single miss as 
 | Model | Clerk cases | Negotiation | Money moved wrongly | What missed |
 | --- | --- | --- | --- | --- |
 | `gpt-oss:20b` (the Ollama default) | 13/14, then 14/14 on a re-run of the miss | agreed | 0 | one run hit the 60 s limit and was stopped with "nothing was sent" |
-| `us.openai.gpt-6-luna` (Bedrock, the default; 7 Oct, streamed, one run after the retry fix, 2 to 6 s per case) | 14/14 | agreed | 0 | An earlier streamed run scored 9/14 and 11/14: the misses were all `AI_StreamProviderError` ("the server had an error") from Bedrock, not wrong answers, and no miss moved money. The harness now repeats a call that fails as the stream opens. |
+| `us.openai.gpt-6-luna` (historical, on Amazon Bedrock; 7 Oct, streamed, one run after the retry fix, 2 to 6 s per case) | 14/14 | agreed | 0 | An earlier streamed run scored 9/14 and 11/14: the misses were all `AI_StreamProviderError` ("the server had an error") from Bedrock, not wrong answers, and no miss moved money. The harness now repeats a call that fails as the stream opens. |
 | `gemma4:31b` | 14/14 | agreed | 0 | nothing |
 | `nemotron-3-nano:30b` | 13/14 | agreed | 0 | one model error on the "split it" case |
 | `gpt-oss:120b` | 12/14 | agreed | 0 | declined the $18 lunch in words, so no refusal was recorded; used `get_jobs` for a "what is waiting" question |
 | `mistral-large-3:675b`, `deepseek-v4.1-flash` | not measured | not measured | n/a | Ollama answered 402: these models are not in the free plan |
 
 Every miss was behavioural (a wrong tool, a refusal in words that leaves no record, a timeout) and not one moved money: in all 56 scored runs PayPal was never asked to do anything the rules had not approved. That is the point of the design. The run shows the model is replaceable and the safety is not in it.
+
+Re-run on 8 Oct 2026, with Amazon Bedrock fully removed (`gpt-oss:20b` clerk/negotiators/reviewer, `gemma4:31b` drafter, both on Ollama Cloud): agent cases 14 of 14, the negotiation agreed, the drafter 25 of 25, the policy reader 20 of 20 verdicts with no sentence falsely called covered and no pasted order changing the rules.
 
 **End-to-end tests (`web/e2e/job.spec.ts`)**, against a fresh in-memory server per viewport:
 
@@ -1191,7 +1191,7 @@ Not used, and why: **Bryntum** and **Elastic** need trial keys that would expire
 4. ✅ **Deal check** between two companies' rules, with private limits.
 5. ✅ **Signed locks and deals** (Ed25519, verifiable from a public key endpoint, rotation-safe).
 6. ✅ **MCP agent door** (`/mcp` and stdio), six tools, none can pay.
-7. ✅ **AI agents**: the clerk and the two negotiators on Bedrock `us.openai.gpt-6-luna`, evaluated 14 of 14 against the real model.
+7. ✅ **AI agents**: the clerk and the two negotiators on `gpt-oss:20b` and `gemma4:31b` on Ollama Cloud, evaluated against the real model against the real model.
 8. ✅ **PayPal invoices** through the Agent Toolkit, behind the gate, with a checkout fallback. Live in the sandbox: created, sent, paid and settled.
 9. ✅ **AG Grid ledger, job view, guided tour.** ⬜ The read-only agent query over the grid.
 10. ⬜ **Deploy and prove it:** Render deploy, register the webhook (then set `PAYPAL_WEBHOOK_ID`), a public Postman workspace.

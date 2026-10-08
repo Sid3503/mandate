@@ -99,7 +99,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
         onLeave?.()
         return
       }
-      if (!agents) return patch(id, { pending: false, error: new ApiError(503, 'agents.unconfigured', 'No language model is configured', 'Questions about the ledger work without one (try “What is waiting for me?”). To ask the clerk to file a request, set BEDROCK_API_KEY.', {}) })
+      if (!agents) return patch(id, { pending: false, error: new ApiError(503, 'agents.unconfigured', 'No language model is configured', 'Questions about the ledger work without one (try “What is waiting for me?”). To ask the clerk to file a request, set OLLAMA_API_KEY.', {}) })
       patch(id, { route })
       await api.streamClerk({ message, conversationId: conversation, context }, (event) => {
         if (event.type === 'step') {
@@ -169,7 +169,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
   return (
     <>
       {!agents && session.data ? (
-        <div className="agents-off" role="status"><Chip tone="muted">no model</Chip> Questions about the ledger, and jumping around, work without a language model. To have the clerk file a request, set <span className="mono">BEDROCK_API_KEY</span>.</div>
+        <div className="agents-off" role="status"><Chip tone="muted">no model</Chip> Questions about the ledger, and jumping around, work without a language model. To have the clerk file a request, set <span className="mono">OLLAMA_API_KEY</span>.</div>
       ) : null}
       <div className="log" aria-live="polite" {...(tour ? { 'data-tour': 'clerk-log' } : {})}>
         {turns.length === 0 ? (

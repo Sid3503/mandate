@@ -7,7 +7,7 @@ import { agree, call, collect, EVIDENCE, harness, JOB, STUDIO_KEY } from '../tes
 
 const model = buildModels(process.env).primary
 if (!model) {
-  console.error('Set BEDROCK_API_KEY (or OLLAMA_API_KEY) to run the eval')
+  console.error('Set OLLAMA_API_KEY to run the eval')
   process.exit(2)
 }
 

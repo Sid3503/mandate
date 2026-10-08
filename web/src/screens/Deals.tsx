@@ -59,7 +59,7 @@ export function Deals() {
     <div className="page">
       <PageHead eyebrow="Two companies agree before any money exists" title="Deals">
         {owner ? (
-          <button type="button" className="btn btn-lime" data-tour="deal-negotiate" disabled={!agents || !online || running} onClick={() => void live.start()} title={agents ? 'Two AI agents negotiate inside both companies’ rules' : 'Set BEDROCK_API_KEY to turn the agents on'}>
+          <button type="button" className="btn btn-lime" data-tour="deal-negotiate" disabled={!agents || !online || running} onClick={() => void live.start()} title={agents ? 'Two AI agents negotiate inside both companies’ rules' : 'Set OLLAMA_API_KEY to turn the agents on'}>
             {running ? 'Agents are negotiating…' : 'Let the agents negotiate'}
           </button>
         ) : null}

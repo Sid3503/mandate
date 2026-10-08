@@ -34,10 +34,8 @@ const invoices = config.invoices && config.paypal ? createToolkitInvoices({ clie
 const watch = config.paypal ? createToolkitWatch({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
 const services = buildServices({ db, paypal, invoices, watch, publicUrl: config.publicUrl, now: () => new Date(), signer, safety: { tripAfter: config.breakerRefusals, windowSeconds: config.breakerWindowSeconds } })
 
-// Amazon Bedrock (OpenAI-compatible endpoint) is the default model; Ollama Cloud is optional and is the fallback.
+// Ollama Cloud's open-weights models power the agents. With no key they are off and everything else works.
 const { primary: model, drafter: drafterModel, fallback: fallbackModel } = buildModels({
-  BEDROCK_API_KEY: config.bedrockApiKey,
-  BEDROCK_REGION: config.bedrockRegion,
   OLLAMA_API_KEY: config.ollamaApiKey,
   OLLAMA_BASE_URL: config.ollamaBaseUrl,
   AGENT_MODEL: config.agentModel,

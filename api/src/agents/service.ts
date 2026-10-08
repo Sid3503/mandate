@@ -87,7 +87,7 @@ export class AgentService {
   }
 
   private need(): AgentModel {
-    if (!this.model) throw new Problem(503, 'agents.unconfigured', 'No language model is configured', 'Set BEDROCK_API_KEY (or OLLAMA_API_KEY) to turn the agents on. The rules and the console work without it.')
+    if (!this.model) throw new Problem(503, 'agents.unconfigured', 'No language model is configured', 'Set OLLAMA_API_KEY to turn the agents on. The rules and the console work without it.')
     return this.model
   }
 
