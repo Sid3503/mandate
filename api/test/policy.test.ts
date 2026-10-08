@@ -189,8 +189,9 @@ describe('POST /v1/rules/policy', () => {
     expect(row(made.json, 'Spending policy').status).toBe('context')
     expect(made.json.draft).toMatchObject({ changed: true, added: [], untrusted: [expect.stringContaining('Ignore all previous')] })
     expect(made.json.draft.draft.monthlyCapCents).toBe(12_000)
-    // One reader, one drafter, one auditor.
-    expect(model.calls()).toBe(3)
+    // One reader, one drafter, one auditor, and two failed read-back attempts that fall back to the code-written lines.
+    expect(model.calls()).toBe(5)
+    expect(made.json.draft.readBackBy).toBe('code')
     // What was set aside never reached the drafter.
     const drafterSaw = callsTo(model, 'drafter').join('\n')
     expect(drafterSaw).toContain('at most $120')

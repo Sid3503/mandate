@@ -578,7 +578,7 @@ function DraftNote({ result, replay = true }: { result: RulesDraft; replay?: boo
       {result.notes.length > 0 ? <ul className="draft-notes">{result.notes.map((line) => <li key={line}>{line}</li>)}</ul> : null}
       {result.readBack.length > 0 ? (
         <div className="draft-readback">
-          <strong>Read back, in plain words:</strong>
+          <strong>Read back, in plain words{result.readBackBy === 'model' ? ' (written by the model, every number checked against the rules)' : ''}:</strong>
           <ul>{result.readBack.map((line) => <li key={line}>{line}</li>)}</ul>
         </div>
       ) : null}

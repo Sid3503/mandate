@@ -104,7 +104,10 @@ describe('the rules drafter', () => {
     const made = await draft(app, 'what is the weather')
     expect(made.json).toMatchObject({ changed: false, loosens: [], tightens: [], notes: [] })
     const runs = (await call(app, 'GET', '/v1/agent-runs')).json.data
-    expect(runs[0]).toMatchObject({ agent: 'drafter', status: 'ok' })
+    expect(runs.find((run: { agent: string }) => run.agent === 'drafter')).toMatchObject({ status: 'ok' })
+    // The scripted model cannot write a read-back, so the code-written lines stand in and say so.
+    expect(made.json.readBackBy).toBe('code')
+    expect(runs.find((run: { agent: string }) => run.agent === 'rules_explainer')).toMatchObject({ status: 'error' })
   })
 
   it('front door: says it, sees it, checks it, replays it, reads it back, signs it', async () => {

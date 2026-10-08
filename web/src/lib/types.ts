@@ -349,6 +349,7 @@ export type RulesDraft = {
   added: IntentFlag[]
   untrusted: string[]
   readBack: string[]
+  readBackBy: 'model' | 'code'
   replay: Replay
   changed: boolean
   model: string

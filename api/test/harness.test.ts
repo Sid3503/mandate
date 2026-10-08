@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { ModelHealth } from '../src/agents/health'
 import { assessProof } from '../src/agents/proof'
-import { clerkSystem, MANDATE_CAN, MANDATE_CANNOT, negotiatorSystem, policyAuditorSystem, policyReaderSystem, PROMPT_VERSIONS, promptVersion, reviewerSystem, untrusted } from '../src/agents/prompts'
+import { clerkSystem, MANDATE_CAN, MANDATE_CANNOT, negotiatorSystem, policyAuditorSystem, policyReaderSystem, PROMPT_VERSIONS, promptVersion, reviewerSystem, rulesExplainerSystem, untrusted } from '../src/agents/prompts'
 import { AgentService, guardedStream, type ClerkStreamEvent } from '../src/agents/service'
 import { demoModel } from '../src/dev/demo-model'
 import { LINE_STUDIO_WARRANT, WarrantBodySchema } from '../src/domain/schemas'
@@ -73,6 +73,7 @@ describe('prompts are versioned, fenced and stable', () => {
     expect(negotiatorSystem({ side: 'buyer', company: 'Northwind', counterparty: 'Line Studio', task: 'a logo', brief: 'Open low.', threadId: '22222222-2222-2222-2222-222222222222', rules: { displayName: 'Northwind', currency: 'USD', categories: ['design'], maxMilestones: 4, requireProof: true, maxTotalCents: 30_000, maxMilestoneCents: 20_000 } as never })).toMatchSnapshot('negotiator')
     expect(policyReaderSystem(warrant)).toMatchSnapshot('policyReader')
     expect(policyAuditorSystem()).toMatchSnapshot('policyAuditor')
+    expect(rulesExplainerSystem()).toMatchSnapshot('rulesExplainer')
     // The reader and the auditor are told the same things about what Mandate can and cannot do.
     for (const prompt of [policyReaderSystem(warrant), policyAuditorSystem()]) { expect(prompt).toContain(MANDATE_CAN); expect(prompt).toContain(MANDATE_CANNOT) }
   })

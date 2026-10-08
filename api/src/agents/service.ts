@@ -13,6 +13,7 @@ import { applyAudit, countStatuses, firstPass, instructionFor, listChanges, POLI
 import { ModelHealth } from './health'
 import { runStudioTurn, type StudioEvent, type StudioTurn } from './studio'
 import { assessProof } from './proof'
+import { explainRules } from './explainer'
 import { readBack } from './intent'
 import { claimsMoneyMoved, composeReply, unsupportedAmounts, type Outcome } from './guard'
 import type { AgentModel } from './model'
@@ -284,7 +285,19 @@ export class AgentService {
       const exampleCents = Math.max(0, ...this.services.deals.readyToBill().map((item) => item.amountCents), 0) || 15_000
       const replay = this.services.mandate.replay(draft.draft)
       stage({ stage: 'reading_back' })
-      return { ...draft, runId, readBack: readBack(draft.draft, exampleCents), replay }
+      // The read-back is written by the model from the exact facts, with every number checked before it is shown.
+      // When the model cannot do that, the code-written lines stand in, so the owner always sees true lines.
+      let readBackLines = readBack(draft.draft, exampleCents)
+      let readBackBy: 'model' | 'code' = 'code'
+      try {
+        const explained = await explainRules({ model: used, draft: draft.draft, exampleCents })
+        readBackLines = [...explained.lines, ...explained.notes.map((note) => `Worth knowing: ${note}`)]
+        readBackBy = 'model'
+        this.record({ id: randomUUID(), agent: 'rules_explainer', who, conversationId: runId, model: used.name, input: instruction.slice(0, 500), output: readBackLines.join(' ').slice(0, 500), steps: [], status: 'ok', error: null, ms: 0, prompt: 'rulesExplainer' })
+      } catch {
+        this.record({ id: randomUUID(), agent: 'rules_explainer', who, conversationId: runId, model: used.name, input: instruction.slice(0, 500), output: null, steps: [], status: 'error', error: 'fallback', ms: 0, prompt: 'rulesExplainer' })
+      }
+      return { ...draft, runId, readBack: readBackLines, readBackBy, replay }
     } catch (error) {
       this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: model.name, input: instruction, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0, prompt: 'drafter' })
       throw error
