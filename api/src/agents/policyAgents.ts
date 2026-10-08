@@ -33,7 +33,10 @@ export const AuditSchema = z.object({
   })).min(1),
   changes: z.array(z.object({
     change: z.number().int().min(1),
-    supportedBy: z.array(z.number().int().min(1)).max(40).describe('Ids of the sentences that really ask for this change. Empty if none does.'),
+    supportedBy: z.array(z.object({
+      id: z.number().int().min(1).describe('The id of a sentence that really asks for this change.'),
+      quote: z.string().max(300).describe('The exact words in that sentence that ask for it, copied from the sentence.'),
+    })).max(40).describe('Empty if no sentence asks for this change.')
   })),
 })
 
@@ -123,8 +126,14 @@ export async function auditPolicy(input: { model: AgentModel; current: WarrantBo
       const numbers = value.changes.map((item) => item.change)
       const noChange = changeList.map((change) => change.n).filter((n) => !numbers.includes(n))
       if (noChange.length) complaints.push(`you left out changes ${noChange.join(', ')}`)
-      // Evidence that cites nothing real is worth one more try. On the last try it is simply not believed.
+      // Support that points at nothing real is worth one more try. On the last try it is simply not believed.
       if (!last) {
+        for (const item of value.changes) {
+          for (const backer of item.supportedBy) {
+            if (!ids.includes(backer.id)) complaints.push(`change ${item.change} is supported by sentence id ${backer.id}, which does not exist`)
+            else if (!inSentence(backer.quote, text.get(backer.id) ?? '')) complaints.push(`change ${item.change}: “${backer.quote.slice(0, 60)}” is not words from sentence ${backer.id}`)
+          }
+        }
         for (const item of value.sentences) {
           for (const piece of item.evidence) {
             if (!keys.has(piece.fact)) complaints.push(`sentence ${item.id} cites “${piece.fact}”, which is not a fact in the list`)

@@ -91,6 +91,16 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
         const has = (key: string) => factKeys.find((candidate) => candidate === key || candidate.startsWith(key))
         const audited = sentences.map(({ id, text: line }) => {
           const money = /\$[\d,]+/.exec(line)?.[0]
+          const lookFirst = /only after I have|approve each one|ask me first|seen the work|look at it first/i.test(line)
+          const tellMe = /email me|text me|notify me|message me/i.test(line)
+          const schedule = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(line)
+          if (lookFirst || tellMe || schedule) {
+            const gap = lookFirst
+              ? 'Wanting to look first cannot be kept beside a payout that goes with no tap: a covered payout goes without asking you.'
+              : tellMe ? 'Mandate sends no messages. The Today page shows what needs you.' : 'The rules have no day-of-week clock. Reminders go out after a number of days.'
+            const keep = money && /month/i.test(line) && !tellMe ? [{ fact: has('monthlyCapCents'), quote: money }] : []
+            return { id, verdict: keep.length ? 'partly' : 'not_enforced', suspicious: false, evidence: keep.filter((item) => item.fact && item.quote), gap }
+          }
           const cite = (fact: string | undefined, quote: string | undefined) => fact && quote ? { id, verdict: 'enforced', suspicious: false, evidence: [{ fact, quote }], gap: '' } : null
           return (money && /month/i.test(line) ? cite(has('monthlyCapCents'), money) : null)
             ?? (money && /single|per payment/i.test(line) ? cite(has('perPaymentCeilingCents'), money) : null)
@@ -98,8 +108,7 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
             ?? (/link to the work|proof/i.test(line) ? cite(has('evidenceRequired'), /link to the work|proof/i.exec(line)?.[0]) : null)
             ?? { id, verdict: 'not_enforced', suspicious: /ignore/i.test(line), evidence: [], gap: 'Nothing in the rules carries this out.' }
         })
-        const ids = sentences.map((item) => item.id)
-        const changes = [...message.matchAll(/^(\d+)\. \((?:loosens|tightens|note)\)/gm)].map((match) => ({ change: Number(match[1]), supportedBy: ids }))
+        const changes = [...message.matchAll(/^(\d+)\. \((?:loosens|tightens|note)\)/gm)].map((match) => ({ change: Number(match[1]), supportedBy: sentences.map((item) => ({ id: item.id, quote: item.text.slice(0, 120) })) }))
         return call('audit_policy', { sentences: audited, changes })
       }
 

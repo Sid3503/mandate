@@ -93,9 +93,9 @@ describe('changes nobody asked for', () => {
   const changes = listChanges(rules, draft)
 
   it('counts silence, an empty list, and support from a sentence that was set aside as unsupported', () => {
-    expect(unsupportedChanges(changes, [{ change: 1, supportedBy: [] }, { change: 2, supportedBy: [7] }], new Set([3]))).toHaveLength(2)
-    expect(unsupportedChanges(changes, [{ change: 1, supportedBy: [3] }], new Set([3])).map((item) => item.n)).toEqual([2])
-    expect(unsupportedChanges(changes, [{ change: 1, supportedBy: [3] }, { change: 2, supportedBy: [3] }], new Set([3]))).toEqual([])
+    expect(unsupportedChanges(changes, [{ change: 1, supportedBy: [] }, { change: 2, supportedBy: [{ id: 7, quote: 'x' }] }], new Set([3]))).toHaveLength(2)
+    expect(unsupportedChanges(changes, [{ change: 1, supportedBy: [{ id: 3, quote: 'x' }] }], new Set([3])).map((item) => item.n)).toEqual([2])
+    expect(unsupportedChanges(changes, [{ change: 1, supportedBy: [{ id: 3, quote: 'x' }] }, { change: 2, supportedBy: [{ id: 3, quote: 'x' }] }], new Set([3]))).toEqual([])
   })
 })
 
@@ -164,7 +164,10 @@ function pipeline(plan: Plan = {}) {
       if (/link to the work/.test(item.text)) return { id: item.id, verdict: 'enforced', suspicious: false, evidence: [{ fact: 'evidenceRequired', quote: 'link to the work' }], gap: '' }
       return { id: item.id, verdict: 'not_enforced', suspicious: false, evidence: [], gap: 'Nothing in the rules carries this out.' }
     })
-    return { tool: 'audit_policy', input: { sentences: audited, changes: Array.from({ length: nChanges }, (_, index) => ({ change: index + 1, supportedBy: plan.support ? plan.support(index + 1, ids) : ids })) } }
+    const words = new Map(sentences.map((item) => [item.id, item.text]))
+    const back = (id: number) => ({ id, quote: (words.get(id) ?? '').slice(0, 120) })
+    const backing = (list: number[]) => list.map(back)
+    return { tool: 'audit_policy', input: { sentences: audited, changes: Array.from({ length: nChanges }, (_, index) => ({ change: index + 1, supportedBy: plan.support ? backing(plan.support(index + 1, ids)) : backing(ids) })) } }
   })
   return { model, readerCalls: () => readerCalls }
 }

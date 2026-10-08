@@ -200,7 +200,7 @@ describe('the rules drafter, streamed', () => {
     const { app } = harness({ model: demoModel() })
     const response = await app.request('http://mandate.test/v1/rules/draft/stream', { method: 'POST', headers: { authorization: `Bearer ${OWNER_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ instruction: 'Pay Priya 60% of what Northwind pays, automatically, never more than $180 a month' }) })
     const seen = sse(await response.text())
-    expect(seen.filter((event) => event.name === 'stage').map((event) => event.data.stage)).toEqual(['reading', 'drafting', 'patch', 'checking', 'replaying', 'reading_back'])
+    expect(seen.filter((event) => event.name === 'stage').map((event) => event.data.stage)).toEqual(['reading', 'drafting', 'patch', 'checking', 'auditing', 'replaying', 'reading_back'])
     expect(seen.at(-1)!.name).toBe('done')
     expect(seen.at(-1)!.data.draft).toMatchObject({ changed: true, readBack: expect.any(Array), replay: expect.any(Object) })
   })

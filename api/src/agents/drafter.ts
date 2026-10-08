@@ -4,6 +4,8 @@ import { resolveClient, resolvePayee } from '../domain/gate'
 import { WarrantBodySchema, type WarrantBody } from '../domain/schemas'
 import { Problem } from '../http/problem'
 import { checkIntent, type IntentFlag } from './intent'
+import { applyAudit, segmentPolicy, type PolicySentence } from './policy'
+import { auditPolicy } from './policyAgents'
 import type { AgentModel } from './model'
 
 /**
@@ -313,6 +315,36 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
   }
   stage({ stage: 'checking' })
   const { loosens, tightens, notes } = compareRules(input.current, merged)
-  const intent = input.intent === false ? { ignored: [], untrusted: [], added: [] } : checkIntent(input.instruction, input.current, merged)
+  const intent = await checkDraftAgainstWords({ model: input.model, current: input.current, merged, instruction: input.instruction, audit: input.intent !== false, signal: input.signal, onStage: stage })
   return { draft: merged, summary: patch.summary, loosens, tightens, notes, ignored: intent.ignored, untrusted: intent.untrusted, added: intent.added, changed: loosens.length + tightens.length + notes.length > 0, model: input.model.name, ms: Date.now() - started }
+}
+
+/**
+ * Reads the finished draft against the owner's words. A second model call (the auditor) says, per sentence, whether
+ * the draft carries it out and which sentence asked for each change; code keeps only claims that point at something
+ * real. When the auditor cannot answer for every sentence, or fails, the built-in word check stands in, so the owner
+ * always gets an answer. Callers that audit the draft themselves (the policy flow) pass audit: false.
+ */
+async function checkDraftAgainstWords(input: { model: AgentModel; current: WarrantBody; merged: WarrantBody; instruction: string; audit: boolean; signal?: AbortSignal; onStage?: (stage: DraftStage) => void }): Promise<{ ignored: IntentFlag[]; untrusted: string[]; added: IntentFlag[] }> {
+  const plain = checkIntent(input.instruction, input.current, input.merged)
+  if (!input.audit) return { ignored: [], untrusted: [], added: [] }
+  const sent = segmentPolicy(input.instruction)
+  if (sent.length === 0) return plain
+  const stage = input.onStage ?? (() => undefined)
+  stage({ stage: 'auditing', sentences: sent.length, changes: 0 })
+  try {
+    const audit = await auditPolicy({ model: input.model, current: input.current, draft: input.merged, sent, signal: input.signal, onRetry: (reason) => stage({ stage: 'retry', attempt: 1, reason }) })
+    const answered = new Set(audit.sentences.map((item) => item.id))
+    // Partial coverage is not coverage: an unanswered sentence must never read as fine.
+    if (!sent.every((segment) => answered.has(segment.id))) return plain
+    const rows: PolicySentence[] = sent.map((segment) => ({ id: segment.id, text: segment.text, start: segment.start, end: segment.end, line: segment.line, status: 'unchecked', reasons: [], carriedBy: [], already: false }))
+    const added = applyAudit(rows, sent, audit)
+    return {
+      ignored: rows.filter((row) => row.status === 'not_covered' || row.status === 'partly').map((row) => ({ phrase: row.text.slice(0, 160), why: row.reasons.join(' ') || 'Nothing in the draft carries this out.' })),
+      untrusted: rows.filter((row) => row.status === 'untrusted').map((row) => row.text),
+      added,
+    }
+  } catch {
+    return plain
+  }
 }

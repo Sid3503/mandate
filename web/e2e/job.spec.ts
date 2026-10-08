@@ -807,6 +807,9 @@ test('a proposer key can ask but never approve', async ({ page }) => {
 test('offline is read-only', async ({ page, context }) => {
   await unlock(page, OWNER)
   await page.goto('/app/new')
+  // The status fetch must have answered before going offline: otherwise the "could not be reached" banner (which
+  // carries the same sentence) renders next to the offline banner and the assertion below is ambiguous.
+  await page.waitForResponse('**/v1/status')
   await context.setOffline(true)
   await page.evaluate(() => window.dispatchEvent(new Event('offline')))
   await expect(page.getByText('Nothing that moves money can be sent')).toBeVisible()
@@ -1027,9 +1030,9 @@ test('the owner says a change in words, sees what the code found in it, reads it
   const box = page.locator('[data-tour="rules-draft"]')
   await box.getByLabel('Describe the change you want to the rules').fill('Pay Priya 60% of what Northwind pays, never more than $180 a month, and only after I have seen the work.')
   await box.getByRole('button', { name: 'Draft it' }).click()
-  // Amber: a wish the rules cannot keep. Found by code, not by the model.
+  // Amber: a wish the rules cannot keep. A second model reading checks the draft first, so the first assertion waits.
   const ignored = box.locator('.draft-ignored')
-  await expect(ignored).toContainText('only after I have seen the work')
+  await expect(ignored).toContainText('only after I have seen the work', { timeout: 30_000 })
   await expect(ignored).toContainText('without asking you')
   await expect(box.locator('.draft-loosens')).toContainText('A standing rule would let Priya Shah from Northwind be paid with no tap')
   await expect(box.locator('.draft-readback')).toContainText('Priya Shah gets $90 (60%) with no tap from you')
@@ -1070,7 +1073,8 @@ test('a change you were writing is still there after you leave the screen or rel
   const words = 'Pay Priya 60% of what Northwind pays, never more than $180 a month, and only after I have seen the work.'
   await box.getByLabel('Describe the change you want to the rules').fill(words)
   await box.getByRole('button', { name: 'Draft it' }).click()
-  await expect(box.locator('.draft-readback')).toContainText('Priya Shah gets $90 (60%) with no tap from you')
+  // The draft, its second reading and its read-back run one after another, so the first assertion waits.
+  await expect(box.locator('.draft-readback')).toContainText('Priya Shah gets $90 (60%) with no tap from you', { timeout: 30_000 })
 
   // Reload: the words and the drafted result are still there, and still unpublished.
   await page.reload()

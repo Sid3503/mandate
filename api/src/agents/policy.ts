@@ -195,14 +195,14 @@ export function groundSentence(entry: AuditedSentence, text: string, facts: Fact
   return { id: entry.id, status: 'covered', reasons: entry.gap ? [entry.gap] : [], carriedBy, already }
 }
 
-export type ChangeSupport = { change: number; supportedBy: number[] }
+export type ChangeSupport = { change: number; supportedBy: Array<{ id: number; quote: string }> }
 
 /**
  * Changes in the draft that no sentence of the policy asked for. A change the audit did not mention counts as unsupported,
  * and so does one supported only by a sentence that was set aside. Fail closed: silence is not support.
  */
 export function unsupportedChanges(changes: Change[], support: ChangeSupport[], usable: Set<number>): Change[] {
-  const by = new Map(support.map((item) => [item.change, item.supportedBy.filter((id) => usable.has(id))]))
+  const by = new Map(support.map((item) => [item.change, item.supportedBy.map((backer) => backer.id).filter((id) => usable.has(id))]))
   return changes.filter((change) => (by.get(change.n) ?? []).length === 0)
 }
 

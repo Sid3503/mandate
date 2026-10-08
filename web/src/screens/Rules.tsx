@@ -617,6 +617,7 @@ function stageViews(stages: Array<DraftStage & { at: number }>): StageView[] {
       case 'patch': return { label: 'The model proposed a change', detail: `“${stage.summary}”` }
       case 'retry': return { label: 'The draft did not fit the rules, so it was sent back', detail: stage.reason }
       case 'checking': return { label: 'Code is checking the draft against your words', detail: 'What it loosens, what it leaves out, what it adds' }
+      case 'auditing': return { label: 'A second reading is checking the draft against each sentence', detail: 'Every claim is checked against the rules' }
       case 'replaying': return { label: 'Replaying your history under the new rules' }
       case 'reading_back': return { label: 'Writing the read-back in plain words' }
       case 'reading_policy': return { label: 'A model is reading your policy', detail: `${stage.sentences} sentence${stage.sentences === 1 ? '' : 's'}${stage.parts > 1 ? `, in ${stage.parts} parts` : ''}: rule, judgment, someone else’s words, or something Mandate cannot do` }
