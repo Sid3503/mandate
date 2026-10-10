@@ -761,7 +761,7 @@ An Ollama Cloud open-weights model, through the Vercel AI SDK, as an MCP client 
   - **Code before model.** The client's reviewer first runs a proof check in code (`agents/proof.ts`: https, home page, shortener, login, placeholder, host kind). A clear-cut bad link is rejected there with no model asked, and the model is handed the facts for the rest.
 - **The record.** Every run is stored with its full trace (`GET /v1/agent-runs/:id`, owner only): every model turn, tool call and result. A request an agent asked for links back to it, so the receipt shows the chat behind it.
 - **Without a model** (`OLLAMA_API_KEY` unset) the agents answer `503 agents.unconfigured` and nothing else changes. `npm run demo` ships a deterministic stand-in (`demo-script`) so the whole flow works offline; it is a script, not an AI, and says so on the System screen.
-- **Evaluation.** `npm run eval:agents` (in `api/`) runs the script's `cases` array, which has 14 names, and then a negotiation. A case passes when the **rules'** outcome is right. The model is allowed to be wrong; the design makes that harmless. The older "eight cases, last run 8 of 8" note is not the script. Scores are only in the past write-up later in this file, and were not re-run for this change.
+- **Evaluation.** `npm run eval:agents` (in `api/`) runs the script's `cases` array, which has 14 names, and then a negotiation. A case passes when the **rules'** outcome is right. The model is allowed to be wrong; the design makes that harmless.
 
 ### Invoices (PayPal Agent Toolkit)
 
@@ -1085,7 +1085,7 @@ Past write-up (not re-run for this change; not a fresh score). Run on 6 Oct 2026
 
 Every miss was behavioural (a wrong tool, a refusal in words that leaves no record, a timeout) and not one moved money: in all 56 scored runs PayPal was never asked to do anything the rules had not approved. That is the point of the design. The run shows the model is replaceable and the safety is not in it.
 
-Still that past write-up, not a fresh score. Re-run on 8 Oct 2026, with Amazon Bedrock fully removed (`gpt-oss:20b` clerk/negotiators/reviewer, `gemma4:31b` drafter, both on Ollama Cloud): agent cases 14 of 14, the negotiation agreed, the drafter 25 of 25, the policy reader 20 of 20 verdicts with no sentence falsely called covered and no pasted order changing the rules.
+Re-run on 8 Oct 2026, with Amazon Bedrock fully removed (`gpt-oss:20b` clerk/negotiators/reviewer, `gemma4:31b` drafter, both on Ollama Cloud): agent cases 14 of 14, the negotiation agreed, the drafter 25 of 25, the policy reader 20 of 20 verdicts with no sentence falsely called covered and no pasted order changing the rules.
 
 **End-to-end tests (`web/e2e/job.spec.ts`)**, against a fresh in-memory server per viewport:
 
