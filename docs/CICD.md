@@ -82,3 +82,17 @@ A deploy restarts the free instance and wipes its ledger, so nothing should depl
 - **No automatic rollback.** A failed smoke test turns the run red and emails you; going back is one click (above). Automatic rollback on a free instance with an ephemeral ledger would hide the failure.
 - **The real PayPal sandbox is not in CI.** CI uses the fake PayPal. Live checks (a real invoice, a payout, the webhook) stay manual: `npm run webhook:register`, the steps in `docs/JUDGES.md`.
 - **Lighthouse and the AI model evaluations** are not run per commit (`npm run eval:agents` needs a model key and costs money).
+
+## The live chain a merge does not prove
+
+CI uses the fake PayPal. What remains unproven is one unbroken live chain on the sandbox. A live run depends on the owner publishing real sandbox emails on Rules before the first capture. This repo does not contain those emails. Merging does not produce a PayPal id.
+
+Walk the frozen job in the same order as Today's next step:
+
+1. Keep the price sheets.
+2. Agree the deal.
+3. Publish `billSignedDeals` and one standing rule, only if the no-tap beat is the point.
+4. Bill milestone 0.
+5. Pay the invoice as the sandbox buyer.
+6. Observe the server ask for the contractor share.
+7. Observe PayPal `SUCCESS` or `UNCLAIMED`.
