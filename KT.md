@@ -1,6 +1,6 @@
-# Mandate — knowledge transfer
+# Mandate — knowledge transfer: history of an early Orders design
 
-Handoff for the warrant server and the sandbox runs behind it. The product story is in [README.md](README.md), with the long version in [docs/REFERENCE.md](docs/REFERENCE.md). How to call the API is in [api/README.md](api/README.md).
+> This file is the history of an early Orders design: $25 captures, a $60 cap, the clerk not built, and the payee not sent to PayPal. The cap, the clerk, the payout receiver, and the console have moved. The current cap is 18000 cents on `LINE_STUDIO_WARRANT` in `api/src/domain/schemas.ts`. Current `settlePayout` in `api/src/services/mandate.ts` sends `receiverEmail: payee.email`. The sections below are that history. The sandbox account table is a past local database, not the seed. The product story is in [README.md](README.md), with the long version in [docs/REFERENCE.md](docs/REFERENCE.md). How to call the API is in [api/README.md](api/README.md).
 
 ## What this repo is
 
@@ -76,7 +76,7 @@ The clerk is not built. Today a human sends `POST /v1/proposals` with an `Idempo
 
 ## PayPal sandbox
 
-Accounts on the developer dashboard used for these runs. Passwords live in the dashboard and in `.env`. They are not written here.
+These accounts are a past local database, not the seed. Passwords live in the dashboard and in `.env`. They are not written here.
 
 | Account | Role |
 | --- | --- |
@@ -97,7 +97,7 @@ Checkout has no return URL, so after a successful approval the browser can remai
 
 ## Live rows in `api/data/mandate.sqlite`
 
-These exist only in that local file.
+These rows are from that past local database, not the seed.
 
 | Proposal | Phase | What happened |
 | --- | --- | --- |
