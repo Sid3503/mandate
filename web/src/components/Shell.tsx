@@ -34,9 +34,20 @@ const MORE: NavItem[] = [
   { to: '/system#h-connect', label: 'Connect an agent', tour: 'nav-connect', icon: 'M8 12h8 M5 8v8 M19 8v8 M3 10v4 M21 10v4' },
 ]
 
-function isHere(item: NavItem, pathname: string): boolean {
-  if (item.end) return pathname === item.to
-  return [item.to, ...(item.also ?? [])].some((base) => pathname === base || pathname.startsWith(`${base}/`))
+/** Everything the desktop rail shows. */
+const RAIL: NavItem[] = [...NAV, ...MORE]
+
+/**
+ * Whether a nav item is the current place. An item's own address beats another item's alias, so on a surface that shows
+ * both Jobs and Deals, /deals lights Deals and not Jobs (two lit links fight over the one lime pill and one goes dark).
+ * Pass the items that surface actually shows: the phone tab bar has no Deals tab, so there /deals still lights Jobs.
+ */
+function isHere(item: NavItem, pathname: string, shown: NavItem[]): boolean {
+  const under = (base: string) => pathname === base || pathname.startsWith(`${base}/`)
+  const own = (it: NavItem) => (it.end ? pathname === it.to : under(it.to))
+  if (own(item)) return true
+  if (item.end) return false
+  return (item.also ?? []).some(under) && !shown.some((other) => other !== item && own(other))
 }
 
 function Icon({ path }: { path: string }) {
@@ -170,12 +181,12 @@ function ShellFrame() {
         </div>
         <nav className="rail-nav" aria-label="Sections">
           {NAV.map((item) => (
-            <RailLink key={item.to} item={item} collapsed={collapsed} here={isHere(item, location.pathname)} badge={item.to === '/' ? waiting : 0} />
+            <RailLink key={item.to} item={item} collapsed={collapsed} here={isHere(item, location.pathname, RAIL)} badge={item.to === '/' ? waiting : 0} />
           ))}
           <div className="rail-more" role="group" aria-label="More">
             <span className="rail-more-title rail-label">More</span>
             {MORE.map((item) => (
-              <RailLink key={item.to} item={item} collapsed={collapsed} here={isHere(item, location.pathname)} badge={0} small />
+              <RailLink key={item.to} item={item} collapsed={collapsed} here={isHere(item, location.pathname, RAIL)} badge={0} small />
             ))}
           </div>
         </nav>
@@ -229,9 +240,9 @@ function ShellFrame() {
 
       <nav className="tabbar" aria-label="Main">
         {NAV.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.end} className={isHere(item, location.pathname) ? 'tab active' : 'tab'} data-tour={item.tour}>
+          <NavLink key={item.to} to={item.to} end={item.end} className={isHere(item, location.pathname, NAV) ? 'tab active' : 'tab'} data-tour={item.tour}>
             <>
-              {isHere(item, location.pathname) ? <motion.span layoutId="tab-pill" className="pill" transition={{ type: 'spring', stiffness: 520, damping: 40 }} /> : null}
+              {isHere(item, location.pathname, NAV) ? <motion.span layoutId="tab-pill" className="pill" transition={{ type: 'spring', stiffness: 520, damping: 40 }} /> : null}
               <Icon path={item.icon} />
               <span>{item.label}</span>
               {item.to === '/' && waiting > 0 ? <span className="badge">{waiting}</span> : null}

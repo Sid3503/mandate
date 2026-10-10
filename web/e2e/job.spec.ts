@@ -1489,6 +1489,27 @@ test('System says whether the owner is notified, and never shows a webhook addre
   await expect(panel).toContainText('cannot approve or pay anything')
 })
 
+test('on Deals the sidebar still shows Jobs, and only Deals is lit (on a phone Deals has no tab, so Jobs is lit)', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/deals')
+  if (test.info().project.name === 'phone') {
+    await expect(page.locator('.tabbar a.tab.active')).toHaveText(/Jobs/)
+    return
+  }
+  const rail = page.locator('.rail-nav')
+  const jobs = rail.getByRole('link', { name: 'Jobs' })
+  const deals = rail.getByRole('link', { name: 'Deals' })
+  await expect(jobs).toBeVisible()
+  await expect(jobs).not.toHaveClass(/\bactive\b/)
+  await expect(deals).toHaveClass(/\bactive\b/)
+  // Not dark text on the dark sidebar: the label is the light, resting colour.
+  await expect(jobs).toHaveCSS('color', 'rgb(214, 208, 195)')
+  // The section's own page still lights Jobs.
+  await page.goto('/app/jobs')
+  await expect(rail.getByRole('link', { name: 'Jobs' })).toHaveClass(/\bactive\b/)
+  await expect(rail.getByRole('link', { name: 'Deals' })).not.toHaveClass(/\bactive\b/)
+})
+
 // Last on purpose: it wipes the ledger, which every earlier test builds on.
 test('on a hosted demo the owner can start over, and the next person gets a fresh Line Studio', async ({ page, request }) => {
   const headers = { authorization: `Bearer ${OWNER}` }
