@@ -87,12 +87,13 @@ A deploy restarts the free instance and wipes its ledger, so nothing should depl
 
 CI uses the fake PayPal. What remains unproven is one unbroken live chain on the sandbox. A live run depends on the owner publishing real sandbox emails on Rules before the first capture. This repo does not contain those emails. Merging does not produce a PayPal id.
 
-Walk the frozen job in the same order as Today's next step:
+Walk the frozen job in Today's next-step order:
 
 1. Keep the price sheets.
 2. Agree the deal.
-3. Publish `billSignedDeals` and one standing rule, only if the no-tap beat is the point.
-4. Bill milestone 0.
-5. Pay the invoice as the sandbox buyer.
-6. Observe the server ask for the contractor share.
-7. Observe PayPal `SUCCESS` or `UNCLAIMED`.
+3. Bill milestone 0.
+4. Approve and send, unless the invoice is already out.
+5. Pay as the sandbox buyer.
+6. Ask to pay the contractor share.
+
+Publishing `billSignedDeals`, `payOnSettle`, and one standing rule before that capture is a separate no-tap choice, not Today's next step. `UNCLAIMED` is not paid.
