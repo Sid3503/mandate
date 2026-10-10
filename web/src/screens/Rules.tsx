@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
+import { EmailNotice } from '../components/EmailNotice'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
 import { api, ApiError, type DraftStage } from '../lib/api'
 import { StageTrail, type StageView } from '../components/ToolTrail'
@@ -94,6 +95,7 @@ export function Rules() {
         {owner && !editing ? <button type="button" className="btn btn-ink" data-tour="rules-write" onClick={() => { setSeed(null); setResume(null); keep({ body: null }); setEditing(true) }}>Write version {current.version + 1}</button> : null}
       </PageHead>
 
+      <EmailNotice here />
       {notice ? <div className="panel wip-note" role="status"><p className="fine">{notice}</p><button type="button" className="link" onClick={() => setNotice(null)}>Dismiss</button></div> : null}
       {owner && !editing && saved?.body ? (
         <div className="panel panel-lime wip-note" role="status" data-testid="wip-banner">
