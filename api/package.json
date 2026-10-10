@@ -20,19 +20,19 @@
     "eval:policy": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-policy.ts"
   },
   "dependencies": {
-    "@ai-sdk/mcp": "^2.0.66",
+    "@ai-sdk/mcp": "^2.0.69",
     "@asteasolutions/zod-to-openapi": "^9.1.0",
     "@hono/node-server": "^1.19.12",
-    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@paypal/agent-toolkit": "^1.11.0",
-    "ai": "^7.0.127",
+    "ai": "^7.0.130",
     "ai-sdk-ollama": "^4.4.0",
-    "hono": "^4.13.12",
+    "hono": "^4.13.13",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",
-    "tsx": "^4.21.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^5.0.3"
   },
