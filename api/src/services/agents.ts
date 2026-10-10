@@ -21,6 +21,10 @@ export class AgentService {
     if (!name) throw new Problem(422, 'agent.name', 'The agent needs a name', 'Give the agent a name, such as “CI script” or “Priya\'s assistant”.')
     const scopes = [...new Set(input.scopes)]
     if (scopes.length === 0) throw new Problem(422, 'agent.scopes', 'The agent needs at least one scope', 'Pick at least one: read, propose, stream, mcp, deals.')
+    // The MCP door only opens the door. Without read, propose or deals the key would connect and then have no tools.
+    if (scopes.includes('mcp') && !scopes.some((scope) => scope === 'read' || scope === 'propose' || scope === 'deals')) {
+      throw new Problem(422, 'agent.scopes', 'The MCP door needs something behind it', 'Add read (to look), propose (to ask to pay or bill) or deals (to negotiate) next to the MCP door, or the agent would connect with no tools.')
+    }
     const limits: AgentLimits = { ...DEFAULT_AGENT_LIMITS, ...(input.limits ?? {}) }
     if (!Number.isFinite(limits.proposalsPerHour) || limits.proposalsPerHour < 1 || limits.proposalsPerHour > 10_000) throw new Problem(422, 'agent.limit', 'proposalsPerHour must be between 1 and 10000', 'Set a sensible hourly proposal allowance for this agent.')
     if (!Number.isFinite(limits.centsPerHour) || limits.centsPerHour < 1) throw new Problem(422, 'agent.limit', 'centsPerHour must be positive', 'Set a sensible hourly value ceiling for this agent.')

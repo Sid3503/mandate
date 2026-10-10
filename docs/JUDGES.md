@@ -12,7 +12,7 @@ Open the hosted URL (or run it, see the [README](../README.md#run-it-real-paypal
 2. **Deals → Let the agents negotiate.** Two companies' agents trade offers. $450 and $200 are refused; $300 in two milestones is agreed and signed.
 3. **Jobs → open the job.** The track shows where it is and the one next step. Bill a milestone, approve it, and pay the invoice as the sandbox buyer. The page updates by itself when PayPal says it was paid.
 4. **Pay the contractor.** $90 goes out through PayPal Payouts, only from the settled $150. Try the same payout *before* the client paid, and it is refused (`funding.missing`).
-5. **System → Connect any agent.** Make an agent key with the MCP door scope and point your own MCP agent at it. Tell it to ignore its rules. It can only ask.
+5. **System → Connect an agent.** Name it, keep *Read and ask*, press **Create the key**, then **Check the connection from here**. Paste the Claude Code command (the key is already in it) into your own MCP agent and tell it to ignore its rules. It can only ask.
 6. **Activity → Proof**, then open any receipt and press **Verify**. The check runs in your browser against public keys.
 7. **Jobs → Share this job.** Create a status link for Priya, open it in a private window with no key, and see that she sees only her own payouts. Withdraw it and the same address stops working.
 

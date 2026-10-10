@@ -46,6 +46,12 @@ const app = createApp({
   },
 })
 
+// Test-only: the breaker is off in these tests, so this is how a test gets an agent into the suspended state.
+app.post('/__fake/agents/:id/suspend', (c) => {
+  services.repo.setAgentStatus(c.req.param('id'), 'suspended', new Date().toISOString())
+  return c.json({ ok: true })
+})
+
 // Test-only controls for how the fake PayPal answers a payout. They need the owner key like everything else.
 app.post('/__fake/payouts/:outcome', async (c) => {
   const outcome = c.req.param('outcome')
