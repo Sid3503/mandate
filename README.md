@@ -18,7 +18,7 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 
 | Step | What happens | Status |
 | --- | --- | --- |
-| Money in | The studio bills $150. Meera (owner) taps. Northwind pays through PayPal Orders. | built, live in sandbox |
+| Money in | The studio bills $150. Meera (owner) taps. Capture tries an invoice first. Orders run when invoicing is off, unpermitted, or the row already has an order id. | built, live in sandbox |
 | Money out | The captured $150 funds Priya's $90. Meera taps. PayPal Payouts sends exactly $90 to Priya's own account, and it is called *paid* only when PayPal says so. | built, live in sandbox |
 | Refusals | $18 team lunch (`category.missing`). Fake vendor "P. Shah" $480 (`payee.unknown`). Payout before the client paid (`funding.missing`). Retry at $250 after the tap (`cart.immutable`). A third $90 past the $180 monthly cap (`cap.monthly`). | built |
 | Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | built |
@@ -29,7 +29,7 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 | Client acceptance | Optionally, the studio's delivery waits for the client's own agent to accept it (signed over the exact proof link) before the invoice goes out. | built, tested |
 | Verify a receipt | A public page checks a downloaded receipt's lock and signatures in the browser, against the public keys, without asking the server. | built, tested |
 | Ask Mandate | One box (Cmd/Ctrl + K): questions answered from the ledger with no model, "delivered" prepared as a button, rule-like sentences handed to the drafter, and a refusal that says what would pass. | built, tested |
-| Rules in your own words | A model drafts; code flags what it dropped (amber) or added (red), reads it back, and replays your history; you publish. | built, measured (25 wordings, 0 hidden loosenings) |
+| Rules in your own words | A model drafts; code flags what it dropped (amber) or added (red), reads it back, and replays your history; you publish. | built, measured (25 wordings, 0 hidden loosenings; not re-run for this change) |
 | Today, Ask, Proof | A landing page of what waits for the owner, what is in flight and what was done for them (and how); a clerk on Cmd/Ctrl + K; and a Proof page that re-verifies every lock, every yes and every amount from the ledger. | built |
 | Standing rules | The owner signs one rule for Priya's share. The $90 is then sent with no tap, after the same checks: funding, share, cap, proof, dispute hold, signed lock. Anything that does not match still waits. | built, red-teamed, real Payouts call verified |
 | Invoices | A client charge is billed as a PayPal invoice through the Agent Toolkit, and settled only when PayPal says it was paid. Falls back to checkout where the app lacks the permission. | built, live in sandbox |
@@ -99,7 +99,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-498 API tests (including a 56-case red team), 56 end-to-end tests run on both desktop and phone (112 runs) (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
+498 API tests (including a 56-case red team), 56 end-to-end tests run on both desktop and phone (112 runs) (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile. Those counts were not re-run for this change.
 
 ## Where to read next
 
