@@ -76,6 +76,7 @@ export const EVENT: Record<string, string> = {
   'delivery.accepted': 'Client’s agent accepted the delivery · signed',
   'standing.waiting': 'Held for now · Mandate will retry',
   'autopilot.payout_asked': 'Autopilot asked to pay the contractor',
+  'autopilot.clearing': 'Autopilot is waiting for the client’s money to clear',
   'payout.cancelled': 'Unclaimed payout cancelled · money returned',
   'invoice.reminded': 'Reminder sent to the client',
   'invoice.cancelled': 'Invoice cancelled',
@@ -122,6 +123,7 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
     case 'funding.missing': return 'No client payment has money left to fund this payout.'
     case 'funding.job_mismatch': return 'That client payment belongs to a different job.'
     case 'system.paused': return 'Mandate is paused. Nothing automatic runs and no agent is served until the owner resumes it; the owner’s own requests wait for a tap.'
+    case 'funding.clearing': return `The client’s payment is still clearing, so no rule pays ${who} from it yet. A client can still take money back for a while. You can approve it yourself now, or let the rule send it when the wait is over.`
     case 'funding.disputed': return 'The client has disputed that payment with PayPal, so it cannot fund a payout until the dispute is resolved.'
     case 'funding.exceeds': return `That client payment cannot fund this much at a ${share} contractor share.`
     case 'deal.required': return 'This job has an agreed deal, so a charge on it must bill one of the deal’s milestones.'
@@ -168,6 +170,7 @@ export function problemWords(code: string): string {
     case 'system.paused': return 'Mandate is paused. Nothing automatic runs and agents are refused until the owner resumes it.'
     case 'rate.limited': return 'Too many requests. Wait a minute.'
     case 'request.invalid': return 'Some fields did not pass validation.'
+    case 'deal.rules_invalid': return 'That price sheet is missing something the rules need. Nothing was saved.'
     default: return ''
   }
 }
@@ -204,9 +207,10 @@ export function ruleSentences(warrant: Warrant): string[] {
     warrant.fundingRequired
       ? `A contractor is only paid from a client payment already settled on the same job, up to ${warrant.contractorShareBps / 100}% of it.`
       : 'Contractor payouts do not need a client payment behind them.',
+    warrant.fundingRequired && warrant.clearingDays > 0 ? `A rule or autopilot waits ${warrant.clearingDays} day${warrant.clearingDays === 1 ? '' : 's'} after a client pays before it sends a payout from that money. You can still tap to pay earlier.` : '',
     `Everything moves in ${warrant.currency}, counted in whole cents.`,
   ]
-  return lines
+  return lines.filter((line) => line !== '')
 }
 
 /** The deal check's rule codes, in words for a person who is not a lawyer. */

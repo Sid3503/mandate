@@ -57,6 +57,8 @@ export const WarrantBodySchema = z.object({
   clients: z.array(PayeeSchema).max(100).default([]),
   fundingRequired: z.boolean().default(false),
   contractorShareBps: z.number().int().min(0).max(10_000).default(10_000),
+  /** Days a client payment must have been settled before a rule may send a payout from it with no tap. 0 means no wait. The owner can still tap to pay earlier. */
+  clearingDays: z.number().int().min(0).max(60).default(0),
   standing: z.array(StandingRuleSchema).max(20).default([]),
   automation: AutomationSchema.default(NO_AUTOMATION),
 }).strict().superRefine((warrant, ctx) => {
@@ -168,6 +170,7 @@ export const LINE_STUDIO_WARRANT: WarrantBody = {
   automation: NO_AUTOMATION,
   fundingRequired: true,
   contractorShareBps: 6000,
+  clearingDays: 0,
 }
 
 export const DEMO_JOB_ID = 'job_northwind_logo'

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, JOB, STUDIO_KEY, terms } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, confirmPrices, EVIDENCE, harness, JOB, STUDIO_KEY, terms } from './support'
 import { scriptedModel, type ScriptContext } from './mockModel'
 
 afterEach(closeAll)
@@ -155,6 +155,7 @@ describe('the negotiators', () => {
       return offerFor(30_000, 'Let us meet at $300.00.', threadId)
     })
     const { app } = harness({ model })
+    await confirmPrices(app)
     const run = await call(app, 'POST', '/v1/negotiations', { body: {} })
     expect(run.status).toBe(200)
     expect(run.json).toMatchObject({ agreed: true })
@@ -182,6 +183,7 @@ describe('the negotiators', () => {
       return offerFor(30_000, 'Agreed in spirit, $300.00.', threadId)
     })
     const { app } = harness({ model })
+    await confirmPrices(app)
     await call(app, 'POST', '/v1/negotiations', { body: {} })
     const sellerPrompts = model.prompts.filter((prompt) => prompt.includes('the seller'))
     const buyerPrompts = model.prompts.filter((prompt) => prompt.includes('the buyer') && !prompt.includes('the seller'))
@@ -204,6 +206,7 @@ describe('the negotiators', () => {
       return system.includes('the seller') ? offerFor(45_000, 'My minimum is $250.00 but I want $450.00.', threadId) : offerFor(30_000, 'Fine.', threadId)
     })
     const { app } = harness({ model })
+    await confirmPrices(app)
     const run = await call(app, 'POST', '/v1/negotiations', { body: { maxOffers: 2 } })
     const first = run.json.turns[0].deal
     expect(first.prompt).not.toContain('250.00')
@@ -214,6 +217,7 @@ describe('the negotiators', () => {
   it('stop after the turns they are given when no terms fit both sides', async () => {
     const model = scriptedModel(({ system, round }) => round > 0 ? { text: 'offered' } : offerFor(system.includes('the seller') ? 45_000 : 20_000, 'again', threadOf(system)))
     const { app } = harness({ model })
+    await confirmPrices(app)
     const run = await call(app, 'POST', '/v1/negotiations', { body: { maxOffers: 4 } })
     expect(run.json).toMatchObject({ agreed: false, dealId: null })
     expect(run.json.turns).toHaveLength(4)
@@ -222,6 +226,7 @@ describe('the negotiators', () => {
 
   it('end cleanly if an agent never makes an offer', async () => {
     const { app } = harness({ model: scriptedModel(() => ({ text: 'I would rather not.' })) })
+    await confirmPrices(app)
     const run = await call(app, 'POST', '/v1/negotiations', { body: {} })
     expect(run.json.agreed).toBe(false)
     expect(run.json.turns).toEqual([expect.objectContaining({ side: 'seller', error: 'no_offer' })])
@@ -231,6 +236,17 @@ describe('the negotiators', () => {
     const { app } = harness({ model: scriptedModel(() => ({ text: 'x' })) })
     expect((await call(app, 'POST', '/v1/negotiations', { key: STUDIO_KEY, body: {} })).status).toBe(403)
     expect((await call(app, 'POST', '/v1/negotiations', { key: BUYER_KEY, body: {} })).status).toBe(403)
+  })
+
+  it('wait for kept numbers before any agent talks: no model is even called', async () => {
+    const model = scriptedModel(() => ({ text: 'x' }))
+    const { app } = harness({ model })
+    const run = await call(app, 'POST', '/v1/negotiations', { body: {} })
+    expect(run.status).toBe(409)
+    expect(run.json.code).toBe('deal.rules_unconfirmed')
+    expect(model.calls()).toBe(0)
+    await confirmPrices(app)
+    expect((await call(app, 'POST', '/v1/negotiations', { body: { maxOffers: 2 } })).status).toBe(200)
   })
 })
 
@@ -255,6 +271,7 @@ describe('watching a negotiation live', () => {
   it('tells the watcher who is thinking, then each offer with the rules\' verdict, then the result', async () => {
     turnNo = 0
     const { app } = harness({ model: script() })
+    await confirmPrices(app)
     const response = await app.request('http://mandate.test/v1/negotiations/stream', { method: 'POST', headers: { authorization: 'Bearer test-mandate-key-32chars', 'content-type': 'application/json' }, body: '{}' })
     expect(response.headers.get('content-type')).toContain('text/event-stream')
     const all = events(await response.text())
@@ -287,6 +304,7 @@ describe('watching a negotiation live', () => {
   it('stops when the watcher presses Stop: no more offers are made', async () => {
     turnNo = 0
     const { app, repo } = harness({ model: script(120) })
+    await confirmPrices(app)
     const controller = new AbortController()
     const response = await app.request(new Request('http://mandate.test/v1/negotiations/stream', { method: 'POST', headers: { authorization: 'Bearer test-mandate-key-32chars', 'content-type': 'application/json' }, body: '{}', signal: controller.signal }))
     const reader = response.body!.getReader()
@@ -311,6 +329,7 @@ describe('a model hiccup during a negotiation', () => {
       return { tool: 'offer_deal', input: { buyer: 'Northwind', threadId, terms: terms(system.includes('the seller') ? 30_000 : 20_000) } }
     })
     const { app } = harness({ model })
+    await confirmPrices(app)
     const run = await call(app, 'POST', '/v1/negotiations', { body: {} })
     expect(run.json.turns[0]).toMatchObject({ side: 'seller', deal: { terms: { totalCents: 30_000 } } })
     expect(run.json.agreed).toBe(true)

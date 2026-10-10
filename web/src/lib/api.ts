@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
+import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -217,6 +217,18 @@ export const api = {
   createAgent: (input: { name: string; scopes: AgentScope[]; limits?: { proposalsPerHour?: number; centsPerHour?: number } }) => request<{ agent: AgentRow; apiKey: string }>('/v1/agents', { method: 'POST', body: input }),
   revokeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/revoke`, { method: 'POST' }),
   resumeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/resume`, { method: 'POST' }),
+  shares: (jobId: string) => request<{ data: ShareSummary[] }>(`/v1/jobs/${encodeURIComponent(jobId)}/shares`),
+  createShare: (jobId: string, input: { partyId: string; ttlDays?: number; label?: string }) => request<{ share: ShareSummary; token: string; url: string }>(`/v1/jobs/${encodeURIComponent(jobId)}/shares`, { method: 'POST', body: input }),
+  revokeShare: (id: string) => request<ShareSummary>(`/v1/shares/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
+  /** Opened by someone who holds a link and no key. It sends no key even if this browser has one. */
+  shareView: (token: string) => request<ShareView>(`/v1/share/${encodeURIComponent(token)}`, { key: '' }),
+  notify: () => request<{ enabled: boolean; lastSentAt: string | null; lastError: string | null; sent: number }>('/v1/notify'),
+  notifyTest: () => request<{ enabled: boolean; lastSentAt: string | null; lastError: string | null; sent: number }>('/v1/notify/test', { method: 'POST' }),
+  resetDemo: () => request<{ reset: true }>('/v1/demo/reset', { method: 'POST', body: { confirm: 'reset the demo' } }),
+  clientKeys: () => request<ClientKeyRow[]>('/v1/client-keys'),
+  createClientKey: (input: { name: string; partyId: string }) => request<{ key: ClientKeyRow; apiKey: string }>('/v1/client-keys', { method: 'POST', body: input }),
+  revokeClientKey: (id: string) => request<ClientKeyRow>(`/v1/client-keys/${id}/revoke`, { method: 'POST' }),
+  rotateClientKey: (id: string) => request<{ key: ClientKeyRow; apiKey: string }>(`/v1/client-keys/${id}/rotate`, { method: 'POST' }),
   health: () => request<Health>('/health'),
   ready: () => request<Health>('/ready'),
   session: (key?: string) => request<Session>('/v1/session', { key }),
@@ -257,6 +269,10 @@ export const api = {
   reviewDelivery: (dealId: string, milestone: number) =>
     request<{ runId: string; model: string; ms: number; delivery: Delivery; charge: Proposal | null }>(`/v1/deals/${dealId}/milestones/${milestone}/review`, { method: 'POST' }),
   partyRules: () => request<{ data: PartyRulesView[] }>('/v1/party-rules'),
+  // The caller's own sheet: a client key may read this and never the studio's, and the owner's own is the studio's.
+  myPartyRules: () => request<PartyRulesView>('/v1/party-rules/mine'),
+  // Write one company's sheet. Only the price fields are sent; everything else about the company is kept.
+  putPartyRules: (partyId: string, body: Record<string, unknown>) => request<PartyRulesView>(`/v1/party-rules/${encodeURIComponent(partyId)}`, { method: 'PUT', body }),
   negotiate: (body: { buyerBrief?: string; sellerBrief?: string } = {}) => request<Negotiation>('/v1/negotiations', { method: 'POST', body }),
   clerk: (message: string, conversationId?: string) => request<ClerkReply>('/v1/clerk/messages', { method: 'POST', body: { message, conversationId } }),
   agentRuns: () => request<{ data: Array<{ id: string; agent: string; status: string; model: string; input: string; ms: number; createdAt: string }> }>('/v1/agent-runs'),

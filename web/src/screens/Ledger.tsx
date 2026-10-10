@@ -1,3 +1,4 @@
+import { ActivityTabs } from '../components/ActivityTabs'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef, type ICellRendererParams } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
@@ -53,6 +54,7 @@ export function Ledger() {
   const [tab, setTab] = useState<'requests' | 'events' | 'paypal'>('requests')
   return (
     <div className="page page-wide">
+      <ActivityTabs />
       <PageHead eyebrow="Append-only · every attempt, including the refused ones" title="Ledger">
         <div className="segmented small" role="tablist" data-tour="ledger-tabs">
           <button type="button" role="tab" aria-selected={tab === 'requests'} className={tab === 'requests' ? 'on' : ''} onClick={() => setTab('requests')}>Requests</button>

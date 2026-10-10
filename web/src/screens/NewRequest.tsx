@@ -74,6 +74,8 @@ export function NewRequest() {
   const cents = parseCents(amount)
   const finalCategory = category === OTHER ? otherCategory.trim().toLowerCase() : category
   const payee = stranger !== null && kind !== 'refund' ? stranger.trim() : party
+  // Name what is missing while the button is dead, so an incomplete form never fails silently.
+  const missing = [cents === null ? 'an amount' : null, !payee ? (kind === 'refund' ? 'a settled payment' : 'who') : null, !description.trim() ? 'what it is for' : null].filter((part): part is string => part !== null)
   const input: ProposalInput | null = cents === null || !payee || !description.trim() ? null : {
     kind,
     payee,
@@ -198,7 +200,7 @@ export function NewRequest() {
           <label className="field" data-tour="new-prompt"><span>How it was asked, in words</span><textarea rows={2} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Pay Priya her $90 share for Northwind milestone 1" maxLength={4000} /></label>
 
           <div className="row between wrap gap-s">
-            <span className="mono small muted" title="Sent as the Idempotency-Key header">Idempotency-Key {idem.slice(0, 18)}…</span>
+            <span className="fine">{missing.length > 0 ? `To ask the rules: add ${missing.join(', ')}.` : 'Double-press safe: sending the same request twice asks once.'}</span>
             <button type="submit" className="btn btn-lime btn-big" data-tour="new-submit" disabled={!input || !online || send.isPending}>{send.isPending ? 'Asking the rules…' : 'Ask the rules'}</button>
           </div>
           <ProblemCard error={send.error} />

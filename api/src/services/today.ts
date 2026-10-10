@@ -192,10 +192,12 @@ export class TodayService {
     const steps = [
       { id: 'paypal', label: 'Connect PayPal', hint: 'Add the sandbox app credentials to the server, then check System.', href: '/system', done: this.paypalConfigured() },
       { id: 'people', label: 'Add the people you bill and pay', hint: 'A client and a contractor on the rules.', href: '/rules', done: Boolean(body && body.payees.length > 0 && body.clients.length > 0) },
+      { id: 'price', label: 'Set what each company will accept', hint: 'The least the studio takes and the most each client pays. Each company writes its own, on Deals.', href: '/deals', done: this.deals.priceLimitsSet() },
       { id: 'deal', label: 'Agree a deal with a client', hint: 'Let the two agents negotiate, or offer terms yourself.', href: '/deals', done: this.repo.countAgreedDeals() > 0 },
       { id: 'rule', label: 'Sign a standing rule for a contractor', hint: 'Say yes once to a kind of payout, so it needs no tap.', href: '/rules', done: Boolean(body && body.standing.length > 0) },
       { id: 'autopilot', label: 'Switch on autopilot', hint: 'Bill on delivery, pay when the client pays, chase unpaid invoices.', href: '/rules', done: Boolean(body && (body.automation.billSignedDeals || body.automation.payOnSettle || body.automation.remindUnpaidAfterDays !== null)) },
       { id: 'first', label: 'Get the first client payment through', hint: 'Bill a milestone and have the client pay it.', href: '/jobs', done: this.repo.settledProposals('1970-01-01T00:00:00.000Z', 500).some((row) => row.kind === 'charge') },
+      { id: 'paid', label: 'Pay a contractor from settled money', hint: 'A payout funded by a client payment PayPal confirmed. Money in releases money out.', href: '/jobs', done: this.repo.settledProposals('1970-01-01T00:00:00.000Z', 500).some((row) => row.kind === 'payment') },
     ]
     return { complete: steps.every((step) => step.done), steps }
   }

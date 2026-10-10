@@ -9,6 +9,9 @@ services:
     startCommand: npm start
     healthCheckPath: /ready
     envVars:
+      # The API needs Node 22.13+ (node:sqlite). Pinned to the version it is tested on.
+      - key: NODE_VERSION
+        value: 24.14.1
       - key: NODE_ENV
         value: production
       - key: HOST
@@ -34,3 +37,8 @@ services:
         sync: false
       - key: PAYPAL_CLIENT_SECRET
         sync: false
+      # Set these by hand in the dashboard after the first deploy (see docs/REFERENCE.md, Deployment):
+      #   PAYPAL_WEBHOOK_ID    the id PayPal gives the webhook you register for https://<host>/v1/webhooks/paypal
+      #   DEMO_RESET=on        lets the owner wipe the demo from System (refused unless PAYPAL_API is the sandbox)
+      #   NOTIFY_WEBHOOK_URL   a Slack/Discord/Zapier https incoming webhook; it is a secret
+      # Links to status pages and the console are built from RENDER_EXTERNAL_URL, which Render sets itself.

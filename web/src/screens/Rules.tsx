@@ -35,6 +35,7 @@ const LABELS: Array<{ key: keyof Body; label: string; show: (body: Body) => stri
   { key: 'monthlyCapCents', label: 'Monthly contractor cap', show: (b) => dollars(b.monthlyCapCents) },
   { key: 'perPaymentCeilingCents', label: 'Per-payment ceiling', show: (b) => dollars(b.perPaymentCeilingCents) },
   { key: 'contractorShareBps', label: 'Contractor share of client money', show: (b) => `${(b.contractorShareBps ?? 10000) / 100}%` },
+  { key: 'clearingDays', label: 'Wait after a client pays', show: (b) => ((b.clearingDays ?? 0) === 0 ? 'no wait' : `${b.clearingDays} day${b.clearingDays === 1 ? '' : 's'} before a rule pays from it`) },
   { key: 'fundingRequired', label: 'Payouts need client money', show: (b) => (b.fundingRequired ? 'yes' : 'no') },
   { key: 'evidenceRequired', label: 'Proof link required', show: (b) => (b.evidenceRequired ? 'yes' : 'no') },
   { key: 'currency', label: 'Currency', show: (b) => b.currency },
@@ -199,6 +200,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
   const [cap, setCap] = useState(centsInput(from.monthlyCapCents))
   const [ceiling, setCeiling] = useState(centsInput(from.perPaymentCeilingCents))
   const [share, setShare] = useState(String((from.contractorShareBps ?? 10000) / 100))
+  const [clearing, setClearing] = useState(String(from.clearingDays ?? 0))
   const [funding, setFunding] = useState(Boolean(from.fundingRequired))
   const [evidence, setEvidence] = useState(from.evidenceRequired)
   const [categories, setCategories] = useState(from.categories.join(', '))
@@ -224,6 +226,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
       monthlyCapCents: c,
       perPaymentCeilingCents: ce,
       contractorShareBps: Math.round(sh * 100),
+      clearingDays: Math.max(0, Math.min(60, Math.round(Number(clearing)) || 0)),
       fundingRequired: funding,
       evidenceRequired: evidence,
       categories: categories.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean),
@@ -276,6 +279,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
             <label className="check"><input type="checkbox" checked={funding} onChange={(e) => setFunding(e.target.checked)} /> Payouts need client money first</label>
             <label className="check"><input type="checkbox" checked={evidence} onChange={(e) => setEvidence(e.target.checked)} /> Proof link required</label>
           </div>
+          <label className="field"><span>Wait after a client pays, before a rule pays a contractor from it</span><span className="dollar-input"><input inputMode="numeric" aria-label="Days to wait after a client pays" value={clearing} onChange={(e) => setClearing(e.target.value)} /><span>days</span></span><small>0 means no wait. A client can still take money back for a while, so a rule or autopilot waits this long. You can still tap to pay earlier.</small></label>
           <label className="field"><span>Allowed work, comma separated</span><input value={categories} onChange={(e) => setCategories(e.target.value)} /></label>
           <Parties title="Who can be paid" prefix="payee_" list={payees} onChange={setPayees} />
           <Parties title="Who can be billed" prefix="client_" list={clients} onChange={setClients} />
@@ -493,7 +497,7 @@ function PolicyBox({ onUse }: { onUse: (result: RulesDraft) => void }) {
         <label className="sr-only" htmlFor="policy-text">Your written policy</label>
         <textarea id="policy-text" rows={8} maxLength={POLICY_LIMIT} value={text} placeholder={'Contractors may be paid at most $2,000 a month.\nEvery request needs a link to the work.\nUse good judgment on anything unusual.'} onChange={(event) => setText(event.target.value)} />
         <div className="row between wrap">
-          <span className="fine">{text.length.toLocaleString()} of {POLICY_LIMIT.toLocaleString()} characters. Quoted or forwarded text is not treated as yours.</span>
+          <span className="fine">{text.length.toLocaleString()} of {POLICY_LIMIT.toLocaleString()} characters · at least 20 to read. Quoted or forwarded text is not treated as yours.</span>
           <button type="submit" className="btn btn-ink" disabled={!online || text.trim().length < 20 || read.isPending}>{read.isPending ? 'Reading…' : 'Read my policy'}</button>
         </div>
       </form>

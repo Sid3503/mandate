@@ -103,6 +103,7 @@ export function factsOf(body: WarrantBody): Fact[] {
     { key: 'monthlyCapCents', label: 'the monthly contractor cap', value: money(body.monthlyCapCents) },
     { key: 'perPaymentCeilingCents', label: 'the per-payment ceiling (no single payment above it)', value: money(body.perPaymentCeilingCents) },
     { key: 'contractorShareBps', label: 'the most of a client payment contractors can receive', value: `${body.contractorShareBps / 100}%` },
+    { key: 'clearingDays', label: 'a rule pays a contractor only after the client\'s payment has settled this long (the owner can still tap sooner)', value: body.clearingDays === 0 ? 'no wait' : `${body.clearingDays} day${body.clearingDays === 1 ? '' : 's'}` },
     { key: 'evidenceRequired', label: 'every request needs an https link to the work', value: yes(body.evidenceRequired) },
     { key: 'fundingRequired', label: 'a contractor is paid only from a client payment that has settled', value: yes(body.fundingRequired) },
     { key: 'categories', label: 'the allowed kinds of work', value: body.categories.join(', ') || 'none' },

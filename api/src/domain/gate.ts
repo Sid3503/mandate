@@ -18,6 +18,7 @@ export const Clause = {
   fundingJobMismatch: 'funding.job_mismatch',
   fundingExceeds: 'funding.exceeds',
   fundingDisputed: 'funding.disputed',
+  fundingClearing: 'funding.clearing',
   standingMatched: 'standing.matched',
   standingBilling: 'standing.billing',
   dealUnknown: 'deal.unknown',
@@ -64,6 +65,8 @@ export type FundingCharge = {
   payeeHeldCents?: number
   /** PayPal has an open dispute on this client payment. Money that may be taken back is not spent. */
   disputed?: boolean
+  /** When this client payment settled, from the ledger. Null when it is not known. */
+  settledAt?: string | null
 }
 
 /** What the gate needs to know about the deal a charge bills, resolved by the service from the database. */
@@ -103,6 +106,24 @@ export function fundableCents(warrant: WarrantBody, funding: FundingCharge): num
 export type GateContext = {
   reservedCents: number
   priorCaptureIds: string[]
+  /** The time the request is judged at, in milliseconds. The gate has no clock of its own. */
+  nowMs?: number
+}
+
+const DAY_MS = 86_400_000
+
+/**
+ * Has this client payment cleared? Money a client can still take back (a chargeback, a dispute that has not opened yet)
+ * is not paid out by a rule until it has been settled for `clearingDays`. With no clock, or no known settle time, it
+ * has not cleared: the gate fails closed.
+ */
+export function clearingState(warrant: { clearingDays?: number }, funding: { settledAt?: string | null }, nowMs: number | undefined): { pending: boolean; clearsAt: string | null } {
+  const days = warrant.clearingDays ?? 0
+  if (days <= 0) return { pending: false, clearsAt: null }
+  const settled = funding.settledAt ? Date.parse(funding.settledAt) : Number.NaN
+  if (!Number.isFinite(settled) || nowMs === undefined) return { pending: true, clearsAt: null }
+  const clears = settled + days * DAY_MS
+  return { pending: nowMs < clears, clearsAt: new Date(clears).toISOString() }
 }
 
 function deny(clause: string, detail: string): Decision {
@@ -205,7 +226,15 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
       detail: 'covered by the owner\'s rule to bill signed-deal milestones when proof is attached: the client, the amount and the milestone are exactly what the deal says, and it has not been billed before, so no tap is needed',
     }
   }
+  // A payout that would go with no tap waits while the client's money could still be taken back. Only the owner's own tap sends it early.
+  const clearing = proposal.kind === 'payment' && proposal.funding ? clearingState(warrant, proposal.funding, context.nowMs) : null
+  const holdForClearing = (): Decision => ({
+    gate: 'NEEDS_APPROVAL',
+    clause: Clause.fundingClearing,
+    detail: `the client's payment is still clearing${clearing?.clearsAt ? ` until ${clearing.clearsAt.slice(0, 10)}` : ''} (${warrant.clearingDays} day${warrant.clearingDays === 1 ? '' : 's'} after it settled), so no rule sends this on its own. You can still approve it yourself.`,
+  })
   const standing = matchStanding(warrant, proposal)
+  if (standing && clearing?.pending) return holdForClearing()
   if (standing) {
     return {
       gate: 'AUTO',
@@ -213,6 +242,7 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
       detail: `covered by the owner's standing rule ${standing.id}: paid from settled ${standing.requireDeal ? 'signed-deal ' : ''}client money, within the contractor share and the monthly cap, so no tap is needed`,
     }
   }
+  if (proposal.amountCents < warrant.autoSettleUnderCents && clearing?.pending) return holdForClearing()
   if (proposal.amountCents < warrant.autoSettleUnderCents) {
     return {
       gate: 'AUTO',

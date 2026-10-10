@@ -41,6 +41,8 @@ const app = createApp({
     paypalConfigured: true,
     log: false,
     publicUrl: `http://127.0.0.1:${port}`,
+    // The tests run against a fake PayPal, so the reset a hosted demo uses is safe to offer here.
+    demoReset: true,
   },
 })
 

@@ -13,6 +13,7 @@ import { installProcessGuards } from './http/process'
 import { createToolkitInvoices } from './paypal/invoices'
 import { createPayPalClient } from './paypal/client'
 import { createToolkitWatch } from './paypal/watch'
+import { Notifier } from './services/notify'
 
 const config = loadConfig(process.env)
 const defaultWeb = fileURLToPath(new URL('../../web/dist', import.meta.url))
@@ -46,8 +47,13 @@ const agents = new AgentService(services, model, () => new Date(), drafterModel,
 
 installProcessGuards()
 let draining = false
+// Tell the owner's own channel when something needs them. Off unless NOTIFY_WEBHOOK_URL is set.
+const notifier = new Notifier({ url: config.notifyWebhookUrl, repo: services.repo, consoleUrl: `${config.publicUrl.replace(/\/$/, '')}/app`, now: () => new Date() })
+notifier.start()
+
 const app = createApp({
   draining: () => draining,
+  notifier,
   db,
   signer,
   services,
@@ -70,6 +76,7 @@ const app = createApp({
     publicUrl: config.publicUrl,
     webhookId: config.paypalWebhookId,
     clientAgent: config.clientAgent,
+    demoReset: config.demoReset,
   },
 })
 

@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { afterEach, describe, expect, it } from 'vitest'
-import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY, terms, type Requester } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, confirmPrices, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY, terms, type Requester } from './support'
 
 afterEach(closeAll)
 
@@ -150,6 +150,7 @@ describe('the MCP door', () => {
 
   it('lets two agents negotiate the frozen deal through tools: $450 no, $200 no, $300 yes', async () => {
     const { app } = harness()
+    await confirmPrices(app)
     const seller = await connect(app, STUDIO_KEY)
     const buyer = await connect(app, BUYER_KEY)
     const terms300 = (total: number) => terms(total)

@@ -1,13 +1,16 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useGuide } from '../components/GuidedTour'
+import { ConnectAgent } from '../components/ConnectAgent'
+import { DemoReset } from '../components/DemoReset'
+import { NotifyPanel } from '../components/NotifyPanel'
 import { FeaturePanel, ToolTiers } from '../components/PayPalFeatures'
 import { Chip, KV, Loading, PageHead } from '../components/ui'
 import { api, ApiError } from '../lib/api'
-import type { AgentRow, AgentScope } from '../lib/types'
+import type { AgentRow, AgentScope, ClientKeyRow } from '../lib/types'
 import { when } from '../lib/format'
-import { useIsOwner, useSession } from '../lib/hooks'
+import { useIsOwner, useSession, useWarrant } from '../lib/hooks'
 import { session } from '../lib/session'
 
 const SCOPE_WORDS: Record<AgentScope, string> = { read: 'read', propose: 'propose', stream: 'live stream', mcp: 'MCP door', deals: 'deals' }
@@ -94,12 +97,99 @@ function AgentKeys() {
   )
 }
 
+function ClientKeys() {
+  const client = useQueryClient()
+  const warrant = useWarrant()
+  const rows = useQuery({ queryKey: ['client-keys'], queryFn: api.clientKeys, refetchInterval: 30_000 })
+  const [name, setName] = useState('')
+  const [partyId, setPartyId] = useState('')
+  const [newKey, setNewKey] = useState<{ name: string; key: string } | null>(null)
+  const [error, setError] = useState<ApiError | null>(null)
+  const clients = warrant.data?.clients ?? []
+  const clientName = (id: string) => clients.find((item) => item.id === id)?.displayName ?? id
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setError(null)
+    try {
+      const created = await api.createClientKey({ name, partyId })
+      setNewKey({ name: created.key.name, key: created.apiKey })
+      setName('')
+      await client.invalidateQueries({ queryKey: ['client-keys'] })
+    } catch (e) { setError(e as ApiError) }
+  }
+  const act = async (action: 'revoke' | 'rotate', row: ClientKeyRow) => {
+    setError(null)
+    try {
+      if (action === 'revoke') await api.revokeClientKey(row.id)
+      else {
+        const done = await api.rotateClientKey(row.id)
+        setNewKey({ name: done.key.name, key: done.apiKey })
+      }
+      await client.invalidateQueries({ queryKey: ['client-keys'] })
+    } catch (e) { setError(e as ApiError) }
+  }
+  return (
+    <section className="panel" aria-labelledby="h-client-keys" data-testid="client-keys-panel">
+      <h2 className="panel-title" id="h-client-keys">Client keys</h2>
+      <p className="fine">Each client company gets its own key, bound to itself on the rules. A client key can make and read its own deal
+        offers and write its own price ceiling — never the studio’s floor, never another client’s. The environment’s buyer key keeps
+        working; these are how a second, third, and tenth client get theirs without touching the server.</p>
+      {newKey ? (
+        <div className="draft-added" role="alert">
+          <strong>Copy this key now. It is shown once and never again.</strong>
+          <pre className="mono small" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{newKey.key}</pre>
+        </div>
+      ) : null}
+      {error ? <p className="draft-added" role="alert">{error.title}: {error.detail}</p> : null}
+      <form className="draft-form" onSubmit={submit}>
+        <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Northwind buyer agent" required /></label>
+        <label className="field"><span>Client</span>
+          <select value={partyId} onChange={(e) => setPartyId(e.target.value)} required>
+            <option value="">Pick a client…</option>
+            {clients.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}
+          </select>
+        </label>
+        <button type="submit" className="btn btn-ink" disabled={!name.trim() || !partyId}>Issue client key</button>
+      </form>
+      <div className="table-wrap" style={{ marginTop: 12 }}>
+        {rows.data && rows.data.length > 0 ? (
+          <table className="diff runs">
+            <thead><tr><th scope="col">Name</th><th scope="col">Client</th><th scope="col">Status</th><th scope="col">Last seen</th><th scope="col">Actions</th></tr></thead>
+            <tbody>
+              {rows.data.map((row) => (
+                <tr key={row.id}>
+                  <th scope="row">{row.name}</th>
+                  <td>{clientName(row.partyId)}</td>
+                  <td><Chip tone={row.status === 'active' ? 'auto' : 'deny'}>{row.status}</Chip></td>
+                  <td className="fine">{row.lastSeenAt ? when(row.lastSeenAt) : 'never'}</td>
+                  <td className="row gap-s">
+                    {row.status === 'active' ? <button type="button" className="btn btn-ghost btn-small" onClick={() => act('rotate', row)}>Rotate</button> : null}
+                    {row.status !== 'revoked' ? <button type="button" className="btn btn-ghost btn-small" onClick={() => act('revoke', row)}>Revoke</button> : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <p className="fine">{rows.isLoading ? 'Loading…' : rows.data ? 'No client keys yet. Issue the first one above.' : 'Could not load client keys.'}</p>}
+      </div>
+    </section>
+  )
+}
+
 export function System() {
+  const where = useLocation()
   const health = useQuery({ queryKey: ['health'], queryFn: api.health })
   const ready = useQuery({ queryKey: ['ready'], queryFn: api.ready, refetchInterval: 20_000 })
   const me = useSession()
   const keys = useQuery({ queryKey: ['signing-keys'], queryFn: api.signingKeys })
   const owner = useIsOwner()
+  // A link to a spot on this page (the shortcut to Connect an agent) scrolls there once the section exists.
+  useEffect(() => {
+    if (!where.hash || !owner) return
+    const id = where.hash.slice(1)
+    const handle = window.setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start' }), 120)
+    return () => window.clearTimeout(handle)
+  }, [where.hash, owner])
   const agents = useQuery({ queryKey: ['agent-health'], queryFn: api.agentHealth, enabled: owner, refetchInterval: 15_000 })
   const safety = useQuery({ queryKey: ['safety'], queryFn: api.safety, refetchInterval: 30_000 })
   const errors = useQuery({ queryKey: ['client-errors'], queryFn: api.clientErrors, enabled: owner, refetchInterval: 60_000 })
@@ -137,6 +227,10 @@ export function System() {
         </section>
       ) : null}
       {owner ? <AgentKeys /> : null}
+      {owner ? <ConnectAgent /> : null}
+      {owner ? <NotifyPanel /> : null}
+      {owner ? <ClientKeys /> : null}
+      {owner && me.data?.demoReset ? <DemoReset /> : null}
       {owner && (errors.data?.data.length ?? 0) > 0 ? (
         <section className="panel" aria-labelledby="h-screen-errors">
           <h2 className="panel-title" id="h-screen-errors">Recent screen errors</h2>

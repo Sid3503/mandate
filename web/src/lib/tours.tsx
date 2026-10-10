@@ -80,18 +80,6 @@ export const TOURS: Record<TourId, TourStep[]> = {
       ),
     },
     {
-      target: '[data-tour="nav-new"]',
-      title: 'New request',
-      placement: 'right',
-      mobilePlacement: 'top',
-      content: (
-        <>
-          {p('Where staff, or an agent, ask to bill a client, pay a contractor, or refund a payment.')}
-          {p('The screen never guesses. The server’s answer comes back word for word, and even a refusal is kept, with $0 moved.')}
-        </>
-      ),
-    },
-    {
       target: '[data-tour="nav-jobs"]',
       title: 'Jobs',
       placement: 'right',
@@ -99,49 +87,28 @@ export const TOURS: Record<TourId, TourStep[]> = {
       content: (
         <>
           {p('A job ties the money in to the money out. The client pays first. Only then can a contractor be paid, up to the share in your rules.')}
-          {p('Each job shows what came in, what went out, what is approved but not paid yet, and what the studio keeps.')}
+          {p('Every job shows a track: Agreed, Delivered, Billed, Client paid, Contractor paid. It says where the job is and the one thing to do next. Start a job, or bill a client, from the buttons at the top.')}
         </>
       ),
-    },
-    {
-      target: '[data-tour="nav-deals"]',
-      title: 'Deals',
-      placement: 'right',
-      mobilePlacement: 'top',
-      content: (
-        <>
-          {p('Before any money exists, the studio and its client agree the terms: the price and the milestones. A deal only counts if it fits both companies’ rules.')}
-          {p('Once agreed, it is signed, and it becomes the only thing a client charge on that job may bill.')}
-        </>
-      ),
-    },
-    {
-      target: '[data-tour="nav-clerk"]',
-      title: 'Ask Mandate',
-      placement: 'right',
-      mobilePlacement: 'top',
-      content: p('Say it in a sentence. Questions about your money are answered from the ledger with no model. “The concepts are delivered” prepares a button for you. A pay or bill request goes to the AI clerk, which can ask and never pay, and the rules still decide. It is the full-page version of Cmd+K.'),
-    },
-    {
-      target: '[data-tour="nav-ledger"]',
-      title: 'Ledger',
-      placement: 'right',
-      mobilePlacement: 'top',
-      content: p('Every request ever made, including the refused ones, with the rule that decided it. Use it to answer “why did we pay this?” or “what did the agents try?”.'),
     },
     {
       target: '[data-tour="nav-rules"]',
       title: 'Rules',
       placement: 'right',
       mobilePlacement: 'top',
-      content: p('Your limits in plain words: who can be paid, which kinds of work are allowed, the automatic line, the monthly cap and the client-money rule. Changing them makes a new version. Old requests keep the rules they were asked under.'),
+      content: p('Your limits in plain words: who can be paid, which kinds of work are allowed, the automatic line, the monthly cap and the client-money rule. Paste your policy, or say a change in a sentence, and a model drafts it for you to read before you sign. Changing them makes a new version.'),
     },
     {
-      target: '[data-tour="nav-proof"]',
-      title: 'Proof',
+      target: '[data-tour="nav-activity"]',
+      title: 'Activity',
       placement: 'right',
       mobilePlacement: 'top',
-      content: p('One button re-verifies the whole ledger: every lock, every yes, every amount to the cent. It is how you check the product’s promise instead of believing it.'),
+      content: (
+        <>
+          {p('What happened, in three views. The Ledger lists every request ever made, including the refused ones. Proof re-verifies every lock and every amount. The Control room is a dashboard on the same data.')}
+          {p('Ask Mandate (Cmd or Ctrl + K) answers “why did we pay this?” from the ledger, from anywhere.')}
+        </>
+      ),
     },
     {
       target: '[data-tour="keys"]',
@@ -191,7 +158,7 @@ export const TOURS: Record<TourId, TourStep[]> = {
       target: '[data-tour="today-setup"]',
       title: 'Get set up',
       placement: 'bottom',
-      content: p('Six steps from a fresh install to a job that runs itself. Each links to where you do it. This disappears when they are all done.'),
+      content: p('Eight steps from a fresh install to a job that runs itself. Each links to where you do it. This disappears when they are all done.'),
     },
     {
       target: '[data-tour="today-waiting"]',

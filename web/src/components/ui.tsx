@@ -8,7 +8,9 @@ export function Chip({ tone = 'ink', children, title, pop = false }: { tone?: 'd
   return <span className={`chip chip-${tone}${pop ? ' chip-pop' : ''}`} title={title}>{children}</span>
 }
 
-export function GateChip({ gate }: { gate: Gate }) {
+export function GateChip({ gate, past }: { gate: Gate; /** How a finished request's decision reads: approved once money moved, refused once the owner said no. Live requests keep the present tense. */ past?: 'approved' | 'refused' }) {
+  if (past === 'approved' && gate === 'NEEDS_APPROVAL') return <Chip tone="muted">Approved</Chip>
+  if (past === 'refused' && gate === 'NEEDS_APPROVAL') return <Chip tone="deny">Refused</Chip>
   const info = GATE[gate]
   return <Chip tone={info.tone}>{info.label}</Chip>
 }

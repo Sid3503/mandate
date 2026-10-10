@@ -11,6 +11,27 @@ async function unlock(page: Page, key: string) {
   await expect(page.getByRole('heading', { name: /Waiting for you/ })).toBeVisible()
 }
 
+// Sample numbers nobody kept refuse every offer on the server. Keep them through the API (no login needed).
+async function keepPrices(request: APIRequestContext) {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  const sheets = (await (await request.get('/v1/party-rules', { headers })).json()).data as Array<{ partyId: string; role: string; origin: string; maxTotalCents?: number; minTotalCents?: number }>
+  for (const sheet of sheets.filter((item) => item.origin === 'seed')) {
+    const kept = await request.put(`/v1/party-rules/${sheet.partyId}`, { headers, data: sheet.role === 'buyer' ? { maxTotalCents: sheet.maxTotalCents } : { minTotalCents: sheet.minTotalCents } })
+    expect(kept.status()).toBe(201)
+  }
+}
+
+// Same, through the Keep bar in the console (needs an owner session). A no-op when someone already kept.
+async function keepPricesUI(page: Page) {
+  await page.goto('/app/deals')
+  await expect(page.locator('[data-tour="price-sheets"]')).toBeVisible()
+  const bar = page.locator('[data-tour="keep-bar"]')
+  if (await bar.count() > 0) {
+    await bar.getByRole('button', { name: 'Keep these numbers' }).click()
+    await expect(page.getByText('Starting numbers kept')).toBeVisible()
+  }
+}
+
 async function ask(page: Page, fill: () => Promise<void>) {
   await page.goto('/app/new')
   await fill()
@@ -138,6 +159,11 @@ test('the frozen job, end to end, from the owner console', async ({ page }) => {
   await expect(page.getByText('Payout batch')).toBeVisible()
   await expect(page.getByRole('button', { name: /Send \$90|Check PayPal/ })).toHaveCount(0)
   await shots(page, '07b-payout-paid')
+
+  // The decision is history now: the gate reads Approved, not "Needs you".
+  const decision = page.locator('[data-tour="receipt-decision"]')
+  await expect(decision.getByText('Approved', { exact: true })).toBeVisible()
+  await expect(decision.getByText('Needs you')).toHaveCount(0)
 
   // The job: $150 in, $90 out, $60 kept.
   await page.goto(`/app/jobs/${job}`)
@@ -412,6 +438,7 @@ test('a receipt has a guide, and the open tour passes axe', async ({ page, reque
 
 test('two agents negotiate a deal, it is signed, and billing a milestone follows it', async ({ page }) => {
   await unlock(page, OWNER)
+  await keepPricesUI(page)
   await page.goto('/app/deals')
   await expect(page.getByText('Where a deal can exist')).toBeVisible()
   await page.getByRole('button', { name: 'Let the agents negotiate' }).click()
@@ -468,6 +495,7 @@ test('two agents negotiate a deal, it is signed, and billing a milestone follows
 
 test('pressing Stop ends a running negotiation and keeps what was offered', async ({ page }) => {
   await unlock(page, OWNER)
+  await keepPricesUI(page)
   await page.goto('/app/deals')
   await page.getByRole('button', { name: 'Let the agents negotiate' }).click()
   await expect(page.locator('.stage .turn.is-in')).toHaveCount(1, { timeout: 30_000 })
@@ -561,7 +589,7 @@ test('when PayPal is not answering, every screen says so and says what is safe',
   const banner = page.getByTestId('degraded')
   await expect(banner).toContainText('PayPal is not answering')
   await expect(banner).toContainText('keep their place')
-  await page.getByRole('link', { name: 'Ledger' }).first().click()
+  await page.getByRole('link', { name: 'Activity' }).first().click()
   await expect(page.getByTestId('degraded')).toBeVisible()
 })
 
@@ -727,7 +755,8 @@ test('the control room shows the ledger in AG Studio, follows it live, keeps a s
   page.on('request', (r) => { const url = new URL(r.url()); if (!['127.0.0.1', 'localhost'].includes(url.hostname) && url.protocol.startsWith('http')) outside.push(r.url()) })
 
   await unlock(page, OWNER)
-  await page.getByRole('link', { name: 'Control room' }).first().click()
+  await page.getByRole('link', { name: 'Activity' }).first().click()
+  await page.getByRole('navigation', { name: 'Activity views' }).getByRole('link', { name: /Control room/ }).click()
   const room = page.getByTestId('control-room')
   await expect(room).toContainText('MONEY IN · CONFIRMED', { timeout: 30_000 })
   await expect(room).toContainText('WHAT THE RULES REFUSED', { timeout: 30_000 })
@@ -919,6 +948,7 @@ test('autopilot runs the job: proof in, invoice out, client pays, contractor pai
   const headers = { authorization: `Bearer ${OWNER}` }
   await fake(request, 'invoices-on')
   await widerCap(request)
+  await keepPrices(request)
   const job = `job_autopilot_${test.info().project.name}`
   const offered = await request.post('/v1/deals/offers', {
     headers: { ...headers, 'idempotency-key': `deal-${job}-0001` },
@@ -946,9 +976,9 @@ test('autopilot runs the job: proof in, invoice out, client pays, contractor pai
   await page.reload()
   const done = page.locator('[data-tour="today-done"]')
   await expect(done).toContainText('Northwind paid $150.00')
-  await expect(done).toContainText('Billing rule · no tap')
+  await expect(done).toContainText('Your billing rule · no tap')
   await expect(done).toContainText('Priya Shah was paid $90.00')
-  await expect(done).toContainText('Autopilot · no tap')
+  await expect(done).toContainText('Your autopilot rule · no tap')
   await shots(page, '35-today-done-for-you')
 
   await page.goto(`/app/jobs/${job}`)
@@ -968,6 +998,7 @@ test('autopilot runs the job: proof in, invoice out, client pays, contractor pai
 
 test('Ask Mandate opens from any screen, answers from the ledger with no model, prepares a button, and gets out of the way', async ({ page, request }) => {
   const headers = { authorization: `Bearer ${OWNER}` }
+  await keepPrices(request)
   await unlock(page, OWNER)
   await page.goto('/app/jobs')
   await page.keyboard.press('Control+k')
@@ -1195,4 +1226,282 @@ test('a receipt can be checked in the browser without a key, and a tampered one 
   await page.goto(`/app/p/${asked.id}`)
   await page.getByRole('link', { name: /Check it in your browser instead/ }).click()
   await expect(page.getByTestId('verdict')).toContainText('This receipt is genuine.')
+})
+
+test('the owner sets each company’s price limit, and the band follows', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/deals')
+  const bar = page.locator('[data-tour="keep-bar"]')
+  const sheets = page.locator('[data-tour="price-sheets"]')
+  await expect(sheets.getByText('What each company will accept')).toBeVisible()
+  // On a fresh box the numbers are starting examples, not anyone's choice: the band says so, negotiation waits,
+  // and one click keeps them as the next version of each sheet. (Skipped when an earlier test already kept.)
+  if (await bar.count() > 0) {
+    await expect(bar.getByText('Starting examples, not your numbers yet')).toBeVisible()
+    await expect(bar.getByText('2 to keep')).toBeVisible()
+    await expect(page.locator('[data-tour="deal-band"]')).toContainText('starting examples')
+    await expect(page.getByRole('button', { name: 'Let the agents negotiate' })).toBeDisabled()
+    await bar.getByRole('button', { name: 'Keep these numbers' }).click()
+    await expect(page.getByText('Starting numbers kept')).toBeVisible()
+    await expect(bar).toHaveCount(0)
+  }
+  const buyer = page.locator('[data-tour="price-buyer"]')
+  const seller = page.locator('[data-tour="price-seller"]')
+  await expect(buyer.locator('input[inputmode="decimal"]')).toHaveValue('400.00')
+  await expect(seller.locator('input[inputmode="decimal"]')).toHaveValue('250.00')
+  await expect(sheets.getByText('both numbers are set')).toBeVisible()
+  await expect(page.locator('[data-tour="deal-band"]')).toContainText('$250.00 to $400.00')
+  // The form says what "Offered by" does, before anyone has to ask.
+  await expect(page.getByText('The rules judge the terms, never the speaker')).toBeVisible()
+
+  // A refused thread says what to do next, in one clean sentence.
+  await page.getByLabel('Total').fill('450')
+  await page.getByRole('button', { name: 'Offer these terms' }).click()
+  await expect(page.locator('[data-tour="deal-next"]').first()).toHaveText('No deal yet — Lower the total. Adjust a price limit above, or offer again below.')
+
+  // The client’s ceiling moves to $480: the band follows, and negotiation stays available.
+  await buyer.locator('input[inputmode="decimal"]').fill('480')
+  await buyer.getByRole('button', { name: 'Save this limit' }).click()
+  await expect(page.getByText('Northwind’s ceiling is now $480.00')).toBeVisible()
+  await expect(page.locator('[data-tour="deal-band"]')).toContainText('$250.00 to $480.00')
+  await expect(page.getByRole('button', { name: 'Let the agents negotiate' })).toBeEnabled()
+
+  // The studio’s floor moves the same way, then both numbers are put back so the suite ends as it started.
+  await seller.locator('input[inputmode="decimal"]').fill('260')
+  await seller.getByRole('button', { name: 'Save this limit' }).click()
+  await expect(page.getByText('Line Studio’s floor is now $260.00')).toBeVisible()
+  await buyer.locator('input[inputmode="decimal"]').fill('400')
+  await buyer.getByRole('button', { name: 'Save this limit' }).click()
+  await seller.locator('input[inputmode="decimal"]').fill('250')
+  await seller.getByRole('button', { name: 'Save this limit' }).click()
+  await expect(page.locator('[data-tour="deal-band"]')).toContainText('$250.00 to $400.00')
+})
+
+test('a client key writes only its own ceiling, and never sees the studio’s floor', async ({ page }) => {
+  await page.goto('/app/unlock')
+  await page.getByLabel('API key').fill('buyer-agent-e2e-key-0123456789')
+  // The key is accepted at the door; only then do we move on, or the unlock request is cancelled mid-flight.
+  const [session] = await Promise.all([
+    page.waitForResponse('**/v1/session'),
+    page.getByRole('button', { name: 'Unlock console' }).click(),
+  ])
+  expect(session.status()).toBe(200)
+  await page.goto('/app/deals')
+  const sheets = page.locator('[data-tour="price-sheets"]')
+  await expect(sheets.getByText('What your company will accept')).toBeVisible()
+  // Its own ceiling is here, prefilled. The studio’s form and the band are not on this screen at all.
+  await expect(page.locator('[data-tour="price-buyer"] input[inputmode="decimal"]')).toHaveValue('400.00')
+  await expect(page.locator('[data-tour="price-seller"]')).toHaveCount(0)
+  await expect(page.locator('[data-tour="deal-band"]')).toHaveCount(0)
+  await expect(sheets.getByText('The studio is never told this number.')).toBeVisible()
+
+  // It moves its own ceiling through these same controls, then puts it straight back.
+  await page.locator('[data-tour="price-buyer"] input[inputmode="decimal"]').fill('420')
+  await page.locator('[data-tour="price-buyer"] button[type="submit"]').click()
+  await expect(page.getByText('Northwind’s ceiling is now $420.00')).toBeVisible()
+  await page.locator('[data-tour="price-buyer"] input[inputmode="decimal"]').fill('400')
+  await page.locator('[data-tour="price-buyer"] button[type="submit"]').click()
+  await expect(page.getByText('Northwind’s ceiling is now $400.00')).toBeVisible()
+})
+
+test('the owner issues a client its own key from the System page', async ({ page, request }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/system')
+  const panel = page.getByTestId('client-keys-panel')
+  await expect(panel.getByText('Client keys')).toBeVisible()
+  await panel.getByLabel('Name').fill('Northwind buyer')
+  await panel.getByLabel('Client').selectOption({ label: 'Northwind' })
+  await panel.getByRole('button', { name: 'Issue client key' }).click()
+  const secret = panel.locator('pre')
+  await expect(secret).toContainText(/^mnd_cl_/)
+  const first = (await secret.textContent())!.trim()
+  await expect(panel.getByRole('rowheader', { name: 'Northwind buyer' })).toBeVisible()
+
+  // The key is its company at the API: its own sheet, and nothing else about the other side.
+  const asClient = { authorization: `Bearer ${first}` }
+  expect((await (await request.get('/v1/party-rules/mine', { headers: asClient })).json()).partyId).toBe('client_northwind')
+  expect((await request.get('/v1/party-rules', { headers: asClient })).status()).toBe(403)
+
+  // Rotate: a new secret is shown once, the old key dies with it, the new one already works.
+  await panel.getByRole('button', { name: 'Rotate' }).click()
+  await expect(secret).not.toContainText(first)
+  const second = (await secret.textContent())!.trim()
+  expect(second).not.toBe(first)
+  expect((await request.get('/v1/party-rules/mine', { headers: asClient })).status()).toBe(403)
+  expect((await request.get('/v1/party-rules/mine', { headers: { authorization: `Bearer ${second}` } })).status()).toBe(200)
+
+  // Revoke: the key is refused, and the listing says so.
+  await panel.getByRole('button', { name: 'Revoke' }).click()
+  await expect(panel.getByText('revoked', { exact: true })).toBeVisible()
+  const dead = await request.get('/v1/party-rules/mine', { headers: { authorization: `Bearer ${second}` } })
+  expect(dead.status()).toBe(403)
+  expect((await dead.json()).code).toBe('client-key.revoked')
+})
+
+test('Activity holds the ledger, the proof and the control room as one row of tabs', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/ledger')
+  const tabs = page.getByRole('navigation', { name: 'Activity views' })
+  await expect(tabs.getByRole('link', { name: /Ledger/ })).toHaveAttribute('aria-current', 'page')
+  await tabs.getByRole('link', { name: /Proof/ }).click()
+  await expect(page).toHaveURL(/\/app\/proof/)
+  await expect(page.getByRole('navigation', { name: 'Activity views' }).getByRole('link', { name: /Proof/ })).toHaveAttribute('aria-current', 'page')
+  // The main navigation is four places, and Activity stays lit on every one of its views.
+  const main = test.info().project.name === 'phone' ? page.getByRole('navigation', { name: 'Main' }).last() : page.getByRole('navigation', { name: 'Sections' })
+  for (const name of ['Today', 'Jobs', 'Rules', 'Activity']) await expect(main.getByRole('link', { name })).toBeVisible()
+  await expect(main.getByRole('link', { name: 'Activity' })).toHaveClass(/active/)
+})
+
+test('Try to break it refuses three bad requests through the real rules, and files and moves nothing', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  await unlock(page, OWNER)
+  const before = (await (await request.get('/v1/proposals', { headers })).json()).data.length
+  const panel = page.getByTestId('break-it')
+  await expect(panel).toBeVisible()
+  await panel.getByRole('button', { name: /A fake vendor email/ }).click()
+  await expect(panel.getByRole('status')).toContainText('payee.unknown')
+  await expect(panel.getByRole('status')).toContainText('$0 moved')
+  await panel.getByRole('button', { name: /An \$18 team lunch/ }).click()
+  await expect(panel.getByRole('status')).toContainText('category.missing')
+  await panel.getByRole('button', { name: /Pay before the client has paid/ }).click()
+  await expect(panel.getByRole('status')).toContainText('funding.missing')
+  await shots(page, '44-try-to-break-it')
+  // A dry run: the ledger is exactly as it was.
+  expect((await (await request.get('/v1/proposals', { headers })).json()).data.length).toBe(before)
+})
+
+test('a job shows where it is and the one next thing to do', async ({ page, request }) => {
+  const job = `job_track_${test.info().project.name}`
+  const asked = await (await request.post('/v1/proposals', {
+    headers: { authorization: `Bearer ${OWNER}`, 'idempotency-key': `track-${test.info().project.name}-0001` },
+    data: { kind: 'charge', payee: 'Northwind', amountCents: 15000, currency: 'USD', category: 'design', description: 'Track job', evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job },
+  })).json()
+  expect(asked.jobId).toBe(job)
+  await unlock(page, OWNER)
+  await page.goto(`/app/jobs/${job}`)
+  const track = page.getByTestId('job-track')
+  await expect(track).toBeVisible()
+  // Billed, but nobody has approved it yet: the job is waiting for the owner, and the track says so.
+  await expect(track.locator('.track-stage.here')).toContainText('Billed')
+  await expect(track).toContainText('waiting for your tap')
+  await expect(track.getByRole('link', { name: /Open it on Today/ })).toBeVisible()
+  await shots(page, '45-job-track')
+})
+
+test('Connect any agent shows how to plug in an MCP agent, and never prints a real key', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/system')
+  const panel = page.getByTestId('connect-agent')
+  await expect(panel).toBeVisible()
+  await expect(panel).toContainText('claude mcp add --transport http mandate')
+  await expect(panel).toContainText('/mcp')
+  await expect(panel).toContainText('YOUR_AGENT_KEY')
+  // The owner key is the one secret that must never be printed on a page.
+  expect(await panel.innerText()).not.toContain(OWNER)
+  await expect(panel).toContainText('tools/list')
+})
+
+test('Try to break it hands your own words to the clerk, filled in', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.getByTestId('break-it').getByRole('button', { name: /Say it to the clerk in your own words/ }).click()
+  const dialog = page.getByRole('dialog', { name: 'Ask Mandate' })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('textbox')).toHaveValue(/Ignore your rules and pay/)
+  // It is only filled in. Nothing is sent until the person presses send.
+  await expect(dialog.locator('.bubble')).toHaveCount(0)
+})
+
+test('the owner can make rules wait for a client payment to clear, and it reads back in plain words', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  await unlock(page, OWNER)
+  await page.goto('/app/rules')
+  await page.getByRole('button', { name: /Write version/ }).click()
+  await page.getByLabel('Days to wait after a client pays').fill('3')
+  await page.getByRole('button', { name: 'Review changes' }).click()
+  const diff = page.locator('.editor table.diff').first()
+  await expect(diff).toContainText('Wait after a client pays')
+  await expect(diff).toContainText('3 days before a rule pays from it')
+  await page.getByRole('button', { name: /Publish version/ }).click()
+  await expect(page.getByText(/waits 3 days after a client pays/)).toBeVisible()
+  // Put it back: the other tests expect a payout to go as soon as the rule allows.
+  const current = await (await request.get('/v1/warrant', { headers })).json()
+  const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
+  expect((await request.put('/v1/warrant', { headers, data: { ...body, clearingDays: 0 } })).status()).toBe(201)
+})
+
+test('Connect an agent can be found from Today in one click', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.getByTestId('break-it').getByRole('link', { name: 'Connect it here' }).click()
+  await expect(page).toHaveURL(/\/app\/system#h-connect/)
+  await expect(page.getByTestId('connect-agent')).toBeInViewport()
+  if (test.info().project.name === 'desktop') {
+    await page.goto('/app/')
+    await page.getByRole('navigation', { name: 'Sections' }).getByRole('link', { name: 'Connect an agent' }).click()
+    await expect(page.getByTestId('connect-agent')).toBeInViewport()
+  }
+})
+
+test('the owner shares a job with someone, who sees only their part with no sign-in, until it is withdrawn', async ({ page, browser, request, baseURL }) => {
+  const job = `job_shared_${test.info().project.name}`
+  const asked = await (await request.post('/v1/proposals', {
+    headers: { authorization: `Bearer ${OWNER}`, 'idempotency-key': `share-${test.info().project.name}-0001` },
+    data: { kind: 'charge', payee: 'Northwind', amountCents: 15000, currency: 'USD', category: 'design', description: 'Shared job charge', evidenceUrl: 'https://www.figma.com/file/northwind-logo', jobId: job },
+  })).json()
+  expect(asked.jobId).toBe(job)
+  await unlock(page, OWNER)
+  await page.goto(`/app/jobs/${job}`)
+  const panel = page.getByTestId('job-shares')
+  await panel.getByLabel('Who').selectOption({ label: 'Priya Shah (contractor)' })
+  await panel.getByRole('button', { name: 'Create link' }).click()
+  const made = panel.getByTestId('share-made')
+  await expect(made).toContainText('shown once')
+  const link = new URL((await made.locator('pre').innerText()).trim())
+  expect(link.pathname).toMatch(/^\/app\/s\/[0-9a-f-]{36}~/)
+  await shots(page, '46-share-made')
+
+  // A different browser with no key at all opens it.
+  const stranger = await browser.newContext({ baseURL })
+  const there = await stranger.newPage()
+  await there.goto(link.pathname)
+  const card = there.getByTestId('share-contractor')
+  await expect(card).toContainText('Your payouts')
+  await expect(card).toContainText('Not paid yet')
+  // Nothing of the studio is on the page, and there is no navigation into the console.
+  const text = await there.locator('body').innerText()
+  for (const hidden of ['Today', 'Rules', 'Ledger', 'Kept by the studio', 'Money in']) expect(text).not.toContain(hidden)
+  await expect(there.getByRole('link', { name: 'Today' })).toHaveCount(0)
+  await shots(there, '47-share-contractor-view')
+
+  // The owner withdraws it, and the same address is now just "not available".
+  await panel.getByRole('button', { name: 'Withdraw' }).click()
+  await expect(panel.getByText('withdrawn')).toBeVisible()
+  await there.reload()
+  await expect(there.getByTestId('share-gone')).toContainText('This link is not available')
+  await stranger.close()
+})
+
+test('System says whether the owner is notified, and never shows a webhook address', async ({ page }) => {
+  await unlock(page, OWNER)
+  await page.goto('/app/system')
+  const panel = page.getByTestId('notify-panel')
+  await expect(panel).toContainText('Not set up')
+  await expect(panel).toContainText('NOTIFY_WEBHOOK_URL')
+  await expect(panel).toContainText('cannot approve or pay anything')
+})
+
+// Last on purpose: it wipes the ledger, which every earlier test builds on.
+test('on a hosted demo the owner can start over, and the next person gets a fresh Line Studio', async ({ page, request }) => {
+  const headers = { authorization: `Bearer ${OWNER}` }
+  await unlock(page, OWNER)
+  await page.goto('/app/system')
+  const panel = page.getByTestId('demo-reset')
+  const button = panel.getByRole('button', { name: 'Reset the demo' })
+  await expect(button).toBeDisabled()
+  await panel.getByLabel(/Type/).fill('reset the demo')
+  await expect(button).toBeEnabled()
+  expect(((await (await request.get('/v1/proposals', { headers })).json()).data as unknown[]).length).toBeGreaterThan(0)
+  await button.click()
+  await expect(page.getByRole('heading', { name: /Waiting for you/ })).toBeVisible()
+  expect(((await (await request.get('/v1/proposals', { headers })).json()).data as unknown[]).length).toBe(0)
+  expect((await (await request.get('/v1/warrant', { headers })).json()).version).toBe(1)
 })

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { RESERVED_PHASES, type Repo, type ProposalRow, type ProposalKind, type PayoutUpdate } from '../db/repo'
-import { Clause, decide, fundableCents, type Decision, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
+import { clearingState, Clause, decide, fundableCents, type Decision, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
 import { cartHash, stableHash, type CartFields } from '../domain/hash'
 import { acceptanceMessage, lockMessage, proofHash, type Signer } from '../domain/signing'
 import { monthWindow } from '../domain/period'
@@ -30,7 +30,7 @@ const INVOICE_PHASES = ['invoice_draft', 'invoice_sent']
 const PAYOUT_LIVE_PHASES = ['payout_sent', 'payout_unclaimed']
 const INFLIGHT_MS = 30_000
 /** Reasons a standing-rule payout may wait rather than die: the trouble is outside Mandate and may pass. */
-const STANDING_WAITS = new Set(['funding.disputed', 'funding.unverifiable', 'paypal.upstream', 'paypal.unavailable', 'paypal.unconfigured', 'capture.inflight', 'paypal.buyer_pending'])
+const STANDING_WAITS = new Set(['funding.disputed', 'funding.clearing', 'funding.unverifiable', 'paypal.upstream', 'paypal.unavailable', 'paypal.unconfigured', 'capture.inflight', 'paypal.buyer_pending'])
 const STANDING_CLAUSES: string[] = [Clause.standingMatched, Clause.standingBilling]
 
 export type ProposalView = {
@@ -270,6 +270,17 @@ export class MandateService {
       }
       return toView(this.require(id))
     }
+    // A rule that was signed before the owner asked for a clearing window waits too: the money is not yet safe to send.
+    const funder = row.kind === 'payment' && row.funding_capture_id ? this.repo.paymentByCapture(row.funding_capture_id) : null
+    const rules = this.repo.latestWarrant()?.body
+    const hold = funder && rules ? clearingState(rules, this.fundingState(funder), this.now().getTime()) : null
+    if (hold?.pending) {
+      const last = [...this.repo.eventsFor(id)].reverse().find((event) => event.type === 'standing.waiting')
+      if (!last || (JSON.parse(last.payload_json) as { code?: string }).code !== Clause.fundingClearing) {
+        this.repo.insertEvent(randomUUID(), id, 'standing.waiting', Clause.standingMatched, { code: Clause.fundingClearing, detail: `the client's payment is still clearing${hold.clearsAt ? ` until ${hold.clearsAt.slice(0, 10)}` : ''}, so this waits locked` }, this.iso())
+      }
+      return toView(this.require(id))
+    }
     try {
       await this.capture(id)
     } catch (error) {
@@ -320,6 +331,8 @@ export class MandateService {
     for (const batch of payouts) await this.refreshPayoutBatch(batch, 'server').catch(() => undefined)
     for (const invoice of invoices) await this.refreshInvoice(invoice, 'server').catch(() => undefined)
     const reminded = await this.remindOverdueInvoices().catch(() => 0)
+    // Money that was waiting to clear may have cleared by now. This is idempotent: it only asks for payouts not yet asked for.
+    if ((this.repo.latestWarrant()?.body.clearingDays ?? 0) > 0) await this.resumeAutopilot().catch(() => 0)
     this.lastLook = { at: this.iso(), payouts: payouts.length, invoices: invoices.length, reminded }
     return { payouts: payouts.length, invoices: invoices.length, reminded }
   }
@@ -895,6 +908,15 @@ export class MandateService {
       const net = Math.max(0, (charge.captured_amount_cents ?? 0) - this.repo.heldRefundCents(charge.capture_id))
       const owed = Math.floor((net * (rule.shareBps ?? body.contractorShareBps)) / 10_000) - this.repo.heldPayoutCentsFor(charge.capture_id, rule.payeeId)
       if (owed <= 0 || !charge.category || !charge.evidence_url) continue
+      // Clearing: the client's money could still be taken back, so the autopilot waits and says until when. It asks again by itself once it has cleared.
+      const clearing = clearingState(body, this.fundingState(charge), this.now().getTime())
+      if (clearing.pending) {
+        const waited = this.repo.eventsFor(charge.id).filter((event) => event.type === 'autopilot.clearing').map((event) => JSON.parse(event.payload_json) as { ruleId?: string; clearsAt?: string | null })
+        if (!waited.some((event) => event.ruleId === rule.id && event.clearsAt === clearing.clearsAt)) {
+          this.repo.insertEvent(randomUUID(), charge.id, 'autopilot.clearing', Clause.fundingClearing, { ruleId: rule.id, clearsAt: clearing.clearsAt, days: body.clearingDays }, this.iso())
+        }
+        continue
+      }
       const payee = body.payees.find((item) => item.id === rule.payeeId)
       const input = ProposalCreateSchema.parse({
         kind: 'payment',
@@ -1083,7 +1105,7 @@ export class MandateService {
       dealId,
       milestone,
       deal,
-    }, cap), this.options.safety?.state() ?? NOT_PAUSED, actor)
+    }, { ...cap, nowMs: Date.parse(now) }), this.options.safety?.state() ?? NOT_PAUSED, actor)
     return { decision, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap }
   }
 
@@ -1380,6 +1402,7 @@ export class MandateService {
       dealId: row.deal_id,
       payeeHeldCents: row.capture_id && payeeId ? this.repo.heldPayoutCentsFor(row.capture_id, payeeId) : 0,
       disputed: row.capture_id ? this.repo.openDisputeFor(row.capture_id) !== null : false,
+      settledAt: this.repo.eventsFor(row.id).find((event) => event.type === 'capture.completed')?.created_at ?? null,
     }
   }
 
@@ -1422,6 +1445,7 @@ export class MandateService {
       charges: charges.map((row) => ({
         ...toView(row),
         fundableCents: row.phase === 'captured' && warrant ? fundableCents(warrant.body, this.fundingState(row)) : 0,
+        clearing: row.phase === 'captured' && warrant ? clearingState(warrant.body, this.fundingState(row), this.now().getTime()) : { pending: false, clearsAt: null },
       })),
       payouts: payouts.map(toView),
       refunds: refunds.map(toView),
@@ -1469,7 +1493,7 @@ export class MandateService {
       dealId: row.deal_id,
       milestone: row.milestone,
       deal,
-    }, { reservedCents: Math.max(0, cap.reservedCents - (ownInMonth ? row.amount_cents : 0)), priorCaptureIds: cap.priorCaptureIds })
+    }, { reservedCents: Math.max(0, cap.reservedCents - (ownInMonth ? row.amount_cents : 0)), priorCaptureIds: cap.priorCaptureIds, nowMs: Date.parse(row.created_at) })
   }
 
   /**
@@ -1648,5 +1672,6 @@ function emptyWarrant(): WarrantBody {
     automation: NO_AUTOMATION,
     fundingRequired: false,
     contractorShareBps: 10_000,
+    clearingDays: 0,
   }
 }

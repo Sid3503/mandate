@@ -418,6 +418,9 @@ export class AgentService {
     const warrant = this.services.repo.latestWarrant()
     const buyer = warrant ? resolveClient(warrant.body, input.buyer ?? warrant.body.clients[0]?.id ?? '') : null
     if (!warrant || !buyer) throw new Problem(422, 'deal.buyer_unknown', 'Unknown buyer', 'That client is not on the warrant.')
+    // The agents talk only inside numbers a person chose. Sample numbers nobody kept refuse the whole run up front,
+    // before any model is called or any turn is billed.
+    this.services.deals.keptSheets(buyer.id)
     const maxOffers = Math.min(Math.max(input.maxOffers ?? 4, 2), 8)
     const threadId = randomUUID()
     const task = input.task?.slice(0, 300) || DEFAULT_TASK

@@ -1,10 +1,12 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { CountMoney } from '../components/Motion'
-import { Empty, Loading, Money, PageHead, PhaseChip, ProblemCard } from '../components/ui'
+import { JobShares } from '../components/JobShares'
+import { Chip, Empty, Loading, Money, PageHead, PhaseChip, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { useIsOwner, useNames, useProposals } from '../lib/hooks'
 import { dollars } from '../lib/money'
+import { jobNext, jobStages } from '../lib/jobTrack'
 import type { Job, Proposal } from '../lib/types'
 import type { Names } from '../lib/words'
 
@@ -16,6 +18,7 @@ export function Jobs() {
   return (
     <div className="page">
       <PageHead eyebrow="Money in releases money out" title="Jobs">
+        <Link className="btn btn-ghost" to="/deals">Start a job with a deal</Link>
         <Link className="btn btn-ghost" to="/new?kind=charge">Bill a client</Link>
       </PageHead>
       {proposals.isLoading ? <Loading /> : null}
@@ -28,11 +31,13 @@ export function Jobs() {
 }
 
 function JobCard({ job, names }: { job: Job; names: Names }) {
+  const stage = jobStages(job).find((item) => item.state === 'here')
   return (
     <Link to={`/jobs/${job.jobId}`} className="job-card" data-tour="job-card">
       <div className="row between"><span className="mono small">{job.jobId}</span><span className="muted small">{job.charges.length} in · {job.payouts.length} out</span></div>
       <h3>{job.client?.displayName ?? names(job.charges[0]?.payeeId)}</h3>
       <Flow totals={job.totals} compact />
+      {stage ? <p className="fine"><strong>Now:</strong> {stage.label.toLowerCase()} · {stage.detail.toLowerCase()}</p> : <p className="fine">Done.</p>}
     </Link>
   )
 }
@@ -47,6 +52,29 @@ export function Flow({ totals, compact = false }: { totals: Job['totals']; compa
       {totals.heldCents > 0 ? <div className="flow-row"><span>Held</span><div className="bar"><i className="bar-held" style={{ width: pct(totals.heldCents) }} /></div><b>{dollars(totals.heldCents)}</b></div> : null}
       <div className="flow-row"><span>Kept</span><div className="bar"><i className="bar-kept" style={{ width: pct(totals.keptCents) }} /></div><b>{dollars(totals.keptCents)}</b></div>
     </div>
+  )
+}
+
+export function JobTrack({ job, owner }: { job: Job; owner: boolean }) {
+  const stages = jobStages(job)
+  const next = jobNext(job, owner)
+  return (
+    <section className="job-track" data-tour="job-track" data-testid="job-track" aria-label="Where this job is">
+      <ol className="track">
+        {stages.map((stage) => (
+          <li key={stage.id} className={`track-stage ${stage.state}`} aria-current={stage.state === 'here' ? 'step' : undefined}>
+            <span className="track-dot" aria-hidden="true">{stage.state === 'done' ? '✓' : ''}</span>
+            <strong>{stage.label}</strong>
+            <small>{stage.detail}</small>
+          </li>
+        ))}
+      </ol>
+      <div className="track-next">
+        <span className="eyebrow">{next.waiting ? 'Nothing for you to do' : 'Next'}</span>
+        <p>{next.text}</p>
+        {next.to && next.cta ? <Link className="btn btn-lime" to={next.to}>{next.cta} →</Link> : null}
+      </div>
+    </section>
   )
 }
 
@@ -68,6 +96,7 @@ export function JobScreen() {
         <Link className="btn btn-ghost" to={`/new?kind=charge&job=${encodeURIComponent(data.jobId)}`}>Bill the next milestone</Link>
       </PageHead>
 
+      <JobTrack job={data} owner={owner} />
       {data.deal ? <DealStrip deal={data.deal} jobId={data.jobId} /> : null}
       <section className="totals" data-tour="job-totals">
         <div className="total total-in"><span>Money in</span><CountMoney cents={data.totals.inCents} size="xl" /></div>
@@ -96,6 +125,7 @@ export function JobScreen() {
                   <>
                     <span className="mono small">{charge.captureId}</span>
                     <span>can still fund <strong>{dollars(charge.fundableCents)}</strong></span>
+                    {charge.clearing?.pending ? <Chip tone="need" title="A client can still take money back for a while, so your rules wait before paying from it. You can still tap to pay earlier.">Clearing{charge.clearing.clearsAt ? ` until ${new Date(charge.clearing.clearsAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : ''}</Chip> : null}
                     {owner && charge.fundableCents > 0 ? <Link className="btn btn-lime" to={`/new?kind=payment&funding=${encodeURIComponent(charge.captureId ?? '')}`}>Pay a contractor from this</Link> : null}
                   </>
                 ) : <span className="muted">Not settled yet, so it funds nothing.</span>}
@@ -140,6 +170,8 @@ export function JobScreen() {
           </ul>
         </section>
       ) : null}
+
+      {owner ? <JobShares job={data} /> : null}
     </div>
   )
 }

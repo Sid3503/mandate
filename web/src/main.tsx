@@ -27,6 +27,7 @@ import { NewRequest } from './screens/NewRequest'
 import { Receipt } from './screens/Receipt'
 import { Rules } from './screens/Rules'
 import { System } from './screens/System'
+import { SharedStatus } from './screens/SharedStatus'
 import { Unlock } from './screens/Unlock'
 import { Loading } from './components/ui'
 
@@ -98,6 +99,7 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/welcome" element={<Landing />} />
           <Route path="/unlock" element={<Unlock />} />
           <Route path="/verify" element={<Verify />} />
+          <Route path="/s/:token" element={<SharedStatus />} />
           <Route element={<RequireKey><LiveProvider><Shell /></LiveProvider></RequireKey>}>
             <Route index element={<Today />} />
             <Route path="p/:id" element={<Receipt />} />

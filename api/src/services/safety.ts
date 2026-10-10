@@ -75,6 +75,11 @@ export class SafetyService {
     return this.state()
   }
 
+  /** Forgets the refusals counted so far. A demo reset starts from none. */
+  forget(): void {
+    this.counter.reset()
+  }
+
   /** Called for every refusal an asker (not the owner) received. Three odd ones in two minutes pause Mandate. */
   noteRefusal(askerKey: string, clause: string): boolean {
     if (this.paused()) return false

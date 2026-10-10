@@ -81,6 +81,32 @@ export type AgentRow = {
   last_seen_at: string | null
 }
 
+/** One client's own key: bound to one client on the warrant, never to the studio, never to another client. */
+export type ClientKeyRow = {
+  id: string
+  name: string
+  party_id: string
+  status: string
+  key_hash: string
+  created_at: string
+  last_seen_at: string | null
+}
+
+/** A read-only link to one job's status for one person. Only a hash of the secret is stored. */
+export type ShareRow = {
+  id: string
+  job_id: string
+  party_id: string
+  role: string
+  label: string
+  secret_hash: string
+  created_at: string
+  expires_at: string
+  revoked_at: string | null
+  last_seen_at: string | null
+  views: number
+}
+
 export type AgentRunRow = {
   id: string
   agent: string
@@ -124,7 +150,7 @@ export type DeliveryRow = {
   decided_at: string | null
 }
 
-export type PartyRulesRecord = { partyId: string; version: number; body: PartyRules; createdAt: string }
+export type PartyRulesRecord = { partyId: string; version: number; body: PartyRules; createdAt: string; origin: 'seed' | 'written' }
 
 /** Phases in which a payout's money is spoken for: locked, sent to PayPal, or paid. */
 export const RESERVED_PHASES = ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured'] as const
@@ -442,19 +468,19 @@ export class Repo {
   // ---------- deal rules and deals ----------
 
   partyRules(partyId: string): PartyRulesRecord | null {
-    const row = this.db.prepare('SELECT party_id, version, body_json, created_at FROM party_rules WHERE party_id = ? ORDER BY version DESC LIMIT 1')
-      .get(partyId) as { party_id: string; version: number; body_json: string; created_at: string } | undefined
-    return row ? { partyId: row.party_id, version: row.version, body: PartyRulesSchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at } : null
+    const row = this.db.prepare('SELECT party_id, version, body_json, created_at, origin FROM party_rules WHERE party_id = ? ORDER BY version DESC LIMIT 1')
+      .get(partyId) as { party_id: string; version: number; body_json: string; created_at: string; origin: string } | undefined
+    return row ? { partyId: row.party_id, version: row.version, body: PartyRulesSchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, origin: row.origin === 'seed' ? 'seed' : 'written' } : null
   }
 
   partyRulesVersions(partyId: string): PartyRulesRecord[] {
-    const rows = this.db.prepare('SELECT party_id, version, body_json, created_at FROM party_rules WHERE party_id = ? ORDER BY version DESC')
-      .all(partyId) as Array<{ party_id: string; version: number; body_json: string; created_at: string }>
-    return rows.map((row) => ({ partyId: row.party_id, version: row.version, body: PartyRulesSchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at }))
+    const rows = this.db.prepare('SELECT party_id, version, body_json, created_at, origin FROM party_rules WHERE party_id = ? ORDER BY version DESC')
+      .all(partyId) as Array<{ party_id: string; version: number; body_json: string; created_at: string; origin: string }>
+    return rows.map((row) => ({ partyId: row.party_id, version: row.version, body: PartyRulesSchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, origin: row.origin === 'seed' ? 'seed' : 'written' }))
   }
 
-  insertPartyRules(partyId: string, version: number, body: PartyRules, now: string): void {
-    this.db.prepare('INSERT INTO party_rules (party_id, version, body_json, created_at) VALUES (?, ?, ?, ?)').run(partyId, version, JSON.stringify(body), now)
+  insertPartyRules(partyId: string, version: number, body: PartyRules, now: string, origin: 'seed' | 'written'): void {
+    this.db.prepare('INSERT INTO party_rules (party_id, version, body_json, created_at, origin) VALUES (?, ?, ?, ?, ?)').run(partyId, version, JSON.stringify(body), now, origin)
   }
 
   insertDeal(row: DealRow): void {
@@ -730,6 +756,52 @@ export class Repo {
 
   setAgentSeen(id: string, at: string): void {
     this.db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(at, id)
+  }
+
+  createShare(row: ShareRow): void {
+    this.db.prepare(`INSERT INTO share_links (id, job_id, party_id, role, label, secret_hash, created_at, expires_at, revoked_at, last_seen_at, views)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.job_id, row.party_id, row.role, row.label, row.secret_hash, row.created_at, row.expires_at, row.revoked_at, row.last_seen_at, row.views)
+  }
+
+  sharesForJob(jobId: string): ShareRow[] {
+    return this.db.prepare('SELECT * FROM share_links WHERE job_id = ? ORDER BY created_at ASC, rowid ASC').all(jobId) as ShareRow[]
+  }
+
+  getShare(id: string): ShareRow | null {
+    return (this.db.prepare('SELECT * FROM share_links WHERE id = ?').get(id) as ShareRow | undefined) ?? null
+  }
+
+  revokeShare(id: string, at: string): void {
+    this.db.prepare('UPDATE share_links SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(at, id)
+  }
+
+  noteShareSeen(id: string, at: string): void {
+    this.db.prepare('UPDATE share_links SET last_seen_at = ?, views = views + 1 WHERE id = ?').run(at, id)
+  }
+
+  createClientKey(row: ClientKeyRow): void {
+    this.db.prepare(`INSERT INTO client_keys (id, name, party_id, status, key_hash, created_at, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.party_id, row.status, row.key_hash, row.created_at, row.last_seen_at)
+  }
+
+  listClientKeys(): ClientKeyRow[] {
+    return this.db.prepare('SELECT * FROM client_keys ORDER BY created_at ASC, rowid ASC').all() as ClientKeyRow[]
+  }
+
+  getClientKey(id: string): ClientKeyRow | null {
+    return (this.db.prepare('SELECT * FROM client_keys WHERE id = ?').get(id) as ClientKeyRow | undefined) ?? null
+  }
+
+  getClientKeyByKeyHash(keyHash: string): ClientKeyRow | null {
+    return (this.db.prepare('SELECT * FROM client_keys WHERE key_hash = ?').get(keyHash) as ClientKeyRow | undefined) ?? null
+  }
+
+  setClientKeyStatus(id: string, status: string, at: string): void {
+    this.db.prepare('UPDATE client_keys SET status = ?, last_seen_at = ? WHERE id = ?').run(status, at, id)
+  }
+
+  setClientKeySeen(id: string, at: string): void {
+    this.db.prepare('UPDATE client_keys SET last_seen_at = ? WHERE id = ?').run(at, id)
   }
 
   recentAgentRuns(limit: number): AgentRunRow[] {
