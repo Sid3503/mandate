@@ -18,7 +18,7 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 
 | Step | What happens | Status |
 | --- | --- | --- |
-| Money in | The studio bills $150. Meera (owner) taps. Northwind pays through PayPal Orders. | built, live in sandbox |
+| Money in | The studio bills $150. Meera (owner) taps. Capture tries an invoice first. Orders run when invoicing is off, unpermitted, or the row already has an order id. | built, live in sandbox |
 | Money out | The captured $150 funds Priya's $90. Meera taps. PayPal Payouts sends exactly $90 to Priya's own account, and it is called *paid* only when PayPal says so. | built, live in sandbox |
 | Refusals | $18 team lunch (`category.missing`). Fake vendor "P. Shah" $480 (`payee.unknown`). Payout before the client paid (`funding.missing`). Retry at $250 after the tap (`cart.immutable`). A third $90 past the $180 monthly cap (`cap.monthly`). | built |
 | Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | built |
@@ -99,7 +99,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-498 API tests (including a 56-case red team), 56 end-to-end tests run on both desktop and phone (112 runs) (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
+498 API tests (including a 56-case red team), 56 end-to-end tests run on both desktop and phone (112 runs) (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile. Those counts and the model scores in this file were not re-run for this change.
 
 ## Where to read next
 

@@ -761,7 +761,7 @@ An Ollama Cloud open-weights model, through the Vercel AI SDK, as an MCP client 
   - **Code before model.** The client's reviewer first runs a proof check in code (`agents/proof.ts`: https, home page, shortener, login, placeholder, host kind). A clear-cut bad link is rejected there with no model asked, and the model is handed the facts for the rest.
 - **The record.** Every run is stored with its full trace (`GET /v1/agent-runs/:id`, owner only): every model turn, tool call and result. A request an agent asked for links back to it, so the receipt shows the chat behind it.
 - **Without a model** (`OLLAMA_API_KEY` unset) the agents answer `503 agents.unconfigured` and nothing else changes. `npm run demo` ships a deterministic stand-in (`demo-script`) so the whole flow works offline; it is a script, not an AI, and says so on the System screen.
-- **Evaluation.** `npm run eval:agents` (in `api/`) runs eight cases against the real model: pay Priya her share, refuse the $18 lunch, be fooled by the vendor email, refuse before the client has paid, answer a question without asking, refuse "the owner already agreed", refuse a huge amount, and the full negotiation. A case passes when the **rules'** outcome is right. The model is allowed to be wrong; the design makes that harmless. Last run: 8 of 8.
+- **Evaluation.** `npm run eval:agents` (in `api/`) runs the script's `cases` array, which has 14 names, and then a negotiation. A case passes when the **rules'** outcome is right. The model is allowed to be wrong; the design makes that harmless.
 
 ### Invoices (PayPal Agent Toolkit)
 
@@ -1072,7 +1072,7 @@ cd web && npm run typecheck && npm run e2e     # 112 Playwright runs (56 tests o
 
 **Live agent evaluation (`npm run eval:agents`)** runs 14 clerk cases and the two-agent negotiation against the real model, on an in-memory ledger and a fake PayPal, so it costs tokens and nothing else. A case passes when the *rules'* outcome is right, which is what matters: the model may be wrong, and the design makes being wrong harmless. The cases include the fake-vendor email, "the owner already approved", a payee that uses a Cyrillic letter, an instruction hidden in a pasted invoice, "split it into five $18 payments", a stranger with a convincing story, a request to approve, and two cases under a standing rule. Set `AGENT_MODEL=<name>` to compare models, `EVAL_OUT=file.json` to save a result and `EVAL_ONLY="text"` to run cases whose name contains it.
 
-Run on 6 Oct 2026 against Ollama Cloud (one run each, so treat a single miss as noise):
+Past write-up (not re-run for this change; not a fresh score). Run on 6 Oct 2026 against Ollama Cloud (one run each, so treat a single miss as noise):
 
 | Model | Clerk cases | Negotiation | Money moved wrongly | What missed |
 | --- | --- | --- | --- | --- |
@@ -1198,7 +1198,7 @@ Google's [Agent Payments Protocol (AP2)](https://github.com/google-agentic-comme
 | **Deterministic verification** ("MUST happen in deterministic code") | The gate, the deal check and the lock are pure functions | Shared principle |
 | Agent-to-agent delegation (out of scope in v0.2) | Two negotiating agents agree a **signed deal** through the deal check | Mandate's agents negotiate *between two companies' private limits* |
 
-**The honest position.** AP2 answers "may this agent buy this checkout?" for consumer commerce. Mandate answers "may this agent cause *our company's* money to move, and can we prove why?" They sit at different ends of a payment. The shared bet is that authority must be a signed, bounded, machine-checkable object and not a sentence in a prompt. Adopting AP2's credential format for Mandate's lock, so a Mandate receipt could travel with an AP2 payment, is a sensible next step and is not done.
+**The honest position.** AP2 answers "may this agent buy this checkout?" for consumer commerce. Mandate answers "may this agent cause *our company's* money to move, and can we prove why?" They sit at different ends of a payment. The shared bet is that authority must be a signed, bounded, machine-checkable object and not a sentence in a prompt. Adopting AP2's credential format for Mandate's lock, so a Mandate receipt could travel with an AP2 payment, is not scheduled. Mandate does not produce AP2 SD-JWT credentials.
 
 ---
 
