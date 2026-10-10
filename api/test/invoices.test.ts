@@ -130,6 +130,32 @@ describe('billing a client with a PayPal invoice', () => {
     expect((await (await hook('INV2-UNKNOWN0000')).json()).refreshed).toBe(false)
   })
 
+  it('sends the invoice to the client email on the locked warrant version, not a newer one', async () => {
+    const invoices = new FakeInvoices()
+    const { app, id } = await billed(invoices)
+    const locked = (await call(app, 'GET', `/v1/proposals/${id}`)).json
+    expect(locked).toMatchObject({ phase: 'locked', warrantVersion: 1 })
+
+    const current = (await call(app, 'GET', '/v1/warrant')).json
+    const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
+    const published = await call(app, 'PUT', '/v1/warrant', {
+      body: {
+        ...body,
+        clients: body.clients.map((client: { id: string }) => client.id === 'client_northwind' ? { ...client, email: 'ap@later.example' } : client),
+      },
+    })
+    expect(published.status).toBe(201)
+    expect(published.json).toMatchObject({ version: 2, clients: [expect.objectContaining({ id: 'client_northwind', email: 'ap@later.example' })] })
+
+    const sent = await call(app, 'POST', `/v1/proposals/${id}/capture`)
+    expect(sent.status).toBe(200)
+    expect(sent.json.phase).toBe('invoice_sent')
+    expect(sent.json.warrantVersion).toBe(1)
+    const made = [...invoices.invoices.values()][0]!
+    expect(made.email).toBe('ap@northwind.example')
+    expect(made.email).not.toBe('ap@later.example')
+  })
+
   it('parses what PayPal returns, and never reads missing data as paid', () => {
     const live = parseInvoice({
       id: 'INV2-1', status: 'PAID', detail: { invoice_number: 'MND-1', currency_code: 'USD', reference: 'p1', metadata: { recipient_view_url: 'https://www.sandbox.paypal.com/invoice/p/#1' } },

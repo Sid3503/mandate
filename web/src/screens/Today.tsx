@@ -11,6 +11,7 @@ import { useQuery } from '@tanstack/react-query'
 import { relative } from '../lib/format'
 import { reviewKey, useLive, type ReviewState } from '../lib/live'
 import { BreakIt } from '../components/BreakIt'
+import { EmailNotice } from '../components/EmailNotice'
 import { ToolTrail } from '../components/ToolTrail'
 import { dollars } from '../lib/money'
 import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useToday, useWarrant } from '../lib/hooks'
@@ -64,6 +65,7 @@ export function Today() {
 
       {proposals.isLoading || today.isLoading ? <Loading /> : null}
       <ProblemCard error={proposals.error ?? today.error} />
+      <EmailNotice />
 
       {data ? <MonthStrip data={data} /> : null}
       {data ? <WaitingOnClient data={data} /> : null}
