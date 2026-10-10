@@ -912,8 +912,8 @@ test('the owner signs a standing rule once, and the payout it covers is sent wit
   const scan = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).include('.editor').analyze()
   expect(scan.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
   await page.getByRole('button', { name: 'Review changes' }).click()
-  await expect(page.locator('.editor table.diff')).toContainText('Standing rules (no tap)')
-  await expect(page.locator('.editor table.diff')).toContainText('Priya Shah from Northwind')
+  await expect(page.locator('.editor table.diff').first()).toContainText('Standing rules (no tap)')
+  await expect(page.locator('.editor table.diff').first()).toContainText('Priya Shah from Northwind')
   await page.getByRole('button', { name: /Publish version/ }).click()
   await expect(page.getByText(/Standing rule: Priya Shah is paid, with no tap/)).toBeVisible()
 
@@ -1078,7 +1078,7 @@ test('the owner says a change in words, sees what the code found in it, reads it
   const editor = page.locator('.editor')
   await expect(editor).toContainText('Drafted by')
   await editor.getByRole('button', { name: 'Review changes' }).click()
-  await expect(editor.locator('table.diff')).toContainText('Standing rules (no tap)')
+  await expect(editor.locator('table.diff').first()).toContainText('Standing rules (no tap)')
   await expect(editor.getByTestId('replay')).toBeVisible()
   await editor.getByRole('button', { name: /Publish version/ }).click()
   await expect(page.getByText(/Standing rule: Priya Shah is paid, with no tap/)).toBeVisible()
@@ -1308,14 +1308,14 @@ test('the owner issues a client its own key from the System page', async ({ page
   await unlock(page, OWNER)
   await page.goto('/app/system')
   const panel = page.getByTestId('client-keys-panel')
-  await expect(panel.getByText('Client keys')).toBeVisible()
+  await expect(panel.getByRole('heading', { name: 'Client keys' })).toBeVisible()
   await panel.getByLabel('Name').fill('Northwind buyer')
   await panel.getByLabel('Client').selectOption({ label: 'Northwind' })
   await panel.getByRole('button', { name: 'Issue client key' }).click()
   const secret = panel.locator('pre')
   await expect(secret).toContainText(/^mnd_cl_/)
   const first = (await secret.textContent())!.trim()
-  await expect(panel.getByRole('rowheader', { name: 'Northwind buyer' })).toBeVisible()
+  await expect(panel.getByRole('rowheader', { name: 'Northwind buyer' }).first()).toBeVisible()
 
   // The key is its company at the API: its own sheet, and nothing else about the other side.
   const asClient = { authorization: `Bearer ${first}` }
@@ -1330,9 +1330,11 @@ test('the owner issues a client its own key from the System page', async ({ page
   expect((await request.get('/v1/party-rules/mine', { headers: asClient })).status()).toBe(403)
   expect((await request.get('/v1/party-rules/mine', { headers: { authorization: `Bearer ${second}` } })).status()).toBe(200)
 
-  // Revoke: the key is refused, and the listing says so.
+  // Revoke: the key is refused, and the listing says so. Rotating already revoked the first key, so a revoked row exists
+  // before this click. The deterministic signal is that no active key is left, not that "revoked" is visible.
   await panel.getByRole('button', { name: 'Revoke' }).click()
-  await expect(panel.getByText('revoked', { exact: true })).toBeVisible()
+  await expect(panel.getByText('active', { exact: true })).toHaveCount(0)
+  await expect(panel.getByText('revoked', { exact: true }).first()).toBeVisible()
   const dead = await request.get('/v1/party-rules/mine', { headers: { authorization: `Bearer ${second}` } })
   expect(dead.status()).toBe(403)
   expect((await dead.json()).code).toBe('client-key.revoked')

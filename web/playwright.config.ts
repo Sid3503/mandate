@@ -13,10 +13,11 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   timeout: 60_000,
-  // On CI: a stray test.only fails the run, one retry separates a flaky test from a broken one (it is reported as flaky),
-  // and failures show up as annotations on the pull request.
+  // On CI: a stray test.only fails the run, and failures show up as annotations on the pull request. No retries: the tests
+  // share one server and build on each other's ledger, so a retry runs against a server the failed attempt already changed
+  // and fails for a new reason, burying the real one.
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  retries: 0,
   reporter: process.env.CI ? [['list'], ['github'], ['html', { open: 'never' }]] : [['list']],
   use: { channel: 'chrome', trace: 'retain-on-failure' },
   projects: [

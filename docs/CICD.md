@@ -30,7 +30,7 @@ The goal is fast and safe: you merge small changes often, nothing untested reach
 | **Secret scan** (gitleaks, `.gitleaks.toml`) | A key committed to a **public** repository. Only the fixed test keys are allowed, by exact string. |
 | **API typecheck and tests** | Everything in `api/test`: the gate, the red team, signed locks, the MCP door, the pipeline's own guards. All against a fake PayPal, so no credentials. |
 | **Console build** | A type error in the console, a broken build, and **an API change whose console types were not regenerated** (`npm --prefix web run gen:types`). |
-| **Browser tests** (desktop, phone) | The whole product through a real Chrome, with an accessibility scan. One retry per test; a test that needs it is reported as flaky. |
+| **Browser tests** (desktop, phone) | The whole product through a real Chrome, with an accessibility scan. No retries: the tests share a server and build on each other's ledger, so a retry would run against changed state and hide the real failure. |
 | **CI OK** | Fails if any job above failed or was cancelled. |
 
 ## Why it is safe
