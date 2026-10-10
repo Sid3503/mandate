@@ -121,6 +121,19 @@ describe('autopilot: paying the contractor when the client pays', () => {
     expect(h.paypal!.payoutCalls).toBe(1)
   })
 
+  it('does not treat PayPal UNCLAIMED as captured', async () => {
+    const paypal = new FakePayPal()
+    paypal.unregistered.add('priya.shah@example.com')
+    const h = await studio({ paypal })
+    await publish(h.app, { standing: [RULE], automation: ON })
+    const billed = await bill(h, 0, STUDIO_KEY)
+    h.invoices.pay(billed.json.invoiceId)
+    await h.services.mandate.sweepPending()
+    const [payout] = (await payouts(h.app)) as [Record<string, any>]
+    expect(payout.phase).not.toBe('captured')
+    expect(payout).toMatchObject({ gate: 'AUTO', phase: 'payout_unclaimed', payoutStatus: 'UNCLAIMED' })
+  })
+
   it('does nothing until the client has paid, and never for a rule the owner did not sign', async () => {
     const h = await studio()
     await publish(h.app, { automation: { ...ON, payOnSettle: false }, standing: [RULE] })
