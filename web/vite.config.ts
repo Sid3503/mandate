@@ -49,6 +49,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/v1': api,
+      '/mcp': api,
       '/health': api,
       '/ready': api,
       '/openapi.json': api,

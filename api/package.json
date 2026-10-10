@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "eval:agents": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-agents.ts",
     "mcp": "tsx src/mcp/stdio.ts",
+    "check:mcp": "tsx scripts/check-mcp.ts",
     "webhook:register": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/register-webhook.ts",
     "eval:drafter": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-drafter.ts",
     "eval:policy": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-policy.ts"

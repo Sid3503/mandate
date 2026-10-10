@@ -1115,10 +1115,40 @@ html { scroll-behavior: smooth; }
 .break-result { margin-top: 8px; padding: 14px; border: 2px solid var(--ink); background: #fffdf6; display: grid; gap: 8px; }
 .break-result p { margin: 0; }
 
-/* Connect an agent: copyable commands. */
-.connect-steps { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 4px; }
+/* Tables of keys: natural column widths, a header row, and a sideways scroll on a phone instead of squeezed words. */
+.table-wrap { overflow-x: auto; }
+.keys-table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 14px; }
+.keys-table th, .keys-table td { text-align: left; padding: 10px 12px 10px 0; border-top: 1px solid var(--line); vertical-align: middle; }
+.keys-table thead th { border-top: 0; padding-top: 0; font: 700 11px/1.4 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+.keys-table tbody th { font-weight: 700; }
+.keys-table .nowrap { white-space: nowrap; }
+.keys-table .row.gap-s { flex-wrap: wrap; justify-content: flex-start; }
+
+/* Connect an agent: name it, choose what it may do, copy the commands. */
+.connect-form { display: grid; gap: 16px; margin: 14px 0 4px; }
+.connect-form fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.connect-form legend { padding: 0; margin-bottom: 8px; font: 700 12px/1.2 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.preset-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+.preset { position: relative; display: grid; gap: 4px; align-content: start; padding: 12px 14px 12px 40px; border: 2px solid var(--ink); background: var(--surface); cursor: pointer; transition: background-color 120ms ease; }
+.preset:hover { background: var(--lime-soft); }
+.preset.on { background: var(--lime); box-shadow: var(--shadow-s); }
+.preset input { position: absolute; left: 12px; top: 14px; width: 18px; height: 18px; margin: 0; accent-color: var(--ink); }
+.preset input:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+.preset strong { font: 700 14px/1.25 var(--body); }
+.preset span { font-size: 13px; line-height: 1.4; color: var(--ink-2); }
+.connect-custom { display: grid; gap: 12px; padding: 12px 14px; border: 1.5px dashed var(--ink); background: var(--sheet); }
+.scope-grid { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.scope-grid legend { width: 100%; }
+.scope-grid .check { padding-top: 0; }
+.connect-actions { display: flex; gap: 10px; align-items: center; }
+.connect-reveal, .connect-sample { margin-top: 14px; padding: 14px 16px; border: 2px solid var(--ink); background: #fffdf6; }
+.connect-reveal { background: var(--lime-soft); box-shadow: var(--shadow-s); }
+.connect-h { margin: 0 0 6px; font: 700 15px/1.3 var(--body); }
+.connect-check { display: grid; gap: 8px; margin-top: 10px; padding: 10px 12px; border: 2px solid var(--ink); background: var(--lime); }
+.connect-check code { padding: 2px 6px; border: 1.5px solid var(--ink); background: #fff; }
+.connect-reveal .row.gap-s { margin-top: 6px; }
 .snippet { margin: 10px 0; border: 2px solid var(--ink); background: #fffdf6; padding: 8px 12px; }
-.snippet pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-all; }
+.snippet pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* A status link: one person's read-only view of one job. */
 .share-page { min-height: 100vh; background: var(--paper); color: var(--ink); }

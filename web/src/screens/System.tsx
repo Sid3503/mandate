@@ -8,35 +8,16 @@ import { NotifyPanel } from '../components/NotifyPanel'
 import { FeaturePanel, ToolTiers } from '../components/PayPalFeatures'
 import { Chip, KV, Loading, PageHead } from '../components/ui'
 import { api, ApiError } from '../lib/api'
-import type { AgentRow, AgentScope, ClientKeyRow } from '../lib/types'
+import { SCOPE_WORDS } from '../lib/connect'
+import type { AgentRow, ClientKeyRow } from '../lib/types'
 import { when } from '../lib/format'
 import { useIsOwner, useSession, useWarrant } from '../lib/hooks'
 import { session } from '../lib/session'
 
-const SCOPE_WORDS: Record<AgentScope, string> = { read: 'read', propose: 'propose', stream: 'live stream', mcp: 'MCP door', deals: 'deals' }
-
 function AgentKeys() {
   const client = useQueryClient()
   const rows = useQuery({ queryKey: ['agent-keys'], queryFn: api.agents, refetchInterval: 30_000 })
-  const [name, setName] = useState('')
-  const [scopes, setScopes] = useState<AgentScope[]>(['read', 'propose'])
-  const [perHour, setPerHour] = useState('60')
-  const [centsPerHour, setCentsPerHour] = useState('')
-  const [newKey, setNewKey] = useState<{ name: string; key: string } | null>(null)
   const [error, setError] = useState<ApiError | null>(null)
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault()
-    setError(null)
-    try {
-      const limits: { proposalsPerHour?: number; centsPerHour?: number } = {}
-      const n = Number(perHour); if (n > 0) limits.proposalsPerHour = n
-      const c = Number(centsPerHour); if (centsPerHour !== '' && c >= 0) limits.centsPerHour = Math.round(c * 100)
-      const created = await api.createAgent({ name, scopes, ...(Object.keys(limits).length ? { limits } : {}) })
-      setNewKey({ name: created.agent.name, key: created.apiKey })
-      setName('')
-      await client.invalidateQueries({ queryKey: ['agent-keys'] })
-    } catch (e) { setError(e as ApiError) }
-  }
   const act = async (action: 'revoke' | 'resume', agent: AgentRow) => {
     setError(null)
     try {
@@ -47,51 +28,31 @@ function AgentKeys() {
   }
   return (
     <section className="panel" aria-labelledby="h-agents" data-testid="agent-keys-panel">
-      <h2 className="panel-title" id="h-agents">Agent keys</h2>
-      <p className="fine">Each agent gets its own key, its own scopes, and its own hourly limits. The owner key keeps full control; agent keys can never approve, publish rules, or pause.
-        A key that trips the breaker is suspended until you resume it.</p>
-      {newKey ? (
-        <div className="draft-added" role="alert">
-          <strong>Copy this key now. It is shown once and never again.</strong>
-          <pre className="mono small" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{newKey.key}</pre>
-        </div>
-      ) : null}
+      <h2 className="panel-title" id="h-agents">Connected agents</h2>
+      <p className="fine">Each agent has its own key, its own scopes and its own hourly limits. The owner key keeps full control; an agent key can never approve, publish rules or pause.
+        A key that trips the breaker is suspended on its own, and the others carry on. Make another on <a href="#h-connect">Connect an agent</a>.</p>
       {error ? <p className="draft-added" role="alert">{error.title}: {error.detail}</p> : null}
-      <form className="draft-form" onSubmit={submit}>
-        <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Nightly invoice sweep" required /></label>
-        <fieldset>
-          <legend>Scopes</legend>
-          {(['read', 'propose', 'stream', 'mcp', 'deals'] as AgentScope[]).map((s) => (
-            <label key={s} className="check" style={{ marginRight: 12 }}>
-              <input type="checkbox" checked={scopes.includes(s)} onChange={() => setScopes((cur) => cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s])} /> {SCOPE_WORDS[s]}
-            </label>
-          ))}
-        </fieldset>
-        <label className="field"><span>Proposals per hour</span><input inputMode="numeric" value={perHour} onChange={(e) => setPerHour(e.target.value)} /></label>
-        <label className="field"><span>Max asked value per hour ($)</span><input inputMode="decimal" placeholder="2500" value={centsPerHour} onChange={(e) => setCentsPerHour(e.target.value)} /></label>
-        <button type="submit" className="btn btn-ink" disabled={!name.trim() || scopes.length === 0}>Create agent key</button>
-      </form>
       <div className="table-wrap" style={{ marginTop: 12 }}>
         {rows.data && rows.data.length > 0 ? (
-          <table className="diff runs">
+          <table className="keys-table">
             <thead><tr><th scope="col">Name</th><th scope="col">Scopes</th><th scope="col">Status</th><th scope="col">Last seen</th><th scope="col">Hourly limit</th><th scope="col">Actions</th></tr></thead>
             <tbody>
               {rows.data.map((agent) => (
                 <tr key={agent.id}>
                   <th scope="row">{agent.name}</th>
                   <td>{agent.scopes.map((s) => SCOPE_WORDS[s]).join(', ')}</td>
-                  <td><Chip tone={agent.status === 'active' ? 'auto' : agent.status === 'suspended' ? 'need' : 'deny'}>{agent.status}</Chip></td>
-                  <td className="fine">{agent.lastSeenAt ? when(agent.lastSeenAt) : 'never'}</td>
-                  <td className="fine">{agent.limits.proposalsPerHour}/h · ${(agent.limits.centsPerHour / 100).toLocaleString()}</td>
-                  <td className="row gap-s">
+                  <td><Chip tone={agent.status === 'active' ? 'auto' : agent.status === 'suspended' ? 'need' : 'deny'} title={agent.status === 'suspended' ? 'The breaker stopped this agent after repeated refused requests. Look at what it asked for, then resume it.' : undefined}>{agent.status}</Chip></td>
+                  <td className="fine nowrap">{agent.lastSeenAt ? when(agent.lastSeenAt) : 'never'}</td>
+                  <td className="fine nowrap">{agent.limits.proposalsPerHour}/h · ${(agent.limits.centsPerHour / 100).toLocaleString()}</td>
+                  <td><div className="row gap-s">
                     {agent.status === 'suspended' ? <button type="button" className="btn btn-ghost btn-small" onClick={() => act('resume', agent)}>Resume</button> : null}
                     {agent.status !== 'revoked' ? <button type="button" className="btn btn-ghost btn-small" onClick={() => act('revoke', agent)}>Revoke</button> : null}
-                  </td>
+                  </div></td>
                 </tr>
               ))}
             </tbody>
           </table>
-        ) : <p className="fine">{rows.isLoading ? 'Loading…' : rows.data ? 'No agent keys yet. Create one above.' : 'Could not load agents.'}</p>}
+        ) : <p className="fine">{rows.isLoading ? 'Loading…' : rows.data ? 'No agents connected yet. Make a key above.' : 'Could not load agents.'}</p>}
       </div>
     </section>
   )
@@ -153,7 +114,7 @@ function ClientKeys() {
       </form>
       <div className="table-wrap" style={{ marginTop: 12 }}>
         {rows.data && rows.data.length > 0 ? (
-          <table className="diff runs">
+          <table className="keys-table">
             <thead><tr><th scope="col">Name</th><th scope="col">Client</th><th scope="col">Status</th><th scope="col">Last seen</th><th scope="col">Actions</th></tr></thead>
             <tbody>
               {rows.data.map((row) => (
@@ -161,11 +122,11 @@ function ClientKeys() {
                   <th scope="row">{row.name}</th>
                   <td>{clientName(row.partyId)}</td>
                   <td><Chip tone={row.status === 'active' ? 'auto' : 'deny'}>{row.status}</Chip></td>
-                  <td className="fine">{row.lastSeenAt ? when(row.lastSeenAt) : 'never'}</td>
-                  <td className="row gap-s">
+                  <td className="fine nowrap">{row.lastSeenAt ? when(row.lastSeenAt) : 'never'}</td>
+                  <td><div className="row gap-s">
                     {row.status === 'active' ? <button type="button" className="btn btn-ghost btn-small" onClick={() => act('rotate', row)}>Rotate</button> : null}
                     {row.status !== 'revoked' ? <button type="button" className="btn btn-ghost btn-small" onClick={() => act('revoke', row)}>Revoke</button> : null}
-                  </td>
+                  </div></td>
                 </tr>
               ))}
             </tbody>
@@ -226,8 +187,8 @@ export function System() {
           )}
         </section>
       ) : null}
-      {owner ? <AgentKeys /> : null}
       {owner ? <ConnectAgent /> : null}
+      {owner ? <AgentKeys /> : null}
       {owner ? <NotifyPanel /> : null}
       {owner ? <ClientKeys /> : null}
       {owner && me.data?.demoReset ? <DemoReset /> : null}

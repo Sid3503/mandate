@@ -217,6 +217,11 @@ export const api = {
   createAgent: (input: { name: string; scopes: AgentScope[]; limits?: { proposalsPerHour?: number; centsPerHour?: number } }) => request<{ agent: AgentRow; apiKey: string }>('/v1/agents', { method: 'POST', body: input }),
   revokeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/revoke`, { method: 'POST' }),
   resumeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/resume`, { method: 'POST' }),
+  /** Asks the MCP door which tools a key may use. The console is served by the same server, so this needs no CORS. */
+  mcpTools: async (key: string) => {
+    const answer = await request<{ result?: { tools?: Array<{ name: string }> } }>('/mcp', { method: 'POST', key, body: { jsonrpc: '2.0', id: 1, method: 'tools/list' }, headers: { accept: 'application/json, text/event-stream' } })
+    return (answer.result?.tools ?? []).map((tool) => tool.name)
+  },
   shares: (jobId: string) => request<{ data: ShareSummary[] }>(`/v1/jobs/${encodeURIComponent(jobId)}/shares`),
   createShare: (jobId: string, input: { partyId: string; ttlDays?: number; label?: string }) => request<{ share: ShareSummary; token: string; url: string }>(`/v1/jobs/${encodeURIComponent(jobId)}/shares`, { method: 'POST', body: input }),
   revokeShare: (id: string) => request<ShareSummary>(`/v1/shares/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
