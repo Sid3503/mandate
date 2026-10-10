@@ -74,6 +74,7 @@ const app = createApp({
     paypalConfigured: config.paypal !== null,
     log: config.log,
     publicUrl: config.publicUrl,
+    commit: config.commit,
     webhookId: config.paypalWebhookId,
     clientAgent: config.clientAgent,
     demoReset: config.demoReset,

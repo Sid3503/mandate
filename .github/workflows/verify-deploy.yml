@@ -1,0 +1,87 @@
+# After CI passes on main, Render deploys the commit (render.yaml: autoDeployTrigger: checksPass). This waits until the
+# live service reports that commit, then smoke-tests it, so a deploy that did not happen, or came up broken, is a red run
+# and an email, not something you find out from a judge.
+#
+# Set the repository variable PRODUCTION_URL (for example https://mandate-80ng.onrender.com) to turn it on.
+# Optional secret SMOKE_OWNER_KEY adds a check through the MCP door with a short-lived read-only key.
+# Set the repository variable DEPLOY_FREEZE to true while auto-deploys are off (the judging window).
+name: Verify deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'Commit the live service should be running. Empty: the latest main.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# The newest main commit is the one that matters.
+concurrency:
+  group: verify-deploy
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Smoke test production
+    # Only our own pushes to main, never a fork's pull request that happens to be called main.
+    if: >-
+      vars.PRODUCTION_URL != '' && vars.DEPLOY_FREEZE != 'true' && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.event == 'push' &&
+         github.event.workflow_run.head_branch == 'main' &&
+         github.event.workflow_run.head_repository.full_name == github.repository)
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      MANDATE_OWNER_KEY: ${{ secrets.SMOKE_OWNER_KEY }}
+      COMMIT_INPUT: ${{ inputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+      - name: Which commit, and does it deploy?
+        id: commit
+        run: |
+          set -euo pipefail
+          if [ -n "${COMMIT_INPUT:-}" ]; then
+            [[ "$COMMIT_INPUT" =~ ^[0-9a-fA-F]{7,40}$ ]] || { echo "::error::'commit' is not a commit id"; exit 1; }
+            sha="$(git rev-parse --verify "${COMMIT_INPUT}^{commit}")"
+          else
+            sha="$(git rev-parse HEAD)"
+          fi
+          base="$(git rev-parse "${sha}^" 2>/dev/null || true)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          # Render skips a deploy when a push touches only render.yaml's ignoredPaths (docs, tests, workflows). Then there is no
+          # new commit to wait for, and the check just confirms that what is live is still healthy.
+          node scripts/ci/deploy-needed.mjs "$base" "$sha"
+      - run: npm ci
+        working-directory: api
+      - name: Smoke test
+        working-directory: api
+        env:
+          SHA: ${{ steps.commit.outputs.sha }}
+          NEEDED: ${{ steps.commit.outputs.needed }}
+        run: |
+          if [ "$NEEDED" = "true" ]; then
+            npm run smoke -- "$PRODUCTION_URL" --commit "$SHA" --wait 1500
+          else
+            echo "::notice::This commit changed only files Render ignores, so no deploy is expected. Checking that the live service is healthy."
+            npm run smoke -- "$PRODUCTION_URL"
+          fi

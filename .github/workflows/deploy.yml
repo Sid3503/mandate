@@ -1,0 +1,97 @@
+# Deploy one exact commit by hand: to promote something when auto-deploys are off (the judging window), or to roll back.
+# Run it from Actions → "Deploy a commit" → Run workflow, on main.
+#
+# One-time setup:
+#   Settings → Environments → New environment "production"
+#     secret   RENDER_DEPLOY_HOOK_URL   Render → the service → Settings → Deploy Hook (a secret: anyone with it can deploy)
+#     optional: Required reviewers, to put a person between the click and the deploy
+#   Settings → Secrets and variables → Actions → Variables:  PRODUCTION_URL
+#     optional secret SMOKE_OWNER_KEY: adds a check through the MCP door with a short-lived key
+name: Deploy a commit
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'Commit on main to deploy (full or short SHA). Empty: the latest main. To roll back, give an earlier one.'
+        required: false
+        type: string
+      skip_ci_check:
+        description: 'Deploy even though this commit has no passing "CI OK" (an emergency rollback to a commit that predates CI).'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  checks: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy and verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      COMMIT_INPUT: ${{ inputs.commit }}
+      SKIP_CI_CHECK: ${{ inputs.skip_ci_check }}
+      PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+      MANDATE_OWNER_KEY: ${{ secrets.SMOKE_OWNER_KEY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Choose the commit and check it is safe to deploy
+        id: pick
+        run: |
+          set -euo pipefail
+          : "${PRODUCTION_URL:?Set the repository variable PRODUCTION_URL}"
+          if [ -n "${COMMIT_INPUT:-}" ]; then
+            [[ "$COMMIT_INPUT" =~ ^[0-9a-fA-F]{7,40}$ ]] || { echo "::error::'$COMMIT_INPUT' is not a commit id"; exit 1; }
+            sha="$(git rev-parse --verify "${COMMIT_INPUT}^{commit}")"
+          else
+            sha="$(git rev-parse origin/main)"
+          fi
+          # Only what is on main: reviewed, merged, and gated.
+          git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not on main"; exit 1; }
+          if [ "$SKIP_CI_CHECK" != "true" ]; then
+            ok="$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "CI OK" and .conclusion == "success")] | length')"
+            [ "$ok" -ge 1 ] || { echo "::error::$sha has no passing \"CI OK\". Fix it, or tick skip_ci_check for an emergency rollback."; exit 1; }
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Deploying $sha"
+      - name: Ask Render to deploy exactly that commit
+        env:
+          HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          SHA: ${{ steps.pick.outputs.sha }}
+        run: |
+          set -euo pipefail
+          : "${HOOK:?Add RENDER_DEPLOY_HOOK_URL to the production environment}"
+          case "$HOOK" in *\?*) url="${HOOK}&ref=${SHA}" ;; *) url="${HOOK}?ref=${SHA}" ;; esac
+          code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$url")"
+          case "$code" in
+            200) echo "Render started the deploy." ;;
+            202) echo "Render queued the deploy behind one that is running." ;;
+            401) echo "::error::Render refused the deploy hook (401). Regenerate the hook and update the secret."; exit 1 ;;
+            404) echo "::error::Render does not know that commit (404)."; exit 1 ;;
+            *) echo "::error::Render answered $code."; exit 1 ;;
+          esac
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: api/package-lock.json
+      - run: npm ci
+        working-directory: api
+      - name: Wait for it to be live, then smoke test
+        working-directory: api
+        env:
+          SHA: ${{ steps.pick.outputs.sha }}
+        run: npm run smoke -- "$PRODUCTION_URL" --commit "$SHA" --wait 1500

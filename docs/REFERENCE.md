@@ -187,7 +187,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 353 API tests (Vitest), including a 56-case red team, plus 62 Playwright end-to-end tests on desktop and phone with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 498 API tests (Vitest), including a 56-case red team, plus 112 Playwright end-to-end runs (56 tests, on desktop and on phone) with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -336,6 +336,7 @@ npm run setup            # npm ci in api/ and web/, including dev dependencies
 | `NOTIFY_WEBHOOK_URL` | unset | An https incoming-webhook address (Slack, Discord, Zapier, Make). When set, Mandate messages it when a request needs the owner's tap, a payout fails or is unclaimed, or Mandate pauses. The message says what and links to the console; it cannot approve or pay. The address is a secret and is never logged or returned. |
 | `DEMO_RESET` | `off` | `on` lets the owner wipe the ledger back to a fresh Line Studio from System (`POST /v1/demo/reset`, typed confirmation). Refused at start-up unless `PAYPAL_API` is a sandbox address. Keys are kept. For a hosted demo that many people try in turn. |
 | `PUBLIC_URL` | `http://HOST:PORT` | The server URL written into the OpenAPI document. |
+| `RENDER_GIT_COMMIT`, `GIT_COMMIT` | unset | The commit this build came from (Render sets the first; the second wins if both are set). Shown as `releaseId` on `/ready` and `/health`, so a deploy can be verified by reading it back. Anything that is not 7 to 40 hex characters is ignored. |
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | unset | Sandbox app credentials. Without them the rules still decide, but nothing settles (`paypal.unconfigured`). |
 | `PAYPAL_API` | `https://api-m.sandbox.paypal.com` | The PayPal REST base URL. |
 | `BUYER_AGENT_KEY` | unset | The first client's agent. Can offer and read deals for `BUYER_AGENT_PARTY` and call `/mcp`. Nothing else. Further clients get their own keys from the System page (`POST /v1/client-keys`), each bound to its own client; the environment key keeps working. |
@@ -725,21 +726,24 @@ A hash can be recomputed by anyone who can write the database. So the lock is al
 
 `POST /mcp` is a Model Context Protocol server (Streamable HTTP, stateless: a fresh server per request, no session to leak). `npm run mcp` in `api/` serves the same tools over stdio for Claude Desktop, Cursor or the MCP Inspector.
 
-| Tool | Studio key | Client agent key | Reads or asks |
-| --- | --- | --- | --- |
-| `get_rules` | yes | yes (its own rules only) | reads |
-| `get_jobs` | yes | no | reads |
-| `propose` | yes | no | **asks** |
-| `list_ledger` | yes | no | reads |
-| `offer_deal` | yes | yes | **asks** |
-| `explain` | yes | yes (its own deals only) | reads |
+| Tool | Studio key | An issued agent key needs | Client agent key | Reads or asks |
+| --- | --- | --- | --- | --- |
+| `get_rules` | yes | `read` | yes (its own rules only) | reads |
+| `get_jobs` | yes | `read` | no | reads |
+| `propose` | yes | `propose` | no | **asks** |
+| `list_ledger` | yes | `read` | no | reads |
+| `offer_deal` | yes | `deals` | yes | **asks** |
+| `explain` | yes | `read` (requests) or `deals` (deals) | yes (its own deals only) | reads |
 
 **There is no approve, capture, send, refund or publish-rules tool.** The owner key is accepted at `/mcp` but downgraded to a proposer, so the agent door never carries owner authority. Design choices worth knowing:
 
 - Every answer has the rule code, the rules' sentence in plain words, the server's own words, the phase, the next step and `moneyMoved: "$0.00"`.
 - Tool errors come back as `isError` results the model can read and fix, not as protocol failures. Small models fill optional fields with placeholders (`""`, `0`, an invented id); the `propose` boundary treats those as absent, and never changes who, how much or what for.
 - A connection has a budget of requests that ask (12, keyed by the `x-mandate-run` header). A request that fails validation does not spend it.
-- A repeated tool call in the same run replays instead of asking twice.
+- **An issued agent key** (System → Connect an agent, or `POST /v1/agents`) opens the door with the `mcp` scope, and `read`, `propose` and `deals` decide which tools are behind it. A tool the scopes do not allow is switched off before the connection opens: it is not listed and cannot be called. A key with the door and nothing behind it is refused when it is made (`agent.scopes`), so it can never connect to an empty room. The key's hourly request count and value limits apply to what it asks through `/mcp`, and the breaker counts refusals per agent: a key that keeps asking for what the rules never allow is suspended on its own (the next call gets `403 agent.suspended`), the others carry on, and the owner resumes it on System.
+- **Retries.** Most MCP clients send no `x-mandate-run`, so a retried call would look new. An identical tool call from the same caller inside 60 seconds is treated as a retry: it gets the first call's run id, and the idempotency key built from it replays the first answer instead of asking twice. After the window, the same ask is made and judged afresh. With the header, the run id is the client's own.
+- **Plain HTTP.** POST only: a `GET` or `DELETE` answers `405` with `Allow: POST` (there is no session and no event stream, and an empty `200` made real clients reconnect over and over). A client that leaves out `Accept`, or sends `Content-Type: text/plain`, is served anyway, since every answer is JSON. A body over 1 MB is `413`.
+- **Check a connection.** `MANDATE_AGENT_KEY=<key> npm run check:mcp -- https://your-host [--attack]` connects with the official MCP client, lists the key's tools, reads, and (with `--attack`) asks for a fake-vendor payout and shows it refused. The key is read from the environment and never printed.
 - Tool descriptions say what a tool does, when to call it, and what it must never claim. Read-only tools carry `readOnlyHint`.
 
 ### The agents
@@ -1016,7 +1020,7 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 
 ```bash
 cd api && npm test && npm run typecheck        # 353 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 62 Playwright tests (desktop 1440×960 and Pixel 7)
+cd web && npm run typecheck && npm run e2e     # 112 Playwright runs (56 tests on desktop 1440×960 and on Pixel 7)
 ```
 
 **API tests (`api/test/`)** cover:
@@ -1047,7 +1051,7 @@ cd web && npm run typecheck && npm run e2e     # 62 Playwright tests (desktop 14
 - **Deals:** $450 / $200 / $300 end to end, limits that stay private (checked in what each agent is shown), keys bound to one side, thread closing, idempotent replay, rules versioning. Each company writes its own price sheet (`PUT /v1/party-rules/mine`; partial bodies keep the rest, a new sheet starts from the warrant, the other side's is refused); sheets that came with the sample studio are examples until kept, and the server refuses offers and negotiations until they are (`409 deal.rules_unconfirmed`). The Deals screen carries the writer and the Keep bar, and negotiation and offers wait until both numbers exist and are kept.
 - **Deals bind billing:** a charge on a dealt job must bill a milestone at its exact amount, once; the whole $150 in / $90 out / $60 kept loop runs through a deal.
 - **Signed locks:** signing on tap and on auto, a forged row with a recomputed hash is refused at capture, boot-time signing of old locks only if intact, key rotation, tampered deals.
-- **MCP:** the exact tool lists per key, no tool can pay, the owner key is downgraded, a fooled agent is refused, replay, request budget, bad input returned as a tool error, two agents negotiating through tools.
+- **MCP:** the exact tool lists per key, no tool can pay, the owner key is downgraded, a fooled agent is refused, replay, request budget, bad input returned as a tool error, two agents negotiating through tools. **Issued agent keys through the door** (`mcp-agent-keys.test.ts`, with the official MCP client): which tools each scope combination gets, a read-only key can never ask, a key with an empty door is refused, hourly count and value limits, the per-agent breaker (suspend, resume, others unaffected), revoke and wrong key, the 60-second retry window, one payout under a standing rule even when asked twice, `405` on GET and DELETE, a client that sends no `Accept`, bad JSON, protocol versions.
 - **Agents (scripted model):** the clerk's full path and its trace on the receipt, a boasting model is overruled by the guard, what each negotiator is shown (so leaks are testable), scrubbing, rate limits, model failure.
 - **Invoices:** create and send once, settle only on PayPal's `PAID` for the exact cents, part-paid / different total / cancelled are never settled, fallback to checkout, crash recovery, webhook as a nudge only.
 - **The PayPal payloads:** the Orders request, and the Payouts item with the lock-derived batch id.
@@ -1120,7 +1124,7 @@ Screenshots are written to `web/e2e/shots/`.
 
 - **Status links.** The owner shares a job with one person (`POST /v1/jobs/:jobId/shares`, `{partyId, ttlDays}`; `GET` lists them; `POST /v1/shares/:id/revoke` withdraws one). The link looks like `/app/s/<id>~<secret>`. It is read-only: a contractor sees their own payouts and whether the client's money has arrived (and is clearing), a client sees their own invoices with a PayPal pay link. No totals, margin, rules, emails or anyone else. Only a hash of the secret is stored, links expire (default 30 days, at most 90), and every kind of bad link (unknown, wrong, expired, withdrawn) answers the same `404 share.unknown`. The one public route is `GET /v1/share/:token`; every other route still needs a key. Anonymous callers are rate-limited by address.
 - **Risk-aware release.** `clearingDays` in the rules (0 to 60, default 0): a payout that a standing rule, autopilot or the automatic line would send with no tap waits until the client payment has been settled that long, because a client can still take money back for a while. The owner can approve earlier. Shown on the job as "Clearing until ...".
-- **Connect any agent.** System shows a Claude Code command, a generic MCP address and a curl check, with a placeholder key. A real key comes from Agent keys with the MCP door scope.
+- **Connect an agent.** One flow on System: name the agent, choose what it may do (read and ask, read only, read ask and negotiate, or custom scopes and limits), and get a key with the Claude Code, Cursor and generic commands already carrying it. The key is shown once, lives only in the page's memory, and the page can check the connection itself (it lists what the key can do and confirms none of it can approve or pay). The list below it shows each agent's scopes, status and last seen, with Resume for a suspended agent and Revoke.
 - **Notifications.** `NOTIFY_WEBHOOK_URL` above. `GET /v1/notify` shows whether it is on and when it last sent; `POST /v1/notify/test` sends one test message.
 - **Demo reset.** `DEMO_RESET=on` above. `POST /v1/demo/reset` with `{"confirm":"reset the demo"}`. Without the variable the route is a 404.
 
@@ -1152,6 +1156,7 @@ Screenshots are written to `web/e2e/shots/`.
 - `NODE_ENV=production`, `HOST=0.0.0.0`, `DATABASE_PATH=/tmp/mandate.sqlite` (the free disk is wiped on restart, so the rules are reseeded on boot).
 - `API_KEY` and `PROPOSER_KEY` are generated by Render. Read them in the dashboard.
 - `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` are set by hand (`sync: false`).
+- `autoDeployTrigger: checksPass`: Render deploys a commit only after its GitHub checks (the CI workflow) pass. `buildFilter.ignoredPaths` keeps a docs-only or tests-only push from restarting the free instance and wiping its ledger. See [docs/CICD.md](CICD.md) for the pipeline, the verified deploy, rollback and the judging freeze.
 
 - `NODE_VERSION` is pinned (the API needs Node 22.13+ for `node:sqlite`). Links to status pages and the console are built from `RENDER_EXTERNAL_URL`, which Render sets, or from `PUBLIC_URL` if you set it.
 

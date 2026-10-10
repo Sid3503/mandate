@@ -6,7 +6,13 @@
     "build": "npm --prefix web run build",
     "start": "npm --prefix api start",
     "test": "npm --prefix api test && npm --prefix web run e2e",
-    "demo": "npm --prefix web run build && node api/node_modules/tsx/dist/cli.mjs api/src/dev/e2e-server.ts"
+    "demo": "npm --prefix web run build && node api/node_modules/tsx/dist/cli.mjs api/src/dev/e2e-server.ts",
+    "typecheck": "npm --prefix api run typecheck && npm --prefix web run typecheck",
+    "hygiene": "node scripts/ci/hygiene.mjs",
+    "check": "npm run hygiene && npm run typecheck && npm --prefix api test",
+    "ci": "npm run check && npm run build && npm --prefix web run e2e",
+    "smoke": "npm --prefix api run smoke --",
+    "hooks:install": "git config core.hooksPath .githooks"
   },
   "license": "MIT"
 }

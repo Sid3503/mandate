@@ -8,6 +8,23 @@ services:
     buildCommand: npm run setup && npm run build
     startCommand: npm start
     healthCheckPath: /ready
+    # Deploy a commit only after its GitHub checks (the CI workflow) have passed. For the judging window set this to
+    # `off` and deploy by hand, so the ledger is never wiped under a judge.
+    autoDeployTrigger: checksPass
+    # A redeploy restarts the free instance and wipes its ledger, so a push that touches only these does not deploy.
+    # scripts/ci/deploy-needed.mjs reads this list too, so the post-deploy check agrees with Render about what counts.
+    buildFilter:
+      ignoredPaths:
+        - '**/*.md'
+        - docs/**
+        - pitch/**
+        - .github/**
+        - .githooks/**
+        - scripts/**
+        - api/test/**
+        - api/scripts/**
+        - web/e2e/**
+        - LICENSE
     envVars:
       # The API needs Node 22.13+ (node:sqlite). Pinned to the version it is tested on.
       - key: NODE_VERSION

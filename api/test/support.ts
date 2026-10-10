@@ -23,7 +23,7 @@ export function closeAll() {
 
 export type Requester = { request: (input: string, init?: RequestInit) => Response | Promise<Response> }
 
-export function harness(options: { demoReset?: boolean; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: { tripAfter: number; windowSeconds?: number } } = {}) {
+export function harness(options: { commit?: string | null; demoReset?: boolean; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: { tripAfter: number; windowSeconds?: number } } = {}) {
   const db = openDatabase(':memory:')
   open.push(db)
   migrate(db)
@@ -53,6 +53,7 @@ export function harness(options: { demoReset?: boolean; invoices?: InvoicePort |
       paypalConfigured: paypal !== null,
       log: false,
       publicUrl: 'http://127.0.0.1:8787',
+      commit: options.commit,
       webhookId: options.webhookId,
       clientAgent: options.clientAgent,
       demoReset: options.demoReset,

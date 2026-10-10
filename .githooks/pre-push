@@ -1,0 +1,8 @@
+#!/bin/sh
+# Fast checks before a push (about 20 seconds): the repo rules, both type-checks, and the API tests.
+# CI runs the rest (the browser tests) and is the real gate; this only saves you a red run.
+# Install:  npm run hooks:install      Skip once:  git push --no-verify
+set -e
+cd "$(git rev-parse --show-toplevel)"
+echo "pre-push: npm run check"
+npm run --silent check

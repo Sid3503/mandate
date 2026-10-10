@@ -64,6 +64,8 @@ export type AppDeps = {
     paypalConfigured: boolean
     log: boolean
     publicUrl: string
+    /** The commit this server was built from. Shown on /ready as releaseId so a deploy can be verified. */
+    commit?: string | null
     /** PayPal's id for the registered webhook. When set, a webhook must carry a signature PayPal confirms. */
     webhookId?: string | null
     /** `auto` lets the hosted stand-in for the client's agent answer a delivery as soon as it arrives. */
@@ -314,10 +316,10 @@ export function createApp(deps: AppDeps) {
 
   app.get('/health', (c) => health(c, 'pass', {
     'api:alive': [{ status: 'pass', componentType: 'system', time: deps.now().toISOString() }],
-  }))
+  }, 200, deps.config.commit ?? null))
 
   app.get('/ready', (c) => {
-    if (deps.draining?.()) return health(c, 'fail', { 'process:draining': [{ status: 'fail', componentType: 'system', observedValue: 'shutting down', time: deps.now().toISOString() }] }, 503)
+    if (deps.draining?.()) return health(c, 'fail', { 'process:draining': [{ status: 'fail', componentType: 'system', observedValue: 'shutting down', time: deps.now().toISOString() }] }, 503, deps.config.commit ?? null)
     const dbOk = databaseReady(deps.db)
     const paypalStatus = deps.config.paypalConfigured ? 'pass' : 'warn'
     const status = dbOk ? 'pass' : 'fail'
@@ -335,7 +337,7 @@ export function createApp(deps: AppDeps) {
         observedValue: deps.config.paypalConfigured ? 'configured' : 'missing',
         time: deps.now().toISOString(),
       }],
-    }, dbOk ? 200 : 503)
+    }, dbOk ? 200 : 503, deps.config.commit ?? null)
   })
 
   app.get('/openapi.json', (c) => c.json(openapi))
@@ -856,10 +858,12 @@ export function createApp(deps: AppDeps) {
   return app
 }
 
-function health(c: { json: (body: unknown, status?: number, headers?: Record<string, string>) => Response }, status: 'pass' | 'fail', checks: Record<string, unknown[]>, code = 200) {
+function health(c: { json: (body: unknown, status?: number, headers?: Record<string, string>) => Response }, status: 'pass' | 'fail', checks: Record<string, unknown[]>, code = 200, releaseId: string | null = null) {
   return c.json({
     status,
     version: VERSION,
+    // The commit this build came from, when the host says so (health+json's own field for it).
+    ...(releaseId ? { releaseId } : {}),
     serviceId: 'mandate-api',
     description: 'Mandate spending-warrant API',
     checks,
