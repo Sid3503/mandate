@@ -1,7 +1,9 @@
+import { BUYER_PARTY_ID } from '../db/database'
 import type { ProposalRow, Repo } from '../db/repo'
+import type { DealTerms } from '../domain/deal'
 import { explainClause } from '../domain/explain'
 import { monthWindow } from '../domain/period'
-import type { WarrantBody } from '../domain/schemas'
+import { DEMO_JOB_ID, WARRANT_ID, type WarrantBody } from '../domain/schemas'
 import type { DealService } from './deals'
 import type { MandateService } from './mandate'
 
@@ -14,6 +16,7 @@ import type { MandateService } from './mandate'
  *   inFlight  nobody needs to do anything: an invoice out, a payout processing, Mandate sending it
  *   done      settled in the last week, and how: a tap, a standing rule, autopilot, or under the automatic line
  *   stopped   refused by the rules
+ *   next      the one next step of the frozen Northwind job, and nothing else
  *
  * Words are composed here, in one place, so the page and the tests agree on what is said.
  */
@@ -163,6 +166,7 @@ export class TodayService {
       readyToBill: this.deals.readyToBill(),
       watcher: this.mandate.watcher(),
       stats: { last30Days: { requests: recent.length, refused: refused.length + recent.filter((row) => row.gate === 'DENY' && createdBy.get(row.id) === 'autopilot').length, automatic, tapped: decided.length - automatic, automaticShare: decided.length === 0 ? null : Math.round((automatic / decided.length) * 100) } },
+      next: this.frozenNext(body),
       setup: this.setup(body),
     }
   }
@@ -189,19 +193,124 @@ export class TodayService {
   }
 
   private setup(body: WarrantBody | null) {
+    // `next` is the checklist for the frozen walk. These two would compete with it until milestone 0 is captured.
+    const later = this.milestoneCaptured()
+      ? [
+          { id: 'rule', label: 'Sign a standing rule for a contractor', hint: 'Say yes once to a kind of payout, so it needs no tap.', href: '/rules', done: Boolean(body && body.standing.length > 0) },
+          { id: 'autopilot', label: 'Switch on autopilot', hint: 'Bill on delivery, pay when the client pays, chase unpaid invoices.', href: '/rules', done: Boolean(body && (body.automation.billSignedDeals || body.automation.payOnSettle || body.automation.remindUnpaidAfterDays !== null)) },
+        ]
+      : []
     const steps = [
       { id: 'paypal', label: 'Connect PayPal', hint: 'Add the sandbox app credentials to the server, then check System.', href: '/system', done: this.paypalConfigured() },
       { id: 'people', label: 'Add the people you bill and pay', hint: 'A client and a contractor on the rules.', href: '/rules', done: Boolean(body && body.payees.length > 0 && body.clients.length > 0) },
       { id: 'price', label: 'Set what each company will accept', hint: 'The least the studio takes and the most each client pays. Each company writes its own, on Deals.', href: '/deals', done: this.deals.priceLimitsSet() },
       { id: 'deal', label: 'Agree a deal with a client', hint: 'Let the two agents negotiate, or offer terms yourself.', href: '/deals', done: this.repo.countAgreedDeals() > 0 },
-      { id: 'rule', label: 'Sign a standing rule for a contractor', hint: 'Say yes once to a kind of payout, so it needs no tap.', href: '/rules', done: Boolean(body && body.standing.length > 0) },
-      { id: 'autopilot', label: 'Switch on autopilot', hint: 'Bill on delivery, pay when the client pays, chase unpaid invoices.', href: '/rules', done: Boolean(body && (body.automation.billSignedDeals || body.automation.payOnSettle || body.automation.remindUnpaidAfterDays !== null)) },
+      ...later,
       { id: 'first', label: 'Get the first client payment through', hint: 'Bill a milestone and have the client pay it.', href: '/jobs', done: this.repo.settledProposals('1970-01-01T00:00:00.000Z', 500).some((row) => row.kind === 'charge') },
       { id: 'paid', label: 'Pay a contractor from settled money', hint: 'A payout funded by a client payment PayPal confirmed. Money in releases money out.', href: '/jobs', done: this.repo.settledProposals('1970-01-01T00:00:00.000Z', 500).some((row) => row.kind === 'payment') },
     ]
     return { complete: steps.every((step) => step.done), steps }
   }
+
+  /** Milestone 0 of the frozen job has a captured client charge. */
+  private milestoneCaptured(): boolean {
+    const deal = this.repo.agreedDealByJob(DEMO_JOB_ID)
+    return Boolean(deal && this.repo.chargeForMilestone(deal.id, 0)?.phase === 'captured')
+  }
+
+  /**
+   * One sentence for the frozen job. Indexes match DealService.bill (0, then 1). A lock names the email on that
+   * proposal's warrant version; before a lock exists, the latest warrant is the one that would be used.
+   */
+  private frozenNext(body: WarrantBody | null): { step: string | null; rules: string | null } {
+    const sheets = this.unconfirmedSheets()
+    if (sheets.length > 0) {
+      const verb = sheets.length === 1 ? 'shows' : 'show'
+      return { step: `Keep the price sheets on Deals. ${sheets.join(' and ')} still ${verb} the sample numbers that came with the studio.`, rules: null }
+    }
+    const clientName = body?.clients.find((client) => client.id === BUYER_PARTY_ID)?.displayName ?? 'Northwind'
+    const deal = this.repo.agreedDealByJob(DEMO_JOB_ID)
+    if (!deal) return { step: `No deal with ${clientName} is agreed. Negotiate one, or offer ${dollars(30_000)} as two ${dollars(15_000)} milestones.`, rules: null }
+    const terms = JSON.parse(deal.terms_json) as DealTerms
+    const milestone = terms.milestones[0]
+    if (!milestone) return { step: null, rules: null }
+    const charge = this.repo.chargeForMilestone(deal.id, 0)
+    if (!charge) {
+      const delivery = this.repo.currentDelivery(deal.id, 0)
+      if (delivery?.status === 'awaiting') return { step: `Waiting for ${clientName} to accept the delivery for milestone 0. Nothing is billed until they do.`, rules: null }
+      return { step: `Bill milestone 0 (${dollars(milestone.amountCents)}) with an https proof link.`, rules: null }
+    }
+    const money = dollars(charge.amount_cents)
+    if (charge.phase === 'pending_approval') return { step: `Tap to approve the ${money} charge for milestone 0.`, rules: null }
+    if (charge.phase === 'locked' || charge.phase === 'invoice_draft') {
+      const step = charge.clause === 'standing.billing'
+        ? `Your billing rule sends the invoice for the ${money} charge for milestone 0. No tap.`
+        : `Send the invoice for the ${money} charge for milestone 0.`
+      return { step, rules: null }
+    }
+    if (charge.phase === 'invoice_sent' || charge.phase === 'order_created') {
+      const client = this.party(charge)
+      return { step: client ? `${client.name} must pay ${client.email} in PayPal, not in this console.` : 'The client must pay in PayPal, not in this console.', rules: null }
+    }
+    if (charge.phase === 'capture_inflight') return { step: `PayPal is settling the ${money} charge for milestone 0.`, rules: null }
+    if (charge.phase !== 'captured') return { step: `The ${money} charge for milestone 0 is not finished.`, rules: null }
+    return { step: this.payoutStep(charge, body), rules: this.rulesHint(body, terms) }
+  }
+
+  /** Sheets still marked origin seed. A deal against them is refused as deal.rules_unconfirmed. */
+  private unconfirmedSheets(): string[] {
+    const seller = this.repo.partyRules(WARRANT_ID)
+    const buyer = this.repo.partyRules(BUYER_PARTY_ID)
+    const names: string[] = []
+    if (!seller || seller.origin === 'seed') names.push(seller?.body.displayName ?? 'Line Studio')
+    if (!buyer || buyer.origin === 'seed') names.push(buyer?.body.displayName ?? 'Northwind')
+    return names
+  }
+
+  /** The email a locked row will actually invoice or pay. Latest warrant only while nothing is locked. */
+  private party(row: ProposalRow): { name: string; email: string } | null {
+    const warrant = row.cart_hash ? this.repo.warrant(row.warrant_id, row.warrant_version) : this.repo.latestWarrant()
+    if (!warrant || !row.payee_id) return null
+    const list = row.kind === 'payment' ? warrant.body.payees : warrant.body.clients
+    const party = list.find((item) => item.id === row.payee_id)
+    return party ? { name: party.displayName, email: party.email } : null
+  }
+
+  /** What is left of milestone 0 once the client has paid. Stops once that $ share payout is captured. */
+  private payoutStep(charge: ProposalRow, body: WarrantBody | null): string | null {
+    const payee = body?.payees.find((item) => item.id === FROZEN_PAYEE) ?? body?.payees[0]
+    const payeeId = payee?.id ?? FROZEN_PAYEE
+    const payouts = (charge.capture_id ? this.repo.proposalsForJob(DEMO_JOB_ID) : []).filter((row) => row.kind === 'payment' && row.funding_capture_id === charge.capture_id && row.payee_id === payeeId && !DEAD_PAYOUT.has(row.phase))
+    if (payouts.some((row) => row.phase === 'captured')) return null
+    const payout = [...payouts].reverse().find((row) => row.phase !== 'captured')
+    if (!payout) {
+      const net = Math.max(0, (charge.captured_amount_cents ?? charge.amount_cents) - (charge.capture_id ? this.repo.refundedCents(charge.capture_id) : 0))
+      const share = Math.floor((net * (body?.contractorShareBps ?? 0)) / 10_000)
+      return `Ask to pay ${payee?.displayName ?? 'the contractor'} ${dollars(share)} from the capture for milestone 0.`
+    }
+    const who = this.party(payout)
+    const name = who?.name ?? payee?.displayName ?? 'the contractor'
+    const money = dollars(payout.amount_cents)
+    // Pending approval is the tap: the amount is not under the automatic line, and no standing rule matched.
+    if (payout.phase === 'pending_approval') return `Approve the ${money} payout to ${name} and send it.`
+    if (payout.phase === 'payout_unclaimed') return `The ${money} payout to ${name} is not paid. The receiver is ${who?.email ?? 'unknown'}.`
+    if (payout.phase === 'payout_sent' || payout.phase === 'capture_inflight' || payout.phase === 'order_created') return `PayPal is sending the ${money} payout to ${name}. It is not paid until PayPal says so.`
+    if (payout.gate === 'AUTO' || payout.clause === 'standing.matched') return `The ${money} payout to ${name} goes out with no tap.`
+    return `Send the ${money} payout to ${name}.`
+  }
+
+  /** After milestone 0 is captured, point at Rules for milestone 1. Do not publish the rule, and do not invent a milestone 2. */
+  private rulesHint(body: WarrantBody | null, terms: DealTerms): string | null {
+    if (!body || !terms.milestones[1]) return null
+    const payeeId = body.payees.find((item) => item.id === FROZEN_PAYEE)?.id ?? body.payees[0]?.id
+    if (!payeeId) return null
+    if (body.standing.some((rule) => rule.payeeId === payeeId && rule.clientIds.includes(BUYER_PARTY_ID))) return null
+    return 'If you want milestone 1 to pay under a standing rule, sign one on Rules — nothing is published until you do.'
+  }
 }
+
+const FROZEN_PAYEE = 'payee_priya'
+const DEAD_PAYOUT = new Set(['denied', 'rejected', 'capture_refused', 'payout_failed', 'refunded'])
 
 const dollars = (cents: number) => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const verb = (kind: string) => (kind === 'charge' ? 'Bill' : kind === 'refund' ? 'Refund' : 'Pay')
