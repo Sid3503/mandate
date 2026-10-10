@@ -13,7 +13,11 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   timeout: 60_000,
-  reporter: [['list']],
+  // On CI: a stray test.only fails the run, one retry separates a flaky test from a broken one (it is reported as flaky),
+  // and failures show up as annotations on the pull request.
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 1 : 0,
+  reporter: process.env.CI ? [['list'], ['github'], ['html', { open: 'never' }]] : [['list']],
   use: { channel: 'chrome', trace: 'retain-on-failure' },
   projects: [
     { name: 'desktop', use: { baseURL: 'http://127.0.0.1:8779', viewport: { width: 1440, height: 960 } } },

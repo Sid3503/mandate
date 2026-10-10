@@ -28,6 +28,9 @@ const EnvSchema = z.object({
   PUBLIC_URL: z.string().min(1).optional(),
   /** Render sets this to the service's public https address. It stands in for PUBLIC_URL when that is not set. */
   RENDER_EXTERNAL_URL: z.string().url().optional(),
+  /** The commit this build came from. Render sets RENDER_GIT_COMMIT; GIT_COMMIT is for anywhere else. Shown on /ready as releaseId. */
+  RENDER_GIT_COMMIT: z.string().optional(),
+  GIT_COMMIT: z.string().optional(),
   PAYPAL_CLIENT_ID: z.string().min(1).optional(),
   PAYPAL_CLIENT_SECRET: z.string().min(1).optional(),
   PAYPAL_WEBHOOK_ID: z.string().min(1).optional(),
@@ -62,6 +65,8 @@ export type AppConfig = {
   webDist: string | null
   rateLimitPerMinute: number
   publicUrl: string
+  /** The commit this server was built from, when the host says so. A deploy is verified by reading it back. */
+  commit: string | null
   log: boolean
   /** Where to tell the owner that something needs them. Null when not set. Never logged. */
   notifyWebhookUrl: string | null
@@ -124,6 +129,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     webDist: value.WEB_DIST ?? null,
     rateLimitPerMinute: value.RATE_LIMIT_PER_MINUTE,
     publicUrl: value.PUBLIC_URL ?? value.RENDER_EXTERNAL_URL ?? `http://${value.HOST}:${value.PORT}`,
+    commit: [value.GIT_COMMIT, value.RENDER_GIT_COMMIT].map((item) => item?.trim().toLowerCase()).find((item) => item !== undefined && /^[0-9a-f]{7,40}$/.test(item)) ?? null,
     log: value.LOG === 'on',
     notifyWebhookUrl: value.NOTIFY_WEBHOOK_URL ?? null,
     demoReset: value.DEMO_RESET === 'on',

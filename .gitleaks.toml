@@ -1,0 +1,15 @@
+title = "Mandate"
+
+[extend]
+useDefault = true
+
+# Fixed keys that only the test suite and the fake-PayPal dev server use. They protect nothing and are meant to be public.
+# Anything else that looks like a secret fails the scan. The allowlist is these exact strings, not whole files.
+[allowlist]
+description = "test fixtures"
+regexes = [
+  '''owner-e2e-key-0123456789''',
+  '''proposer-e2e-key-0123456789''',
+  '''buyer-agent-e2e-key-0123456789''',
+  '''test-proposer-[A-Za-z0-9_-]+''',
+]
