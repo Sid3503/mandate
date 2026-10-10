@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeInvoices, FakePayPal, FakeWatch } from '../src/paypal/fake'
-import { agree, call, closeAll, collect, EVIDENCE, harness, idem, JOB, NOW, STUDIO_KEY } from './support'
+import { agree, call, closeAll, collect, confirmPrices, EVIDENCE, harness, idem, JOB, NOW, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
 
@@ -32,11 +32,26 @@ describe('Today', () => {
     const h = harness()
     const fresh = await today(h.app)
     expect(fresh.setup.complete).toBe(false)
-    expect(Object.fromEntries(fresh.setup.steps.map((step: { id: string; done: boolean }) => [step.id, step.done]))).toEqual({ paypal: true, people: true, deal: false, rule: false, autopilot: false, first: false })
+    expect(Object.fromEntries(fresh.setup.steps.map((step: { id: string; done: boolean }) => [step.id, step.done]))).toEqual({ paypal: true, people: true, price: false, deal: false, rule: false, autopilot: false, first: false, paid: false })
     expect(fresh.waiting).toEqual([])
     expect(fresh.readyToBill).toEqual([])
     const bare = harness({ paypal: null })
     expect((await today(bare.app)).setup.steps[0]).toMatchObject({ id: 'paypal', done: false })
+  })
+
+  it('reopens the price step when a new client arrives without a ceiling', async () => {
+    const h = harness()
+    const priced = async () => (await today(h.app)).setup.steps.find((step: { id: string }) => step.id === 'price').done
+    // The sample numbers that came with the box do not count: nobody has kept them yet.
+    expect(await priced()).toBe(false)
+    await confirmPrices(h.app)
+    expect(await priced()).toBe(true)
+    const current = (await call(h.app, 'GET', '/v1/warrant')).json
+    const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
+    await call(h.app, 'PUT', '/v1/warrant', { body: { ...body, clients: [...body.clients, { id: 'client_harbor', displayName: 'Harbor Foods', email: 'ap@harbor.example', aliases: [] }] } })
+    expect(await priced()).toBe(false)
+    await call(h.app, 'PUT', '/v1/party-rules/client_harbor', { body: { maxTotalCents: 12_000 } })
+    expect(await priced()).toBe(true)
   })
 
   it('lists what waits for the owner, what the rules refused, and the next milestone to bill', async () => {
@@ -88,6 +103,7 @@ describe('Today', () => {
     expect(page.done.find((item: { title: string }) => item.title === 'Priya Shah was paid $90.00').detail).not.toContain('own check')
     expect(page.watcher).toMatchObject({ everySeconds: 60, lastLook: { payouts: expect.any(Number), invoices: expect.any(Number) } })
     expect(page.setup.steps.find((step: { id: string }) => step.id === 'first').done).toBe(true)
+    expect(page.setup.steps.find((step: { id: string }) => step.id === 'paid').done).toBe(true)
   })
 
   it('tells the owner when autopilot could not pay, when a payout is held, and when an invoice is overdue', async () => {

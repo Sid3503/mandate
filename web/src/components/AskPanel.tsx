@@ -57,12 +57,14 @@ const GO: Array<{ label: string; to: string; words: string }> = [
  *   drafter, or the clerk, whose steps and whose rules-answer appear as they happen. The model never gets more power
  *   on any of them: it can ask, and a person presses the button that does anything.
  */
-export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say what you want done…', tour = false, initial, context, onLeave }: {
+export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say what you want done…', tour = false, initial, prefill, context, onLeave }: {
   examples?: string[]
   autoFocus?: boolean
   placeholder?: string
   tour?: boolean
   initial?: string
+  /** Text to put in the box without sending it. */
+  prefill?: string
   context?: { jobId?: string; proposalId?: string }
   /** Called when a road leaves the panel (the drafter hand-off, a link), so a dialog can close itself. */
   onLeave?: () => void
@@ -76,7 +78,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
   const proposals = useProposals()
   const names = useNames()
   const [turns, setTurns] = useState<Turn[]>([])
-  const [text, setText] = useState('')
+  const [text, setText] = useState(prefill ?? '')
   const [picked, setPicked] = useState(-1)
   const [conversation, setConversation] = useState<string | undefined>()
   const end = useRef<HTMLDivElement>(null)

@@ -38,14 +38,15 @@ Every agent holds **a wallet of authority, not a wallet of money**:
 15. [Rule codes (clauses) and what they mean](#rule-codes-clauses-and-what-they-mean)
 16. [PayPal integration](#paypal-integration)
 17. [Testing and quality](#testing-and-quality)
-18. [Security model](#security-model)
-19. [Deployment (Render)](#deployment-render)
-20. [How Mandate relates to AP2](#how-mandate-relates-to-ap2)
-21. [Sponsor tools](#sponsor-tools)
-22. [Roadmap: what is left](#roadmap-what-is-left)
-23. [Same engine, other owners](#same-engine-other-owners)
-24. [Troubleshooting](#troubleshooting)
-25. [Pitch materials](#pitch-materials)
+18. [Status links, notifications, agent onboarding and demo reset](#status-links-notifications-agent-onboarding-and-demo-reset)
+19. [Security model](#security-model)
+20. [Deployment (Render)](#deployment-render)
+21. [How Mandate relates to AP2](#how-mandate-relates-to-ap2)
+22. [Sponsor tools](#sponsor-tools)
+23. [Roadmap: what is left](#roadmap-what-is-left)
+24. [Same engine, other owners](#same-engine-other-owners)
+25. [Troubleshooting](#troubleshooting)
+26. [Pitch materials](#pitch-materials)
 
 ---
 
@@ -331,11 +332,13 @@ npm run setup            # npm ci in api/ and web/, including dev dependencies
 | `API_KEY` | `dev-mandate-key-change-me` (dev only) | The owner key, at least 16 characters. |
 | `PROPOSER_KEY` | `dev-proposer-key-change-me` (dev only) | The proposer key. It must differ from `API_KEY`. Optional in production. |
 | `WEB_DIST` | `../web/dist` if it exists | Where the built console lives. |
-| `RATE_LIMIT_PER_MINUTE` | `120` | Per key. `0` turns it off. |
+| `RATE_LIMIT_PER_MINUTE` | `120` | Per key. A caller with no key (a status link) is counted by address. `0` turns it off. |
+| `NOTIFY_WEBHOOK_URL` | unset | An https incoming-webhook address (Slack, Discord, Zapier, Make). When set, Mandate messages it when a request needs the owner's tap, a payout fails or is unclaimed, or Mandate pauses. The message says what and links to the console; it cannot approve or pay. The address is a secret and is never logged or returned. |
+| `DEMO_RESET` | `off` | `on` lets the owner wipe the ledger back to a fresh Line Studio from System (`POST /v1/demo/reset`, typed confirmation). Refused at start-up unless `PAYPAL_API` is a sandbox address. Keys are kept. For a hosted demo that many people try in turn. |
 | `PUBLIC_URL` | `http://HOST:PORT` | The server URL written into the OpenAPI document. |
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` | unset | Sandbox app credentials. Without them the rules still decide, but nothing settles (`paypal.unconfigured`). |
 | `PAYPAL_API` | `https://api-m.sandbox.paypal.com` | The PayPal REST base URL. |
-| `BUYER_AGENT_KEY` | unset | A client's agent. Can offer and read deals for `BUYER_AGENT_PARTY` and call `/mcp`. Nothing else. |
+| `BUYER_AGENT_KEY` | unset | The first client's agent. Can offer and read deals for `BUYER_AGENT_PARTY` and call `/mcp`. Nothing else. Further clients get their own keys from the System page (`POST /v1/client-keys`), each bound to its own client; the environment key keeps working. |
 | `BUYER_AGENT_PARTY` | `client_northwind` | The client that key speaks for. |
 | `SIGNING_KEY` | dev: created beside the database | Ed25519 private key (PKCS8 PEM). **Required in production.** |
 | `SIGNING_KEYS_PREVIOUS` | unset | Retired public PEMs separated by `\|`. Old keys are also remembered in the ledger. |
@@ -391,7 +394,7 @@ An installable web app (PWA) for the owner, built only on the existing API. It h
 | Screen | Path | What it shows and does | API |
 | --- | --- | --- | --- |
 | **Unlock** | `/app/unlock` | Ledger and PayPal readiness. Enter an owner or proposer key. | `GET /ready`, `GET /v1/session` |
-| **Today** | `/app/` | The landing page, worked out from the ledger alone: the month in money (in, out, kept, and the contractor cap), how much ran without a tap, a setup checklist until six steps are done, **Waiting for you** (approval cards and anything else that needs a decision, with the buttons on the row), **Ready to bill** (paste the proof link for the next milestone of each signed deal), **In flight**, **Done for you** (last 7 days, and how each was approved) and **Stopped by the rules**. **Ask Mandate** (Cmd or Ctrl + K) opens the clerk from anywhere. The approval cards: who, how much, for what, the proof link, **which client payment funds it**, and **why it needs you**. **Approve $90.00** shows the lock hash being set. Below are approved requests and what happens next (settle a client charge, or see a payout's status), and recent refusals with "$0 moved". | `GET /v1/proposals`, `POST …/approve`, `POST …/reject` |
+| **Today** | `/app/` | The landing page, worked out from the ledger alone: the month in money (in, out, kept, and the contractor cap), how much ran without a tap, a setup checklist until eight steps are done, **Waiting for you** (approval cards and anything else that needs a decision, with the buttons on the row), **Ready to bill** (paste the proof link for the next milestone of each signed deal), **In flight**, **Done for you** (last 7 days, and how each was approved) and **Stopped by the rules**. **Ask Mandate** (Cmd or Ctrl + K) opens the clerk from anywhere. The approval cards: who, how much, for what, the proof link, **which client payment funds it**, and **why it needs you**. **Approve $90.00** shows the lock hash being set. Below are approved requests and what happens next (settle a client charge, or see a payout's status), and recent refusals with "$0 moved". | `GET /v1/proposals`, `POST …/approve`, `POST …/reject` |
 | **Receipt** | `/app/p/:id` | The decision in plain words and the server's words, the full lock hash, approved vs settled cents ("cents match ✓"), funded by, PayPal ids, a timeline, and a JSON download. For a client charge, **Settle** walks the PayPal buyer step and answers "Still waiting" with the time it checked when the buyer has not approved. For a contractor payout, a **Send the payout** panel replaces Settle and follows the payout from ready to sent to paid, unclaimed or failed, with a **Cancel this payout** button until it is sent. The **integrity check** sends a different claimed amount and shows the refusal. | `GET …/packet`, `POST …/capture` |
 | **Jobs** | `/app/jobs`, `/app/jobs/:jobId` | Money in, out, held and kept, with bars. Each client payment with what it can still fund and the payouts under it. Shortcuts to bill the next milestone or pay a contractor from a payment. | `GET /v1/jobs/:jobId` |
 | **New request** | `/app/new` | Money in, money out or refund. People and categories come from the rules. The funding picker lists only settled client payments, with what each can still fund. You can deliberately pick "not funded yet", "someone not on the rules" or another kind of work to see refusals. The answer card is always the server's decision; the screen never predicts it. | `GET /v1/warrant`, `POST /v1/proposals` |
@@ -566,7 +569,7 @@ deal (signed) → delivery (proof link) → client's agent accepts (signed) → 
 - `month`: in, out, kept and the contractor cap, taken from the settle **events** PayPal confirmed, not from requests.
 - `readyToBill`: the next milestone of each agreed deal that has no live charge.
 - `stats`: the share of the last 30 days' decisions that needed no tap.
-- `setup`: six steps (connect PayPal, add people, agree a deal, sign a standing rule, switch on autopilot, get a first payment through) and whether all are done.
+- `setup`: eight steps (connect PayPal, add people, set what each company will accept — the sample numbers count only once a person keeps them, agree a deal, sign a standing rule, switch on autopilot, get a first payment through, pay a contractor from settled money) and whether all are done.
 
 **Ask Mandate** is the same studio clerk as the Clerk screen, opened over any screen with Cmd or Ctrl + K. It has the same powers: it can ask, and the rules answer.
 
@@ -703,9 +706,10 @@ Before any money exists, two companies agree terms. Each company has its own **d
 | $300 in two $150 milestones | Agreed |
 
 - **Privacy of limits.** An agent is told which of *its own* rules it broke, with the number. For the other side it is told only that their rules do not allow the terms, and which way to move (*Lower the total*). Notes an agent writes to the other side are scrubbed of its own private numbers before they are stored or shown.
-- **Who can speak for whom.** A key is bound to one side. The studio key speaks for the studio; `BUYER_AGENT_KEY` speaks for one client and can call only the deal routes and `/mcp`. Pretending to be the other side is `403 deal.wrong_side`.
+- **Who can speak for whom.** A key is bound to one side. The studio key speaks for the studio; a client key speaks for one client and can call only the deal routes and `/mcp`. The first client key is `BUYER_AGENT_KEY`; the rest are issued per client from the System page and rotate or revoke there. Pretending to be the other side is `403 deal.wrong_side`.
+- **Client keys.** `GET /v1/client-keys`, `POST /v1/client-keys` (`{name, partyId}`, owner only; the party must be a client on the rules), `POST /v1/client-keys/:id/revoke` and `POST /v1/client-keys/:id/rotate` (the old key dies as the new one is issued; shown once, hashed afterwards). A revoked key is refused with `403 client-key.revoked`.
 - **Agreed deals are signed and bind billing.** An agreed deal names its job. From then on a client charge on that job must cite the deal and a milestone, for exactly the agreed cents, once (`deal.required`, `deal.milestone_mismatch`, `deal.milestone_billed`). A freelance invoice on a dealt job is refused.
-- **Routes.** `POST /v1/deals/offers` (needs `Idempotency-Key`), `GET /v1/deals`, `GET /v1/deals/:id`, `GET /v1/deals/:id/verify`, `POST /v1/deals/:id/milestones/:n/bill`, `GET /v1/party-rules` and `PUT /v1/party-rules/:partyId` (owner only; each company's rules are private).
+- **Routes.** `POST /v1/deals/offers` (needs `Idempotency-Key`), `GET /v1/deals`, `GET /v1/deals/:id`, `GET /v1/deals/:id/verify`, `POST /v1/deals/:id/milestones/:n/bill`, `GET /v1/party-rules` (owner only; both companies' private rules) and `PUT /v1/party-rules/:partyId` (each company writes **its own**: `:partyId` may be `mine`, which resolves to the caller's party — owner either, client key its own ceiling, studio key its own floor, agent keys never; the other side's sheet is refused with 403; send only what changes, the rest is kept, and the price itself is never defaulted; sheets that arrived with the sample studio stay examples until a key writes them, and until then offers and negotiations are refused with `409 deal.rules_unconfirmed`).
 
 ### Signed locks
 
@@ -827,7 +831,8 @@ The base URL is `http://127.0.0.1:8787` locally. Everything under `/v1` needs a 
 | `GET /v1/deals`, `GET /v1/deals/:id` | any key | Offers and deals (a client agent sees its own) |
 | `GET /v1/deals/:id/verify` | any key | Re-check an agreed deal's signature |
 | `POST /v1/deals/:id/milestones/:n/bill` | studio, owner | Propose a charge for one milestone, at exactly its agreed amount |
-| `GET /v1/party-rules`, `PUT /v1/party-rules/:partyId` | owner | Both companies' private deal rules |
+| `GET /v1/party-rules` | owner | Both companies' private deal rules |
+| `PUT /v1/party-rules/:partyId` | owner **or** the company's own key | Writes that company's own sheet only (`mine` resolves to the caller); another party's sheet is refused; sample sheets count only once kept |
 | `POST /mcp` | any key | The agent door (Model Context Protocol) |
 | `POST /v1/clerk/messages` | studio, owner | Talk to the clerk |
 | `POST /v1/negotiations` | owner | Have the two agents negotiate |
@@ -915,6 +920,7 @@ Import `api/postman/Mandate.postman_collection.json` and `api/postman/Mandate.lo
 | `standing.billing` | AUTO | The owner switched on billing signed deals when proof is attached, and this is exactly a milestone of one, so the invoice goes out without a tap. |
 | `standing.matched` | AUTO | A standing rule the owner signed covers this payout, so it goes to PayPal without a tap. Every other rule still passed. |
 | `funding.disputed` | DENY or 409 | The client has an open PayPal dispute on that payment, so it cannot fund a payout until the dispute is resolved. At capture the server asks PayPal first; if PayPal cannot answer, the payout waits (`funding.unverifiable`, 503). |
+| `funding.clearing` | NEEDS_APPROVAL | The client's payment settled less than `clearingDays` ago, so no rule or autopilot sends a payout from it yet. The owner can still approve it by hand. Autopilot records `autopilot.clearing` with the date and asks again by itself once the money has cleared. Off when `clearingDays` is 0. |
 | `funding.exceeds` | DENY or 409 | That client payment cannot fund this much at the contractor share (or it was refunded). |
 | `deal.over_buyer_limit`, `deal.under_seller_minimum`, `deal.shape`, `deal.currency`, `deal.category_*`, `deal.milestone_too_large`, `deal.milestone_too_small`, `deal.too_many_milestones`, `deal.proof_required`, `deal.due_date_past`, `deal.job_taken`, `deal.thread_closed` | REFUSED offer | The deal check: terms outside one side's rules. |
 | `deal.required`, `deal.unknown`, `deal.job_mismatch`, `deal.party_mismatch`, `deal.milestone_unknown`, `deal.milestone_mismatch`, `deal.milestone_billed` | DENY | A charge on a job with an agreed deal must bill one of its milestones, exactly once, for exactly the agreed cents. |
@@ -1038,7 +1044,7 @@ cd web && npm run typecheck && npm run e2e     # 62 Playwright tests (desktop 14
 - **Roles:** the proposer gets 403 on approve, reject, capture and rule changes.
 - **Rules history.**
 - **Console serving:** CSP, immutable assets, client-route fallback, path traversal refused.
-- **Deals:** $450 / $200 / $300 end to end, limits that stay private (checked in what each agent is shown), keys bound to one side, thread closing, idempotent replay, rules versioning.
+- **Deals:** $450 / $200 / $300 end to end, limits that stay private (checked in what each agent is shown), keys bound to one side, thread closing, idempotent replay, rules versioning. Each company writes its own price sheet (`PUT /v1/party-rules/mine`; partial bodies keep the rest, a new sheet starts from the warrant, the other side's is refused); sheets that came with the sample studio are examples until kept, and the server refuses offers and negotiations until they are (`409 deal.rules_unconfirmed`). The Deals screen carries the writer and the Keep bar, and negotiation and offers wait until both numbers exist and are kept.
 - **Deals bind billing:** a charge on a dealt job must bill a milestone at its exact amount, once; the whole $150 in / $90 out / $60 kept loop runs through a deal.
 - **Signed locks:** signing on tap and on auto, a forged row with a recomputed hash is refused at capture, boot-time signing of old locks only if intact, key rotation, tampered deals.
 - **MCP:** the exact tool lists per key, no tool can pay, the owner key is downgraded, a fooled agent is refused, replay, request budget, bad input returned as a tool error, two agents negotiating through tools.
@@ -1110,6 +1116,14 @@ Screenshots are written to `web/e2e/shots/`.
 
 ---
 
+## Status links, notifications, agent onboarding and demo reset
+
+- **Status links.** The owner shares a job with one person (`POST /v1/jobs/:jobId/shares`, `{partyId, ttlDays}`; `GET` lists them; `POST /v1/shares/:id/revoke` withdraws one). The link looks like `/app/s/<id>~<secret>`. It is read-only: a contractor sees their own payouts and whether the client's money has arrived (and is clearing), a client sees their own invoices with a PayPal pay link. No totals, margin, rules, emails or anyone else. Only a hash of the secret is stored, links expire (default 30 days, at most 90), and every kind of bad link (unknown, wrong, expired, withdrawn) answers the same `404 share.unknown`. The one public route is `GET /v1/share/:token`; every other route still needs a key. Anonymous callers are rate-limited by address.
+- **Risk-aware release.** `clearingDays` in the rules (0 to 60, default 0): a payout that a standing rule, autopilot or the automatic line would send with no tap waits until the client payment has been settled that long, because a client can still take money back for a while. The owner can approve earlier. Shown on the job as "Clearing until ...".
+- **Connect any agent.** System shows a Claude Code command, a generic MCP address and a curl check, with a placeholder key. A real key comes from Agent keys with the MCP door scope.
+- **Notifications.** `NOTIFY_WEBHOOK_URL` above. `GET /v1/notify` shows whether it is on and when it last sent; `POST /v1/notify/test` sends one test message.
+- **Demo reset.** `DEMO_RESET=on` above. `POST /v1/demo/reset` with `{"confirm":"reset the demo"}`. Without the variable the route is a 404.
+
 ## Security model
 
 - **No model, no browser, and no sponsor tool ever holds the PayPal secret.** Only the server talks to PayPal, and only from a locked cart.
@@ -1139,7 +1153,22 @@ Screenshots are written to `web/e2e/shots/`.
 - `API_KEY` and `PROPOSER_KEY` are generated by Render. Read them in the dashboard.
 - `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` are set by hand (`sync: false`).
 
+- `NODE_VERSION` is pinned (the API needs Node 22.13+ for `node:sqlite`). Links to status pages and the console are built from `RENDER_EXTERNAL_URL`, which Render sets, or from `PUBLIC_URL` if you set it.
+
 The console is then at `https://<service>.onrender.com/app/`, and you can install it on a phone from there. Make sure every key the hosted demo depends on stays valid through judging (1 to 15 December 2026).
+
+**Steps**
+
+1. Commit and push to GitHub. Render builds from the repository, and `.env` is git-ignored, so no secret goes up.
+2. Generate the signing key once and keep a copy: `node -e "console.log(require('crypto').generateKeyPairSync('ed25519').privateKey.export({type:'pkcs8',format:'pem'}))"`. If it changes, old receipts stop verifying.
+3. Render dashboard → **New → Blueprint** → pick the repository. Fill the prompted values: `SIGNING_KEY` (the PEM, or its base64), `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` (a **sandbox** app), `OLLAMA_API_KEY`.
+4. Wait for the first deploy, then open `https://<service>.onrender.com/ready` (it answers `"status":"pass"`; `paypal:credentials` should say `configured` and `agents:model` should name the model, not `off`).
+5. Read the generated `API_KEY` in **Environment**. That is the owner key: it unlocks the console at `/app/`. Put it in the Devpost testing instructions, never in the repository.
+6. PayPal Developer Dashboard → your sandbox app → **Webhooks → Add**: URL `https://<service>.onrender.com/v1/webhooks/paypal`, events for payouts (`PAYMENT.PAYOUTSBATCH.*`, `PAYMENT.PAYOUTS-ITEM.*`), invoices (`INVOICING.INVOICE.*`) and disputes (`CUSTOMER.DISPUTE.*`). Copy the **Webhook ID** into `PAYPAL_WEBHOOK_ID` in Render and redeploy. From then on every delivery must be signed by PayPal.
+7. Optional: `DEMO_RESET=on` (a *Start the demo over* button for judges' turns) and `NOTIFY_WEBHOOK_URL`. Press **Send a test message** on System.
+8. Smoke test, in order: `/ready`, unlock the console, **Try to break it** on Today, **System → Connect any agent** and run the curl check, then one real invoice and payout.
+
+The free plan sleeps after about 15 minutes of no traffic and its disk is wiped when it restarts, so a sleeping copy shows a fresh ledger and takes about a minute to wake. Open it a few minutes before any demo or recording. For the judging window, a paid plan with a persistent disk (set `DATABASE_PATH` to a path on the disk) keeps the ledger across restarts.
 
 ---
 

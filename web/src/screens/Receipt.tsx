@@ -34,7 +34,7 @@ export function Receipt() {
       <div className="receipt-grid">
         <div className="stack-l">
           <section className="panel" data-tour="receipt-decision">
-            <div className="row between"><h2 className="panel-title">The decision</h2><GateChip gate={p.gate} /></div>
+            <div className="row between"><h2 className="panel-title">The decision</h2><GateChip gate={p.gate} past={p.phase === 'captured' || p.phase === 'refunded' ? 'approved' : p.phase === 'rejected' ? 'refused' : undefined} /></div>
             <p className="decision-words">{explain(p.clause, p, warrant, names)}</p>
             <p className="server-words"><span>Server · {p.clause}</span>{p.detail}</p>
             {p.gate === 'DENY' ? <NoMoneyMoved /> : null}

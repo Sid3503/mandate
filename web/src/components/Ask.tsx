@@ -3,7 +3,8 @@ import { useLocation } from 'react-router-dom'
 import { AskPanel } from './AskPanel'
 import { useToday } from '../lib/hooks'
 
-type AskContext = { open: (message?: string) => void; close: () => void; isOpen: boolean }
+/** `open(message)` asks it straight away. `open(message, { send: false })` only fills the box, so the person reads it and presses send. */
+type AskContext = { open: (message?: string, options?: { send?: boolean }) => void; close: () => void; isOpen: boolean }
 const Ask = createContext<AskContext>({ open: () => undefined, close: () => undefined, isOpen: false })
 export const useAsk = () => useContext(Ask)
 
@@ -17,9 +18,11 @@ const LINK = 'https://www.figma.com/file/northwind-logo'
 export function AskProvider({ children }: { children: ReactNode }) {
   const [isOpen, setOpen] = useState(false)
   const [initial, setInitial] = useState<string | undefined>()
+  const [fillOnly, setFillOnly] = useState(false)
   const opener = useRef<HTMLElement | null>(null)
-  const open = useCallback((message?: string) => {
+  const open = useCallback((message?: string, options?: { send?: boolean }) => {
     opener.current = document.activeElement as HTMLElement | null
+    setFillOnly(options?.send === false)
     setInitial(message)
     setOpen(true)
   }, [])
@@ -47,12 +50,12 @@ export function AskProvider({ children }: { children: ReactNode }) {
   return (
     <Ask.Provider value={value}>
       {children}
-      {isOpen ? <AskDialog initial={initial} onClose={close} /> : null}
+      {isOpen ? <AskDialog initial={initial} fillOnly={fillOnly} onClose={close} /> : null}
     </Ask.Provider>
   )
 }
 
-function AskDialog({ initial, onClose }: { initial: string | undefined; onClose: () => void }) {
+function AskDialog({ initial, fillOnly, onClose }: { initial: string | undefined; fillOnly: boolean; onClose: () => void }) {
   const today = useToday()
   const location = useLocation()
   const box = useRef<HTMLDivElement>(null)
@@ -93,7 +96,7 @@ function AskDialog({ initial, onClose }: { initial: string | undefined; onClose:
           <button type="button" className="link" onClick={onClose} aria-label="Close">Esc</button>
         </div>
         <div className="chat ask-chat">
-          <AskPanel examples={examples} autoFocus initial={initial} context={context} onLeave={onClose} placeholder="Say what you want done…" />
+          <AskPanel examples={examples} autoFocus initial={fillOnly ? undefined : initial} prefill={fillOnly ? initial : undefined} context={context} onLeave={onClose} placeholder="Say what you want done…" />
         </div>
       </div>
     </div>

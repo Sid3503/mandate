@@ -1,6 +1,6 @@
 import { live, stamp } from './live'
 import { randomUUID } from 'node:crypto'
-import type { DealRow, DeliveryRow, Repo } from '../db/repo'
+import type { DealRow, DeliveryRow, PartyRulesRecord, Repo } from '../db/repo'
 import { checkDeal, DealClause, PartyRulesSchema, scrubNote, secretsOf, verdictFor, type DealOffer, type DealTerms, type DealVerdict, type PartyRules, type Side } from '../domain/deal'
 import { resolveClient } from '../domain/gate'
 import { stableHash } from '../domain/hash'
@@ -49,11 +49,7 @@ export class DealService {
     if (who.side === 'buyer' && who.buyerId !== buyer.id) {
       throw new Problem(403, 'deal.wrong_side', 'This key cannot speak for that party', 'This key speaks for a different client.')
     }
-    const buyerRules = this.repo.partyRules(buyer.id)
-    const sellerRules = this.repo.partyRules(WARRANT_ID)
-    if (!buyerRules || !sellerRules) {
-      throw new Problem(409, 'deal.rules_missing', 'Deal rules are missing', 'Both companies need deal rules before terms can be checked.')
-    }
+    const { buyerRules, sellerRules } = this.keptSheets(buyer.id)
     const threadId = input.threadId ?? randomUUID()
     const closed = this.repo.agreedDealInThread(threadId)
     if (closed) {
@@ -326,7 +322,7 @@ export class DealService {
     return {
       data: parties.flatMap((partyId) => {
         const latest = this.repo.partyRules(partyId)
-        return latest ? [{ partyId, version: latest.version, createdAt: latest.createdAt, ...latest.body }] : []
+        return latest ? [{ partyId, version: latest.version, createdAt: latest.createdAt, origin: latest.origin, ...latest.body }] : []
       }),
     }
   }
@@ -336,21 +332,93 @@ export class DealService {
     const partyId = who.side === 'buyer' ? who.buyerId : WARRANT_ID
     const latest = this.repo.partyRules(partyId)
     if (!latest) throw new Problem(404, 'deal.rules_missing', 'Deal rules are missing', 'No deal rules are set for this party.')
-    return { partyId, version: latest.version, ...latest.body }
+    return { partyId, version: latest.version, origin: latest.origin, ...latest.body }
   }
 
-  publishRules(partyId: string, input: unknown): HttpResult {
+  /**
+   * The sheets a deal with this buyer is judged against. They must exist and must be kept: a sheet that came with
+   * the box stays an example until a key writes it, and until then there is nothing to judge against — so offers
+   * and negotiations wait on the server, not only on a button in the console.
+   */
+  keptSheets(buyerId: string): { buyerRules: PartyRulesRecord; sellerRules: PartyRulesRecord } {
+    const buyerRules = this.repo.partyRules(buyerId)
+    const sellerRules = this.repo.partyRules(WARRANT_ID)
+    if (!buyerRules || !sellerRules) throw new Problem(409, 'deal.rules_missing', 'Deal rules are missing', 'Both companies need deal rules before terms can be checked.')
+    const examples = [...(sellerRules.origin === 'seed' ? [sellerRules.body.displayName] : []), ...(buyerRules.origin === 'seed' ? [buyerRules.body.displayName] : [])]
+    if (examples.length > 0) throw new Problem(409, 'deal.rules_unconfirmed', 'The starting numbers are not kept yet', `${examples.join(' and ')} still show${examples.length === 1 ? 's' : ''} the sample numbers that came with the studio. Keep them, or write your own, on Deals — then terms can be judged.`)
+    return { buyerRules, sellerRules }
+  }
+
+  /**
+   * The price limits are set when the studio has said the least it takes and every client on the warrant has said the
+   * most it pays — said, not seeded. A sheet that came with the box does not count until a key writes it.
+   */
+  priceLimitsSet(): boolean {
     const warrant = this.repo.latestWarrant()
-    const known = partyId === WARRANT_ID || warrant?.body.clients.some((client) => client.id === partyId)
+    if (!warrant) return false
+    const byId = new Map(this.rules().data.map((sheet) => [sheet.partyId, sheet]))
+    const seller = byId.get(WARRANT_ID)
+    if (seller?.origin !== 'written' || seller?.minTotalCents === undefined) return false
+    return warrant.body.clients.every((client) => {
+      const sheet = byId.get(client.id)
+      return sheet?.origin === 'written' && sheet?.maxTotalCents !== undefined
+    })
+  }
+
+  /**
+   * Writes the next version of one company's price limits. `mine` is the caller's own party, so a company never has
+   * to know the other side's id. Each company writes its own sheet and nobody else's: the owner may write either,
+   * a client key only its own client, the studio key only the studio, and an agent never (its key may ask, not set
+   * the terms its own company will accept). That rule is what keeps the limits private in both directions.
+   */
+  publishRules(partyId: string, input: unknown, who: Principal): HttpResult {
+    const target = partyId === 'mine' ? (who.side === 'buyer' ? who.buyerId : WARRANT_ID) : partyId
+    if (who.role !== 'owner') {
+      if (who.role === 'agent') throw new Problem(403, 'auth.forbidden', 'An agent key cannot set price limits', 'An agent may read its company’s terms. Writing them is for the owner or the company’s own key.')
+      const own = who.side === 'buyer' ? who.buyerId : WARRANT_ID
+      if (target !== own) throw new Problem(403, 'auth.forbidden', 'Your own company only', 'Each company writes the least it will accept or the most it will pay. This key cannot change the other side.')
+    }
+    const warrant = this.repo.latestWarrant()
+    const known = target === WARRANT_ID || warrant?.body.clients.some((client) => client.id === target)
     if (!known) throw new Problem(404, 'deal.party_unknown', 'Unknown party', 'Deal rules can only be written for the studio or a client on the warrant.')
-    const parsed: PartyRules = PartyRulesSchema.parse(input)
-    const expected = partyId === WARRANT_ID ? 'seller' : 'buyer'
-    if (parsed.role !== expected) throw new Problem(422, 'deal.role_mismatch', 'Wrong role', `${partyId} is the ${expected}.`)
+    const expected = target === WARRANT_ID ? 'seller' : 'buyer'
+    // A sheet is written as a whole but may be written in part: anything the caller leaves out keeps its current
+    // value, or the warrant's own answer for a company that has never had a sheet. The price itself is never
+    // inherited — a company that says nothing about what it will accept has not said anything, and the schema
+    // makes that an error rather than a silent zero.
+    const current = this.repo.partyRules(target)?.body
+    const client = warrant?.body.clients.find((item) => item.id === target)
+    // Origin is the server's own record of whether a person chose these numbers. A caller may send a sheet it read
+    // back — which now carries that record — but it can never set it: every write through this route is a person
+    // writing, so every write counts as written.
+    const { origin: _ignored, ...fields } = (input as Record<string, unknown>)
+    const checked = PartyRulesSchema.safeParse({
+      role: expected,
+      displayName: current?.displayName ?? client?.displayName,
+      currency: current?.currency ?? warrant?.body.currency,
+      categories: current?.categories ?? warrant?.body.categories,
+      maxMilestones: current?.maxMilestones ?? 4,
+      requireProof: current?.requireProof ?? warrant?.body.evidenceRequired,
+      maxTotalCents: current?.maxTotalCents,
+      maxMilestoneCents: current?.maxMilestoneCents,
+      minTotalCents: current?.minTotalCents,
+      minMilestoneCents: current?.minMilestoneCents,
+      ...fields,
+    })
+    // The sheet is refused in the words a person would use to explain it: "a buyer must set the most a job may cost",
+    // never a stack of schema paths the console would have to translate.
+    if (!checked.success) {
+      const issue = checked.error.issues[0]
+      const where = issue?.path.join('.') || 'rules'
+      throw new Problem(422, 'deal.rules_invalid', 'That price sheet is not complete', `${where}: ${issue?.message ?? 'Every field needs a value.'}`)
+    }
+    const parsed = checked.data
+    if (parsed.role !== expected) throw new Problem(422, 'deal.role_mismatch', 'Wrong role', `${target} is the ${expected}.`)
     const now = this.now().toISOString()
     return this.repo.transaction(() => {
-      const version = (this.repo.partyRules(partyId)?.version ?? 0) + 1
-      this.repo.insertPartyRules(partyId, version, parsed, now)
-      return { status: 201, body: { partyId, version, createdAt: now, ...parsed } }
+      const version = (this.repo.partyRules(target)?.version ?? 0) + 1
+      this.repo.insertPartyRules(target, version, parsed, now, 'written')
+      return { status: 201, body: { partyId: target, version, createdAt: now, ...parsed } }
     })
   }
 

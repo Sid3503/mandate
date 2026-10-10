@@ -26,11 +26,17 @@ const EnvSchema = z.object({
   WEB_DIST: z.string().min(1).optional(),
   RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(0).max(10_000).default(120),
   PUBLIC_URL: z.string().min(1).optional(),
+  /** Render sets this to the service's public https address. It stands in for PUBLIC_URL when that is not set. */
+  RENDER_EXTERNAL_URL: z.string().url().optional(),
   PAYPAL_CLIENT_ID: z.string().min(1).optional(),
   PAYPAL_CLIENT_SECRET: z.string().min(1).optional(),
   PAYPAL_WEBHOOK_ID: z.string().min(1).optional(),
   PAYPAL_API: z.string().url().default('https://api-m.sandbox.paypal.com'),
   LOG: z.enum(['on', 'off']).default('on'),
+  /** An incoming webhook (Slack, Discord, Zapier) that is told when something needs the owner. The address is a secret. */
+  NOTIFY_WEBHOOK_URL: z.string().url().refine((value) => value.startsWith('https://'), 'must be an https address').optional(),
+  /** Lets the owner wipe the money state from the System page, for a hosted demo that many people try in turn. Sandbox PayPal only. */
+  DEMO_RESET: z.enum(['on', 'off']).default('off'),
 })
 
 export type AppConfig = {
@@ -57,6 +63,10 @@ export type AppConfig = {
   rateLimitPerMinute: number
   publicUrl: string
   log: boolean
+  /** Where to tell the owner that something needs them. Null when not set. Never logged. */
+  notifyWebhookUrl: string | null
+  /** When on, the owner can reset the demo from the System page. Refused unless PayPal is the sandbox. */
+  demoReset: boolean
   version: string
   paypal: { clientId: string; clientSecret: string; baseUrl: string } | null
   /** The id PayPal gave the webhook when it was registered. With it, every webhook is checked against PayPal's signature. */
@@ -89,6 +99,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   const paypal = value.PAYPAL_CLIENT_ID && value.PAYPAL_CLIENT_SECRET
     ? { clientId: value.PAYPAL_CLIENT_ID, clientSecret: value.PAYPAL_CLIENT_SECRET, baseUrl: value.PAYPAL_API }
     : null
+  if (value.DEMO_RESET === 'on' && !/sandbox/i.test(value.PAYPAL_API)) {
+    throw new Error('DEMO_RESET wipes the ledger, so it only runs against the PayPal sandbox (PAYPAL_API must be a sandbox address)')
+  }
   return {
     nodeEnv: value.NODE_ENV,
     host: value.HOST,
@@ -110,8 +123,10 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     previousPublicKeys: (value.SIGNING_KEYS_PREVIOUS ?? '').split('|').map((item) => item.trim()).filter(Boolean),
     webDist: value.WEB_DIST ?? null,
     rateLimitPerMinute: value.RATE_LIMIT_PER_MINUTE,
-    publicUrl: value.PUBLIC_URL ?? `http://${value.HOST}:${value.PORT}`,
+    publicUrl: value.PUBLIC_URL ?? value.RENDER_EXTERNAL_URL ?? `http://${value.HOST}:${value.PORT}`,
     log: value.LOG === 'on',
+    notifyWebhookUrl: value.NOTIFY_WEBHOOK_URL ?? null,
+    demoReset: value.DEMO_RESET === 'on',
     version: VERSION,
     paypalWebhookId: value.PAYPAL_WEBHOOK_ID ?? null,
     paypal,

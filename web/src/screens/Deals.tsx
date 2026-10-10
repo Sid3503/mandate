@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useToast } from '../components/Toast'
@@ -7,8 +7,8 @@ import { Signature } from '../components/Signature'
 import { Chip, Empty, Loading, Money, PageHead, PhaseChip, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { when } from '../lib/format'
-import { useAgentsOn, useDeals, useIsOwner, useOnline, useRefreshDeals } from '../lib/hooks'
-import { dollars, parseCents } from '../lib/money'
+import { useAgentsOn, useDeals, useIsOwner, useOnline, useRefreshDeals, useSession } from '../lib/hooks'
+import { centsInput, dollars, parseCents } from '../lib/money'
 import type { Deal, PartyRulesView } from '../lib/types'
 import { useNegotiation } from '../lib/useNegotiation'
 import { DEAL_RULE } from '../lib/words'
@@ -18,6 +18,7 @@ const newKey = () => `web-deal-${crypto.randomUUID()}`
 export function Deals() {
   const deals = useDeals()
   const owner = useIsOwner()
+  const session = useSession()
   const agents = useAgentsOn()
   const online = useOnline()
   const refresh = useRefreshDeals()
@@ -25,9 +26,45 @@ export function Deals() {
   const live = useNegotiation(() => void refresh())
   const [highlight, setHighlight] = useState<string | null>(null)
   const rules = useQuery({ queryKey: ['party-rules'], queryFn: api.partyRules, enabled: owner })
+  // Not the owner: this key reads its own sheet only. A client key may read nothing else about the other company.
+  const mine = useQuery({ queryKey: ['party-rules', 'mine'], queryFn: api.myPartyRules, enabled: session.data !== undefined && !owner, retry: false })
+  const warrant = useQuery({ queryKey: ['warrant'], queryFn: api.warrant, enabled: owner, staleTime: 30_000 })
   const running = live.state.phase === 'running'
-  const buyerMax = rules.data?.data.find((item) => item.role === 'buyer')?.maxTotalCents
-  const sellerMin = rules.data?.data.find((item) => item.role === 'seller')?.minTotalCents
+  const sheetRows = owner ? (rules.data?.data ?? []) : mine.data ? [mine.data] : []
+  const buyerSheet = sheetRows.find((item) => item.role === 'buyer')
+  const sellerSheet = sheetRows.find((item) => item.role === 'seller')
+  const buyerMax = buyerSheet?.maxTotalCents
+  const sellerMin = sellerSheet?.minTotalCents
+  // A deal needs a number from both companies. Until both exist there is nothing for the rules to judge against.
+  const bothSet = Boolean(buyerMax && sellerMin)
+  // And examples do not count: the agents talk only inside numbers a person chose. The server refuses otherwise.
+  const confirmed = bothSet && buyerSheet?.origin === 'written' && sellerSheet?.origin === 'written'
+  const parties: SheetParty[] = owner
+    ? [
+        ...(warrant.data?.clients ?? []).map((client) => ({
+          key: client.id,
+          partyId: client.id,
+          role: 'buyer' as const,
+          displayName: client.displayName,
+          sheet: sheetRows.find((row) => row.partyId === client.id),
+        })),
+        // The studio's own id never leaves the server; the owner writes it through `mine`.
+        {
+          key: 'studio',
+          partyId: 'mine',
+          role: 'seller' as const,
+          displayName: sheetRows.find((row) => row.role === 'seller')?.displayName ?? '',
+          sheet: sheetRows.find((row) => row.role === 'seller'),
+        },
+      ]
+    : [{
+        key: 'mine',
+        partyId: 'mine',
+        role: session.data?.side === 'buyer' ? ('buyer' as const) : ('seller' as const),
+        displayName: mine.data?.displayName ?? '',
+        sheet: mine.data,
+      }]
+  const sheetsReady = owner ? Boolean(rules.data && warrant.data) : Boolean(session.data) && !mine.isLoading
   const jump = () => {
     setHighlight(live.state.agreedDealId)
     document.getElementById(`deal-${live.state.agreedDealId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -59,7 +96,14 @@ export function Deals() {
     <div className="page">
       <PageHead eyebrow="Two companies agree before any money exists" title="Deals">
         {owner ? (
-          <button type="button" className="btn btn-lime" data-tour="deal-negotiate" disabled={!agents || !online || running} onClick={() => void live.start()} title={agents ? 'Two AI agents negotiate inside both companies’ rules' : 'Set OLLAMA_API_KEY to turn the agents on'}>
+          <button
+            type="button"
+            className="btn btn-lime"
+            data-tour="deal-negotiate"
+            disabled={!agents || !online || running || !bothSet || !confirmed}
+            onClick={() => void live.start()}
+            title={!bothSet ? 'Both companies need a price limit first: a deal needs a number each company will accept' : !confirmed ? 'Keep the starting numbers first: the agents talk only inside numbers a person chose' : agents ? 'Two AI agents negotiate inside both companies’ rules' : 'Set OLLAMA_API_KEY to turn the agents on'}
+          >
             {running ? 'Agents are negotiating…' : 'Let the agents negotiate'}
           </button>
         ) : null}
@@ -69,7 +113,13 @@ export function Deals() {
       <ProblemCard error={live.state.phase === 'failed' ? live.state.error : null} />
       {live.state.phase !== 'idle' ? <NegotiationStage state={live.state} buyerMax={buyerMax} sellerMin={sellerMin} onStop={live.stop} onReset={live.reset} onJump={jump} /> : null}
 
-      {owner && rules.data && live.state.phase === 'idle' ? <RuleBand rules={rules.data.data} /> : null}
+      {/* The bar that makes first boot honest: these numbers came with the box. Nothing counts until a person keeps them. */}
+      {sheetsReady && live.state.phase === 'idle' ? <KeepBar sheets={sheetRows} owner={owner} /> : null}
+
+      {owner && rules.data && live.state.phase === 'idle' ? <RuleBand rules={sheetRows} examples={!confirmed} /> : null}
+
+      {/* The writer for the numbers above: each company writes its own limit, and nobody else can reach it. */}
+      {sheetsReady && live.state.phase === 'idle' ? <PriceSheets parties={parties} owner={owner} /> : null}
 
       {deals.isLoading ? <Loading /> : null}
       <ProblemCard error={deals.error} />
@@ -81,7 +131,7 @@ export function Deals() {
         {threads.map((thread) => <Thread key={thread.id} deals={thread.deals} owner={owner} highlight={highlight} />)}
       </div>
 
-      {owner ? <OfferForm /> : null}
+      {owner ? <OfferForm blocked={!bothSet || !confirmed} blockedHint={!bothSet ? 'Both companies need a price limit before an offer can be judged.' : 'Keep the starting numbers first: offers wait until a person chose them.'} /> : null}
     </div>
   )
 }
@@ -92,8 +142,47 @@ function groupThreads(rows: Deal[]): Array<{ id: string; deals: Deal[] }> {
   return [...map.entries()].map(([id, deals]) => ({ id, deals })).reverse()
 }
 
+/**
+ * The bar that makes first boot honest. The sample numbers that came with the studio are shown, not hidden — but
+ * they count for nothing until a person looks at them and keeps them. One click writes the same numbers as the next
+ * version of each sheet, which is exactly what "a person chose them" means in this product. A company that already
+ * wrote its sheet never sees this bar.
+ */
+function KeepBar({ sheets, owner }: { sheets: PartyRulesView[]; owner: boolean }) {
+  const queryClient = useQueryClient()
+  const online = useOnline()
+  const toast = useToast()
+  const examples = sheets.filter((sheet) => sheet.origin === 'seed' && (sheet.role === 'buyer' ? sheet.maxTotalCents !== undefined : sheet.minTotalCents !== undefined))
+  const keep = useMutation({
+    // A client key writes through `mine`: the route resolves it to its own party and refuses any other.
+    mutationFn: () => Promise.all(examples.map((sheet) => api.putPartyRules(owner ? sheet.partyId : 'mine', sheet.role === 'buyer' ? { maxTotalCents: sheet.maxTotalCents } : { minTotalCents: sheet.minTotalCents }))),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['party-rules'] })
+      void queryClient.invalidateQueries({ queryKey: ['party-rules', 'mine'] })
+      toast({ title: 'Starting numbers kept', body: 'Recorded as your choice, as the next version of each sheet. A real client would set its own with its own key.', tone: 'good' })
+    },
+  })
+  if (examples.length === 0) return null
+  return (
+    <section className="panel panel-lime keep-bar" data-tour="keep-bar">
+      <div className="row between wrap gap-s">
+        <h2 className="panel-title">Starting examples, not {examples.length === 1 && !owner ? 'your number' : 'your numbers'} yet</h2>
+        <Chip tone="need">{examples.length} to keep</Chip>
+      </div>
+      <p className="fine">
+        These numbers came with the sample studio so you can try the product: {examples.map((sheet) => sheet.role === 'buyer' ? `${sheet.displayName} pays at most ${dollars(sheet.maxTotalCents)}` : `${sheet.displayName} takes a job for at least ${dollars(sheet.minTotalCents)}`).join(' · ')}.{' '}
+        Nothing is judged, and the agents do not talk, until a person chooses them. Keeping records your choice; changing them in the forms below records a better one.
+      </p>
+      <div className="row gap-s wrap">
+        <button type="button" className="btn btn-ink" disabled={!online || keep.isPending} onClick={() => keep.mutate()}>{keep.isPending ? 'Keeping…' : examples.length === 1 && !owner ? 'Keep this number' : 'Keep these numbers'}</button>
+      </div>
+      <ProblemCard error={keep.error} />
+    </section>
+  )
+}
+
 /** Each company's limits as a band on a line, so "why was $450 refused?" is a picture, not a paragraph. */
-function RuleBand({ rules }: { rules: PartyRulesView[] }) {
+function RuleBand({ rules, examples }: { rules: PartyRulesView[]; examples: boolean }) {
   const buyer = rules.find((item) => item.role === 'buyer')
   const seller = rules.find((item) => item.role === 'seller')
   if (!buyer?.maxTotalCents || !seller?.minTotalCents) return null
@@ -104,7 +193,7 @@ function RuleBand({ rules }: { rules: PartyRulesView[] }) {
     <section className="rule-band panel" aria-label="Where the two companies' rules overlap" data-tour="deal-band">
       <div className="row between wrap gap-s">
         <h2 className="panel-title">Where a deal can exist</h2>
-        <Chip tone={fits ? 'auto' : 'deny'}>{fits ? `${dollars(seller.minTotalCents)} to ${dollars(buyer.maxTotalCents)}` : 'no overlap'}</Chip>
+        <Chip tone={examples ? 'need' : fits ? 'auto' : 'deny'}>{examples ? 'starting examples' : fits ? `${dollars(seller.minTotalCents)} to ${dollars(buyer.maxTotalCents)}` : 'no overlap'}</Chip>
       </div>
       <div className="band-track" role="img" aria-label={`${buyer.displayName} pays at most ${dollars(buyer.maxTotalCents)}. ${seller.displayName} needs at least ${dollars(seller.minTotalCents)}.`}>
         <i className="band-buyer" style={{ left: 0, width: at(buyer.maxTotalCents) }} />
@@ -120,9 +209,106 @@ function RuleBand({ rules }: { rules: PartyRulesView[] }) {
   )
 }
 
+/** One company's price limit, and where the form writes it. `partyId` is `mine` whenever the caller writes its own. */
+type SheetParty = {
+  key: string
+  partyId: string
+  role: 'buyer' | 'seller'
+  displayName: string
+  sheet: PartyRulesView | undefined
+}
+
+/**
+ * The writer for the numbers the band above draws. Each company writes its own limit: the form sends only the price,
+ * the server keeps everything else about the company, and the other side's sheet is not reachable from here at all.
+ */
+function PriceSheets({ parties, owner }: { parties: SheetParty[]; owner: boolean }) {
+  const unset = parties.filter((party) => {
+    const number = party.role === 'buyer' ? party.sheet?.maxTotalCents : party.sheet?.minTotalCents
+    return number === undefined
+  })
+  const examples = parties.filter((party) => {
+    const number = party.role === 'buyer' ? party.sheet?.maxTotalCents : party.sheet?.minTotalCents
+    return number !== undefined && party.sheet?.origin === 'seed'
+  })
+  const state = unset.length > 0 ? 'missing' : examples.length > 0 ? 'examples' : 'set'
+  return (
+    <section className="panel price-sheets" data-tour="price-sheets">
+      <div className="row between wrap gap-s">
+        <h2 className="panel-title">{owner ? 'What each company will accept' : 'What your company will accept'}</h2>
+        <Chip tone={state === 'set' ? 'auto' : 'need'}>{state === 'set' ? (owner ? 'both numbers are set' : 'your number is set') : state === 'examples' ? (owner || examples.length > 1 ? 'starting examples' : 'starting example') : `${unset.length} still to set`}</Chip>
+      </div>
+      <p className="fine">
+        {state === 'set'
+          ? 'A deal has to fit between these two numbers. Only this console sees both: each company’s agent is told its own and never the other’s.'
+          : state === 'examples'
+            ? 'These are still the sample numbers that came with the studio. Keep them in the bar above, or change them here — until then nothing is judged.'
+            : 'A deal can only exist where the two numbers overlap. Until both are set there is nothing for the rules to judge against, so offers and negotiation are held.'}
+      </p>
+      <div className="stack">
+        {parties.map((party) => <PriceSheetForm key={party.key} party={party} />)}
+      </div>
+    </section>
+  )
+}
+
+function PriceSheetForm({ party }: { party: SheetParty }) {
+  const queryClient = useQueryClient()
+  const online = useOnline()
+  const toast = useToast()
+  const field = party.role === 'buyer' ? 'maxTotalCents' : 'minTotalCents'
+  const current = field === 'maxTotalCents' ? party.sheet?.maxTotalCents : party.sheet?.minTotalCents
+  const [value, setValue] = useState(() => (current === undefined ? '' : centsInput(current)))
+  const [name, setName] = useState(party.displayName)
+  const cents = parseCents(value)
+  const label = party.role === 'buyer' ? 'pays at most' : 'takes a job for at least'
+  const noun = party.role === 'buyer' ? 'ceiling' : 'floor'
+  const save = useMutation({
+    mutationFn: () => api.putPartyRules(party.partyId, {
+      ...(name.trim() ? { displayName: name.trim() } : {}),
+      [field]: cents,
+    }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['party-rules'] })
+      toast({
+        title: `${name.trim() || party.displayName || 'The company'}’s ${noun} is now ${dollars(cents)}`,
+        body: 'Saved as the next version of its sheet. Nothing has moved: this is only a limit.',
+        tone: 'good',
+      })
+    },
+  })
+  return (
+    <form className="sheet-form" data-tour={`price-${party.role}`} onSubmit={(event) => { event.preventDefault(); if (cents) save.mutate() }}>
+      <div className="row between wrap gap-s">
+        <span className="eyebrow">{party.sheet ? party.displayName : party.role === 'buyer' ? 'A client on the warrant' : 'Your studio'}</span>
+        {party.sheet ? <span className="mono small">sheet v{party.sheet.version}</span> : <Chip tone="need">not set</Chip>}
+      </div>
+      <div className="field-row">
+        {party.sheet ? null : (
+          <label className="field"><span>Company name</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required placeholder="Harbor Foods" /></label>
+        )}
+        <label className="field">
+          <span>{name || 'This company'} {label} for a whole job</span>
+          <span className="dollar-input"><span>$</span><input inputMode="decimal" value={value} onChange={(event) => setValue(event.target.value)} placeholder="400.00" required /></span>
+          <small className="mono">{cents === null ? 'Dollars and cents' : `= ${cents} cents`}</small>
+        </label>
+      </div>
+      <div className="row between wrap gap-s">
+        <span className="fine">{party.role === 'buyer' ? 'The studio is never told this number.' : 'The client is never told this number.'}</span>
+        <button type="submit" className="btn btn-ink" disabled={!cents || !online || save.isPending}>
+          {save.isPending ? 'Saving…' : party.sheet ? 'Save this limit' : 'Set this limit'}
+        </button>
+      </div>
+      <ProblemCard error={save.error} />
+    </form>
+  )
+}
+
 function Thread({ deals, owner, highlight }: { deals: Deal[]; owner: boolean; highlight: string | null }) {
   const final = deals[deals.length - 1]!
   const agreed = deals.find((deal) => deal.status === 'agreed')
+  // Hints already end with a period; the sentence adds its own, so one of them has to give.
+  const firstHint = final.verdict.violations[0]?.hint.replace(/[.。\s]*$/, '')
   return (
     <article id={agreed ? `deal-${agreed.id}` : undefined} className={`deal-card${agreed ? ' is-agreed' : ''}${agreed && agreed.id === highlight ? ' flash' : ''}`} data-tour={agreed ? 'deal-agreed' : undefined}>
       <header className="deal-head">
@@ -148,7 +334,12 @@ function Thread({ deals, owner, highlight }: { deals: Deal[]; owner: boolean; hi
         </ol>
       ) : null}
 
-      {agreed ? <Agreed deal={agreed} owner={owner} /> : null}
+      {agreed ? <Agreed deal={agreed} owner={owner} /> : (
+        <p className="fine" data-tour="deal-next">
+          No deal yet{firstHint ? ` — ${firstHint}` : ''}.{' '}
+          {owner ? 'Adjust a price limit above, or offer again below.' : 'Adjust your ceiling above. The studio is never told your number.'}
+        </p>
+      )}
     </article>
   )
 }
@@ -217,7 +408,7 @@ function Agreed({ deal, owner }: { deal: Deal; owner: boolean }) {
   )
 }
 
-function OfferForm() {
+function OfferForm({ blocked = false, blockedHint = '' }: { blocked?: boolean; blockedHint?: string }) {
   const refresh = useRefreshDeals()
   const online = useOnline()
   const [total, setTotal] = useState('')
@@ -241,13 +432,17 @@ function OfferForm() {
         <div className="field-row">
           <label className="field"><span>Total</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={total} onChange={(event) => { setTotal(event.target.value); setIdem(newKey()) }} placeholder="300.00" required /></span>
             <small className="mono">{cents === null ? 'Dollars and cents' : `= ${cents} cents, split into ${count} equal milestones`}</small></label>
-          <label className="field"><span>Offered by</span><select value={as} onChange={(event) => setAs(event.target.value as 'seller' | 'buyer')}><option value="seller">the studio</option><option value="buyer">the client</option></select></label>
+          <label className="field"><span>Offered by</span><select value={as} onChange={(event) => setAs(event.target.value as 'seller' | 'buyer')}><option value="seller">the studio</option><option value="buyer">the client</option></select>
+            <small>The rules judge the terms, never the speaker: the verdict is the same either way. This only labels who offered.</small></label>
         </div>
         <div className="field-row">
           <label className="field"><span>Scope</span><input value={scope} onChange={(event) => setScope(event.target.value)} maxLength={300} required /></label>
           <label className="field"><span>Milestones</span><select value={count} onChange={(event) => setCount(Number(event.target.value))}>{[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
         </div>
-        <div className="row between wrap gap-s"><span className="fine">Each offer is a fresh thread.</span><button type="submit" className="btn btn-lime" disabled={!cents || !online || send.isPending}>{send.isPending ? 'Checking both rule sets…' : 'Offer these terms'}</button></div>
+        <div className="row between wrap gap-s">
+          <span className="fine">{blocked ? blockedHint : 'Each offer starts its own thread. A thread ends when a deal is agreed.'}</span>
+          <button type="submit" className="btn btn-lime" disabled={!cents || !online || send.isPending || blocked}>{send.isPending ? 'Checking both rule sets…' : 'Offer these terms'}</button>
+        </div>
       </form>
       <ProblemCard error={send.error} />
       {result ? (

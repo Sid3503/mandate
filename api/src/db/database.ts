@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS party_rules (
   version INTEGER NOT NULL,
   body_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  origin TEXT NOT NULL DEFAULT 'written',
   PRIMARY KEY (party_id, version)
 );
 
@@ -199,6 +200,32 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 CREATE INDEX IF NOT EXISTS agents_status ON agents(status);
 
+CREATE TABLE IF NOT EXISTS client_keys (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  party_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  key_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT
+);
+CREATE INDEX IF NOT EXISTS client_keys_status ON client_keys(status);
+
+CREATE TABLE IF NOT EXISTS share_links (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  party_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  label TEXT NOT NULL,
+  secret_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  last_seen_at TEXT,
+  views INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS share_links_job ON share_links(job_id);
+
 CREATE TABLE IF NOT EXISTS client_errors (
   id TEXT PRIMARY KEY,
   at TEXT NOT NULL,
@@ -253,6 +280,10 @@ export function migrate(db: DatabaseSync): void {
   for (const [name, type] of [['prompt_version', 'TEXT'], ['input_tokens', 'INTEGER'], ['output_tokens', 'INTEGER'], ['turns', 'INTEGER']] as const) {
     if (!runColumns.has(name)) db.exec(`ALTER TABLE agent_runs ADD COLUMN ${name} ${type}`)
   }
+  // A sheet that came with the box stays an example until a key writes it. Rows that predate this column were all
+  // written through the API (the seed wrote before it existed), so they count as already written.
+  const rulesColumns = new Set((db.prepare('PRAGMA table_info(party_rules)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!rulesColumns.has('origin')) db.exec(`ALTER TABLE party_rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'written'`)
 }
 
 export function seed(db: DatabaseSync, now: Date): void {
@@ -265,8 +296,9 @@ export function seed(db: DatabaseSync, now: Date): void {
       now.toISOString(),
     )
   }
-  // Each company's deal rules are versioned data too. Seeded once per party, never overwritten.
-  const seedRules = db.prepare('INSERT OR IGNORE INTO party_rules (party_id, version, body_json, created_at) VALUES (?, 1, ?, ?)')
+  // Each company's deal rules are versioned data too. Seeded once per party, never overwritten. The seed's rows
+  // are marked as examples: they work only once a person has looked at them and kept them (or written better ones).
+  const seedRules = db.prepare(`INSERT OR IGNORE INTO party_rules (party_id, version, body_json, created_at, origin) VALUES (?, 1, ?, ?, 'seed')`)
   seedRules.run(BUYER_PARTY_ID, JSON.stringify(PartyRulesSchema.parse(DEMO_BUYER_RULES)), now.toISOString())
   seedRules.run(WARRANT_ID, JSON.stringify(PartyRulesSchema.parse(DEMO_SELLER_RULES)), now.toISOString())
 }
@@ -278,4 +310,25 @@ export function databaseReady(db: DatabaseSync): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Wipes the money state back to a fresh Line Studio: requests, the ledger, deals, deliveries, agent runs, status links,
+ * the pause and the idempotency memory. The signing keys, agent keys and client keys stay, so keys people already hold
+ * keep working. It is for a hosted demo, behind DEMO_RESET, and only ever against the PayPal sandbox.
+ */
+export function resetDemo(db: DatabaseSync, now: Date): void {
+  db.exec('BEGIN')
+  try {
+    // Children before parents, because events point at proposals and deliveries at deals.
+    for (const table of ['events', 'deliveries', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
+      db.exec(`DELETE FROM ${table}`)
+    }
+    db.exec("UPDATE safety_state SET paused = 0, reason = NULL, since = NULL, by = NULL WHERE id = 1")
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+  seed(db, now)
 }

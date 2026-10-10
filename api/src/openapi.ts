@@ -118,6 +118,7 @@ const SessionSchema = z.object({
   agents: z.object({ enabled: z.boolean(), model: z.string().nullable() }),
   version: z.string(),
   paypalConfigured: z.boolean(),
+  demoReset: z.boolean(),
 }).openapi('Session')
 
 const problem = {
@@ -275,6 +276,16 @@ export function buildOpenApi(publicUrl: string) {
   ownerRoute('post', '/v1/agents', 'Issue an agent key. Returns the full API key exactly once; only its hash is stored afterwards.')
   ownerRoute('post', '/v1/agents/{id}/revoke', 'Permanently revoke an agent key.', true)
   ownerRoute('post', '/v1/agents/{id}/resume', 'Re-activate an agent the breaker had suspended. Revoked keys stay revoked; create a new one.', true)
+  ownerRoute('get', '/v1/client-keys', 'List the issued client keys (name, client, status, last seen). Key material is never returned.')
+  ownerRoute('post', '/v1/client-keys', 'Issue a client its own key, bound to that client on the warrant. Returns the full API key exactly once; only its hash is stored afterwards.')
+  ownerRoute('post', '/v1/client-keys/{id}/revoke', 'Permanently revoke a client key.', true)
+  ownerRoute('post', '/v1/client-keys/{id}/rotate', 'Revoke a client key and issue its replacement in one step. Returns the new key exactly once.', true)
+  ownerRoute('get', '/v1/jobs/{jobId}/shares', 'List the read-only status links issued for a job (who, expiry, views). The secret is never returned.')
+  ownerRoute('post', '/v1/jobs/{jobId}/shares', 'Issue a read-only status link for one person on a job: a contractor sees their own payouts, a client sees their own invoices. Returns the link exactly once; only a hash is stored.')
+  ownerRoute('post', '/v1/shares/{id}/revoke', 'Withdraw a status link.', true)
+  ownerRoute('post', '/v1/demo/reset', 'Wipe the ledger back to a fresh Line Studio. Only exists when the server was started with DEMO_RESET=on against the PayPal sandbox; otherwise 404. The body must be {"confirm":"reset the demo"}. Signing, agent and client keys are kept.')
+  ownerRoute('get', '/v1/notify', 'Whether the owner\'s notification webhook is set, when it last sent, and the last error. The address itself is never returned.')
+  ownerRoute('post', '/v1/notify/test', 'Send one test message to the owner\'s webhook, so the setup can be checked.')
   ownerRoute('get', '/v1/agents/health', 'How each language model is doing (calls, failures, latency, circuit state, tokens) and which prompt versions are in force.')
   ownerRoute('get', '/v1/paypal/features', 'Which PayPal features this app may use, from its token scopes, with the dashboard steps for any that are off.')
   ownerRoute('post', '/v1/paypal/features/check', 'Same, after asking PayPal for a fresh token.')
@@ -369,7 +380,7 @@ export function buildOpenApi(publicUrl: string) {
     path: '/v1/party-rules/{partyId}',
     tags: ['deals'],
     security: bearer,
-    summary: 'Owner only. Write the next version of one company\'s deal rules.',
+    summary: 'Write the next version of one company\'s price limits. `mine` is your own party: the owner may write either sheet, a client key its own ceiling, the studio key its own floor, an agent none. Another company\'s sheet is refused. Send only what changes: the rest is kept from the current sheet, or taken from the warrant for a company that never had one. The price itself is never defaulted. Sheets that came with the sample studio count only once a key keeps them: until then offers and negotiations are refused with 409.',
     request: { params: z.object({ partyId: z.string() }), body: { content: { 'application/json': { schema: PartyRulesSchema } }, required: true } },
     responses: { 201: { description: 'New version' }, 401: problem, 403: problem, 404: problem, 422: problem },
   })

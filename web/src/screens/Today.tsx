@@ -10,6 +10,7 @@ import { api } from '../lib/api'
 import { useQuery } from '@tanstack/react-query'
 import { relative } from '../lib/format'
 import { reviewKey, useLive, type ReviewState } from '../lib/live'
+import { BreakIt } from '../components/BreakIt'
 import { ToolTrail } from '../components/ToolTrail'
 import { dollars } from '../lib/money'
 import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useToday, useWarrant } from '../lib/hooks'
@@ -18,10 +19,10 @@ import { explain, isPayout, KIND, type Names } from '../lib/words'
 
 const HOW: Record<NonNullable<TodayItem['how']>, { label: string; tone: 'auto' | 'ink' }> = {
   tap: { label: 'Your tap', tone: 'ink' },
-  standing: { label: 'Standing rule · no tap', tone: 'auto' },
-  billing: { label: 'Billing rule · no tap', tone: 'auto' },
-  autopilot: { label: 'Autopilot · no tap', tone: 'auto' },
-  auto: { label: 'Under the line · no tap', tone: 'auto' },
+  standing: { label: 'Your standing rule · no tap', tone: 'auto' },
+  billing: { label: 'Your billing rule · no tap', tone: 'auto' },
+  autopilot: { label: 'Your autopilot rule · no tap', tone: 'auto' },
+  auto: { label: 'Under your line · no tap', tone: 'auto' },
 }
 
 const KIND_LABEL: Record<TodayItem['kind'], { label: string; tone: 'deny' | 'need' | 'ink' | 'muted' | 'auto' }> = {
@@ -88,6 +89,8 @@ export function Today() {
         </div>
         {attention.length > 0 ? <ul className="items" aria-label="Needs your attention"><AnimatePresence initial={false}>{attention.map((item) => <ItemRow key={item.id} item={item} />)}</AnimatePresence></ul> : null}
       </section>
+
+      <BreakIt />
 
       {data && data.readyToBill.some((item) => item.delivery?.status !== 'awaiting') ? <ReadyToBill data={data} /> : null}
 
@@ -407,6 +410,7 @@ function ItemRow({ item }: { item: TodayItem }) {
           <Link className="link" to={`/p/${item.proposalId}`}>Open receipt →</Link>
         </div>
       ) : null}
+      {!owner && buttons.length > 0 ? <p className="fine">This key can ask and read. Only the owner key can act on a request.</p> : null}
       <ProblemCard error={act.error} />
     </motion.li>
   )

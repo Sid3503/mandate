@@ -51,6 +51,21 @@ The route: **Deals → Let the agents negotiate** ($450 and $200 refused, $300 a
 
 Full walk-through with what you should see at each step: [docs/REFERENCE.md](docs/REFERENCE.md#running-against-the-paypal-sandbox).
 
+### Finding your way around
+
+The console is four places: **Today** (what needs you), **Jobs** (money in releases money out), **Rules** (what you allow) and **Activity** (Ledger, Proof and the Control room as tabs). Deals, the request form and Ask Mandate (Cmd/Ctrl + K) are one step away.
+
+- Every job shows a **track**: Agreed → Billed → Client paid → Contractor paid, with where it is now and the one thing to do next.
+- **Try to break it** (on Today, owner key) sends a fake vendor, an $18 lunch and a payout with no client money behind it through the real rules. It is a dry run: nothing is filed and PayPal is never called.
+- Rows on Today read **Your tap** or **Your … rule · no tap**, so it is always clear who decided.
+- **Share a job.** On a job, give the client or a contractor a read-only status link: they see only their own part, expire it, withdraw it. No more "has the client paid yet?".
+- **Clearing window** (Rules → *Wait after a client pays*). A client can still take money back for a while, so a rule or autopilot waits N days after a client pays before paying a contractor from it. You can still tap to pay sooner.
+- **Connect any agent** (System, or the More group in the sidebar): a Claude Code command and a curl check for the MCP door.
+- **Tell me when something needs me.** Set `NOTIFY_WEBHOOK_URL` to a Slack, Discord or Zapier incoming webhook. The message links to the console; it cannot approve or pay.
+- **Hosted demo.** `DEMO_RESET=on` (sandbox only) adds a typed-confirmation *Start the demo over* on System.
+
+**Letting judges try it.** Deploy with your own `API_KEY` (sandbox PayPal credentials only) and put that key in the Devpost *testing instructions*, not in the repo or the page. Anyone with the owner key can approve and settle in the sandbox.
+
 > **About `npm run demo`.** It starts a *test server* on :8799 with a fake PayPal and a scripted stand-in for the AI, so the 30 browser tests are deterministic and free. It is for development, not for showing the product. The real thing is above.
 
 ## How it works
@@ -84,11 +99,11 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-353 API tests (including a 56-case red team), 62 end-to-end tests on desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
+440 API tests (including a 56-case red team), 45 end-to-end tests run on both desktop and phone (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile.
 
 ## Where to read next
 
-- **Judges:** [docs/REFERENCE.md](docs/REFERENCE.md) for the demo walkthrough, and the [PayPal integration](docs/REFERENCE.md#paypal-integration) section with the live sandbox history.
+- **Judges:** [docs/JUDGES.md](docs/JUDGES.md) for a five-minute path, then [docs/REFERENCE.md](docs/REFERENCE.md) for the demo walkthrough, and the [PayPal integration](docs/REFERENCE.md#paypal-integration) section with the live sandbox history.
 - **Developers:** [api/README.md](api/README.md), [web/README.md](web/README.md), and the [HTTP API reference](docs/REFERENCE.md#http-api-reference).
 - **Roadmap and what is left:** [docs/REFERENCE.md#roadmap-what-is-left](docs/REFERENCE.md#roadmap-what-is-left).
 

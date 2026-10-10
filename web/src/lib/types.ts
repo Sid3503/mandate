@@ -60,7 +60,7 @@ export type Job = {
   jobId: string
   client: Party | null
   contractorShareBps: number | null
-  charges: Array<Proposal & { fundableCents: number }>
+  charges: Array<Proposal & { fundableCents: number; clearing?: { pending: boolean; clearsAt: string | null } }>
   payouts: Proposal[]
   refunds: Proposal[]
   totals: { inCents: number; outCents: number; heldCents: number; keptCents: number }
@@ -119,6 +119,7 @@ export type Safety = {
 
 export type AgentScope = 'read' | 'propose' | 'stream' | 'mcp' | 'deals'
 export type AgentRow = { id: string; name: string; scopes: AgentScope[]; limits: { proposalsPerHour: number; centsPerHour: number }; status: 'active' | 'suspended' | 'revoked'; createdAt: string; lastSeenAt: string | null }
+export type ClientKeyRow = { id: string; name: string; partyId: string; status: 'active' | 'revoked'; createdAt: string; lastSeenAt: string | null }
 
 export type Suggestion = { id: string; payeeId: string; payeeName: string; clientId: string; clientName: string; approved: number; totalCents: number; largestCents: number; firstAt: string; draft: string }
 export type Suggestions = { suggestions: Suggestion[]; taps: { thisMonth: number; lastMonth: number; byRule: number } }
@@ -178,6 +179,8 @@ export type Negotiation = {
 export type PartyRulesView = {
   partyId: string
   version: number
+  /** Whether a person chose these numbers. `seed` came with the sample studio and stays an example until a key writes it. */
+  origin: 'seed' | 'written'
   role: 'buyer' | 'seller'
   displayName: string
   currency: string
@@ -378,3 +381,21 @@ export type ClerkStreamEvent =
   | { type: 'tool_end'; id: string; tool: string; ok: boolean; output?: unknown; ms?: number }
   | { type: 'done'; reply: ClerkReply }
   | { type: 'error'; code: string; message: string }
+
+/** A read-only link to one job for one person, as the owner sees it in a list. The secret is never part of it. */
+export type ShareSummary = { id: string; jobId: string; partyId: string; partyName: string; role: 'contractor' | 'client'; label: string; createdAt: string; expiresAt: string; revokedAt: string | null; lastSeenAt: string | null; views: number; active: boolean }
+
+/** What the holder of a link sees. */
+export type ShareView = {
+  role: 'contractor' | 'client'
+  who: string
+  jobId: string
+  with: string | null
+  asOf: string
+  expiresAt: string
+  contractor?: {
+    clientPayment: { state: 'waiting' | 'clearing' | 'received'; clearsAt: string | null }
+    payouts: Array<{ amountCents: number; state: 'asked' | 'approved' | 'sending' | 'unclaimed' | 'paid' | 'failed'; label: string; at: string }>
+  }
+  client?: { invoices: Array<{ description: string; amountCents: number; state: 'due' | 'paid'; payUrl: string | null; at: string }> }
+}

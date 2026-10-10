@@ -1,3 +1,4 @@
+import { ActivityTabs } from '../components/ActivityTabs'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -20,6 +21,7 @@ export function Proof() {
 
   return (
     <div className="page proof">
+      <ActivityTabs />
       <PageHead eyebrow="Checked by the server, from the ledger, on demand" title="Proof">
         <label className="check"><input type="checkbox" checked={withPayPal} onChange={(event) => setWithPayPal(event.target.checked)} /> Also compare with PayPal’s history</label>
         <button type="button" className="btn btn-ink" disabled={!owner || audit.isFetching} onClick={() => void audit.refetch()}>{audit.isFetching ? 'Checking…' : 'Check again'}</button>

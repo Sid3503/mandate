@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { demoModel } from '../src/dev/demo-model'
-import { agree, call, closeAll, collect, harness, STUDIO_KEY } from './support'
+import { agree, call, closeAll, collect, confirmPrices, harness, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
 
@@ -28,6 +28,7 @@ describe('the demo model (the scripted stand-in used by npm run demo)', () => {
 
   it('negotiates $450, $200, $300', async () => {
     const { app } = harness({ model: demoModel() })
+    await confirmPrices(app)
     const run = await call(app, 'POST', '/v1/negotiations', { body: {} })
     expect(run.json.turns.map((t: { deal: { terms: { totalCents: number } } }) => t.deal.terms.totalCents)).toEqual([45_000, 20_000, 30_000])
   })

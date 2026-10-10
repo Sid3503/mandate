@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Signer } from '../src/domain/signing'
-import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY, terms } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, confirmPrices, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY, terms } from './support'
 import { generateKeyPairSync } from 'node:crypto'
 import { Repo } from '../src/db/repo'
 import { cartHash } from '../src/domain/hash'
 
 afterEach(closeAll)
 
-const offer = (app: Parameters<typeof call>[0], total: number, key = OWNER_KEY, extra: Record<string, unknown> = {}) =>
-  call(app, 'POST', '/v1/deals/offers', { key, idem: idem('offer'), body: { buyer: 'Northwind', terms: terms(total), ...extra } })
+const offer = async (app: Parameters<typeof call>[0], total: number, key = OWNER_KEY, extra: Record<string, unknown> = {}) => {
+  await confirmPrices(app)
+  return call(app, 'POST', '/v1/deals/offers', { key, idem: idem('offer'), body: { buyer: 'Northwind', terms: terms(total), ...extra } })
+}
 
 describe('the deal check', () => {
   it('refuses $450 and $200 and agrees $300, as the frozen story says', async () => {
@@ -69,6 +71,7 @@ describe('the deal check', () => {
 
   it('refuses terms that contradict themselves or sit outside either rule set', async () => {
     const { app } = harness()
+    await confirmPrices(app)
     const cases: Array<[string, Record<string, unknown>, string]> = [
       ['milestones that do not add up', { milestones: [{ title: 'a', amountCents: 10_000 }, { title: 'b', amountCents: 10_000 }] }, 'deal.shape'],
       ['work the buyer does not buy', { category: 'production' }, 'deal.category_buyer'],
@@ -89,6 +92,7 @@ describe('the deal check', () => {
 
   it('closes a negotiation thread once a deal is agreed, and replays a repeated offer', async () => {
     const { app } = harness()
+    await confirmPrices(app)
     const threadId = crypto.randomUUID()
     const first = await call(app, 'POST', '/v1/deals/offers', { idem: 'same-offer-key-1', body: { buyer: 'Northwind', terms: terms(30_000), threadId } })
     const replay = await call(app, 'POST', '/v1/deals/offers', { idem: 'same-offer-key-1', body: { buyer: 'Northwind', terms: terms(30_000), threadId } })
@@ -107,10 +111,86 @@ describe('the deal check', () => {
     const { partyId: _p, version: _v, createdAt: _c, ...body } = rules
     expect((await call(app, 'PUT', '/v1/party-rules/client_northwind', { key: STUDIO_KEY, body: { ...body, maxTotalCents: 50_000 } })).status).toBe(403)
     const published = await call(app, 'PUT', '/v1/party-rules/client_northwind', { body: { ...body, maxTotalCents: 50_000 } })
-    expect(published.json.version).toBe(2)
+    expect(published.json.version).toBe(3)
     const accepted = await offer(app, 45_000)
-    expect(accepted.json).toMatchObject({ status: 'agreed', rulesVersions: { buyer: 2, seller: 1 } })
+    expect(accepted.json).toMatchObject({ status: 'agreed', rulesVersions: { buyer: 3, seller: 2 } })
     expect((await call(app, 'PUT', '/v1/party-rules/client_northwind', { body: { ...body, role: 'seller', minTotalCents: 1 } })).json.code).toBe('deal.role_mismatch')
+  })
+
+  it('refuses offers against sample numbers nobody kept, until both companies keep them', async () => {
+    const { app } = harness()
+    const sheets = (await call(app, 'GET', '/v1/party-rules')).json.data
+    expect(sheets.every((row: { origin: string }) => row.origin === 'seed')).toBe(true)
+    // Refused on the server, before any term is judged: there is nothing to judge against yet.
+    const refused = await call(app, 'POST', '/v1/deals/offers', { idem: idem('kept'), body: { buyer: 'Northwind', terms: terms(30_000) } })
+    expect(refused.status).toBe(409)
+    expect(refused.json).toMatchObject({ code: 'deal.rules_unconfirmed' })
+    expect(refused.json.detail).toContain('Northwind')
+    // Keeping only one side still waits: both companies must keep.
+    await call(app, 'PUT', '/v1/party-rules/client_northwind', { body: { maxTotalCents: 40_000 } })
+    expect((await call(app, 'POST', '/v1/deals/offers', { idem: idem('kept2'), body: { buyer: 'Northwind', terms: terms(30_000) } })).status).toBe(409)
+    // Kept on both sides: the same terms are judged, and agree.
+    await call(app, 'PUT', '/v1/party-rules/wnt_line_studio', { body: { minTotalCents: 25_000 } })
+    const agreed = await call(app, 'POST', '/v1/deals/offers', { idem: idem('kept3'), body: { buyer: 'Northwind', terms: terms(30_000) } })
+    expect(agreed.json.status).toBe('agreed')
+    expect(agreed.json.rulesVersions).toEqual({ buyer: 2, seller: 2 })
+  })
+
+  it('lets each company write its own price sheet, and nobody else’s', async () => {
+    const { app } = harness()
+    const sheets = (await call(app, 'GET', '/v1/party-rules')).json.data as Array<Record<string, unknown>>
+    const seller = sheets.find((row) => row.partyId === 'wnt_line_studio')!
+    const buyer = sheets.find((row) => row.partyId === 'client_northwind')!
+    const sheet = (row: Record<string, unknown>) => {
+      const { partyId: _p, version: _v, createdAt: _c, ...body } = row
+      return body
+    }
+
+    // The client writes its own ceiling through `mine`: it never sees or names the studio's id.
+    const clientSheet = await call(app, 'PUT', '/v1/party-rules/mine', { key: BUYER_KEY, body: { ...sheet(buyer), maxTotalCents: 48_000 } })
+    expect(clientSheet.status).toBe(201)
+    expect(clientSheet.json).toMatchObject({ partyId: 'client_northwind', version: 2, maxTotalCents: 48_000 })
+    expect(JSON.stringify(clientSheet.json)).not.toContain('minTotalCents')
+    // The other side's sheet is out of reach, by id and by `mine`.
+    expect((await call(app, 'PUT', '/v1/party-rules/wnt_line_studio', { key: BUYER_KEY, body: sheet(seller) })).status).toBe(403)
+    expect((await call(app, 'PUT', '/v1/party-rules/client_northwind', { key: BUYER_KEY, body: { ...sheet(buyer), maxTotalCents: 1 } })).status).toBe(403)
+
+    // The studio writes its own floor the same way. Its write left the client's sheet where it was.
+    const studioSheet = await call(app, 'PUT', '/v1/party-rules/mine', { key: STUDIO_KEY, body: { ...sheet(seller), minTotalCents: 26_000 } })
+    expect(studioSheet.json).toMatchObject({ partyId: 'wnt_line_studio', version: 2, minTotalCents: 26_000 })
+    expect((await call(app, 'PUT', '/v1/party-rules/client_northwind', { key: STUDIO_KEY, body: sheet(buyer) })).status).toBe(403)
+    const after = (await call(app, 'GET', '/v1/party-rules')).json.data as Array<Record<string, unknown>>
+    expect(after.find((row) => row.partyId === 'client_northwind')).toMatchObject({ version: 2, maxTotalCents: 48_000 })
+
+    // An agent key may read its company's terms through `mine`; setting them is not its move.
+    const created = await call(app, 'POST', '/v1/agents', { body: { name: 'negotiator', scopes: ['deals'] } })
+    expect(created.status).toBe(201)
+    expect((await call(app, 'PUT', '/v1/party-rules/mine', { key: created.json.apiKey, body: sheet(seller) })).status).toBe(403)
+    expect((await call(app, 'GET', '/v1/party-rules/mine', { key: created.json.apiKey })).status).toBe(200)
+  })
+
+  it('keeps every number a company did not mention, and starts a new sheet from the warrant alone', async () => {
+    const { app } = harness()
+    // A partial write changes the ceiling and nothing else about the company.
+    const kept = await call(app, 'PUT', '/v1/party-rules/client_northwind', { body: { maxTotalCents: 47_000 } })
+    expect(kept.status).toBe(201)
+    expect(kept.json).toMatchObject({ version: 2, maxTotalCents: 47_000, displayName: 'Northwind', categories: ['design'], maxMilestones: 4, requireProof: true })
+
+    // A client newly added to the warrant has no sheet. Its name and its company's currency come from the warrant;
+    // the one thing it must say is the number.
+    const current = (await call(app, 'GET', '/v1/warrant')).json
+    const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
+    const harbor = { id: 'client_harbor', displayName: 'Harbor Foods', email: 'ap@harbor.example', aliases: [] }
+    expect((await call(app, 'PUT', '/v1/warrant', { body: { ...body, clients: [...body.clients, harbor] } })).status).toBe(201)
+    // With no price at all, it is not a sheet: the rules say so rather than silently accepting an open budget.
+    const empty = await call(app, 'PUT', '/v1/party-rules/client_harbor', { body: {} })
+    expect(empty.status).toBe(422)
+    expect(empty.json).toMatchObject({ code: 'deal.rules_invalid' })
+    expect(empty.json.detail).toContain('maxTotalCents')
+    const created = await call(app, 'PUT', '/v1/party-rules/client_harbor', { body: { maxTotalCents: 12_000 } })
+    expect(created.status).toBe(201)
+    expect(created.json).toMatchObject({ partyId: 'client_harbor', version: 1, displayName: 'Harbor Foods', currency: 'USD', categories: ['design', 'production'], maxTotalCents: 12_000 })
+    expect((await call(app, 'GET', '/v1/party-rules')).json.data).toHaveLength(3)
   })
 })
 

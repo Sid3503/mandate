@@ -1,3 +1,4 @@
+import { ActivityTabs } from '../components/ActivityTabs'
 import { AgStudio, AgStudioProvider, type AgStudioRef } from 'ag-studio-react'
 import { AgStudioAiModule, type AgDataSourcesDefinition, type AgReportState, type AgStudioErrorRaisedEvent } from 'ag-studio'
 import { useCallback, useMemo, useRef, useState } from 'react'
@@ -78,13 +79,14 @@ export default function ControlRoom() {
     setMode(next)
   }, [])
 
-  if (!owner) return <div className="page"><PageHead eyebrow="Control room" title="Owner only" /><p className="muted">The control room shows the whole ledger, so it opens with the owner key.</p></div>
+  if (!owner) return <div className="page"><ActivityTabs /><PageHead eyebrow="Control room" title="Owner only" /><p className="muted">The control room shows the whole ledger, so it opens with the owner key.</p></div>
   // A dashboard needs room (Studio asks for 600 px). On a phone the Ledger is the right screen.
-  if (narrow) return <div className="page"><PageHead eyebrow="A dashboard on the ledger · built with AG Studio" title="Control room" /><p className="muted" role="status">The control room is a desktop screen: a dashboard needs room to lay out. On a phone, the <Link to="/ledger">Ledger</Link> has the same requests, and <Link to="/">Today</Link> has what needs you.</p></div>
+  if (narrow) return <div className="page"><ActivityTabs /><PageHead eyebrow="A dashboard on the ledger · built with AG Studio" title="Control room" /><p className="muted" role="status">The control room is a desktop screen: a dashboard needs room to lay out. On a phone, the <Link to="/ledger">Ledger</Link> has the same requests, and <Link to="/">Today</Link> has what needs you.</p></div>
   if (proposals.isLoading || versions.isLoading) return <div className="page page-wide"><Loading label="Opening the control room" /></div>
 
   return (
     <div className="page page-wide control-room">
+      <ActivityTabs />
       <PageHead eyebrow="A dashboard on the ledger · built with AG Studio" title="Control room">
         <div className="segmented small" role="group" aria-label="Mode">
           <button type="button" aria-pressed={mode === 'view'} className={mode === 'view' ? 'on' : ''} onClick={() => switchMode('view')}>View</button>

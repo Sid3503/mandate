@@ -23,7 +23,7 @@ export function closeAll() {
 
 export type Requester = { request: (input: string, init?: RequestInit) => Response | Promise<Response> }
 
-export function harness(options: { invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: { tripAfter: number; windowSeconds?: number } } = {}) {
+export function harness(options: { demoReset?: boolean; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: { tripAfter: number; windowSeconds?: number } } = {}) {
   const db = openDatabase(':memory:')
   open.push(db)
   migrate(db)
@@ -55,6 +55,7 @@ export function harness(options: { invoices?: InvoicePort | null; model?: AgentM
       publicUrl: 'http://127.0.0.1:8787',
       webhookId: options.webhookId,
       clientAgent: options.clientAgent,
+      demoReset: options.demoReset,
     },
   })
   const app = build()
@@ -88,7 +89,21 @@ export const terms = (totalCents: number, overrides: Record<string, unknown> = {
 let counter = 0
 export const idem = (prefix = 'test') => `${prefix}-${Date.now()}-${(counter += 1)}-key`
 
+/**
+ * Keeps the seeded sample numbers as the next version of each sheet, the way the console's "Keep these numbers"
+ * does. Tests that judge terms go through this first: the server refuses offers and negotiations against sheets
+ * nobody kept, so a fresh harness must keep them before it can deal.
+ */
+export async function confirmPrices(app: Requester) {
+  const sheets = (await call(app, 'GET', '/v1/party-rules')).json.data as Array<{ partyId: string; role: 'buyer' | 'seller'; origin: string; maxTotalCents?: number; minTotalCents?: number }>
+  for (const sheet of sheets.filter((item) => item.origin === 'seed')) {
+    const kept = await call(app, 'PUT', `/v1/party-rules/${sheet.partyId}`, { body: sheet.role === 'buyer' ? { maxTotalCents: sheet.maxTotalCents } : { minTotalCents: sheet.minTotalCents } })
+    if (kept.status !== 201) throw new Error(`prices not kept: ${JSON.stringify(kept.json)}`)
+  }
+}
+
 export async function agree(app: Requester, overrides: Record<string, unknown> = {}) {
+  await confirmPrices(app)
   const offer = await call(app, 'POST', '/v1/deals/offers', { idem: idem('deal'), body: { buyer: 'Northwind', terms: terms(30_000, { jobId: JOB, ...overrides }) } })
   if (offer.json.status !== 'agreed') throw new Error(`deal not agreed: ${JSON.stringify(offer.json)}`)
   return offer.json as { id: string; jobId: string; threadId: string }

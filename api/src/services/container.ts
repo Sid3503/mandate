@@ -11,6 +11,8 @@ import { AskService } from './ask'
 import { TodayService } from './today'
 import { DEFAULT_SAFETY, SafetyService, type SafetyConfig } from './safety'
 import { AgentService } from './agents'
+import { ClientKeyService } from './client-keys'
+import { ShareService } from './shares'
 
 export type Services = {
   repo: Repo
@@ -22,6 +24,8 @@ export type Services = {
   ask: AskService
   safety: SafetyService
   agents: AgentService
+  clientKeys: ClientKeyService
+  shares: ShareService
 }
 
 /** The one place the services are wired together. The HTTP app, the MCP server and the agents all start here. */
@@ -30,6 +34,7 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   const signer = deps.signer ?? ephemeralSigner()
   const safety = new SafetyService(repo, signer, deps.now, { ...DEFAULT_SAFETY, ...(deps.safety ?? {}) })
   const agents = new AgentService(repo, deps.now)
+  const clientKeys = new ClientKeyService(repo, deps.now)
   const mandate = new MandateService(repo, deps.paypal, deps.now, signer, deps.invoices ?? null, { publicUrl: deps.publicUrl, watch: deps.watch ?? null, safety, agents })
   const deals = new DealService(repo, signer, deps.now, mandate)
   repo.stampEvents = () => (safety.paused() ? { paused: true } : {})
@@ -41,5 +46,6 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   const today = new TodayService(repo, deals, mandate, deps.now, () => deps.paypal !== null)
   const audit = new AuditService(repo, mandate, deals, deps.now, safety)
   const ask = new AskService(today)
-  return { repo, signer, mandate, deals, today, audit, ask, safety, agents }
+  const shares = new ShareService(repo, mandate, deps.now)
+  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares }
 }

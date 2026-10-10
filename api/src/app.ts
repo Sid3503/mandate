@@ -3,7 +3,7 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { DatabaseSync } from 'node:sqlite'
 import { VERSION } from './config'
-import { databaseReady } from './db/database'
+import { databaseReady, resetDemo } from './db/database'
 import { z } from 'zod'
 import { BillMilestoneSchema, DealOfferSchema, DecideDeliverySchema } from './domain/deal'
 import type { Signer } from './domain/signing'
@@ -16,6 +16,7 @@ import { PayPalError, type PayPalPort } from './paypal/port'
 import { handleMcp } from './mcp/http'
 import { AgentService, logReviewFailure } from './agents/service'
 import { live } from './services/live'
+import type { Notifier } from './services/notify'
 import { StudioTurnSchema } from './agents/studio'
 import { DEEP_RUN, EVERY_CHANGE_RUN, GUARANTEES } from './domain/guarantees'
 import { generateCases } from './domain/cases'
@@ -50,6 +51,8 @@ export type AppDeps = {
   draining?: () => boolean
   /** Built by the caller when something outside the app (the timers in main.ts) must share it. */
   agents?: AgentService
+  /** Tells the owner's own channel when something needs them. Absent in tests that do not need it. */
+  notifier?: Notifier
   config: {
     apiKey: string
     proposerKey?: string | null
@@ -65,6 +68,8 @@ export type AppDeps = {
     webhookId?: string | null
     /** `auto` lets the hosted stand-in for the client's agent answer a delivery as soon as it arrives. */
     clientAgent?: 'auto' | 'manual'
+    /** Lets the owner wipe the ledger back to a fresh Line Studio. Sandbox demos only. */
+    demoReset?: boolean
   }
 }
 
@@ -95,7 +100,8 @@ const PUBLIC = new Set(['/', '/health', '/ready', '/openapi.json', '/v1/webhooks
 const OWNER_ONLY = [
   { method: 'PUT', pattern: /^\/v1\/warrant$/ },
   { method: 'GET', pattern: /^\/v1\/party-rules$/ },
-  { method: 'PUT', pattern: /^\/v1\/party-rules\/[^/]+$/ },
+  // A PUT to /v1/party-rules/:partyId is not owner-only: each company may write its own sheet. The route decides
+  // whose sheet that is; the other side's sheet stays out of reach, so both limits stay private.
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
   { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay|try|cases|policy|policy\/stream)$/ },
   { method: 'POST', pattern: /^\/v1\/ask$/ },
@@ -105,9 +111,18 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/agents$/ },
   { method: 'POST', pattern: /^\/v1\/agents$/ },
   { method: 'POST', pattern: /^\/v1\/agents\/[^/]+\/(revoke|resume)$/ },
+  { method: 'GET', pattern: /^\/v1\/client-keys$/ },
+  { method: 'POST', pattern: /^\/v1\/client-keys$/ },
+  { method: 'POST', pattern: /^\/v1\/client-keys\/[^/]+\/(revoke|rotate)$/ },
+  { method: 'GET', pattern: /^\/v1\/jobs\/[^/]+\/shares$/ },
+  { method: 'POST', pattern: /^\/v1\/jobs\/[^/]+\/shares$/ },
+  { method: 'POST', pattern: /^\/v1\/shares\/[^/]+\/revoke$/ },
   { method: 'GET', pattern: /^\/v1\/client-errors$/ },
   { method: 'GET', pattern: /^\/v1\/suggestions$/ },
   { method: 'POST', pattern: /^\/v1\/safety\/(pause|resume)$/ },
+  { method: 'POST', pattern: /^\/v1\/demo\/reset$/ },
+  { method: 'GET', pattern: /^\/v1\/notify$/ },
+  { method: 'POST', pattern: /^\/v1\/notify\/test$/ },
   { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit)$/ },
@@ -129,7 +144,14 @@ function requiredAgentScope(method: string, path: string): AgentScope | null {
 function buyerMayCall(method: string, path: string): boolean {
   return (method === 'GET' && (path === '/v1/session' || path === '/v1/deals' || path === '/v1/party-rules/mine' || /^\/v1\/deals\/[^/]+$/.test(path)))
     || (method === 'GET' && path === '/v1/deliveries')
+    // The client writes its own ceiling through `mine`: the route resolves it to its own party and refuses any other.
+    || (method === 'PUT' && path === '/v1/party-rules/mine')
     || (method === 'POST' && (path === '/v1/deals/offers' || path === '/mcp' || /^\/v1\/deals\/[^/]+\/milestones\/\d+\/decision$/.test(path)))
+}
+
+/** A status link carries its own proof in the path, so it needs no key. It can only read one person's view of one job. */
+function isShareRead(method: string, path: string): boolean {
+  return method === 'GET' && /^\/v1\/share\/[^/]+$/.test(path)
 }
 
 function isWeb(path: string): boolean {
@@ -140,6 +162,17 @@ const AgentCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   scopes: z.array(z.enum(['read', 'propose', 'stream', 'mcp', 'deals'])).min(1),
   limits: z.object({ proposalsPerHour: z.number().int().min(1).max(10_000).optional(), centsPerHour: z.number().int().min(1).optional() }).strict().optional(),
+}).strict()
+
+const ClientKeyCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  partyId: z.string().trim().min(1).max(120),
+}).strict()
+
+const ShareCreateSchema = z.object({
+  partyId: z.string().trim().min(1).max(120),
+  ttlDays: z.number().int().min(1).max(90).optional(),
+  label: z.string().trim().max(120).optional(),
 }).strict()
 
 const TrySchema = z.object({ request: ProposalCreateSchema, rules: WarrantBodySchema.optional() }).strict()
@@ -189,7 +222,8 @@ export function createApp(deps: AppDeps) {
     if (c.req.path === '/health' || c.req.path === '/ready' || isWeb(c.req.path)) return next()
     const limit = deps.config.rateLimitPerMinute
     if (limit <= 0) return next()
-    const presented = c.req.header('authorization') ?? 'anonymous'
+    // A caller with no key is counted by where it comes from, so one noisy visitor cannot use up everyone else's allowance.
+    const presented = c.req.header('authorization') ?? `anonymous:${(c.req.header('x-forwarded-for') ?? '').split(',')[0]?.trim() || 'direct'}`
     const key = createHash('sha256').update(presented).digest('hex')
     const now = Date.now()
     const bucket = buckets.get(key)
@@ -202,7 +236,7 @@ export function createApp(deps: AppDeps) {
   })
 
   app.use('*', async (c, next) => {
-    if (PUBLIC.has(c.req.path) || isWeb(c.req.path)) return next()
+    if (PUBLIC.has(c.req.path) || isWeb(c.req.path) || isShareRead(c.req.method, c.req.path)) return next()
     const header = c.req.header('authorization') ?? ''
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
     const owner = token !== '' && sameSecret(token, deps.config.apiKey)
@@ -213,13 +247,23 @@ export function createApp(deps: AppDeps) {
     else if (studio) principal = STUDIO
     else if (buyer) principal = buyerPrincipal(deps.config.buyerAgentParty ?? 'client_northwind')
     else {
-      // Agents have their own keys: look them up by hash, enforce status, and carry their scopes and limits.
-      const agent = services.repo.getAgentByKeyHash(createHash('sha256').update(token).digest('hex'))
-      if (!agent) throw new Problem(401, 'auth.unauthorized', 'Unauthorized', 'Provide a valid owner key or agent key.')
-      if (agent.status === 'revoked') throw new Problem(403, 'agent.revoked', 'This agent key is revoked', 'Ask the owner for a new agent key.')
-      if (agent.status === 'suspended') throw new Problem(403, 'agent.suspended', 'This agent is suspended', 'The agent tripped the breaker. The owner can resume it from the System page.')
-      services.repo.setAgentSeen(agent.id, new Date().toISOString())
-      principal = { role: 'agent', side: null, buyerId: null, agentId: agent.id, name: agent.name, scopes: JSON.parse(agent.scopes_json) as AgentScope[], limits: JSON.parse(agent.limits_json) as AgentLimits }
+      // A client's own key, issued from the System page and bound to one client on the warrant. It is the same
+      // kind of caller as the environment's buyer key, except the owner can issue one per client and revoke it.
+      const keyHash = createHash('sha256').update(token).digest('hex')
+      const clientKey = services.repo.getClientKeyByKeyHash(keyHash)
+      if (clientKey) {
+        if (clientKey.status === 'revoked') throw new Problem(403, 'client-key.revoked', 'This client key is revoked', 'Ask the studio for a new key.')
+        services.repo.setClientKeySeen(clientKey.id, new Date().toISOString())
+        principal = buyerPrincipal(clientKey.party_id)
+      } else {
+        // Agents have their own keys: look them up by hash, enforce status, and carry their scopes and limits.
+        const agent = services.repo.getAgentByKeyHash(keyHash)
+        if (!agent) throw new Problem(401, 'auth.unauthorized', 'Unauthorized', 'Provide a valid owner key or agent key.')
+        if (agent.status === 'revoked') throw new Problem(403, 'agent.revoked', 'This agent key is revoked', 'Ask the owner for a new agent key.')
+        if (agent.status === 'suspended') throw new Problem(403, 'agent.suspended', 'This agent is suspended', 'The agent tripped the breaker. The owner can resume it from the System page.')
+        services.repo.setAgentSeen(agent.id, new Date().toISOString())
+        principal = { role: 'agent', side: null, buyerId: null, agentId: agent.id, name: agent.name, scopes: JSON.parse(agent.scopes_json) as AgentScope[], limits: JSON.parse(agent.limits_json) as AgentLimits }
+      }
     }
     c.set('principal', principal)
     if (principal.role === 'agent') {
@@ -352,6 +396,47 @@ export function createApp(deps: AppDeps) {
   app.post('/v1/agents/:id/revoke', (c) => c.json(services.agents.revoke(c.req.param('id'))))
   app.post('/v1/agents/:id/resume', (c) => c.json(services.agents.resume(c.req.param('id'))))
 
+  // ---------- client keys ----------
+  // Where the owner is told when something needs them. The webhook address is never returned.
+  app.get('/v1/notify', (c) => c.json(deps.notifier?.status() ?? { enabled: false, lastSentAt: null, lastError: null, sent: 0 }))
+  app.post('/v1/notify/test', async (c) => {
+    if (!deps.notifier?.enabled) throw new Problem(409, 'notify.off', 'No webhook is set', 'Start the server with NOTIFY_WEBHOOK_URL (an https incoming webhook for Slack, Discord or Zapier) to be told when something needs you.')
+    return c.json(await deps.notifier.test())
+  })
+  // Hosted demos: put the ledger back to a fresh Line Studio. Absent unless the deployer switched it on, and never against real PayPal.
+  app.post('/v1/demo/reset', async (c) => {
+    if (!deps.config.demoReset) throw new Problem(404, 'demo.off', 'Not available', 'This server was not started as a resettable demo.')
+    assertJson(c)
+    const parsed = z.object({ confirm: z.literal('reset the demo') }).strict().safeParse(await readJson(c))
+    if (!parsed.success) throw new Problem(422, 'demo.confirm', 'Type the confirmation', 'Send {"confirm":"reset the demo"} to wipe the ledger.')
+    resetDemo(deps.db, deps.now())
+    services.safety.forget()
+    // Tell every open screen to look again, whatever it was showing.
+    for (const scope of ['ledger', 'delivery', 'deal', 'rules', 'safety', 'agents'] as const) live.publish({ type: 'changed', scope, what: 'demo.reset', at: new Date().toISOString() })
+    return c.json({ reset: true })
+  })
+  // Status links: the owner shares a read-only page about one job with one person.
+  app.get('/v1/jobs/:jobId/shares', (c) => c.json({ data: services.shares.list(c.req.param('jobId')) }))
+  app.post('/v1/jobs/:jobId/shares', async (c) => {
+    assertJson(c)
+    const parsed = ShareCreateSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const made = services.shares.issue({ jobId: c.req.param('jobId'), ...parsed.data })
+    return c.json({ share: made.share, token: made.token, url: `${deps.config.publicUrl.replace(/\/$/, '')}/app/s/${made.token}` }, 201)
+  })
+  app.post('/v1/shares/:id/revoke', (c) => c.json(services.shares.revoke(c.req.param('id'))))
+  app.get('/v1/share/:token', (c) => c.json(services.shares.view(c.req.param('token'))))
+  app.get('/v1/client-keys', (c) => c.json(services.clientKeys.list()))
+  app.post('/v1/client-keys', async (c) => {
+    assertJson(c)
+    const parsed = ClientKeyCreateSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const created = services.clientKeys.issue(parsed.data)
+    return c.json(created, 201)
+  })
+  app.post('/v1/client-keys/:id/revoke', (c) => c.json(services.clientKeys.revoke(c.req.param('id'))))
+  app.post('/v1/client-keys/:id/rotate', (c) => c.json(services.clientKeys.rotate(c.req.param('id')), 201))
+
   // What Mandate promises and where each promise is checked. Static, so it answers when everything else does not.
   app.get('/v1/guarantees', (c) => c.json({ guarantees: GUARANTEES, deepRun: DEEP_RUN, everyChange: EVERY_CHANGE_RUN }))
   // The emergency stop. Anyone with a key can see whether Mandate is paused; only the owner can pause or resume it.
@@ -372,7 +457,7 @@ export function createApp(deps: AppDeps) {
     return c.json(services.safety.pause('owner', reason))
   })
   app.post('/v1/safety/resume', async (c) => c.json(await services.safety.resume('owner')))
-  app.get('/v1/session', (c) => c.json({ role: c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName } }))
+  app.get('/v1/session', (c) => c.json({ role: c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName }, demoReset: deps.config.demoReset === true }))
   app.get('/.well-known/mandate-keys.json', (c) => c.json(service.publicKeys()))
   app.get('/v1/warrant', (c) => c.json(service.currentWarrant()))
   app.get('/v1/warrant/versions', (c) => c.json(service.warrantVersions()))
@@ -759,7 +844,7 @@ export function createApp(deps: AppDeps) {
   app.get('/v1/party-rules/mine', (c) => c.json(deals.rulesFor(c.get('principal'))))
   app.put('/v1/party-rules/:partyId', async (c) => {
     assertJson(c)
-    return send(c, deals.publishRules(c.req.param('partyId'), await readJson(c)))
+    return send(c, deals.publishRules(c.req.param('partyId'), await readJson(c), c.get('principal')))
   })
 
   app.get('/v1/ledger', (c) => {
