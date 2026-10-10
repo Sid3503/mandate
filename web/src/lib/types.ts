@@ -307,6 +307,8 @@ export type Today = {
   done: TodayItem[]
   stopped: { count: number; cents: number; recent: TodayItem[] }
   readyToBill: Array<{ dealId: string; jobId: string; buyerId: string; buyerName: string; scope: string; milestone: number; title: string; amountCents: number; currency: string; billed: number; total: number; delivery: Delivery | null }>
+  /** The one next step of the frozen Northwind job. `rules` is a second sentence, only after milestone 0 is captured. */
+  next: { step: string | null; rules: string | null }
   clientAgent: { mode: 'auto' | 'manual'; ready: boolean }
   watcher: { everySeconds: number; lastLook: { at: string; payouts: number; invoices: number; reminded: number } | null }
   stats: { last30Days: { requests: number; refused: number; automatic: number; tapped: number; automaticShare: number | null } }

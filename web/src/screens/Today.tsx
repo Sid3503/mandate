@@ -66,6 +66,7 @@ export function Today() {
       {proposals.isLoading || today.isLoading ? <Loading /> : null}
       <ProblemCard error={proposals.error ?? today.error} />
       <EmailNotice />
+      {data?.next ? <NextForJob next={data.next} /> : null}
 
       {data ? <MonthStrip data={data} /> : null}
       {data ? <WaitingOnClient data={data} /> : null}
@@ -186,6 +187,22 @@ function MonthStrip({ data }: { data: TodayData }) {
           {on.length > 0 ? <>Autopilot {on.join(', ')}.</> : <>Autopilot is off. <Link to="/rules" className="link">Switch it on in Rules</Link>.</>}
         </p>
         <BalanceNote />
+      </div>
+    </section>
+  )
+}
+
+/** The server's one next step for the frozen Northwind job. The bill control stays on Ready to bill. */
+function NextForJob({ next }: { next: TodayData['next'] }) {
+  if (!next.step && !next.rules) return null
+  const rules = next.rules
+  const at = rules ? rules.indexOf('Rules') : -1
+  return (
+    <section className="panel panel-lime wip-note" aria-label="Next on the Northwind job" data-testid="today-next">
+      <div>
+        <span className="eyebrow">Next</span>
+        {next.step ? <p>{next.step}</p> : null}
+        {rules ? <p>{at < 0 ? rules : <>{rules.slice(0, at)}<Link className="link" to="/rules">Rules</Link>{rules.slice(at + 'Rules'.length)}</>}</p> : null}
       </div>
     </section>
   )
