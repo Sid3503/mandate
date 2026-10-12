@@ -12,9 +12,10 @@ The numbers from the last run of those commands are filled in under "Baseline" a
 
 ## Baseline
 
-- `cd api && npx vitest run`: 44 files, 509 tests passed, 6.77s, on 12 October 2026. Four of those tests are the new flag tests. The count before this change was 505 on this tree.
-- Red team: `api/test/redteam.test.ts` is 56 tests inside the 509. That matches the written "56-case red team".
-- Browser tests and Lighthouse were not re-run for this change. The written 112 runs and 99 / 100 / 100 stay as the last recorded numbers.
+- Audit gate on 12 October 2026, before this repair: `cd api && npx vitest run` was 45 files, 522 tests, 8.24s. Playwright was 112 passed (7.4m), including axe on the receipt tour and every signed-in screen, WCAG 2.1 AA. Lighthouse is not part of `npm run gates` and was not run. The earlier 509 line was phase 0 and did not include that browser run.
+- Red team: `api/test/redteam.test.ts` is 56 tests inside that 522. That matches the written "56-case red team".
+- P0.T1 records that audit run. It does not claim that later tasks passed. The repair pass adds tests on top.
+- Repair gate on 12 October 2026: `npm run gates` exited 0. Hygiene 23. Typecheck clean. API tests were 46 files, 542 tests, 8.50s. Secret check passed for 302 tracked files. The web build warned that `ControlRoom` is 4,602.45 kB. Playwright was 114 passed (7.6m): the existing 112, including axe, plus 2 passkey tests. Lighthouse was not run.
 
 ## Assumptions that did not match the code
 
@@ -52,3 +53,11 @@ Checked against the npm registry on 12 October 2026. Fourteen days before that d
 | `fast-check` | 4.10.2 | 2026-09-19 | 23 days |
 
 License remains MIT. The pins stay exact. This check does not approve a newer release.
+
+## Repair pass pins and caps
+
+Checked on 12 October 2026.
+
+- `@hono/node-server` is pinned exact at 1.19.17 (published 2026-07-27, MIT, about 77 days old). 1.19.12 was still inside the moderate advisory for `serveStatic` (versions `<=1.19.14`). 2.1.3 (2026-09-29) and 2.1.4 (2026-10-08) were not taken: each was under 14 days. The server imports `serve` only. It does not import `serveStatic`.
+- Default model caps are 500,000 tokens a day for the process and 30,000 for the workspace (`OPEN_CAPS`). `MODEL_GLOBAL_DAILY_TOKENS` and `MODEL_WORKSPACE_DAILY_TOKENS` raise them. A missing or invalid value keeps the default. Zero still refuses. `TRUSTED_PROXY_HOPS` is how many proxies sit in front, from the right of `X-Forwarded-For`, default 1, cap 8. Empty or invalid stays 1.
+- The 7 October product text that names Bedrock matches commit `47875a7` (Amazon Bedrock through `@ai-sdk/openai-compatible`, model `us.openai.gpt-6-luna`). Commit `9fa19b6` on 8 October removed it. That removal is an ancestor of every local and origin branch. `git stash list` was empty. The live default on this branch is Ollama. Bedrock was not put back. The budget and the kill switch wrap `AgentService`, so they cover whatever model that service is given.

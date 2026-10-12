@@ -6,7 +6,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 
 ## P0
 
-- [ ] P0.T1 partial. `docs/DECISIONS.md` records 509 API tests and 56 red-team tests. Browser counts were not from a fresh run. `65a30b4`
+- [x] P0.T1 The 12 October 2026 audit run is in `docs/DECISIONS.md`: 45 files, 522 API tests, 112 browser tests, axe on the receipt tour and every signed-in screen. Lighthouse was not run. This tick records that run. `0b8659c`
 - [x] P0.T2 `package.json` scripts `gates` and `gates:fast`. `65a30b4`
 - [x] P0.T3 `scripts/check-secrets.mjs` and `scripts/check-secrets.allow`. `65a30b4`
 - [ ] P0.T4 partial. The API count and the Bedrock mismatch are recorded. Docs were not rewritten to call Bedrock the default. `65a30b4`
@@ -18,7 +18,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 
 | Task | Status | Proof | Commit |
 |---|---|---|---|
-| P0.T1 | partial | Phase 0 record in `docs/DECISIONS.md` is 509 API tests, and that record did not include a fresh browser run. The audit gates run is in Gates below. It does not complete this task | `65a30b4` |
+| P0.T1 | done | Audit run in `docs/DECISIONS.md`: 45 files, 522 API tests, 112 browser tests, axe pass. Lighthouse was not run. The tick records that run | `0b8659c` |
 | P0.T2 | done | root `package.json` `gates`, `gates:fast` | `65a30b4` |
 | P0.T3 | done | `scripts/check-secrets.mjs` | `65a30b4` |
 | P0.T4 | partial | `docs/DECISIONS.md` "Assumptions that did not match the code" | `65a30b4` |
@@ -116,14 +116,14 @@ A box is ticked only when the task is done and a test or file proves the whole t
 
 | Case | Test | Gap |
 |---|---|---|
-| 1 Cookie fails after logout | none | |
-| 2 Cookie from before login fails after login | none | |
-| 3 Wrong Origin on a cookie POST is 403 | none | |
-| 4 Cookie POST without `X-Mandate-Client` is 403 | none | |
-| 5 Recovery code once, and that session cannot approve | none | code only |
-| 6 Key brute force 429 and lockout, timing-safe | none | rate-limit unit test is not this |
-| 7 Revoked member loses every session | none | |
-| 8 Last owner cannot be removed or demoted | none | store only |
+| 1 Cookie fails after logout | `web/e2e/passkey-repair.spec.ts` | separate Playwright project, virtual authenticator |
+| 2 Cookie from before login fails after login | `web/e2e/passkey-repair.spec.ts` | same project |
+| 3 Wrong Origin on a cookie POST is 403 | `api/test/repair-pass.test.ts` | |
+| 4 Cookie POST without `X-Mandate-Client` is 403 | `api/test/repair-pass.test.ts` | |
+| 5 Recovery code once, and that session cannot approve | `api/test/repair-pass.test.ts` | no recovery screen was added |
+| 6 Key brute force 429 and lockout, timing-safe | `api/test/repair-pass.test.ts` | wrong keys share one bucket per client IP |
+| 7 Revoked member loses every session | `api/test/repair-pass.test.ts` | store call, then the cookie. No members route |
+| 8 Last owner cannot be removed or demoted | `api/test/repair-pass.test.ts` | store call. No members route |
 | 9 Assertion replay fails | partial: "registers a passkey and signs in with it" replays a registration challenge | not a step-up replay |
 | 10 Assertion for lock A fails on lock B | none | |
 | 11 UV flag off fails | none | |
@@ -134,31 +134,31 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 16 Approver over the limit is `approval.over_limit` | none | code only |
 | 17 Proposer approve is 403 | `api/test/api.test.ts` "lets a proposer key ask and read, but never decide, capture, or change the warrant" | bearer key, not a cookie proposer |
 | 18 Changed stored approval turns Proof red | `web/e2e/job.spec.ts` "a receipt can be checked in the browser without a key, and a tampered one is caught" | cart tamper, not a passkey assertion |
-| 19 Reused, expired, or revoked invite fails | none | |
-| 20 Two parallel joins, one wins | none | |
-| 21 Invite for A fails on B | none | |
+| 19 Reused, expired, or revoked invite fails | `api/test/repair-pass.test.ts` | no HTTP revoke route. The test sets `revoked_at` in the row |
+| 20 Two parallel joins, one wins | `api/test/repair-pass.test.ts` | |
+| 21 Invite for A fails on B | `api/test/repair-pass.test.ts` | a join on the wrong studio does not consume the invite |
 | 22 Cookie, key, or id from A on B is 404 | partial: "isolates a demo, rejects a bad id, and will not delete a studio" | demo cookie on `ws_default` only |
-| 23 Workspace id with `../` is 400 | none | the bad-id test uses `ws_not_a_workspace` |
-| 24 Random work in A leaves B's checksum unchanged | none | |
-| 25 Demo switch, simulate, and demo tap fail outside a demo | none | |
-| 26 Sixth demo from one IP in an hour is 429 | none | |
+| 23 Workspace id with `../` is 400 | `api/test/repair-pass.test.ts` | |
+| 24 Random work in A leaves B's checksum unchanged | `api/test/repair-pass.test.ts` | hash of ledger rows, not file bytes |
+| 25 Demo switch, simulate, and demo tap fail outside a demo | `api/test/repair-pass.test.ts` | |
+| 26 Sixth demo from one IP in an hour is 429 | `api/test/repair-pass.test.ts` | two addresses get separate fives when the proxy is trusted |
 | 27 Cleanup never deletes default, studio, or live | partial: same isolation test, `deleteDemo` on a studio is false | no cleanup job, no default or live row |
 | 28 Budget 0 means zero model calls, quick asks still work | partial: "does not call the model when the budget is zero" | quick asks are not asserted |
-| 29 Kill switch stops all agents | none | |
+| 29 Kill switch stops all agents | `api/test/repair-pass.test.ts` | studio turn and a drafter that already has a model |
 | 30 Spam trips the breaker, resume needs step-up, proposer cannot pause | partial: `api/test/agent-keys.test.ts` "suspends only the misbehaving agent" and e2e pause | no step-up resume, no proposer pause test |
-| 31 First payment to a new payee needs approval | none | |
-| 32 Pending payee change blocks payouts | none | |
+| 31 First payment to a new payee needs approval | `api/test/repair-pass.test.ts` | |
+| 32 Pending payee change blocks payouts | `api/test/repair-pass.test.ts` | |
 | 33 Pasted policy with a hidden instruction is flagged and not published | `api/test/intent.test.ts` "does not treat a forwarded note"; e2e "a pasted policy is read sentence by sentence" | |
 | 34 Simulate writes zero rows | `api/test/phases.test.ts` "tries a payment without writing a row" | |
 | 35 No test output or log contains a canary | partial: "redacts a canary and a bearer token" and `scripts/check-secrets.mjs` | not a log sweep of the suite |
 
-Cases with no test: 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 19, 20, 21, 23, 24, 25, 26, 29, 31, 32.
+Cases with no test: 10, 11, 12, 13, 14, 15, 16. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 23, 24, 25, 26, 29, 31, and 32 gained a test in the repair pass.
 
 ## Confirmed facts, not changes
 
 - The workspace cache caps at 50 open apps and closes one that has been idle for 10 minutes (`api/src/tenancy/registry.ts`).
-- Model caps are numbers: 10,000,000 global tokens a day, 1,000,000 per workspace, 4,096 output tokens, 8 steps (`OPEN_CAPS`). A cap of 0 refuses the call.
-- `POST /demo/start` is off unless both tenancy and the demo flag are on. With `TRUST_PROXY=0`, `clientIp` is `direct` for every caller, so the per-IP demo cap (default 5 an hour) is one bucket for the whole server. The classed limiter does not run. The older per-minute bucket still counts an anonymous caller by the first `X-Forwarded-For` hop, even when `TRUST_PROXY` is off.
+- Model caps are numbers: 500,000 global tokens a day, 30,000 per workspace, 4,096 output tokens, 8 steps (`OPEN_CAPS`). `MODEL_GLOBAL_DAILY_TOKENS` and `MODEL_WORKSPACE_DAILY_TOKENS` raise them. A cap of 0 refuses the call. The day's counters and an ops kill are stored on the ledger.
+- `POST /demo/start` is off unless both tenancy and the demo flag are on. With `TRUST_PROXY=0`, `clientIp` is `direct` for every caller, so the per-IP demo cap (default 5 an hour) is one bucket for the whole server. With `TRUST_PROXY=1`, the client is the hop counted from the right (`TRUSTED_PROXY_HOPS`, default 1, maximum 8). A chosen value that is not an IP is `direct`. IPv6 is grouped by `/64`. Unknown keys share one per-minute bucket per client IP. A known key keeps its own.
 
 ## Gates
 
