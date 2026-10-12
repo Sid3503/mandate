@@ -99,7 +99,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
 
-542 API tests (including a 56-case red team), re-run on 12 October 2026. 56 job tests run on both desktop and phone (112 runs) plus 2 passkey tests (114 browser runs), including an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile was not re-run for this change. The model scores in this file were not re-run either.
+543 API tests (including a 56-case red team), re-run on 12 October 2026. 56 job tests run on both desktop and phone (112 runs) plus 2 passkey tests (114 browser runs), including an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile was not re-run for this change. The model scores in this file were not re-run either.
 
 ## Where to read next
 

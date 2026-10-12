@@ -16,6 +16,7 @@ The numbers from the last run of those commands are filled in under "Baseline" a
 - Red team: `api/test/redteam.test.ts` is 56 tests inside that 522. That matches the written "56-case red team".
 - P0.T1 records that audit run. It does not claim that later tasks passed. The repair pass adds tests on top.
 - Repair gate on 12 October 2026: `npm run gates` exited 0. Hygiene 23. Typecheck clean. API tests were 46 files, 542 tests, 8.50s. Secret check passed for 302 tracked files. The web build warned that `ControlRoom` is 4,602.45 kB. Playwright was 114 passed (7.6m): the existing 112, including axe, plus 2 passkey tests. Lighthouse was not run.
+- Later the same day, after `POST /ops/model/resume`: `npm run gates` exited 0 again. API tests were 46 files, 543 tests, 7.75s. Secret check passed for 306 tracked files. `ControlRoom` was still 4,602.45 kB. Playwright was 114 passed (7.5m). Lighthouse was not run.
 
 ## Assumptions that did not match the code
 
