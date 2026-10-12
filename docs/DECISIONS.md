@@ -21,7 +21,7 @@ The numbers from the last run of those commands are filled in under "Baseline" a
 
 - `docs/` has no `package.json`. It is markdown. Gates live in the root `package.json`. No docs package was added.
 - `.gitignore` covered `.env`, `api/data/`, and `*.sqlite`. It did not cover `backups/`. That line was added.
-- The plan text says the default model is Bedrock. The code default is Ollama Cloud: `gpt-oss:20b` for the clerk, negotiators, and reviewer, and `gemma4:31b` for the drafter. Bedrock scores in the docs are a past write-up. Docs were not changed to call Bedrock the default.
+- The plan text says the default model is Bedrock. That was true only in commit `47875a7`. Commit `9fa19b6` removed it on purpose. Ollama Cloud is the only provider: `gpt-oss:20b` for the clerk, negotiators, and reviewer, and `gemma4:31b` for the drafter. Product docs now say that. One history note in `docs/REFERENCE.md` keeps both commit ids.
 - Ask Mandate is a row in the feature table and a section that explains it. That is one feature, not two competing claims. It was left as written.
 - The product docs already say the unbroken live PayPal chain was not run in one go. That sentence was left as written.
 
