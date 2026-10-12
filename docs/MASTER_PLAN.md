@@ -29,7 +29,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P1.T2 | partial | `api/test/phases.test.ts` "redacts a canary and a bearer token". Not every route class | `9a2ea0b` |
 | P1.T3 | partial | `api/test/phases.test.ts` "limits auth attempts with an injected clock". Classed limits run only when `TRUST_PROXY=1`. `auth_throttle` is not what the live bucket uses | `9a2ea0b` |
 | P1.T4 | partial | `api/test/phases.test.ts` "does not call the model when the budget is zero". `OPEN_CAPS` in `api/src/ops/budget.ts`. Kill route exists. Quick asks are not in that test | `9a2ea0b` |
-| P1.T5 | partial | `api/test/phases.test.ts` "sends the extra security headers and the health alias". Not asserted on `/app`, `/v1`, and `/auth` | `9a2ea0b` |
+| P1.T5 | done | Headers on `/healthz`, `/app`, `/v1`, and `/auth`. `api/test/phases.test.ts` "sends the extra security headers and the health alias". `api/test/repair-pass.test.ts` "refuses paths that leave the web build and still serves a file inside it" | `9a2ea0b` |
 | P1.T6 | partial | `api/test/phases.test.ts` "refuses a migration whose checksum changed". No backup before migrate. No seeded-copy test | `9a2ea0b` |
 | P1.T7 | partial | same health alias test. `GET /readyz` redirects. No SSE caps. Shutdown in `api/src/main.ts` is older | `9a2ea0b` |
 | P1.T8 | partial | `api/test/phases.test.ts` "serves metrics only to the admin key" | `9a2ea0b` |
@@ -116,14 +116,14 @@ A box is ticked only when the task is done and a test or file proves the whole t
 
 | Case | Test | Gap |
 |---|---|---|
-| 1 Cookie fails after logout | `web/e2e/passkey-repair.spec.ts` | separate Playwright project, virtual authenticator |
-| 2 Cookie from before login fails after login | `web/e2e/passkey-repair.spec.ts` | same project |
-| 3 Wrong Origin on a cookie POST is 403 | `api/test/repair-pass.test.ts` | |
-| 4 Cookie POST without `X-Mandate-Client` is 403 | `api/test/repair-pass.test.ts` | |
-| 5 Recovery code once, and that session cannot approve | `api/test/repair-pass.test.ts` | no recovery screen was added |
-| 6 Key brute force 429 and lockout, timing-safe | `api/test/repair-pass.test.ts` | wrong keys share one bucket per client IP |
-| 7 Revoked member loses every session | `api/test/repair-pass.test.ts` | store call, then the cookie. No members route |
-| 8 Last owner cannot be removed or demoted | `api/test/repair-pass.test.ts` | store call. No members route |
+| 1 Cookie fails after logout | `web/e2e/passkey-repair.spec.ts` "a cookie from a finished session fails after logout" | separate Playwright project, virtual authenticator |
+| 2 Cookie from before login fails after login | `web/e2e/passkey-repair.spec.ts` "a cookie planted before login is not the session after login" | same project |
+| 3 Wrong Origin on a cookie POST is 403 | `api/test/repair-pass.test.ts` "rejects a cookie write from the wrong origin or without the web client header" | same test as case 4 |
+| 4 Cookie POST without `X-Mandate-Client` is 403 | `api/test/repair-pass.test.ts` "rejects a cookie write from the wrong origin or without the web client header" | same test as case 3 |
+| 5 Recovery code once, and that session cannot approve | `api/test/repair-pass.test.ts` "uses a recovery code once and that session cannot pause" | no recovery screen was added. The blocked call is pause, which is a non-GET outside `/auth/` |
+| 6 Key brute force 429 and lockout, timing-safe | `api/test/repair-pass.test.ts` "counts wrong keys on the client ip and still accepts the real key" | wrong keys share one bucket per client IP |
+| 7 Revoked member loses every session | `api/test/repair-pass.test.ts` "drops a revoked member session and will not remove the last owner" | store call, then the cookie. No members route. Same test as case 8 |
+| 8 Last owner cannot be removed or demoted | `api/test/repair-pass.test.ts` "drops a revoked member session and will not remove the last owner" | store call. No members route. Same test as case 7 |
 | 9 Assertion replay fails | partial: "registers a passkey and signs in with it" replays a registration challenge | not a step-up replay |
 | 10 Assertion for lock A fails on lock B | none | |
 | 11 UV flag off fails | none | |
@@ -134,20 +134,20 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 16 Approver over the limit is `approval.over_limit` | none | code only |
 | 17 Proposer approve is 403 | `api/test/api.test.ts` "lets a proposer key ask and read, but never decide, capture, or change the warrant" | bearer key, not a cookie proposer |
 | 18 Changed stored approval turns Proof red | `web/e2e/job.spec.ts` "a receipt can be checked in the browser without a key, and a tampered one is caught" | cart tamper, not a passkey assertion |
-| 19 Reused, expired, or revoked invite fails | `api/test/repair-pass.test.ts` | no HTTP revoke route. The test sets `revoked_at` in the row |
-| 20 Two parallel joins, one wins | `api/test/repair-pass.test.ts` | |
-| 21 Invite for A fails on B | `api/test/repair-pass.test.ts` | a join on the wrong studio does not consume the invite |
+| 19 Reused, expired, or revoked invite fails | `api/test/repair-pass.test.ts` "does not burn an invite on the wrong studio, and a used, expired, or revoked invite fails" | no HTTP revoke route. The test sets `revoked_at` in the row. Same test as case 21 |
+| 20 Two parallel joins, one wins | `api/test/repair-pass.test.ts` "lets one of two joins win" | |
+| 21 Invite for A fails on B | `api/test/repair-pass.test.ts` "does not burn an invite on the wrong studio, and a used, expired, or revoked invite fails" | a join on the wrong studio does not consume the invite. Same test as case 19 |
 | 22 Cookie, key, or id from A on B is 404 | partial: "isolates a demo, rejects a bad id, and will not delete a studio" | demo cookie on `ws_default` only |
-| 23 Workspace id with `../` is 400 | `api/test/repair-pass.test.ts` | |
-| 24 Random work in A leaves B's checksum unchanged | `api/test/repair-pass.test.ts` | hash of ledger rows, not file bytes |
-| 25 Demo switch, simulate, and demo tap fail outside a demo | `api/test/repair-pass.test.ts` | |
-| 26 Sixth demo from one IP in an hour is 429 | `api/test/repair-pass.test.ts` | two addresses get separate fives when the proxy is trusted |
+| 23 Workspace id with `../` is 400 | `api/test/repair-pass.test.ts` "rejects a workspace id that is not an id" | |
+| 24 Random work in A leaves B's checksum unchanged | `api/test/repair-pass.test.ts` "hashes table rows, so work in one studio does not change the other" | hash of ledger rows, not file bytes |
+| 25 Demo switch, simulate, and demo tap fail outside a demo | `api/test/repair-pass.test.ts` "hides demo doors on the default studio and ignores a demo tap there" | |
+| 26 Sixth demo from one IP in an hour is 429 | `api/test/repair-pass.test.ts` "shares one direct bucket when the proxy is not trusted", "gives two real addresses their own five demos", "with two trusted hops the client is the address two from the right" | two addresses get separate fives when the proxy is trusted |
 | 27 Cleanup never deletes default, studio, or live | partial: same isolation test, `deleteDemo` on a studio is false | no cleanup job, no default or live row |
 | 28 Budget 0 means zero model calls, quick asks still work | partial: "does not call the model when the budget is zero" | quick asks are not asserted |
-| 29 Kill switch stops all agents | `api/test/repair-pass.test.ts` | studio turn and a drafter that already has a model |
+| 29 Kill switch stops all agents | `api/test/repair-pass.test.ts` "a kill stops the clerk path and a drafter that already has a model" | studio turn and a drafter that already has a model |
 | 30 Spam trips the breaker, resume needs step-up, proposer cannot pause | partial: `api/test/agent-keys.test.ts` "suspends only the misbehaving agent" and e2e pause | no step-up resume, no proposer pause test |
-| 31 First payment to a new payee needs approval | `api/test/repair-pass.test.ts` | |
-| 32 Pending payee change blocks payouts | `api/test/repair-pass.test.ts` | |
+| 31 First payment to a new payee needs approval | `api/test/repair-pass.test.ts` "holds a first payment and refuses one while a change is pending" | same test as case 32 |
+| 32 Pending payee change blocks payouts | `api/test/repair-pass.test.ts` "holds a first payment and refuses one while a change is pending" | same test as case 31 |
 | 33 Pasted policy with a hidden instruction is flagged and not published | `api/test/intent.test.ts` "does not treat a forwarded note"; e2e "a pasted policy is read sentence by sentence" | |
 | 34 Simulate writes zero rows | `api/test/phases.test.ts` "tries a payment without writing a row" | |
 | 35 No test output or log contains a canary | partial: "redacts a canary and a bearer token" and `scripts/check-secrets.mjs` | not a log sweep of the suite |
