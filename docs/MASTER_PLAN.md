@@ -58,10 +58,10 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P4.T1 | partial | `workspaces.passkey_for_money` is on for a new studio and off for the default studio and a demo. Turning it on is tested. Approve grants bind the cart hash | `fd1432b` |
 | P4.T2 | done | Approve grant is one use, 120 seconds, member plus cart hash. Parallel approve and both rollback outcomes are tested | `283544d` |
 | P4.T3 | done | `proposal.approved` stores the assertion. `0002_warrant_signature` adds `warrants.signature_json` and a file copy is taken first. An older file still reads `{ actor, cartHash }`. Existing money routes require a step-up. The missing key, member, invite-revoke, and payee routes stay 404 | `751ac9f` |
-| P4.T4 | done | Enrollment shows the fingerprint with "Save this". The receipt line is who, how, when, and 8 hex characters. A missing passkey assertion is red. Owner-key and demo are amber. Old rows are grey and marked legacy | |
-| P4.T5 | done | Verify checks ES256 from a Chromium virtual-authenticator vector, including five one-bit changes. Wording is "valid signature by this key". Unknown algorithms say "cannot verify here". One passkey Playwright test signs in, approves, verifies, and sees a tampered receipt fail | |
+| P4.T4 | done | Enrollment shows the fingerprint with "Save this". The receipt line is who, how, when, and 8 hex characters. A missing passkey assertion is red. Owner-key and demo are amber. Old rows are grey and marked legacy | `b6cb07f` |
+| P4.T5 | done | Verify checks ES256 from a Chromium virtual-authenticator vector, including five one-bit changes. Wording is "valid signature by this key". Unknown algorithms say "cannot verify here". One passkey Playwright test signs in, approves, verifies, and sees a tampered receipt fail | `e5913da` |
 | P4.T6 | not started | Proof does not require an assertion | |
-| P4.T7 | partial | `x-mandate-demo-tap` in `requireStep`. No button, no amber receipt, no test | `9a2ea0b` |
+| P4.T7 | done | Demo tap sends `x-mandate-demo-tap` and stores method `demo`. The receipt proof is amber. The Today card shows Demo tap and Try with my passkey. The same header outside a demo stores owner-key. gates:fast 567 | |
 | P4.T8 | partial | the approval card already shows amount and payee (`web/e2e/job.spec.ts`). No "Signed and sent" | `1ac59cd` |
 | P5.T1 | partial | `web/src/screens/Landing.tsx` has the three doors and the trust strip. The h1 is still "Agents can ask." No test of the new doors | `9a2ea0b` |
 | P5.T2 | partial | `api.demoStart` and the demo banner in `web/src/components/Shell.tsx`. No role switcher, reset, or live-proof page. No test | `9a2ea0b` |

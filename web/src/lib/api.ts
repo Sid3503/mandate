@@ -1,4 +1,4 @@
-import { startAuthentication } from '@simplewebauthn/browser'
+import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 import { session } from './session'
 import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
@@ -211,6 +211,20 @@ const streamDraft = (instruction: string, onEvent: (event: DraftStreamEvent) => 
 
 const streamPolicy = (text: string, onEvent: (event: PolicyStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/rules/policy/stream', { text }, onEvent, signal)
 
+async function approveWithPasskey(id: string): Promise<Proposal> {
+  const optionsFor = () => request<{ challengeId: string; options: { allowCredentials?: unknown[] } }>('/auth/stepup/options', { method: 'POST', body: { kind: 'approve', proposalId: id } })
+  let started = await optionsFor()
+  if (!started.options.allowCredentials || started.options.allowCredentials.length === 0) {
+    const reg = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/register/options', { method: 'POST', body: {} })
+    const registered = await startRegistration({ optionsJSON: reg.options as never })
+    await request('/auth/register/verify', { method: 'POST', body: { challengeId: reg.challengeId, response: registered } })
+    started = await optionsFor()
+  }
+  const signed = await startAuthentication({ optionsJSON: started.options as never })
+  const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+  return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant } })
+}
+
 export const api = {
   streamNegotiation,
   streamPolicy,
@@ -267,15 +281,14 @@ export const api = {
   proposal: (id: string) => request<Proposal>(`/v1/proposals/${id}`),
   packet: (id: string) => request<Packet>(`/v1/proposals/${id}/packet`),
   propose: (input: ProposalInput, idempotencyKey: string) => request<Proposal>('/v1/proposals', { method: 'POST', body: input, idempotencyKey }),
-  approve: async (id: string) => {
+  approve: async (id: string, how: 'auto' | 'demo' | 'passkey' = 'auto') => {
+    if (how === 'demo') return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-demo-tap': '1' } })
+    if (how === 'passkey') return approveWithPasskey(id)
     try {
       return await request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST' })
     } catch (error) {
       if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
-      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'approve', proposalId: id } })
-      const signed = await startAuthentication({ optionsJSON: started.options as never })
-      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
-      return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant } })
+      return approveWithPasskey(id)
     }
   },
   reject: (id: string) => request<Proposal>(`/v1/proposals/${id}/reject`, { method: 'POST' }),
