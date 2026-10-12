@@ -1,3 +1,4 @@
+import { startAuthentication } from '@simplewebauthn/browser'
 import { session } from './session'
 import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
@@ -266,7 +267,17 @@ export const api = {
   proposal: (id: string) => request<Proposal>(`/v1/proposals/${id}`),
   packet: (id: string) => request<Packet>(`/v1/proposals/${id}/packet`),
   propose: (input: ProposalInput, idempotencyKey: string) => request<Proposal>('/v1/proposals', { method: 'POST', body: input, idempotencyKey }),
-  approve: (id: string) => request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST' }),
+  approve: async (id: string) => {
+    try {
+      return await request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST' })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'approve', proposalId: id } })
+      const signed = await startAuthentication({ optionsJSON: started.options as never })
+      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+      return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant } })
+    }
+  },
   reject: (id: string) => request<Proposal>(`/v1/proposals/${id}/reject`, { method: 'POST' }),
   cancelPayout: (id: string) => request<Proposal>(`/v1/proposals/${id}/cancel-payout`, { method: 'POST' }),
   remindInvoice: (id: string) => request<Proposal>(`/v1/proposals/${id}/remind-invoice`, { method: 'POST' }),

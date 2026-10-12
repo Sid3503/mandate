@@ -1,6 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { cookieWriteAllowed, readSessionCookie } from './auth/cookies'
-import { passkeyRuleBinding, stepBinding } from './auth/passkeys'
+import { es256PublicJwk, passkeyRuleBinding, stepBinding } from './auth/passkeys'
 import type { ControlStore } from './control/store'
 import { mountExtra, type ProductCtx } from './http/extra'
 import { clientIp } from './ops/client-ip'
@@ -655,10 +655,27 @@ export function createApp(deps: AppDeps) {
     requireStep(c, deps, 'approve', hash ?? id)
     const assertion = grant?.assertion_json ? JSON.parse(grant.assertion_json) as unknown : null
     const credentialId = assertion && typeof assertion === 'object' && 'id' in assertion ? String((assertion as { id: unknown }).id) : ''
-    const fingerprint = credentialId ? deps.control?.credential(credentialId)?.fingerprint ?? null : null
+    const stored = credentialId ? deps.control?.credential(credentialId) : null
+    const fingerprint = stored?.fingerprint ?? null
+    const publicKey = stored ? es256PublicJwk(stored.public_key) : null
+    let origin: string | null = null
+    let challenge: string | null = null
+    const clientData = assertion && typeof assertion === 'object' && 'response' in assertion
+      ? (assertion as { response?: { clientDataJSON?: string } }).response?.clientDataJSON
+      : undefined
+    if (clientData) {
+      try {
+        const parsed = JSON.parse(Buffer.from(clientData, 'base64url').toString('utf8')) as { origin?: unknown; challenge?: unknown }
+        origin = typeof parsed.origin === 'string' ? parsed.origin : null
+        challenge = typeof parsed.challenge === 'string' ? parsed.challenge : null
+      } catch {
+        origin = null
+        challenge = null
+      }
+    }
     const demo = !assertion && workspacePasskeyOn(deps).mode === 'demo' && c.req.header('x-mandate-demo-tap') === '1'
     const method = assertion ? 'passkey' : demo ? 'demo' : 'owner-key'
-    return send(c, service.approve(id, assertion, { method, fingerprint }))
+    return send(c, service.approve(id, assertion, { method, fingerprint, publicKey, rpId: deps.config.webauthn?.rpID ?? null, origin, challenge }))
   })
   app.post('/v1/proposals/:id/reject', async (c) => {
     await assertEmpty(c)
