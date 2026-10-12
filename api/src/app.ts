@@ -6,7 +6,7 @@ import { clientIp } from './ops/client-ip'
 import { API_CSP, securityHeaders } from './ops/headers'
 import { Metrics } from './ops/metrics'
 import type { ModelBudget } from './ops/budget'
-import { RateLimiter, rateClass } from './ops/ratelimit'
+import { MAX_RATE_BUCKETS, RateLimiter, pruneBuckets, rateClass } from './ops/ratelimit'
 import { redactText } from './ops/redact'
 import type { TenantRegistry } from './tenancy/registry'
 import { Hono } from 'hono'
@@ -88,6 +88,8 @@ export type AppDeps = {
     adminKey?: string | null
     cookieSecure?: boolean
     trustProxy?: boolean
+    /** How many proxies sit in front of this process. Counted from the right of X-Forwarded-For. */
+    trustedProxyHops?: number
     redact?: string[]
     webauthn?: { rpID: string; rpName: string; origins: string[] } | null
     classedRates?: boolean
@@ -256,25 +258,47 @@ export function createApp(deps: AppDeps) {
     }
   })
 
+  const visitorIp = (c: { req: { header: (name: string) => string | undefined } }) => clientIp(
+    { get: (name) => c.req.header(name) },
+    deps.config.trustProxy === true,
+    deps.config.trustedProxyHops ?? 1,
+  )
+
+  // A known key keeps its own bucket. Guesses share one bucket per client IP, so a new wrong key does not reset the count.
+  const requestBucket = (c: { req: { header: (name: string) => string | undefined } }): string => {
+    const ip = visitorIp(c)
+    const header = c.req.header('authorization') ?? ''
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+    if (token === '') return `anon:${ip}`
+    const digest = createHash('sha256').update(token).digest('hex')
+    const known = sameSecret(token, deps.config.apiKey)
+      || (deps.config.proposerKey ? sameSecret(token, deps.config.proposerKey) : false)
+      || (deps.config.buyerAgentKey ? sameSecret(token, deps.config.buyerAgentKey) : false)
+      || services.repo.getAgentByKeyHash(digest) !== null
+      || services.repo.getClientKeyByKeyHash(digest) !== null
+    return known ? `key:${digest}` : `fail:${ip}`
+  }
+
   app.use('*', async (c, next) => {
     if (c.req.path === '/health' || c.req.path === '/ready' || c.req.path === '/healthz' || c.req.path === '/readyz' || isWeb(c.req.path)) return next()
     const limit = deps.config.rateLimitPerMinute
     if (limit <= 0) return next()
-    // A caller with no key is counted by where it comes from, so one noisy visitor cannot use up everyone else's allowance.
-    const presented = c.req.header('authorization') ?? `anonymous:${(c.req.header('x-forwarded-for') ?? '').split(',')[0]?.trim() || 'direct'}`
+    const presented = requestBucket(c)
     const key = createHash('sha256').update(presented).digest('hex')
     const now = Date.now()
+    pruneBuckets(buckets, now, MAX_RATE_BUCKETS)
     const bucket = buckets.get(key)
     if (!bucket || now >= bucket.reset) buckets.set(key, { count: 1, reset: now + 60_000 })
     else if (bucket.count >= limit) {
       c.header('retry-after', '60')
       throw new Problem(429, 'rate.limited', 'Too many requests', 'The per-minute limit for this credential has been reached.')
     } else bucket.count += 1
+    pruneBuckets(buckets, now, MAX_RATE_BUCKETS)
     if (deps.config.classedRates) {
       const decision = classes.take({
         className: rateClass(c.req.method, c.req.path),
-        ip: clientIp({ get: (name) => c.req.header(name) }, deps.config.trustProxy === true),
-        principal: key,
+        ip: visitorIp(c),
+        principal: presented,
       })
       if (!decision.ok) {
         c.header('retry-after', String(decision.retryAfter))
@@ -963,6 +987,7 @@ export function createApp(deps: AppDeps) {
     idleHours: deps.config.idleHours ?? 12,
     absoluteDays: deps.config.absoluteDays ?? 7,
     trustProxy: deps.config.trustProxy === true,
+    trustedProxyHops: deps.config.trustedProxyHops ?? 1,
     demo: deps.demo ?? null,
     masterKey: deps.masterKey ?? null,
     paypal: deps.paypal as ProductCtx['paypal'],

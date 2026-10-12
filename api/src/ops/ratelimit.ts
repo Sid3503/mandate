@@ -2,6 +2,23 @@ export type RateClass = 'auth' | 'key-unlock' | 'ask' | 'write' | 'read'
 
 export type RateDecision = { ok: true } | { ok: false; retryAfter: number }
 
+export const MAX_RATE_BUCKETS = 10_000
+
+export type TimedBucket = { count: number; reset: number; lockedUntil?: number }
+
+/** Drops finished windows, then the oldest buckets, so a flood of addresses cannot grow the map without limit. */
+export function pruneBuckets(map: Map<string, TimedBucket>, now: number, max = MAX_RATE_BUCKETS): void {
+  for (const [key, bucket] of map) {
+    if (now >= bucket.reset && now >= (bucket.lockedUntil ?? 0)) map.delete(key)
+  }
+  if (map.size <= max) return
+  const oldest = [...map.entries()].sort((a, b) => a[1].reset - b[1].reset)
+  for (const [key] of oldest) {
+    if (map.size <= max) break
+    map.delete(key)
+  }
+}
+
 type Bucket = { count: number; reset: number; lockedUntil: number }
 
 /**
@@ -11,10 +28,17 @@ type Bucket = { count: number; reset: number; lockedUntil: number }
 export class RateLimiter {
   private readonly buckets = new Map<string, Bucket>()
 
-  constructor(private readonly now: () => number = () => Date.now()) {}
+  constructor(private readonly now: () => number = () => Date.now(), private readonly maxBuckets = MAX_RATE_BUCKETS) {}
 
   take(input: { className: RateClass; ip: string; principal: string }): RateDecision {
     const at = this.now()
+    pruneBuckets(this.buckets, at, this.maxBuckets)
+    const decision = this.decide(input, at)
+    pruneBuckets(this.buckets, at, this.maxBuckets)
+    return decision
+  }
+
+  private decide(input: { className: RateClass; ip: string; principal: string }, at: number): RateDecision {
     if (input.className === 'auth') {
       const minute = this.hit(`auth:m:${input.ip}`, at, 60_000, 5)
       if (!minute.ok) return minute

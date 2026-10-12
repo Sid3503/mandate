@@ -100,6 +100,7 @@ const app = createApp({
     adminKey: product.adminKey,
     cookieSecure: product.cookieSecure,
     trustProxy: product.trustProxy,
+    trustedProxyHops: product.trustedProxyHops,
     redact: product.redact,
     webauthn: product.webauthn,
     classedRates: product.classedRates,

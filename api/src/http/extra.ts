@@ -33,6 +33,7 @@ export type ProductCtx = {
   idleHours: number
   absoluteDays: number
   trustProxy: boolean
+  trustedProxyHops: number
   demo: { root: string; template: string } | null
   masterKey: string | null
   paypal: { pay?: (invoiceId: string, cents?: number) => void; settlePayouts?: (status?: 'SUCCESS' | 'FAILED') => void } | null
@@ -112,7 +113,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       if (!flags.tenancy || !flags.demoEnabled) throw new Problem(404, 'flag/disabled', 'Not available', 'The demo door is off on this server.')
       const control = requireControl(ctx)
       if (!ctx.demo || !ctx.masterKey) throw new Problem(503, 'flag/disabled', 'Demo is not configured', 'The server has no demo template.')
-      const ip = clientIp({ get: (name) => c.req.header(name) }, ctx.trustProxy)
+      const ip = clientIp({ get: (name) => c.req.header(name) }, ctx.trustProxy, ctx.trustedProxyHops)
       const since = new Date(ctx.now().getTime() - 3_600_000).toISOString()
       if (control.demosFromIp(control.hashIp(ip), since) >= flags.demoMaxPerIpHour) {
         throw new Problem(429, 'rate/limited', 'Too many demos', 'This network has started enough demos for this hour.')

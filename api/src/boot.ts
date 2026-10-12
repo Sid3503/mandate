@@ -7,6 +7,7 @@ import { loadSigner } from './domain/signing'
 import type { ServerFlags } from './flags'
 import { createApp } from './app'
 import { ModelBudget, OPEN_CAPS } from './ops/budget'
+import { proxyHops } from './ops/client-ip'
 import { FakePayPal } from './paypal/fake'
 import { buildServices } from './services/container'
 import { openSeal } from './tenancy/envelope'
@@ -22,6 +23,7 @@ export type ProductBoot = {
   webauthn: { rpID: string; rpName: string; origins: string[] } | null
   cookieSecure: boolean
   trustProxy: boolean
+  trustedProxyHops: number
   classedRates: boolean
   idleHours: number
   absoluteDays: number
@@ -61,6 +63,7 @@ export function openProduct(input: {
   const pepper = input.env.KEY_PEPPER?.trim() || null
   const adminKey = input.env.ADMIN_KEY?.trim() || null
   const trustProxy = on(input.env.TRUST_PROXY)
+  const trustedProxyHops = proxyHops(input.env.TRUSTED_PROXY_HOPS)
   const cookieSecure = on(input.env.COOKIE_SECURE) || (input.nodeEnv === 'production' && input.publicUrl.startsWith('https://'))
   const classedRates = trustProxy
   const idleHours = hours('SESSION_IDLE_HOURS', input.env.SESSION_IDLE_HOURS, 12)
@@ -71,7 +74,7 @@ export function openProduct(input: {
     ? { rpID: input.env.WEBAUTHN_RP_ID, rpName: input.env.WEBAUTHN_RP_NAME?.trim() || 'Mandate', origins: input.env.WEBAUTHN_ORIGINS.split(',').map((item) => item.trim()).filter(Boolean) }
     : null
   if (!needsPeople) {
-    return { control: null, registry: null, budget, masterKey: null, demo: null, adminKey, webauthn, cookieSecure, trustProxy, classedRates, idleHours, absoluteDays, redact, close: () => undefined }
+    return { control: null, registry: null, budget, masterKey: null, demo: null, adminKey, webauthn, cookieSecure, trustProxy, trustedProxyHops, classedRates, idleHours, absoluteDays, redact, close: () => undefined }
   }
   if (!masterKey || masterKey.length < 16 || !pepper || pepper.length < 16) {
     throw new Error('MASTER_KEY and KEY_PEPPER are required when workspaces, the demo, passkeys, or invites are on')
@@ -135,6 +138,7 @@ export function openProduct(input: {
         adminKey,
         cookieSecure,
         trustProxy,
+        trustedProxyHops,
         classedRates: false,
         idleHours,
         absoluteDays,
@@ -144,7 +148,7 @@ export function openProduct(input: {
     return { id, fetch: (request) => app.fetch(request), close: () => db.close() }
   }) : null
   return {
-    control, registry, budget, masterKey, demo, adminKey, webauthn, cookieSecure, trustProxy, classedRates, idleHours, absoluteDays, redact,
+    control, registry, budget, masterKey, demo, adminKey, webauthn, cookieSecure, trustProxy, trustedProxyHops, classedRates, idleHours, absoluteDays, redact,
     close: () => { try { controlDb.close() } catch { /* already closed */ } },
   }
 }
