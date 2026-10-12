@@ -6,7 +6,7 @@ import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simp
 import { generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server'
 import type { WebAuthnCredential } from '@simplewebauthn/server'
 import { clearSessionCookie, cookieWriteAllowed, readSessionCookie, writeSessionCookie } from '../auth/cookies'
-import { beginLogin, beginRegistration, finishLogin, finishRegistration, type WebAuthnConfig } from '../auth/passkeys'
+import { applyCounterRollback, beginLogin, beginRegistration, finishLogin, finishRegistration, passkeyRuleBinding, type WebAuthnConfig } from '../auth/passkeys'
 import { ControlStore } from '../control/store'
 import { defaultFlags, type ServerFlags } from '../flags'
 import { Problem } from './problem'
@@ -41,6 +41,8 @@ export type ProductCtx = {
   tryOne?: (body: unknown) => unknown
   counts?: () => { proposals: number; events: number; payees: number }
   listPayees?: () => Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number }>
+  /** Cart hash of a proposal that is waiting for a signature. */
+  approvalHash?: (proposalId: string) => string | null
 }
 
 function sameSecret(presented: string, expected: string): boolean {
@@ -257,9 +259,21 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     if (who.session.method === 'recovery') throw new Problem(403, 'auth/forbidden', 'Recovery cannot approve', 'A recovery session can only add a passkey.')
     const control = requireControl(ctx)
     if (!ctx.webauthn) throw new Problem(503, 'flag/disabled', 'Not configured', 'Passkeys need a site name and origin.')
-    const body = await c.req.json() as { kind?: string; binding?: string }
+    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean }
     const kind = body.kind ?? ''
-    const binding = body.binding ?? ''
+    let binding = ''
+    if (kind === 'approve') {
+      if (!body.proposalId) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Say which request this signature is for.')
+      const hash = ctx.approvalHash?.(body.proposalId) ?? null
+      if (!hash) throw new Problem(409, 'proposal.state', 'Proposal cannot be approved', 'That request is not waiting for a signature.')
+      binding = hash
+    } else if (kind === 'passkey-rule') {
+      if (typeof body.enabled === 'boolean') binding = passkeyRuleBinding(body.enabled)
+      else if (body.binding === passkeyRuleBinding(true) || body.binding === passkeyRuleBinding(false)) binding = body.binding
+      else throw new Problem(400, 'request.invalid', 'Request is invalid', 'Say whether the passkey rule is on.')
+    } else {
+      binding = body.binding ?? ''
+    }
     if (!kind || !binding) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Say what this signature is for.')
     const digest = createHash('sha256').update(`mandate/stepup/v1\n${kind}\n${binding}`).digest('base64url')
     const options = await generateAuthenticationOptions({
@@ -303,7 +317,11 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       })
       if (!verified.authenticationInfo.userVerified) throw new Error('uv')
       ctx.control.setCounter(stored.credential_id, verified.authenticationInfo.newCounter, ctx.now().toISOString())
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      if (message.toLowerCase().includes('counter')) {
+        applyCounterRollback(ctx.control, stored.credential_id, who.member.id, ctx.now().toISOString(), who.member.workspace_id)
+      }
       throw new Problem(401, 'auth/stepup-failed', 'Passkey was not accepted', 'The signature did not match.')
     }
     const grant = randomUUID()

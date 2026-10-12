@@ -55,8 +55,8 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P3.T8 | partial | `useRecovery` and the recovery block in code. No issue, use, or regenerate test | `9a2ea0b` |
 | P3.T9 | partial | `revokeCredential` refuses the last key in `api/src/control/store.ts`. No HTTP test | `9a2ea0b` |
 | P3.T10 | not started | no Chromium virtual authenticator test | |
-| P4.T1 | partial | `workspaces.passkey_for_money` is on for a new studio and off for the default studio and a demo. Turning it on is tested. The grant is still the client string, not the cart hash | `9a2ea0b` |
-| P4.T2 | partial | step-up is on approve and `PUT /v1/warrant` when the workspace row or the flag is on. Approver limit is in `api/src/app.ts`. No limit test yet | `9a2ea0b` |
+| P4.T1 | partial | `workspaces.passkey_for_money` is on for a new studio and off for the default studio and a demo. Turning it on is tested. Approve grants bind the cart hash | `fd1432b` |
+| P4.T2 | partial | Approve grant is one use, 120 seconds, member plus cart hash. Parallel approve and both rollback outcomes are tested. Other owner routes do not require a step-up yet | `fd1432b` |
 | P4.T3 | not started | receipts do not store the assertion | |
 | P4.T4 | not started | no "Meera, passkey" receipt line | |
 | P4.T5 | not started | verify page checks the cart, not a passkey | |

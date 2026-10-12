@@ -369,6 +369,14 @@ export class MandateService {
     return stuck.length
   }
 
+  /** Cart hash for a request that is still waiting. Null when there is nothing to sign. */
+  approvalHash(id: string): string | null {
+    const row = this.repo.proposal(id)
+    if (!row || row.phase !== 'pending_approval' || row.gate === 'DENY') return null
+    if (!row.payee_id || !row.category || !row.evidence_url) return null
+    return cartHash(this.cartFields(row))
+  }
+
   approve(id: string): HttpResult {
     const now = this.iso()
     return this.repo.transaction(() => {

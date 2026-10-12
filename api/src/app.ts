@@ -626,7 +626,16 @@ export function createApp(deps: AppDeps) {
       const amount = service.packet(id).proposal.amountCents
       if (limit != null && amount > limit) throw new Problem(403, 'approval.over_limit', 'Over your limit', 'This amount is above what you can approve.')
     }
-    requireStep(c, deps, 'approve', id)
+    const hash = service.approvalHash(id)
+    if (stepNeeded(c, deps) && hash) {
+      const grantId = c.req.header('x-mandate-stepup')
+      const grant = grantId ? deps.control?.grant(grantId) : null
+      const memberId = c.get('memberId')
+      if (grant && memberId && grant.member_id === memberId && grant.kind === 'approve' && !grant.used_at && grant.binding !== hash) {
+        throw new Problem(409, 'cart.changed', 'changed since you looked', 'The payment changed after you signed. Sign it again.')
+      }
+    }
+    requireStep(c, deps, 'approve', hash ?? id)
     return send(c, service.approve(id))
   })
   app.post('/v1/proposals/:id/reject', async (c) => {
@@ -1021,6 +1030,7 @@ export function createApp(deps: AppDeps) {
       payees: tableCount(deps.db, 'payees'),
     }),
     listPayees: () => services.repo.listPayees(),
+    approvalHash: (proposalId) => service.approvalHash(proposalId),
   }
   mountExtra(app, product, (request) => app.fetch(request))
 
@@ -1034,13 +1044,19 @@ function workspacePasskeyOn(deps: AppDeps): { on: boolean; mode: 'default' | 'de
   return { on: false, mode: deps.workspace?.mode ?? 'default' }
 }
 
-function requireStep(c: { req: { header: (name: string) => string | undefined } }, deps: AppDeps, kind: string, binding: string, force = false): void {
+function stepNeeded(c: { req: { header: (name: string) => string | undefined } }, deps: AppDeps, force = false): boolean {
   const flags = deps.config.flags ?? defaultFlags()
   const workspace = workspacePasskeyOn(deps)
-  if (!force && !flags.requirePasskeyForMoney && !workspace.on) return
-  if (!force && workspace.mode === 'demo' && c.req.header('x-mandate-demo-tap') === '1') return
+  if (!force && !flags.requirePasskeyForMoney && !workspace.on) return false
+  if (!force && workspace.mode === 'demo' && c.req.header('x-mandate-demo-tap') === '1') return false
+  return true
+}
+
+function requireStep(c: { req: { header: (name: string) => string | undefined }; get: (key: 'memberId') => string | undefined }, deps: AppDeps, kind: string, binding: string, force = false): void {
+  if (!stepNeeded(c, deps, force)) return
   const grant = c.req.header('x-mandate-stepup')
-  if (!grant || !deps.control?.consumeGrant(grant, kind, binding, deps.now().toISOString())) {
+  const memberId = c.get('memberId')
+  if (!grant || !memberId || !deps.control?.consumeGrant(grant, memberId, kind, binding, deps.now().toISOString())) {
     throw new Problem(401, 'auth/stepup-required', 'Sign this with your passkey', 'The tap needs a fresh passkey signature.')
   }
 }

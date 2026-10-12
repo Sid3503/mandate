@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS credentials (
   label TEXT,
   created_at TEXT NOT NULL,
   last_used_at TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  suspect_at TEXT
 );
 CREATE TABLE IF NOT EXISTS sessions (
   id_hash TEXT PRIMARY KEY,
@@ -95,7 +96,8 @@ CREATE TABLE IF NOT EXISTS stepup_grants (
   kind TEXT NOT NULL,
   binding TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  used_at TEXT
+  used_at TEXT,
+  expires_at TEXT
 );
 CREATE TABLE IF NOT EXISTS auth_events (
   id TEXT PRIMARY KEY,
@@ -171,14 +173,16 @@ export function passkeyForMoneyDefault(mode: WorkspaceMode): 0 | 1 {
 export class ControlStore {
   constructor(private readonly db: DatabaseSync, private readonly pepper: string) {
     this.db.exec(SCHEMA)
-    this.ensurePasskeyColumn()
+    this.ensureColumn('workspaces', 'passkey_for_money', 'ALTER TABLE workspaces ADD COLUMN passkey_for_money INTEGER NOT NULL DEFAULT 0')
+    this.ensureColumn('stepup_grants', 'expires_at', 'ALTER TABLE stepup_grants ADD COLUMN expires_at TEXT')
+    this.ensureColumn('credentials', 'suspect_at', 'ALTER TABLE credentials ADD COLUMN suspect_at TEXT')
   }
 
-  /** An older control file has no passkey column. Adding it leaves every existing row off. */
-  private ensurePasskeyColumn(): void {
-    const cols = this.db.prepare('PRAGMA table_info(workspaces)').all() as Array<{ name: string }>
-    if (cols.some((col) => col.name === 'passkey_for_money')) return
-    this.db.exec('ALTER TABLE workspaces ADD COLUMN passkey_for_money INTEGER NOT NULL DEFAULT 0')
+  /** Older control files predate these columns. The added passkey rule stays off. */
+  private ensureColumn(table: string, name: string, ddl: string): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+    if (cols.some((col) => col.name === name)) return
+    this.db.exec(ddl)
   }
 
   ensureDefault(dbPath: string, now: string): void {
@@ -328,8 +332,8 @@ export class ControlStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.id, input.memberId, input.credentialId, input.publicKey, input.alg, input.counter, input.transports ?? null, input.backupEligible ? 1 : 0, input.backupState ? 1 : 0, input.fingerprint, input.now)
   }
 
-  credential(credentialId: string): { id: string; member_id: string; credential_id: string; public_key: string; counter: number; revoked_at: string | null; fingerprint: string } | null {
-    return this.db.prepare('SELECT id, member_id, credential_id, public_key, counter, revoked_at, fingerprint FROM credentials WHERE credential_id = ?').get(credentialId) as { id: string; member_id: string; credential_id: string; public_key: string; counter: number; revoked_at: string | null; fingerprint: string } | undefined ?? null
+  credential(credentialId: string): { id: string; member_id: string; credential_id: string; public_key: string; counter: number; revoked_at: string | null; fingerprint: string; suspect_at: string | null } | null {
+    return this.db.prepare('SELECT id, member_id, credential_id, public_key, counter, revoked_at, fingerprint, suspect_at FROM credentials WHERE credential_id = ?').get(credentialId) as { id: string; member_id: string; credential_id: string; public_key: string; counter: number; revoked_at: string | null; fingerprint: string; suspect_at: string | null } | undefined ?? null
   }
 
   credentials(memberId: string): Array<{ id: string; credential_id: string; fingerprint: string; backup_eligible: number; backup_state: number; revoked_at: string | null }> {
@@ -344,6 +348,11 @@ export class ControlStore {
     this.db.prepare('UPDATE credentials SET revoked_at = ? WHERE credential_id = ? AND revoked_at IS NULL').run(now, credentialId)
   }
 
+  /** A rollback on the only passkey is recorded and kept, so the owner is not locked out. */
+  markSuspect(credentialId: string, now: string): void {
+    this.db.prepare('UPDATE credentials SET suspect_at = ? WHERE credential_id = ? AND revoked_at IS NULL').run(now, credentialId)
+  }
+
   revokeCredential(id: string, memberId: string, now: string): boolean {
     const active = this.db.prepare('SELECT COUNT(*) AS n FROM credentials WHERE member_id = ? AND revoked_at IS NULL').get(memberId) as { n: number }
     if (active.n <= 1) return false
@@ -352,13 +361,18 @@ export class ControlStore {
   }
 
   putGrant(input: { id: string; memberId: string; workspaceId: string; kind: string; binding: string; now: string }): void {
-    this.db.prepare('INSERT INTO stepup_grants (id, member_id, workspace_id, kind, binding, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(input.id, input.memberId, input.workspaceId, input.kind, input.binding, input.now)
+    const expiresAt = new Date(Date.parse(input.now) + 120_000).toISOString()
+    this.db.prepare('INSERT INTO stepup_grants (id, member_id, workspace_id, kind, binding, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(input.id, input.memberId, input.workspaceId, input.kind, input.binding, input.now, expiresAt)
   }
 
-  consumeGrant(id: string, kind: string, binding: string, now: string): boolean {
-    const row = this.db.prepare('SELECT used_at, kind, binding FROM stepup_grants WHERE id = ?').get(id) as { used_at: string | null; kind: string; binding: string } | undefined
-    if (!row || row.used_at || row.kind !== kind || row.binding !== binding) return false
-    const result = this.db.prepare('UPDATE stepup_grants SET used_at = ? WHERE id = ? AND used_at IS NULL').run(now, id)
+  grant(id: string): { member_id: string; kind: string; binding: string; used_at: string | null; expires_at: string | null } | null {
+    return this.db.prepare('SELECT member_id, kind, binding, used_at, expires_at FROM stepup_grants WHERE id = ?').get(id) as { member_id: string; kind: string; binding: string; used_at: string | null; expires_at: string | null } | undefined ?? null
+  }
+
+  /** One use. The member, kind, payload hash, and expiry all have to match. Two callers: one update wins. */
+  consumeGrant(id: string, memberId: string, kind: string, binding: string, now: string): boolean {
+    const result = this.db.prepare(`UPDATE stepup_grants SET used_at = ?
+      WHERE id = ? AND member_id = ? AND kind = ? AND binding = ? AND used_at IS NULL AND expires_at IS NOT NULL AND expires_at > ?`).run(now, id, memberId, kind, binding, now)
     return Number(result.changes) === 1
   }
 
