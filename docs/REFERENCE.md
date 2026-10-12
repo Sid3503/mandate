@@ -646,8 +646,6 @@ Also in Ask:
   | --- | --- | --- | --- | --- | --- | --- | --- |
   | `gemma4:31b` (the drafter) | 10/10 | 4/4 | 5/5 | 4/4 | 2/2 | **25/25** | **0** |
   | `gpt-oss:20b` | 7/10 | 4/4 | 5/5 | 4/4 | 2/2 | 22/25 | **0** |
-  | `us.openai.gpt-6-luna` (historical, on Amazon Bedrock; 7 Oct, after the forced single tool call) | 10/10 | 4/4 | 5/5 | 4/4 | 2/2 | **25/25** | **0** |
-  | `us.openai.gpt-6-luna` (historical, on Amazon Bedrock; 7 Oct, before it: 24/25, one plain two-person split added a scope nobody asked for) | 9/10 | 4/4 | 5/5 | 4/4 | 2/2 | 24/25 | **0** |
 
   The first run of `gemma4:31b` scored 23/25 with one "hidden" loosening. Both were faults in the eval, not the drafter: it counted a loosening the owner really asked for as hidden, and it treated a model that put a red-flagged standing rule under a vague request as a failure though the flag was exactly the right outcome. I fixed the metric and re-ran. `gpt-oss:20b` missed three plain requests (reminders, acceptance, a two-person split): it drafted less than was asked, which the amber check reports, and it loosened nothing in secret.
 - `DRAFTER_MODEL` chooses the model (default: `gemma4:31b`). The Ollama numbers below were measured on 6 Oct. On the real models, on four compound requests, `gemma4:31b` got 4 of 4 in about a second each, `gpt-oss:120b` 3 of 4, `nemotron-3-nano:30b` 3 of 4 and `gpt-oss:20b` 2 of 6 tries, so the drafter has its own model.
@@ -1077,7 +1075,6 @@ Past write-up (not re-run for this change; not a fresh score). Run on 6 Oct 2026
 | Model | Clerk cases | Negotiation | Money moved wrongly | What missed |
 | --- | --- | --- | --- | --- |
 | `gpt-oss:20b` (the Ollama default) | 13/14, then 14/14 on a re-run of the miss | agreed | 0 | one run hit the 60 s limit and was stopped with "nothing was sent" |
-| `us.openai.gpt-6-luna` (historical, on Amazon Bedrock; 7 Oct, streamed, one run after the retry fix, 2 to 6 s per case) | 14/14 | agreed | 0 | An earlier streamed run scored 9/14 and 11/14: the misses were all `AI_StreamProviderError` ("the server had an error") from Bedrock, not wrong answers, and no miss moved money. The harness now repeats a call that fails as the stream opens. |
 | `gemma4:31b` | 14/14 | agreed | 0 | nothing |
 | `nemotron-3-nano:30b` | 13/14 | agreed | 0 | one model error on the "split it" case |
 | `gpt-oss:120b` | 12/14 | agreed | 0 | declined the $18 lunch in words, so no refusal was recorded; used `get_jobs` for a "what is waiting" question |
@@ -1085,7 +1082,9 @@ Past write-up (not re-run for this change; not a fresh score). Run on 6 Oct 2026
 
 Every miss was behavioural (a wrong tool, a refusal in words that leaves no record, a timeout) and not one moved money: in all 56 scored runs PayPal was never asked to do anything the rules had not approved. That is the point of the design. The run shows the model is replaceable and the safety is not in it.
 
-Re-run on 8 Oct 2026, with Amazon Bedrock fully removed (`gpt-oss:20b` clerk/negotiators/reviewer, `gemma4:31b` drafter, both on Ollama Cloud): agent cases 14 of 14, the negotiation agreed, the drafter 25 of 25, the policy reader 20 of 20 verdicts with no sentence falsely called covered and no pasted order changing the rules.
+History note. Commit `47875a7` made Amazon Bedrock the default (`us.openai.gpt-6-luna` through `@ai-sdk/openai-compatible`). Commit `9fa19b6` removed it on purpose. Ollama is the only provider. Those Bedrock score rows are not the current default and are not listed above.
+
+Re-run on 8 Oct 2026, after that removal (`gpt-oss:20b` clerk/negotiators/reviewer, `gemma4:31b` drafter, both on Ollama Cloud): agent cases 14 of 14, the negotiation agreed, the drafter 25 of 25, the policy reader 20 of 20 verdicts with no sentence falsely called covered and no pasted order changing the rules.
 
 **End-to-end tests (`web/e2e/job.spec.ts`)**, against a fresh in-memory server per viewport:
 

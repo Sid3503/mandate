@@ -9,7 +9,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 - [x] P0.T1 The 12 October 2026 audit run is in `docs/DECISIONS.md`: 45 files, 522 API tests, 112 browser tests, axe on the receipt tour and every signed-in screen. Lighthouse was not run. This tick records that run. `0b8659c`
 - [x] P0.T2 `package.json` scripts `gates` and `gates:fast`. `65a30b4`
 - [x] P0.T3 `scripts/check-secrets.mjs` and `scripts/check-secrets.allow`. `65a30b4`
-- [ ] P0.T4 partial. The API count and the Bedrock mismatch are recorded. Docs were not rewritten to call Bedrock the default. `65a30b4`
+- [x] P0.T4 Ollama is the only provider. `PRODUCT.md`, `README.md`, and `docs/REFERENCE.md` say so. The API count is 542. The drafter default is `gemma4:31b`, stated on the Model row. One history note keeps commits `47875a7` and `9fa19b6`. `docs/DECISIONS.md`
 - [x] P0.T5 `api/test/flags.test.ts`. `65a30b4`
 - [x] P0.T6 `docs/DECISIONS.md`, `docs/SECURITY.md`, `CHANGELOG.md`. `65a30b4`
 - [x] P0.T7 `api/.env.example` lists current and planned names. `65a30b4`
@@ -21,7 +21,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P0.T1 | done | Audit run in `docs/DECISIONS.md`: 45 files, 522 API tests, 112 browser tests, axe pass. Lighthouse was not run. The tick records that run | `0b8659c` |
 | P0.T2 | done | root `package.json` `gates`, `gates:fast` | `65a30b4` |
 | P0.T3 | done | `scripts/check-secrets.mjs` | `65a30b4` |
-| P0.T4 | partial | `docs/DECISIONS.md` "Assumptions that did not match the code" | `65a30b4` |
+| P0.T4 | done | Ollama only in `PRODUCT.md`, `README.md`, and `docs/REFERENCE.md`. History note names `47875a7` and `9fa19b6`. API count 542. Drafter default `gemma4:31b` | `docs/DECISIONS.md` |
 | P0.T5 | done | `api/test/flags.test.ts` | `65a30b4` |
 | P0.T6 | done | `docs/DECISIONS.md`, `docs/SECURITY.md`, `CHANGELOG.md` | `65a30b4` |
 | P0.T7 | done | `api/.env.example` | `65a30b4` |

@@ -24,7 +24,7 @@ The API test count below was re-run on 12 October 2026 (509). The browser counts
 
 **A second screen, built with AG Studio** (`/app/control-room`, desktop). The Ledger page is the table of requests (AG Grid); the control room is the dashboard the owner builds from them: money in and out, refusals by rule, how each request was approved, who still owes what. Studio is handed plain rows copied from the ledger and can only display them: it has no connection to PayPal or to Mandate, and the tiles count only what PayPal confirmed. A chat analyst inside Studio reads the ledger copy, sets filters and asks Studio's page and widget agents to draw. It runs on Mandate's own model through one route that holds no ledger service and no PayPal client, so the worst it can do is change the dashboard.
 
-**Numbers:** 509 API tests (56 of them a red team), 112 browser runs (56 tests, on desktop and on phone), an axe accessibility scan on every screen.
+**Numbers:** 542 API tests (56 of them a red team), 114 browser runs (56 job tests on desktop and on phone, plus 2 passkey tests), an axe accessibility scan on every signed-in screen.
 
 **Not yet:** a real open dispute (the sandbox cannot create one), the demo video, the deck and the Devpost write-up. The webhook id and the deploy hook are in §11.
 
@@ -179,7 +179,7 @@ An installable React app served at `/app/`.
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 509 API tests (56 of them a red team) and 112 browser runs (56 tests, on desktop and on phone), with an accessibility scan on every screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 542 API tests (56 of them a red team) and 114 browser runs (56 job tests on desktop and on phone, plus 2 passkey tests), with an accessibility scan on every signed-in screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -214,7 +214,7 @@ Repository layout: `api/` (server, PayPal adapters, agents, tests), `web/` (cons
 | --- | --- |
 | Model | Ollama Cloud open-weights models, called through the Vercel AI SDK: `gpt-oss:20b` for the clerk and negotiators, `gemma4:31b` for the drafter. Changing the model is one environment variable (`AGENT_MODEL`, `DRAFTER_MODEL`). With no key the agents are simply off and everything else works. |
 | Four agents | The **clerk** (a chat for the producer, and the Ask Mandate dialog: "pay Priya her share…"), two **negotiators**, one per company, that trade offers until a deal is agreed or refused, and the **rules drafter**, which turns "let Priya be paid automatically" into a reviewable draft. |
-| The drafter is different on purpose | It gets one tool that takes a small patch in dollars, percent and names, not the rules. The server merges and validates it against the same schema as a hand edit, retries with the validation message, and lists what the draft **loosens** in code, so the model's reassurance is never the thing you read. It runs on the main model by default (`DRAFTER_MODEL` picks another) and must call its one tool. Measured: 25 of 25 wordings, 0 hidden loosenings. |
+| The drafter is different on purpose | It gets one tool that takes a small patch in dollars, percent and names, not the rules. The server merges and validates it against the same schema as a hand edit, retries with the validation message, and lists what the draft **loosens** in code, so the model's reassurance is never the thing you read. It runs on `gemma4:31b`, the drafter named in the Model row (`DRAFTER_MODEL` picks another), and must call its one tool. Measured on `gemma4:31b`: 25 of 25 wordings, 0 hidden loosenings. |
 | The only door is MCP | The model never sees HTTP routes or PayPal. It reaches Mandate through an MCP server (`/mcp` for outside agents, stdio with `npm run mcp`, and an in-process connection for Mandate's own agents). An agent of ours has exactly the powers an outside agent would. |
 | Six tools, none can pay | `get_rules`, `get_jobs`, `propose`, `list_ledger`, `offer_deal`, `explain`. There is no approve, capture, refund or rule-change tool. The owner key is deliberately downgraded on this door. |
 | Bounded runs | Temperature 0 so a message gets a repeatable answer. Capped by steps (8 for the clerk, 3 for a negotiator), by the number of asks (4 and 1), and by wall-clock (60 s and 45 s). A model error is retried once. A negotiator's run stops as soon as it calls `offer_deal`. |
@@ -280,7 +280,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 10. Proof
 
-- **509 API tests** (Vitest; 56 are the red team) and **112 end-to-end runs** (Playwright: 56 tests, on desktop and on phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
+- **542 API tests** (Vitest; 56 are the red team) and **114 browser runs** (Playwright: 56 job tests on desktop and on phone, plus 2 passkey tests, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile was not re-run on 12 October 2026.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation).
 - **The whole frozen job has run on the real PayPal sandbox, both milestones:** agents negotiated and signed $300; Northwind paid two real invoices; the locks verified; two real $90 payouts reached a sandbox account (the second with no tap, under a standing rule); the job reads **$300 in, $180 out, $120 kept**; and cancelling an unclaimed payout returned the money.
 - **Proof** checks `locks.valid`, `moved.authorised`, `amounts.match`, `payouts.funded`, `cap.respected`, `jobs.in_covers_out`, `history.complete`, `deals.signed`, `billing.accepted`, `agents.no_reach` and `safety.respected`, and `paypal.agrees` when PayPal is asked. The tests tamper with the database eight ways to check the right one fails.
