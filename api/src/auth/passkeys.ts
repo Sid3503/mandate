@@ -18,6 +18,11 @@ export function credentialFingerprint(publicKey: Uint8Array): string {
   return createHash('sha256').update(publicKey).digest('hex').slice(0, 16)
 }
 
+/** Binding for the grant that turns the workspace passkey rule on or off. */
+export function passkeyRuleBinding(enabled: boolean): string {
+  return createHash('sha256').update(`mandate/passkey-rule/v1\n${enabled ? 'on' : 'off'}`).digest('hex')
+}
+
 export async function beginRegistration(input: { config: WebAuthnConfig; store: ControlStore; memberId: string; memberName: string; workspaceId: string; now: Date }): Promise<{ challengeId: string; options: unknown }> {
   const existing = input.store.credentials(input.memberId).filter((row) => !row.revoked_at)
   const options = await generateRegistrationOptions({

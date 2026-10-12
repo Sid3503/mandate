@@ -19,7 +19,7 @@ A studio's rules decide whether money may move. PayPal moves only the locked cen
 ## Known limits
 
 - A pasted key is still a way in. Passkeys and cookie sessions exist behind flags that default to off. With the flags off, the console still unlocks with a key in this tab.
-- Step-up runs only when `REQUIRE_PASSKEY_FOR_MONEY` is on, and only on approve and on publishing rules. Other owner actions stay on the key.
+- Step-up runs when that workspace's `passkey_for_money` row is on, or when `REQUIRE_PASSKEY_FOR_MONEY` is on. A new studio starts on. The default studio and a demo start off. The env flag stays off. Turning the row on needs an enrolled passkey and a step-up. Today the check is on approve and on publishing rules.
 - A passkey prompt does not show the payment. The screen shows the amount, payee, category, and evidence before the prompt. The prompt itself does not.
 - Demo and studio workspaces use a fake PayPal. The banner says so. They are not a live sandbox payment.
 - A stolen server can still lie. A receipt that a person can check reduces that risk. It does not remove it.
