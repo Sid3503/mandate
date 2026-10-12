@@ -197,6 +197,7 @@ export type WarrantRecord = {
   version: number
   body: WarrantBody
   createdAt: string
+  signatureJson: string | null
 }
 
 export type NewProposal = {
@@ -263,30 +264,30 @@ export class Repo {
 
   latestWarrant(): WarrantRecord | null {
     const row = this.db.prepare(
-      'SELECT id, version, body_json, created_at FROM warrants ORDER BY version DESC LIMIT 1',
-    ).get() as { id: string; version: number; body_json: string; created_at: string } | undefined
+      'SELECT id, version, body_json, created_at, signature_json FROM warrants ORDER BY version DESC LIMIT 1',
+    ).get() as { id: string; version: number; body_json: string; created_at: string; signature_json: string | null } | undefined
     if (!row) return null
-    return { id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at }
+    return { id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, signatureJson: row.signature_json }
   }
 
   warrant(id: string, version: number): WarrantRecord | null {
     const row = this.db.prepare(
-      'SELECT id, version, body_json, created_at FROM warrants WHERE id = ? AND version = ?',
-    ).get(id, version) as { id: string; version: number; body_json: string; created_at: string } | undefined
+      'SELECT id, version, body_json, created_at, signature_json FROM warrants WHERE id = ? AND version = ?',
+    ).get(id, version) as { id: string; version: number; body_json: string; created_at: string; signature_json: string | null } | undefined
     if (!row) return null
-    return { id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at }
+    return { id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, signatureJson: row.signature_json }
   }
 
   warrantVersions(): WarrantRecord[] {
     const rows = this.db.prepare(
-      'SELECT id, version, body_json, created_at FROM warrants ORDER BY version DESC',
-    ).all() as Array<{ id: string; version: number; body_json: string; created_at: string }>
-    return rows.map((row) => ({ id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at }))
+      'SELECT id, version, body_json, created_at, signature_json FROM warrants ORDER BY version DESC',
+    ).all() as Array<{ id: string; version: number; body_json: string; created_at: string; signature_json: string | null }>
+    return rows.map((row) => ({ id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, signatureJson: row.signature_json }))
   }
 
-  insertWarrant(id: string, version: number, body: WarrantBody, now: string): void {
-    this.db.prepare('INSERT INTO warrants (id, version, body_json, created_at) VALUES (?, ?, ?, ?)').run(
-      id, version, JSON.stringify(body), now,
+  insertWarrant(id: string, version: number, body: WarrantBody, now: string, signatureJson: string | null = null): void {
+    this.db.prepare('INSERT INTO warrants (id, version, body_json, created_at, signature_json) VALUES (?, ?, ?, ?, ?)').run(
+      id, version, JSON.stringify(body), now, signatureJson,
     )
     live.publish({ type: 'changed', scope: 'rules', what: 'rules.published', at: stamp() })
   }

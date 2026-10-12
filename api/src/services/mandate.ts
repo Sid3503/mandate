@@ -222,7 +222,7 @@ export class MandateService {
    * Publishes the next version of the rules. A caller that says which version it started from (`expectedVersion`) is
    * refused if someone has published since: two people editing never silently overwrite each other.
    */
-  publishWarrant(input: unknown, expectedVersion?: number): HttpResult {
+  publishWarrant(input: unknown, expectedVersion?: number, signatureJson: string | null = null): HttpResult {
     const parsed = WarrantBodySchema.safeParse(input)
     if (!parsed.success) throw parsed.error
     const now = this.iso()
@@ -233,7 +233,7 @@ export class MandateService {
       }
       const version = current ? current.version + 1 : 1
       const id = current?.id ?? WARRANT_ID
-      this.repo.insertWarrant(id, version, parsed.data, now)
+      this.repo.insertWarrant(id, version, parsed.data, now, signatureJson)
       return { id, version, createdAt: now, ...parsed.data }
     })
     return { status: 201, body: saved }
@@ -377,7 +377,7 @@ export class MandateService {
     return cartHash(this.cartFields(row))
   }
 
-  approve(id: string): HttpResult {
+  approve(id: string, assertion: unknown = null): HttpResult {
     const now = this.iso()
     return this.repo.transaction(() => {
       const row = this.require(id)
@@ -419,7 +419,7 @@ export class MandateService {
       const fields = this.cartFields(row)
       const hash = cartHash(fields)
       this.repo.lockProposal(row.id, hash, this.signer.sign(lockMessage(row.id, hash)), now)
-      this.repo.insertEvent(randomUUID(), row.id, 'proposal.approved', row.clause, { actor: 'owner', cartHash: hash }, now)
+      this.repo.insertEvent(randomUUID(), row.id, 'proposal.approved', row.clause, assertion ? { actor: 'owner', cartHash: hash, assertion } : { actor: 'owner', cartHash: hash }, now)
       return { status: 200, body: toView(this.require(id)) }
     })
   }

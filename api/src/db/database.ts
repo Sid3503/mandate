@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { DEMO_BUYER_RULES, DEMO_SELLER_RULES, PartyRulesSchema } from '../domain/deal'
 import { LINE_STUDIO_WARRANT, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
@@ -285,9 +285,20 @@ export function migrate(db: DatabaseSync): void {
   // written through the API (the seed wrote before it existed), so they count as already written.
   const rulesColumns = new Set((db.prepare('PRAGMA table_info(party_rules)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!rulesColumns.has('origin')) db.exec(`ALTER TABLE party_rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'written'`)
-  applySqlSteps(db, OPS_STEPS)
+  applySqlSteps(db, OPS_STEPS, new Date().toISOString(), backupFileDatabase)
   const eventColumns = new Set((db.prepare('PRAGMA table_info(events)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!eventColumns.has('actor_json')) db.exec('ALTER TABLE events ADD COLUMN actor_json TEXT')
+}
+
+/** Copies a file database aside before a new checksum step. Memory databases are skipped. */
+export function backupFileDatabase(db: DatabaseSync): void {
+  const rows = db.prepare('PRAGMA database_list').all() as Array<{ file: string }>
+  const file = rows.find((row) => row.file)?.file
+  if (!file) return
+  const destDir = join(dirname(file), 'backups')
+  mkdirSync(destDir, { recursive: true })
+  const dest = join(destDir, `mandate-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`)
+  db.exec(`VACUUM INTO '${dest.replaceAll("'", "''")}'`)
 }
 
 export function seed(db: DatabaseSync, now: Date): void {

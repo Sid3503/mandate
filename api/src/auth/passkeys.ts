@@ -23,6 +23,11 @@ export function passkeyRuleBinding(enabled: boolean): string {
   return createHash('sha256').update(`mandate/passkey-rule/v1\n${enabled ? 'on' : 'off'}`).digest('hex')
 }
 
+/** Hash the action payload so a grant for one body cannot be spent on another. */
+export function stepBinding(kind: string, payload: string): string {
+  return createHash('sha256').update(`mandate/step/${kind}\n${payload}`).digest('hex')
+}
+
 export async function beginRegistration(input: { config: WebAuthnConfig; store: ControlStore; memberId: string; memberName: string; workspaceId: string; now: Date }): Promise<{ challengeId: string; options: unknown }> {
   const existing = input.store.credentials(input.memberId).filter((row) => !row.revoked_at)
   const options = await generateRegistrationOptions({

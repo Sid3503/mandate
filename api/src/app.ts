@@ -1,6 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { cookieWriteAllowed, readSessionCookie } from './auth/cookies'
-import { passkeyRuleBinding } from './auth/passkeys'
+import { passkeyRuleBinding, stepBinding } from './auth/passkeys'
 import type { ControlStore } from './control/store'
 import { mountExtra, type ProductCtx } from './http/extra'
 import { clientIp } from './ops/client-ip'
@@ -499,10 +499,14 @@ export function createApp(deps: AppDeps) {
     assertJson(c)
     const parsed = AgentCreateSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
+    requireStep(c, deps, 'agent.issue', stepBinding('agent.issue', JSON.stringify(parsed.data)))
     const created = services.agents.create(parsed.data)
     return c.json(created, 201)
   })
-  app.post('/v1/agents/:id/revoke', (c) => c.json(services.agents.revoke(c.req.param('id'))))
+  app.post('/v1/agents/:id/revoke', (c) => {
+    requireStep(c, deps, 'agent.revoke', stepBinding('agent.revoke', c.req.param('id')))
+    return c.json(services.agents.revoke(c.req.param('id')))
+  })
   app.post('/v1/agents/:id/resume', (c) => c.json(services.agents.resume(c.req.param('id'))))
 
   // ---------- client keys ----------
@@ -540,11 +544,18 @@ export function createApp(deps: AppDeps) {
     assertJson(c)
     const parsed = ClientKeyCreateSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
+    requireStep(c, deps, 'client-key.issue', stepBinding('client-key.issue', JSON.stringify(parsed.data)))
     const created = services.clientKeys.issue(parsed.data)
     return c.json(created, 201)
   })
-  app.post('/v1/client-keys/:id/revoke', (c) => c.json(services.clientKeys.revoke(c.req.param('id'))))
-  app.post('/v1/client-keys/:id/rotate', (c) => c.json(services.clientKeys.rotate(c.req.param('id')), 201))
+  app.post('/v1/client-keys/:id/revoke', (c) => {
+    requireStep(c, deps, 'client-key.revoke', stepBinding('client-key.revoke', c.req.param('id')))
+    return c.json(services.clientKeys.revoke(c.req.param('id')))
+  })
+  app.post('/v1/client-keys/:id/rotate', (c) => {
+    requireStep(c, deps, 'client-key.rotate', stepBinding('client-key.rotate', c.req.param('id')))
+    return c.json(services.clientKeys.rotate(c.req.param('id')), 201)
+  })
 
   // What Mandate promises and where each promise is checked. Static, so it answers when everything else does not.
   app.get('/v1/guarantees', (c) => c.json({ guarantees: GUARANTEES, deepRun: DEEP_RUN, everyChange: EVERY_CHANGE_RUN }))
@@ -565,7 +576,10 @@ export function createApp(deps: AppDeps) {
     }
     return c.json(services.safety.pause('owner', reason))
   })
-  app.post('/v1/safety/resume', async (c) => c.json(await services.safety.resume('owner')))
+  app.post('/v1/safety/resume', async (c) => {
+    requireStep(c, deps, 'resume', stepBinding('resume', 'safety.resume'))
+    return c.json(await services.safety.resume('owner'))
+  })
   app.get('/v1/session', (c) => c.json({ role: c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName }, demoReset: deps.config.demoReset === true }))
   app.get('/v1/flags', (c) => c.json(deps.config.flags ?? defaultFlags()))
   app.post('/v1/workspace/passkey-rule', async (c) => {
@@ -593,8 +607,11 @@ export function createApp(deps: AppDeps) {
     const header = c.req.header('x-expected-version')
     if (header !== undefined && !/^\d{1,6}$/.test(header)) throw new Problem(400, 'rules.expected_version_invalid', 'X-Expected-Version is invalid', 'Send the version number you started from, for example 3.')
     const body = await readJson(c)
-    requireStep(c, deps, 'rules', createHash('sha256').update(JSON.stringify(body)).digest('hex'))
-    const result = service.publishWarrant(body, header === undefined ? undefined : Number(header))
+    const rulesBinding = createHash('sha256').update(JSON.stringify(body)).digest('hex')
+    const rulesGrantId = c.req.header('x-mandate-stepup')
+    const rulesGrant = rulesGrantId ? deps.control?.grant(rulesGrantId) : null
+    requireStep(c, deps, 'rules', rulesBinding)
+    const result = service.publishWarrant(body, header === undefined ? undefined : Number(header), rulesGrant?.assertion_json ?? null)
     return send(c, result)
   })
 
@@ -627,16 +644,17 @@ export function createApp(deps: AppDeps) {
       if (limit != null && amount > limit) throw new Problem(403, 'approval.over_limit', 'Over your limit', 'This amount is above what you can approve.')
     }
     const hash = service.approvalHash(id)
+    const grantId = c.req.header('x-mandate-stepup')
+    const grant = grantId ? deps.control?.grant(grantId) : null
     if (stepNeeded(c, deps) && hash) {
-      const grantId = c.req.header('x-mandate-stepup')
-      const grant = grantId ? deps.control?.grant(grantId) : null
       const memberId = c.get('memberId')
       if (grant && memberId && grant.member_id === memberId && grant.kind === 'approve' && !grant.used_at && grant.binding !== hash) {
         throw new Problem(409, 'cart.changed', 'changed since you looked', 'The payment changed after you signed. Sign it again.')
       }
     }
     requireStep(c, deps, 'approve', hash ?? id)
-    return send(c, service.approve(id))
+    const assertion = grant?.assertion_json ? JSON.parse(grant.assertion_json) as unknown : null
+    return send(c, service.approve(id, assertion))
   })
   app.post('/v1/proposals/:id/reject', async (c) => {
     await assertEmpty(c)
@@ -1031,6 +1049,7 @@ export function createApp(deps: AppDeps) {
     }),
     listPayees: () => services.repo.listPayees(),
     approvalHash: (proposalId) => service.approvalHash(proposalId),
+    requireStep: (c, kind, binding) => requireStep(c, deps, kind, binding),
   }
   mountExtra(app, product, (request) => app.fetch(request))
 
