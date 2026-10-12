@@ -91,6 +91,15 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     return c.json({ killed: true })
   })
 
+  app.post('/ops/model/resume', (c) => {
+    if (!ctx.adminKey) throw new Problem(404, 'route.not_found', 'Not found', 'No route matches this path.')
+    const header = c.req.header('authorization') ?? ''
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+    if (token.length === 0 || !sameSecret(token, ctx.adminKey)) throw new Problem(401, 'auth/required', 'Unauthorized', 'Provide the admin key.')
+    ctx.budget?.resume()
+    return c.json({ killed: false })
+  })
+
   if (!ctx.nested) {
     app.all('/w/:workspace/*', async (c) => {
       if (!flags.tenancy) throw new Problem(404, 'flag/disabled', 'Not available', 'Workspaces are off on this server.')

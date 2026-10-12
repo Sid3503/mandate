@@ -157,7 +157,7 @@ Cases with no test: 10, 11, 12, 13, 14, 15, 16. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19
 ## Confirmed facts, not changes
 
 - The workspace cache caps at 50 open apps and closes one that has been idle for 10 minutes (`api/src/tenancy/registry.ts`).
-- Model caps are numbers: 500,000 global tokens a day, 30,000 per workspace, 4,096 output tokens, 8 steps (`OPEN_CAPS`). `MODEL_GLOBAL_DAILY_TOKENS` and `MODEL_WORKSPACE_DAILY_TOKENS` raise them. A cap of 0 refuses the call. The day's counters and an ops kill are stored on the ledger.
+- Model caps are numbers: 500,000 global tokens a day, 30,000 per workspace, 4,096 output tokens, 8 steps (`OPEN_CAPS`). `MODEL_GLOBAL_DAILY_TOKENS` and `MODEL_WORKSPACE_DAILY_TOKENS` raise them. A cap of 0 refuses the call. The day's counters and an ops kill are stored on the ledger. `POST /ops/model/resume` with the admin key clears the kill row. The test is `api/test/repair-pass.test.ts` "a resume clears the kill row and the clerk can run again".
 - `POST /demo/start` is off unless both tenancy and the demo flag are on. With `TRUST_PROXY=0`, `clientIp` is `direct` for every caller, so the per-IP demo cap (default 5 an hour) is one bucket for the whole server. With `TRUST_PROXY=1`, the client is the hop counted from the right (`TRUSTED_PROXY_HOPS`, default 1, maximum 8). A chosen value that is not an IP is `direct`. IPv6 is grouped by `/64`. Unknown keys share one per-minute bucket per client IP. A known key keeps its own.
 
 ## Gates
