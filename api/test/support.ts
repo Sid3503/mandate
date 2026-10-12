@@ -1,4 +1,5 @@
 import { createApp, type AppDeps } from '../src/app'
+import type { ServerFlags } from '../src/flags'
 import { migrate, openDatabase, seed } from '../src/db/database'
 import { Repo } from '../src/db/repo'
 import type { InvoicePort } from '../src/paypal/invoices'
@@ -23,7 +24,7 @@ export function closeAll() {
 
 export type Requester = { request: (input: string, init?: RequestInit) => Response | Promise<Response> }
 
-export function harness(options: { commit?: string | null; demoReset?: boolean; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: { tripAfter: number; windowSeconds?: number } } = {}) {
+export function harness(options: { commit?: string | null; demoReset?: boolean; flags?: ServerFlags; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: { tripAfter: number; windowSeconds?: number } } = {}) {
   const db = openDatabase(':memory:')
   open.push(db)
   migrate(db)
@@ -57,6 +58,7 @@ export function harness(options: { commit?: string | null; demoReset?: boolean; 
       webhookId: options.webhookId,
       clientAgent: options.clientAgent,
       demoReset: options.demoReset,
+      flags: options.flags,
     },
   })
   const app = build()

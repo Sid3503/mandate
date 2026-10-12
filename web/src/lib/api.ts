@@ -1,5 +1,5 @@
 import { session } from './session'
-import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
+import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -237,6 +237,7 @@ export const api = {
   health: () => request<Health>('/health'),
   ready: () => request<Health>('/ready'),
   session: (key?: string) => request<Session>('/v1/session', { key }),
+  flags: () => request<ServerFlags>('/v1/flags'),
   warrant: () => request<Warrant>('/v1/warrant'),
   warrantVersions: () => request<{ data: Warrant[] }>('/v1/warrant/versions'),
   publishWarrant: (body: unknown, expectedVersion?: number) => request<Warrant>('/v1/warrant', { method: 'PUT', body, headers: expectedVersion === undefined ? undefined : { 'x-expected-version': String(expectedVersion) } }),

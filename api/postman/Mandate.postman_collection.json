@@ -101,6 +101,28 @@
           ]
         },
         {
+          "name": "Flags",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/flags"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('owner can read the switches', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "  pm.expect(pm.response.json().passkeys).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "OpenAPI",
           "request": {
             "auth": {

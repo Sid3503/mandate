@@ -6,6 +6,7 @@ api/data/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+backups/
 web/dist/
 web/test-results/
 web/playwright-report/

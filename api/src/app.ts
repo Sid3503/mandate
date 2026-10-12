@@ -3,6 +3,7 @@ import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { DatabaseSync } from 'node:sqlite'
 import { VERSION } from './config'
+import { defaultFlags, type ServerFlags } from './flags'
 import { databaseReady, resetDemo } from './db/database'
 import { z } from 'zod'
 import { BillMilestoneSchema, DealOfferSchema, DecideDeliverySchema } from './domain/deal'
@@ -72,6 +73,8 @@ export type AppDeps = {
     clientAgent?: 'auto' | 'manual'
     /** Lets the owner wipe the ledger back to a fresh Line Studio. Sandbox demos only. */
     demoReset?: boolean
+    /** Planned switches. Missing means the defaults: new features off. */
+    flags?: ServerFlags
   }
 }
 
@@ -127,7 +130,7 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/notify\/test$/ },
   { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
-  { method: 'GET', pattern: /^\/v1\/(today|audit)$/ },
+  { method: 'GET', pattern: /^\/v1\/(today|audit|flags)$/ },
   { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
   { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
 ]
@@ -460,6 +463,7 @@ export function createApp(deps: AppDeps) {
   })
   app.post('/v1/safety/resume', async (c) => c.json(await services.safety.resume('owner')))
   app.get('/v1/session', (c) => c.json({ role: c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName }, demoReset: deps.config.demoReset === true }))
+  app.get('/v1/flags', (c) => c.json(deps.config.flags ?? defaultFlags()))
   app.get('/.well-known/mandate-keys.json', (c) => c.json(service.publicKeys()))
   app.get('/v1/warrant', (c) => c.json(service.currentWarrant()))
   app.get('/v1/warrant/versions', (c) => c.json(service.warrantVersions()))

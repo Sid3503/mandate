@@ -187,7 +187,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 498 API tests (Vitest), including a 56-case red team, plus 112 Playwright end-to-end runs (56 tests, on desktop and on phone) with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. |
+| Tests | 509 API tests (Vitest, re-run 12 October 2026), including a 56-case red team, plus 112 Playwright end-to-end runs (56 tests, on desktop and on phone) with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. The browser counts and Lighthouse were not re-run for this change. |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
