@@ -1,84 +1,102 @@
 # Phase 4 plan: passkey-signed approvals
 
-Status: WAITING FOR APPROVAL. Branch: `phase/4-stepup`, cut from `repair/hardening` at `86441c0`. Nothing in this file is built yet. Do not push. Do not merge.
+Status: APPROVED WITH 5 CHANGES. Branch: `phase/4-stepup`, cut from `repair/hardening` at `86441c0`. Do not push. Do not merge. Stop after the phase report.
 
-Goal: the tap is a signature a third party can check. `REQUIRE_PASSKEY_FOR_MONEY` stays off except inside tests. Rollback is that flag at 0, which returns the old tap.
+Goal: the tap is a signature a third party can check. `REQUIRE_PASSKEY_FOR_MONEY` stays off in `api/.env.example` and on Render. Tests may turn a workspace setting on, or the flag on, only inside that test. Rollback is the setting off, the flag at 0, or leaving this branch unmerged.
+
+## What stayed from the review
+
+- Step-up today binds the proposal id, so one assertion can approve another lock. The grant binds to the cart hash instead.
+- Step-up does not revoke on a counter rollback. Login does. Both paths reject a rollback. A revoke happens only when the member has another passkey.
+- The signature is stored on `warrants`. There is no second rules table.
+- Verify says "cannot verify here" for an unknown algorithm and never "valid".
+
+## The 5 changes
+
+1. The passkey rule is a per-workspace setting, not only the env flag. Default on for a new studio or live workspace, off for `ws_default` and for demos. Turning it on needs an enrolled passkey and a step-up. Test all three defaults and the turn-on path.
+2. A grant binds to the member, the kind, the payload hash, and a 120 second expiry. One use. Approve recomputes the cart from stored data. If it differs from the grant, return 409 "changed since you looked". Two parallel approves with one grant: one wins. Step-up routes are in the auth rate-limit class. A counter rollback always rejects the assertion. Revoke the credential only if the member has another passkey. If it is the last one, mark it suspect, write an event, and keep it. Test both. This applies to login and to step-up.
+3. Verify uses test vectors from the Chromium virtual authenticator, not only the soft authenticator. Convert the DER signature to raw r and s for WebCrypto. Check rpIdHash, the UP and UV flags, type, and the challenge. Negative vectors flip one bit in the signature, authData, clientDataJSON, the challenge, and the rpId. The result shows the key fingerprint, the RP ID, and the origin. The wording is "valid signature by this key", never "approved by Meera" unless the fingerprint matches the one the user typed. One Playwright test in the passkey project: sign in, approve, download the receipt, verify it, tamper with it, see it fail.
+4. Enrollment shows the fingerprint with "Save this". The receipt line shows a short fingerprint. Proof: a missing assertion where the method says passkey is red. `owner-key` and `demo` are amber. Old rows are grey, marked legacy.
+5. Add `warrants.signature_json` through the migration runner. Back up a file database before the new step. Test the migration on a copy of an older database file. The old `proposal.approved` payload shape must still read. Apply step-up only to routes that exist. Do not add the missing ones.
 
 ## Assumptions
 
-Checked against the code on this branch.
+Checked against the code on this branch. None were false.
 
-- The lock is `canonicalCart` and `cartHash` in `api/src/domain/hash.ts`. The signed message is `lockMessage` in `api/src/domain/signing.ts`. Phase 4 will bind the step-up challenge to that cart hash. It will not invent a second hash.
-- Approvals are not a table. An approval is an `events` row of type `proposal.approved`. The payload today is `{ actor: 'owner', cartHash }`. Rules live in `warrants` (`id`, `version`, `body_json`, `created_at`). There is no `rules_versions` table and no `signature_json` column. The plan adds `signature_json` on `warrants` with the same column-add style already used in `api/src/db/database.ts`. It does not create a second rules table.
-- The public check is two files, not one. `web/src/screens/Verify.tsx` is the page. `web/src/lib/verify.ts` recomputes the cart and checks the Ed25519 lock. `web/e2e/job.spec.ts` "a receipt can be checked in the browser without a key, and a tampered one is caught" already runs the cart check. Phase 4 extends those two files. It does not add a second verify page.
+- The lock is `canonicalCart` and `cartHash` in `api/src/domain/hash.ts`. The signed message is `lockMessage` in `api/src/domain/signing.ts`. Phase 4 reuses that cart hash.
+- An approval is an `events` row of type `proposal.approved`. The payload today is `{ actor: 'owner', cartHash }`. That shape must still read.
+- Rules live in `warrants` (`id`, `version`, `body_json`, `created_at`). There is no `rules_versions` table.
+- The public check is `web/src/screens/Verify.tsx` and `web/src/lib/verify.ts`. There is no second verify page.
+- `POST /auth/stepup/options` and `POST /auth/stepup/verify` exist. `rateClass` already treats a path starting with `/auth/` as `auth`. A test still locks that in.
+- `applySqlSteps` records a checksum and does not take a backup. The caller must copy a file database before the first new step.
 
-One gap found while checking, and the plan fixes it: `finishLogin` in `api/src/auth/passkeys.ts` revokes a credential when the counter moves backwards. `POST /auth/stepup/verify` in `api/src/http/extra.ts` does not. The step-up challenge is bound to the proposal id, not the cart hash, so an assertion for one lock can be presented for another.
+## Routes
 
-## What is already there
+Step-up, when the workspace rule or the env flag is on, applies only to routes that already exist:
 
-- `POST /auth/stepup/options` and `POST /auth/stepup/verify` exist. They return a one-time grant. No test calls them. P4.T1 stays partial until the tests below pass.
-- `requireStep` runs only on `POST /v1/proposals/:id/approve` and `PUT /v1/warrant`, and only when the flag is on. A demo workspace may skip it with `x-mandate-demo-tap: 1`. Case 25 already shows that header does not approve on the default studio.
-- `approval.over_limit` is thrown in `api/src/app.ts` when `memberRole` is `approver` and the amount is over `approval_limit_cents`. Nothing tests it. `agent.over_limit` is a different code and does not count.
-- The approval card on Today already shows the amount and the payee (`web/src/screens/Today.tsx`). It does not show the category, the evidence, the short hash, or the clause before the prompt, and the success toast does not say "Signed and sent".
+- `POST /v1/proposals/:id/approve`
+- `PUT /v1/warrant` (this is how a payee change is published)
+- `POST /v1/invites`
+- `POST /v1/safety/resume`
+- `POST /v1/agents` and `POST /v1/agents/:id/revoke`
+- `POST /v1/client-keys`, `POST /v1/client-keys/:id/revoke`, and `POST /v1/client-keys/:id/rotate`
+
+These routes do not exist. Do not add them:
+
+- `POST /v1/keys` and `POST /v1/keys/:id/revoke`
+- `POST /v1/invites/revoke`
+- `POST /v1/members` and `DELETE /v1/members/:id`
+- `POST /v1/payees` and `PATCH /v1/payees/:id`
+
+`GET /v1/payees` and `GET /v1/members` stay as reads. `POST /v1/agents/:id/resume` is an agent pause, not the safety resume, and does not gain a step-up.
 
 ## Tasks, in order
 
-1. P4.T1. Keep two HTTP calls. The browser has to sit between them for the passkey prompt. Options builds the challenge from `mandate/stepup/v1`, the kind, and `cartHash(canonicalCart(...))` for an approval, or the warrant body hash already used by `requireStep` for a rules publish. Verify still returns a grant. Approve consumes that grant inside the same database transaction that writes the lock and the approval event. A second use of the same assertion is 401.
-2. P4.T2. When the flag is on, also require a step-up to issue or revoke a key, create or revoke an invite, remove a member, resume after pause (`POST /v1/safety/resume`), and confirm a payee change. The approver limit check stays where it is and gains the test in case 16. Do not add a members screen.
-3. P4.T3. Store the assertion JSON on the `proposal.approved` event and on the receipt packet. Store the rules signature in `warrants.signature_json`. Old rows stay null and read as legacy.
-4. P4.T4. `web/src/screens/Receipt.tsx` shows who approved and how, for example "Meera, passkey, 14 Oct 11:20". A standing-rule payout links to the warrant version and says whether that version has a signature.
-5. P4.T5. `web/src/lib/verify.ts` checks an ES256 passkey assertion in the browser with WebCrypto. It recomputes the challenge from the receipt fields and checks type, origin, the UV flag, and the signature over `authenticatorData || SHA-256(clientDataJSON)`. Any other algorithm shows "cannot verify here" and never "valid". `Verify.tsx` gains an optional expected-fingerprint field.
-6. P4.T6. The Proof check in `api/src/services/audit.ts` turns red when a human approval has no assertion and is not marked `owner-key` or `demo`, and when the active warrant has no signature and is not marked legacy.
-7. P4.T7. Demo mode gets a "Demo tap" button that sends `x-mandate-demo-tap: 1` and a `method` of `demo`. The receipt shows that line in amber. An optional "Try with my passkey" enrolls a demo passkey. Demo method stays refused outside a demo workspace. The server check for that already exists.
-8. P4.T8. The Today approval card shows amount, payee, category, evidence, a short hash, and the clause before the prompt. After a successful approve the toast says "Signed and sent".
+- [x] P4.T1. `workspaces.passkey_for_money`. New studio and live rows are 1. The default workspace and demos are 0. An old control file gains the column as 0. `requireStep` reads the row, and the env flag still forces the check when it is on. `POST /v1/workspace/passkey-rule` turns the row on only with a live passkey and a one-time grant of kind `passkey-rule`. Tests cover the three defaults and the turn-on path.
+- [ ] P4.T2. Grant columns gain the member check, the payload hash, and `expires_at` of 120 seconds. One use, inside the same database transaction as the action. Approve recomputes the cart. A mismatch is 409 "changed since you looked". Two parallel approves with one grant: one wins. Auth rate class covers `/auth/stepup/options` and `/auth/stepup/verify`. Counter rollback rejects on login and on step-up. Revoke only when another live passkey exists. Otherwise mark suspect, insert an auth event, and keep the credential. Appendix B cases 9 to 17, with case 15 split into the two rollback outcomes.
+- [ ] P4.T3. Store the assertion JSON on `proposal.approved` and on the receipt. Add `warrants.signature_json` as a new checksum step. Do not edit `0001_ops`. Back up a file database first. Migrate a copy of an older database and still read `{ actor, cartHash }`. Wire step-up to the existing routes listed above. Do not add the missing routes.
+- [ ] P4.T4. Enrollment shows the fingerprint and "Save this". The receipt line is who, how, when, and a short fingerprint. A standing-rule payout names the warrant version and whether that version has a signature. Proof colors: missing passkey assertion is red, `owner-key` and `demo` are amber, legacy rows are grey.
+- [ ] P4.T5. Browser verify checks ES256. DER becomes raw r and s. Check rpIdHash, UP, UV, type, and the challenge. Commit Chromium virtual-authenticator vectors and the five negative bit flips. Wording is "valid signature by this key". An unknown algorithm says "cannot verify here". One new passkey-project Playwright test signs in, approves, downloads the receipt, verifies it, tampers, and sees the failure. `gates:fast` does not run Playwright, so that project is run on its own.
+- [ ] P4.T6. Demo mode gets a "Demo tap" button that sends `x-mandate-demo-tap: 1` and method `demo`. The receipt shows that line in amber. An optional "Try with my passkey" enrolls a demo passkey. The server still refuses a demo tap outside a demo workspace.
+- [ ] P4.T7. The Today approval card shows amount, payee, category, evidence, a short hash, and the clause before the prompt. After success the toast says "Signed and sent".
 
-Flags stay off. No new env var. No new dependency. The passkey library is already pinned.
+No new dependency. The passkey library stays on the pinned versions. Do not edit `web/e2e/job.spec.ts` except the toast string if "Signed and sent" replaces the current one.
 
 ## Appendix B cases 9 to 18
 
-All new API tests go in `api/test/stepup.test.ts` and use the existing soft authenticator (`api/test/soft-authenticator.ts`) so the signatures are real ES256 assertions. The flag is on only inside that file.
+New API tests live in `api/test/stepup.test.ts`. Server assertions use `api/test/soft-authenticator.ts`. Browser vectors for P4.T5 come from Chromium, not from that class.
 
 | Case | Test |
 |---|---|
-| 9 Assertion replay fails | `api/test/stepup.test.ts` "a step-up assertion cannot be used twice". The older registration replay in `api/test/phases.test.ts` "registers a passkey and signs in with it" stays. It is not this case. |
-| 10 Assertion for lock A fails on lock B | `api/test/stepup.test.ts` "an assertion bound to one cart hash does not approve another" |
-| 11 UV flag off fails | `api/test/stepup.test.ts` "a step-up with user verification off is refused" |
-| 12 Revoked credential fails | `api/test/stepup.test.ts` "a revoked passkey cannot sign a step-up" |
-| 13 Assertion from another member fails | `api/test/stepup.test.ts` "a passkey from another member cannot approve" |
-| 14 Wrong origin or RP ID fails | `api/test/stepup.test.ts` "a step-up from the wrong origin or relying party id is refused" |
-| 15 Counter rollback revokes the credential | `api/test/stepup.test.ts` "a step-up counter that moves backwards revokes the passkey". Login already revokes. This test is the step-up path, which does not. |
-| 16 Approver over the limit is `approval.over_limit` | `api/test/stepup.test.ts` "an approver over their limit gets approval.over_limit". The member is a cookie approver. `agent.over_limit` does not count. |
-| 17 Proposer approve is 403 | Keep `api/test/api.test.ts` "lets a proposer key ask and read, but never decide, capture, or change the warrant" for the bearer key. Add `api/test/stepup.test.ts` "a cookie proposer cannot approve". |
-| 18 Changed stored approval turns Proof red | `api/test/stepup.test.ts` "a changed stored assertion turns the proof line red". The cart tamper stays `web/e2e/job.spec.ts` "a receipt can be checked in the browser without a key, and a tampered one is caught". `api/test/verify.test.ts` gains "a changed passkey assertion is not valid" for the browser check function. |
-
-Cases 10 to 16 have no test today. This phase is what covers them.
+| 9 Assertion replay fails | "a step-up assertion cannot be used twice" |
+| 10 Assertion for lock A fails on lock B | "an assertion bound to one cart hash does not approve another" |
+| 11 UV flag off fails | "a step-up with user verification off is refused" |
+| 12 Revoked credential fails | "a revoked passkey cannot sign a step-up" |
+| 13 Assertion from another member fails | "a passkey from another member cannot approve" |
+| 14 Wrong origin or RP ID fails | "a step-up from the wrong origin or relying party id is refused" |
+| 15 Rollback with another passkey revokes | "a step-up counter that moves backwards revokes the passkey when another one exists" |
+| 15b Rollback of the last passkey keeps it | "a step-up counter that moves backwards marks the last passkey suspect and keeps it" |
+| 16 Approver over the limit | "an approver over their limit gets approval.over_limit" |
+| 17 Proposer approve is 403 | Keep the bearer test in `api/test/api.test.ts`. Add "a cookie proposer cannot approve". |
+| 18 Changed stored approval turns Proof red | "a changed stored assertion turns the proof line red", plus the existing cart tamper, plus "a changed passkey assertion is not valid", plus the passkey Playwright flow. |
 
 ## Files
 
-Change: `api/src/http/extra.ts`, `api/src/app.ts`, `api/src/auth/passkeys.ts`, `api/src/db/database.ts`, `api/src/services/mandate.ts`, `api/src/services/audit.ts`, `api/src/domain/hash.ts` only if the challenge string needs a helper next to `cartHash`, `web/src/lib/verify.ts`, `web/src/screens/Verify.tsx`, `web/src/screens/Receipt.tsx`, `web/src/screens/Today.tsx`, `docs/DATA.md`, `docs/MASTER_PLAN.md` after each task is proven.
+Change as each task needs them: `api/src/control/store.ts`, `api/src/http/extra.ts`, `api/src/app.ts`, `api/src/auth/passkeys.ts`, `api/src/db/database.ts`, `api/src/db/sql-migrations.ts`, `api/src/services/mandate.ts`, `api/src/services/audit.ts`, `web/src/lib/verify.ts`, `web/src/screens/Verify.tsx`, `web/src/screens/Receipt.tsx`, `web/src/screens/Today.tsx`, `docs/DATA.md`, `docs/SECURITY.md`, `docs/MASTER_PLAN.md` after a task is proven.
 
-Add: `api/test/stepup.test.ts`.
-
-Do not edit `web/e2e/job.spec.ts` except to point an existing assertion at "Signed and sent" if that toast replaces the current one. The 112 job tests must stay green.
+Add: `api/test/stepup.test.ts`. Add one spec under the passkey Playwright project for P4.T5. Do not edit `api/src/dev/e2e-server.ts`.
 
 ## Migration
 
-`ALTER TABLE warrants ADD COLUMN signature_json TEXT` when the column is missing. No new table. Before running it against a file database that already has money, copy that file aside. Tests use `:memory:` and do not need a copy. There is no checksum migration.
-
-## Flags and env
-
-No new flag. No new env var. `REQUIRE_PASSKEY_FOR_MONEY` stays off in `api/.env.example` and on Render. Tests pass the flag in the harness.
+New step id `0002_warrant_signature` adds `warrants.signature_json TEXT`. `0001_ops` stays byte for byte. `migrate()` copies a file database aside before `applySqlSteps` runs a new step. `:memory:` tests do not copy. A test builds an older file, migrates a copy, and reads an old approval payload.
 
 ## Risks
 
-- Binding the challenge to the cart hash changes the step-up grant. A client that signed the proposal id alone will get 401 once the flag is on. The flag is off, so the current console is unchanged until someone turns it on.
-- WebCrypto verification of an ES256 assertion is easy to get wrong and then show "valid". The rule is the opposite: if the algorithm or the signature format is not checked, the page says it cannot verify.
-- Storing the assertion on the receipt puts a public key and a signature in a file the owner can download. That is the point of the check. The file must not gain the PayPal token, the owner key, or the master key.
-
-## Rollback
-
-Leave `phase/4-stepup` unmerged. `REQUIRE_PASSKEY_FOR_MONEY=0` skips `requireStep`. Dropping the branch drops the column add, because nothing is pushed. Old warrants keep working with a null `signature_json`, read as legacy.
+- A client that signed the proposal id alone gets 401 once the rule is on. The default workspace stays off, so the current console is unchanged until the owner turns the rule on.
+- WebCrypto verification is easy to get wrong and then show "valid". If the algorithm or the signature is not checked, the page says it cannot verify.
+- The receipt carries a public key and a signature. It must not gain the PayPal token, the owner key, or the master key.
+- Revoking the only passkey on a rollback would lock the owner out. The last key stays, marked suspect.
 
 ## Out of this phase
 
-Members screen, recovery-code screen, a second passkey in the studio wizard, turning the flag on for a public URL, Lighthouse, and the Ollama free-plan quiet-clerk test. That last one belongs in P12: if the provider refuses for usage, the clerk goes quiet with a clear message and quick asks still work.
+Members screen, recovery-code screen, a second passkey in the studio wizard, turning the flag on for a public URL, Lighthouse, and the Ollama free-plan quiet-clerk test. That last one belongs in P12.

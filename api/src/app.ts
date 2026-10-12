@@ -1,5 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { cookieWriteAllowed, readSessionCookie } from './auth/cookies'
+import { passkeyRuleBinding } from './auth/passkeys'
 import type { ControlStore } from './control/store'
 import { mountExtra, type ProductCtx } from './http/extra'
 import { clientIp } from './ops/client-ip'
@@ -159,6 +160,7 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/notify\/test$/ },
   { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
+  { method: 'POST', pattern: /^\/v1\/workspace\/passkey-rule$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit|flags)$/ },
   { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
   { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
@@ -566,6 +568,23 @@ export function createApp(deps: AppDeps) {
   app.post('/v1/safety/resume', async (c) => c.json(await services.safety.resume('owner')))
   app.get('/v1/session', (c) => c.json({ role: c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName }, demoReset: deps.config.demoReset === true }))
   app.get('/v1/flags', (c) => c.json(deps.config.flags ?? defaultFlags()))
+  app.post('/v1/workspace/passkey-rule', async (c) => {
+    assertJson(c)
+    if (!deps.control) throw new Problem(404, 'flag/disabled', 'Not available', 'This server has no workspace record.')
+    const body = await readJson(c) as { enabled?: unknown }
+    if (typeof body.enabled !== 'boolean') throw new Problem(400, 'request.invalid', 'Request is invalid', 'Say whether the passkey rule is on.')
+    const id = deps.workspace?.id ?? 'ws_default'
+    const row = deps.control.workspace(id)
+    if (!row) throw new Problem(404, 'tenant/not-found', 'Not found', 'No workspace has that id.')
+    if (body.enabled === (row.passkey_for_money === 1)) return c.json({ passkeyForMoney: row.passkey_for_money === 1 })
+    const memberId = c.get('memberId')
+    if (!memberId) throw new Problem(403, 'auth/passkey-required', 'Enroll a passkey first', 'Sign in with a passkey before changing this rule.')
+    const live = deps.control.credentials(memberId).filter((item) => !item.revoked_at)
+    if (live.length === 0) throw new Problem(409, 'auth/passkey-required', 'Enroll a passkey first', 'This account has no passkey yet.')
+    requireStep(c, deps, 'passkey-rule', passkeyRuleBinding(body.enabled), true)
+    deps.control.setPasskeyForMoney(id, body.enabled)
+    return c.json({ passkeyForMoney: body.enabled })
+  })
   app.get('/.well-known/mandate-keys.json', (c) => c.json(service.publicKeys()))
   app.get('/v1/warrant', (c) => c.json(service.currentWarrant()))
   app.get('/v1/warrant/versions', (c) => c.json(service.warrantVersions()))
@@ -1008,10 +1027,18 @@ export function createApp(deps: AppDeps) {
   return app
 }
 
-function requireStep(c: { req: { header: (name: string) => string | undefined } }, deps: AppDeps, kind: string, binding: string): void {
+function workspacePasskeyOn(deps: AppDeps): { on: boolean; mode: 'default' | 'demo' | 'studio' | 'live' } {
+  const id = deps.workspace?.id ?? 'ws_default'
+  const row = deps.control?.workspace(id)
+  if (row) return { on: row.passkey_for_money === 1, mode: row.mode }
+  return { on: false, mode: deps.workspace?.mode ?? 'default' }
+}
+
+function requireStep(c: { req: { header: (name: string) => string | undefined } }, deps: AppDeps, kind: string, binding: string, force = false): void {
   const flags = deps.config.flags ?? defaultFlags()
-  if (!flags.requirePasskeyForMoney) return
-  if ((deps.workspace?.mode ?? 'default') === 'demo' && c.req.header('x-mandate-demo-tap') === '1') return
+  const workspace = workspacePasskeyOn(deps)
+  if (!force && !flags.requirePasskeyForMoney && !workspace.on) return
+  if (!force && workspace.mode === 'demo' && c.req.header('x-mandate-demo-tap') === '1') return
   const grant = c.req.header('x-mandate-stepup')
   if (!grant || !deps.control?.consumeGrant(grant, kind, binding, deps.now().toISOString())) {
     throw new Problem(401, 'auth/stepup-required', 'Sign this with your passkey', 'The tap needs a fresh passkey signature.')

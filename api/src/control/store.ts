@@ -16,6 +16,8 @@ export type WorkspaceRow = {
   expires_at: string | null
   last_active_at: string
   signing_key_sealed: string | null
+  /** 1 when money actions on this workspace need a passkey step-up. */
+  passkey_for_money: number
 }
 
 const SCHEMA = `
@@ -30,7 +32,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   created_at TEXT NOT NULL,
   expires_at TEXT,
   last_active_at TEXT NOT NULL,
-  signing_key_sealed TEXT
+  signing_key_sealed TEXT,
+  passkey_for_money INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS members (
   id TEXT PRIMARY KEY,
@@ -160,25 +163,43 @@ export function ipHash(ip: string, pepper: string): string {
   return createHash('sha256').update(`${pepper}:${ip}`).digest('hex').slice(0, 32)
 }
 
+/** New studios and live workspaces require a passkey. The default studio and demos do not. */
+export function passkeyForMoneyDefault(mode: WorkspaceMode): 0 | 1 {
+  return mode === 'studio' || mode === 'live' ? 1 : 0
+}
+
 export class ControlStore {
   constructor(private readonly db: DatabaseSync, private readonly pepper: string) {
     this.db.exec(SCHEMA)
+    this.ensurePasskeyColumn()
+  }
+
+  /** An older control file has no passkey column. Adding it leaves every existing row off. */
+  private ensurePasskeyColumn(): void {
+    const cols = this.db.prepare('PRAGMA table_info(workspaces)').all() as Array<{ name: string }>
+    if (cols.some((col) => col.name === 'passkey_for_money')) return
+    this.db.exec('ALTER TABLE workspaces ADD COLUMN passkey_for_money INTEGER NOT NULL DEFAULT 0')
   }
 
   ensureDefault(dbPath: string, now: string): void {
     const row = this.workspace('ws_default')
     if (row) return
-    this.db.prepare(`INSERT INTO workspaces (id, slug, name, mode, paypal_mode, db_path, status, created_at, expires_at, last_active_at, signing_key_sealed)
-      VALUES ('ws_default', 'default', 'Line Studio', 'default', 'sandbox', ?, 'active', ?, NULL, ?, NULL)`).run(dbPath, now, now)
+    this.db.prepare(`INSERT INTO workspaces (id, slug, name, mode, paypal_mode, db_path, status, created_at, expires_at, last_active_at, signing_key_sealed, passkey_for_money)
+      VALUES ('ws_default', 'default', 'Line Studio', 'default', 'sandbox', ?, 'active', ?, NULL, ?, NULL, 0)`).run(dbPath, now, now)
   }
 
   workspace(id: string): WorkspaceRow | null {
     return this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as WorkspaceRow | undefined ?? null
   }
 
-  insertWorkspace(row: WorkspaceRow): void {
-    this.db.prepare(`INSERT INTO workspaces (id, slug, name, mode, paypal_mode, db_path, status, created_at, expires_at, last_active_at, signing_key_sealed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.slug, row.name, row.mode, row.paypal_mode, row.db_path, row.status, row.created_at, row.expires_at, row.last_active_at, row.signing_key_sealed)
+  insertWorkspace(row: Omit<WorkspaceRow, 'passkey_for_money'> & { passkey_for_money?: number }): void {
+    const on = row.passkey_for_money ?? passkeyForMoneyDefault(row.mode)
+    this.db.prepare(`INSERT INTO workspaces (id, slug, name, mode, paypal_mode, db_path, status, created_at, expires_at, last_active_at, signing_key_sealed, passkey_for_money)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.slug, row.name, row.mode, row.paypal_mode, row.db_path, row.status, row.created_at, row.expires_at, row.last_active_at, row.signing_key_sealed, on)
+  }
+
+  setPasskeyForMoney(id: string, on: boolean): void {
+    this.db.prepare('UPDATE workspaces SET passkey_for_money = ? WHERE id = ?').run(on ? 1 : 0, id)
   }
 
   touchWorkspace(id: string, now: string): void {
