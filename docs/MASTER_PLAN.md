@@ -1,42 +1,179 @@
 # Mandate master plan
 
-Status: phases 1 to 12 are in the working tree on top of phase 0. New flags stay off. Browser tests and Lighthouse were not re-run.
-Date of this run: 12 October 2026.
+Status audit on 12 October 2026. No new product work in this pass. Nothing pushed. Nothing deployed.
+Commits: `65a30b4` is phase 0. `9a2ea0b` is phases 1 to 12 in one commit on `phase/0-baseline`. Older behavior is already on main at `1ac59cd`.
+A box is ticked only when the task is done and a test or file proves the whole task. Partial and not started stay unticked.
 
-The full phase text (P1 through P12), the shared contracts, and the appendices are the plan the human supplied with `/phase-run 0`. This file records what phase 0 verified and what it changed. Do not start phase 1 until the human accepts this phase.
+## P0
 
-## Assumptions checked for phase 0
+- [ ] P0.T1 partial. `docs/DECISIONS.md` records 509 API tests and 56 red-team tests. Browser counts were not from a fresh run. `65a30b4`
+- [x] P0.T2 `package.json` scripts `gates` and `gates:fast`. `65a30b4`
+- [x] P0.T3 `scripts/check-secrets.mjs` and `scripts/check-secrets.allow`. `65a30b4`
+- [ ] P0.T4 partial. The API count and the Bedrock mismatch are recorded. Docs were not rewritten to call Bedrock the default. `65a30b4`
+- [x] P0.T5 `api/test/flags.test.ts`. `65a30b4`
+- [x] P0.T6 `docs/DECISIONS.md`, `docs/SECURITY.md`, `CHANGELOG.md`. `65a30b4`
+- [x] P0.T7 `api/.env.example` lists current and planned names. `65a30b4`
 
-- `api/` and `web/` each have a `package.json`. `docs/` does not. Docs stay markdown. Gates live in the root `package.json`. See `docs/DECISIONS.md`.
-- API tests run offline with the scripted model and Fake PayPal. 509 passed.
-- `.gitignore` covered env files, `api/data/`, and `*.sqlite`. `backups/` was missing and is now ignored.
-- The plan's phrase "default is Bedrock" does not match the code. The default model is Ollama Cloud. Docs were not rewritten to say Bedrock.
+## Task table
 
-## P0 tasks
+| Task | Status | Proof | Commit |
+|---|---|---|---|
+| P0.T1 | partial | Phase 0 record in `docs/DECISIONS.md` is 509 API tests, and that record did not include a fresh browser run. The audit gates run is in Gates below. It does not complete this task | `65a30b4` |
+| P0.T2 | done | root `package.json` `gates`, `gates:fast` | `65a30b4` |
+| P0.T3 | done | `scripts/check-secrets.mjs` | `65a30b4` |
+| P0.T4 | partial | `docs/DECISIONS.md` "Assumptions that did not match the code" | `65a30b4` |
+| P0.T5 | done | `api/test/flags.test.ts` | `65a30b4` |
+| P0.T6 | done | `docs/DECISIONS.md`, `docs/SECURITY.md`, `CHANGELOG.md` | `65a30b4` |
+| P0.T7 | done | `api/.env.example` | `65a30b4` |
+| P1.T1 | partial | `api/src/config.ts` already parsed env. `api/src/ops/secret.ts` `SecretString` is not wrapped around boot secrets | `9a2ea0b` |
+| P1.T2 | partial | `api/test/phases.test.ts` "redacts a canary and a bearer token". Not every route class | `9a2ea0b` |
+| P1.T3 | partial | `api/test/phases.test.ts` "limits auth attempts with an injected clock". Classed limits run only when `TRUST_PROXY=1`. `auth_throttle` is not what the live bucket uses | `9a2ea0b` |
+| P1.T4 | partial | `api/test/phases.test.ts` "does not call the model when the budget is zero". `OPEN_CAPS` in `api/src/ops/budget.ts`. Kill route exists. Quick asks are not in that test | `9a2ea0b` |
+| P1.T5 | partial | `api/test/phases.test.ts` "sends the extra security headers and the health alias". Not asserted on `/app`, `/v1`, and `/auth` | `9a2ea0b` |
+| P1.T6 | partial | `api/test/phases.test.ts` "refuses a migration whose checksum changed". No backup before migrate. No seeded-copy test | `9a2ea0b` |
+| P1.T7 | partial | same health alias test. `GET /readyz` redirects. No SSE caps. Shutdown in `api/src/main.ts` is older | `9a2ea0b` |
+| P1.T8 | partial | `api/test/phases.test.ts` "serves metrics only to the admin key" | `9a2ea0b` |
+| P1.T9 | partial | `scripts/db-backup.mjs`, `scripts/db-restore.mjs`. No test | `9a2ea0b` |
+| P2.T1 | partial | `api/src/control/store.ts` `ensureDefault`. `api/test/phases.test.ts` "stays a single studio when the flags are off" | `9a2ea0b` |
+| P2.T2 | partial | `api/src/tenancy/registry.ts` max 50, idle 10 minutes. Handlers were not moved onto the request | `9a2ea0b` |
+| P2.T3 | partial | `api/test/phases.test.ts` "isolates a demo, rejects a bad id, and will not delete a studio". MCP is not under `/w` | `9a2ea0b` |
+| P2.T4 | partial | seal and open in that same test. No per-workspace public key route | `9a2ea0b` |
+| P2.T5 | not started | `external_refs` methods exist. Webhooks do not write them | `9a2ea0b` |
+| P2.T6 | partial | template is built in `api/src/boot.ts` when flags are on. No `npm run seed:template`. No number test | `9a2ea0b` |
+| P2.T7 | partial | demo start is in the isolation test. `reset`, `switch`, and `simulate` are in `api/src/http/extra.ts` and have no test | `9a2ea0b` |
+| P2.T8 | partial | caps are read in `POST /demo/start`. No sixth-demo test, no disk quota, no separate demo model cap | `9a2ea0b` |
+| P2.T9 | partial | isolation test: `deleteDemo` on a studio returns false. No 15 minute job. The file is not removed by a scheduler | `9a2ea0b` |
+| P2.T10 | not started | no tenant scheduler | |
+| P2.T11 | partial | isolation test covers 404, 400, and studio delete. Not the full Appendix B set | `9a2ea0b` |
+| P3.T1 | partial | `api/src/control/store.ts` schema. No migration test | `9a2ea0b` |
+| P3.T2 | partial | `api/test/phases.test.ts` "registers a passkey and signs in with it" | `9a2ea0b` |
+| P3.T3 | partial | `api/src/auth/cookies.ts`, CSRF in `api/src/app.ts`. No origin test | `9a2ea0b` |
+| P3.T4 | partial | bearer then cookie in `api/src/app.ts`. Old key tests still pass in the API suite. No new test names this | `9a2ea0b` |
+| P3.T5 | partial | role checks in `api/src/app.ts`. No role-matrix test | `9a2ea0b` |
+| P3.T6 | partial | `actor_json` written in `api/src/db/repo.ts`. No test | `9a2ea0b` |
+| P3.T7 | partial | `GET /auth/sessions` and `GET /auth/events` in `api/src/http/extra.ts`. No test | `9a2ea0b` |
+| P3.T8 | partial | `useRecovery` and the recovery block in code. No issue, use, or regenerate test | `9a2ea0b` |
+| P3.T9 | partial | `revokeCredential` refuses the last key in `api/src/control/store.ts`. No HTTP test | `9a2ea0b` |
+| P3.T10 | not started | no Chromium virtual authenticator test | |
+| P4.T1 | partial | `POST /auth/stepup/options` and `/verify` in `api/src/http/extra.ts`. No test | `9a2ea0b` |
+| P4.T2 | partial | step-up is only on approve and `PUT /v1/warrant`, and only when the flag is on. Approver limit is in `api/src/app.ts`. No test | `9a2ea0b` |
+| P4.T3 | not started | receipts do not store the assertion | |
+| P4.T4 | not started | no "Meera, passkey" receipt line | |
+| P4.T5 | not started | verify page checks the cart, not a passkey | |
+| P4.T6 | not started | Proof does not require an assertion | |
+| P4.T7 | partial | `x-mandate-demo-tap` in `requireStep`. No button, no amber receipt, no test | `9a2ea0b` |
+| P4.T8 | partial | the approval card already shows amount and payee (`web/e2e/job.spec.ts`). No "Signed and sent" | `1ac59cd` |
+| P5.T1 | partial | `web/src/screens/Landing.tsx` has the three doors and the trust strip. The h1 is still "Agents can ask." No test of the new doors | `9a2ea0b` |
+| P5.T2 | partial | `api.demoStart` and the demo banner in `web/src/components/Shell.tsx`. No role switcher, reset, or live-proof page. No test | `9a2ea0b` |
+| P5.T3 | partial | `web/src/screens/Studio.tsx` is name plus one passkey. No second passkey, recovery codes, or saved progress | `9a2ea0b` |
+| P5.T4 | done | `web/src/screens/Unlock.tsx` has the authority sentence. Route `/app/unlock` | `9a2ea0b` |
+| P5.T5 | not started | no role landings | |
+| P5.T6 | partial | `web/vite.config.ts` `id` and shortcuts. No "Unlock with Face ID" on an expired session | `9a2ea0b` |
+| P5.T7 | not started | the old tour is unchanged. No 3-mark coach | |
+| P5.T8 | partial | `web/src/screens/Studio.tsx` says the browser cannot use passkeys | `9a2ea0b` |
+| P5.T9 | not started | no new browser tests. Phone checklist not run | |
+| P6.T1 | partial | invite hash, join page, `takeInvite` in `api/src/control/store.ts` and `web/src/screens/Join.tsx`. No step-up. No test. Inviter name is not shown | `9a2ea0b` |
+| P6.T2 | partial | last owner is protected in the store. `GET /v1/members` exists. No members screen | `9a2ea0b` |
+| P6.T3 | not started | old `mnd_ag_` and `mnd_cl_` keys were left as they are | |
+| P6.T4 | partial | `web/e2e/job.spec.ts` "Connect any agent shows how to plug in an MCP agent". Not the new template wizard | `1ac59cd` |
+| P6.T5 | partial | `api/test/agent-keys.test.ts` hourly counts and last seen. Not a scorecard into a new breaker | `1ac59cd` |
+| P6.T6 | not started | no delegation end date | |
+| P7.T1 | partial | `safety_events` and pause already deny. `api/test/safety.test.ts`. Not a new gate input from this commit | `1ac59cd` |
+| P7.T2 | partial | `web/e2e/job.spec.ts` "the owner can stop everything with one button". Resume does not require a passkey. One-agent pause is the older suspend | `1ac59cd` |
+| P7.T3 | partial | `api/test/agent-keys.test.ts` "suspends only the misbehaving agent". Not the full trip list, and the owner cannot edit it with step-up | `1ac59cd` |
+| P7.T4 | partial | same e2e pause test. No "Stopped" proof on Today | `1ac59cd` |
+| P7.T5 | partial | `api/test/phases.test.ts` "tries a payment without writing a row" sees Priya in `GET /v1/payees` | `9a2ea0b` |
+| P7.T6 | partial | `api/src/domain/payee-book.ts`. `api/test/phases.test.ts` "never turns a refusal into an approval". No test that a new payee needs approval | `9a2ea0b` |
+| P7.T7 | not started | no payee screen | |
+| P8.T1 | done | `api/test/phases.test.ts` "tries a payment without writing a row" | `9a2ea0b` |
+| P8.T2 | partial | `web/e2e/job.spec.ts` "the owner can try a request and check the rules with cases" | `1ac59cd` |
+| P8.T3 | partial | same e2e test | `1ac59cd` |
+| P8.T4 | partial | `web/e2e/job.spec.ts` "a suggested rule shows on Today". Publishing does not require a passkey | `1ac59cd` |
+| P8.T5 | partial | `api/test/policy.test.ts`, `api/test/intent.test.ts`, e2e "a pasted policy is read sentence by sentence". The 20,000 character cap and `FLAG_POLICY_PASTE` are not what that screen uses | `1ac59cd` |
+| P8.T6 | not started | `FLAG_SECOND_READER` is parsed and unused | `9a2ea0b` |
+| P8.T7 | not started | no 30-wording eval | |
+| P9.T1 | partial | `web/e2e/job.spec.ts` "Ask Mandate opens from any screen" | `1ac59cd` |
+| P9.T2 | partial | clerk context is `jobId` and `proposalId` in `web/src/lib/api.ts`. Not `receiptId` or `dealId` | `1ac59cd` |
+| P9.T3 | partial | `api/test/shares.test.ts`. No payee-role payments page | `1ac59cd` |
+| P9.T4 | not started | `PAYPAL_LOGIN_ENABLED` stays off. No fake IdP | `9a2ea0b` |
+| P10.T1 | partial | `api/test/property.test.ts` "keep every promise, in 40 runs of 36 random steps". Not fast-check over tenant A and B | `1ac59cd` |
+| P10.T2 | partial | `api/test/replay.test.ts`. Not added as a Proof control in this work | `1ac59cd` |
+| P10.T3 | partial | `api/test/audit.test.ts`. No member, assertion, or safety-event lines from this plan | `1ac59cd` |
+| P10.T4 | partial | `web/e2e/job.spec.ts` "the Proof page lists what Mandate promises". No `docs/guarantees.json` or `npm run guarantees` | `1ac59cd` |
+| P10.T5 | not started | Appendix B cases are not in the red team file | |
+| P11.T1 | partial | `api/test/phases.test.ts` "removes an unknown tool and forwards propose". Propose calls the callback, not `POST /v1/proposals` | `9a2ea0b` |
+| P11.T2 | done | `packages/guard/README.md` and that same test | `9a2ea0b` |
+| P11.T3 | not started | `MCP_EXPOSE_READ_TOOLS` is parsed in `api/src/flags.ts` and never read by the MCP server | `9a2ea0b` |
+| P12.T1 | not started | no recorded checklist pass | |
+| P12.T2 | not started | no chaos tests | |
+| P12.T3 | not started | no p95 test, no Lighthouse number from this run | |
+| P12.T4 | partial | `web/e2e/job.spec.ts` "every signed-in screen passes axe". Passkey keyboard walk was not done | `1ac59cd` |
+| P12.T5 | partial | `docs/DATA.md` says what is actually kept. It does not trim logs at 14 days or auth events at 90 | `9a2ea0b` |
+| P12.T6 | partial | `CHANGELOG.md`, `docs/SECURITY.md`, two OpenAPI lines, one Postman request. No `docs/ONBOARDING.md` | `9a2ea0b` |
+| P12.T7 | partial | `npm run preflight` in `scripts/preflight.mjs`. `render.yaml` was not given a workspace disk. Not deployed | `9a2ea0b` |
 
-- [x] P0.T1 API test count recorded in `docs/DECISIONS.md`. Browser tests were not re-run.
-- [x] P0.T2 `npm run gates` and `npm run gates:fast`.
-- [x] P0.T3 `scripts/check-secrets.mjs` and `scripts/check-secrets.allow`.
-- [x] P0.T4 Doc conflicts that were real: the API count is 509. Bedrock was not made the default. The live-chain sentence already said the unbroken chain was not run.
-- [x] P0.T5 `api/src/flags.ts`, `GET /v1/flags` (owner only), switches on System.
-- [x] P0.T6 `docs/DECISIONS.md`, `docs/SECURITY.md`, `CHANGELOG.md`.
-- [x] P0.T7 Planned flag names added to `api/.env.example` as comments and empty placeholders.
+## Appendix B cases 1 to 35
 
-## Phases 1 to 12
+| Case | Test | Gap |
+|---|---|---|
+| 1 Cookie fails after logout | none | |
+| 2 Cookie from before login fails after login | none | |
+| 3 Wrong Origin on a cookie POST is 403 | none | |
+| 4 Cookie POST without `X-Mandate-Client` is 403 | none | |
+| 5 Recovery code once, and that session cannot approve | none | code only |
+| 6 Key brute force 429 and lockout, timing-safe | none | rate-limit unit test is not this |
+| 7 Revoked member loses every session | none | |
+| 8 Last owner cannot be removed or demoted | none | store only |
+| 9 Assertion replay fails | partial: "registers a passkey and signs in with it" replays a registration challenge | not a step-up replay |
+| 10 Assertion for lock A fails on lock B | none | |
+| 11 UV flag off fails | none | |
+| 12 Revoked credential fails | none | |
+| 13 Assertion from another member fails | none | |
+| 14 Wrong origin or RP ID fails | none | |
+| 15 Counter rollback revokes the credential | none | |
+| 16 Approver over the limit is `approval.over_limit` | none | code only |
+| 17 Proposer approve is 403 | `api/test/api.test.ts` "lets a proposer key ask and read, but never decide, capture, or change the warrant" | bearer key, not a cookie proposer |
+| 18 Changed stored approval turns Proof red | `web/e2e/job.spec.ts` "a receipt can be checked in the browser without a key, and a tampered one is caught" | cart tamper, not a passkey assertion |
+| 19 Reused, expired, or revoked invite fails | none | |
+| 20 Two parallel joins, one wins | none | |
+| 21 Invite for A fails on B | none | |
+| 22 Cookie, key, or id from A on B is 404 | partial: "isolates a demo, rejects a bad id, and will not delete a studio" | demo cookie on `ws_default` only |
+| 23 Workspace id with `../` is 400 | none | the bad-id test uses `ws_not_a_workspace` |
+| 24 Random work in A leaves B's checksum unchanged | none | |
+| 25 Demo switch, simulate, and demo tap fail outside a demo | none | |
+| 26 Sixth demo from one IP in an hour is 429 | none | |
+| 27 Cleanup never deletes default, studio, or live | partial: same isolation test, `deleteDemo` on a studio is false | no cleanup job, no default or live row |
+| 28 Budget 0 means zero model calls, quick asks still work | partial: "does not call the model when the budget is zero" | quick asks are not asserted |
+| 29 Kill switch stops all agents | none | |
+| 30 Spam trips the breaker, resume needs step-up, proposer cannot pause | partial: `api/test/agent-keys.test.ts` "suspends only the misbehaving agent" and e2e pause | no step-up resume, no proposer pause test |
+| 31 First payment to a new payee needs approval | none | |
+| 32 Pending payee change blocks payouts | none | |
+| 33 Pasted policy with a hidden instruction is flagged and not published | `api/test/intent.test.ts` "does not treat a forwarded note"; e2e "a pasted policy is read sentence by sentence" | |
+| 34 Simulate writes zero rows | `api/test/phases.test.ts` "tries a payment without writing a row" | |
+| 35 No test output or log contains a canary | partial: "redacts a canary and a bearer token" and `scripts/check-secrets.mjs` | not a log sweep of the suite |
 
-Built behind flags that default to off. Decisions D1 to D6 are in `docs/DECISIONS.md`.
+Cases with no test: 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 19, 20, 21, 23, 24, 25, 26, 29, 31, 32.
 
-- P1. Budgets, rate classes (only when `TRUST_PROXY=1`), headers, healthz, ops metrics, migration checksums, `npm run db:backup` and `npm run db:restore`.
-- P2. A cached app per workspace. Demo start copies a template and uses Fake PayPal. A demo cookie on the default studio is 404. `deleteDemo` refuses a studio row.
-- P3. Passkey register and login through the pinned library, cookie sessions, CSRF on cookie writes, recovery sessions that cannot approve.
-- P4. Step-up on approve and on publishing rules, only when `REQUIRE_PASSKEY_FOR_MONEY` is on. Receipts do not yet store the assertion. The verify page does not check it in the browser.
-- P5. Welcome doors: Try the demo, Create your studio, I have a key. The old heading and the Unlock link stay, because the browser tests look for them. The studio screen is name plus one passkey, then Today. It does not yet issue recovery codes.
-- P6. Invites, a join page that keeps the token in the hash, and a session cookie after accept. There is no members screen in the console yet.
-- P7. Payee book on the ledger. Seeded payees are active and owner attested. `GET /v1/payees` is owner-only and 404 while the flag is off. The console has no payee screen yet.
-- P8. `POST /v1/rules/simulate` runs the pure try and checks that proposal, event, and payee counts do not change. Paste-a-policy and the case generator already existed.
-- P9. Command palette already existed. PayPal login was not built (`PAYPAL_LOGIN_ENABLED` stays off).
-- P10. One property check: a denial stays a denial through the payee book and through pause. A full random money sequence was not added. The guarantees list on Proof already existed.
-- P11. `packages/guard` classifies tools and throws on an unknown tool. README is in that folder. Read tools stay hidden unless `MCP_EXPOSE_READ_TOOLS` is on.
-- P12. `npm run preflight`. Threat-model notes in `docs/SECURITY.md`. This file. Not deployed.
+## Confirmed facts, not changes
 
-Not claimed: a full `npm run gates` (Playwright), Lighthouse, axe on the new screens, a phone install, chaos tests for a full disk, or a second model reader.
+- The workspace cache caps at 50 open apps and closes one that has been idle for 10 minutes (`api/src/tenancy/registry.ts`).
+- Model caps are numbers: 10,000,000 global tokens a day, 1,000,000 per workspace, 4,096 output tokens, 8 steps (`OPEN_CAPS`). A cap of 0 refuses the call.
+- `POST /demo/start` is off unless both tenancy and the demo flag are on. With `TRUST_PROXY=0`, `clientIp` is `direct` for every caller, so the per-IP demo cap (default 5 an hour) is one bucket for the whole server. The classed limiter does not run. The older per-minute bucket still counts an anonymous caller by the first `X-Forwarded-For` hop, even when `TRUST_PROXY` is off.
+
+## Gates
+
+`npm run gates` on 12 October 2026. Exit code 0. The command is hygiene, typecheck, the API suite, the secret check, the web build, then Playwright. Lighthouse is not part of this command and was not run. This run ticks no extra task.
+
+Hygiene (`node scripts/ci/hygiene.mjs`): 23 checks passed. Node pin, both lockfiles, no tracked secret files, Render deploy-after-checks and `/ready`, production `NODE_ENV`, no secrets in `render.yaml`, and the four workflows declare permissions, pin actions to a SHA, and do not use `pull_request_target`.
+
+Typecheck: `tsc --noEmit` in `api` and `web`. Both clean.
+
+API tests: vitest 5.0.3, 45 files passed, 522 tests passed. Started 11:59:24. Duration 8.24s. The only warning is the Node SQLite experimental warning.
+
+Secret check: passed, 302 tracked files.
+
+Web build: vite 8.3.2, 2452 modules, built in 875ms. Warning: some chunks are larger than 1600 kB. `ControlRoom-hQ7W4Fko.js` is 4,602.45 kB (gzip 1,281.49 kB). `index.esm` is 1,194.65 kB. PWA precache is 40 entries (2454.12 KiB).
+
+Playwright (`npm --prefix web run e2e`): 112 passed (7.4m), 1 worker. Desktop tests 1 to 56 and phone tests 57 to 112, all in `web/e2e/job.spec.ts`. Axe runs inside that suite. "a receipt has a guide, and the open tour passes axe" is desktop 10 and phone 66. "every signed-in screen passes axe (WCAG 2.1 AA)" is desktop 30 and phone 86. No failures.
+
+P12.T3 stays not started. There is no p95 number and no Lighthouse number.
