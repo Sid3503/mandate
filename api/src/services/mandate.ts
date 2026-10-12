@@ -378,7 +378,7 @@ export class MandateService {
     return cartHash(this.cartFields(row))
   }
 
-  approve(id: string, assertion: unknown = null, stamp: { method: 'passkey' | 'owner-key' | 'demo'; fingerprint?: string | null } | null = null): HttpResult {
+  approve(id: string, assertion: unknown = null, stamp: { method: 'passkey' | 'owner-key' | 'demo'; fingerprint?: string | null; publicKey?: { kty: 'EC'; crv: 'P-256'; alg: -7; x: string; y: string } | null; rpId?: string | null; origin?: string | null; challenge?: string | null } | null = null): HttpResult {
     const now = this.iso()
     return this.repo.transaction(() => {
       const row = this.require(id)
@@ -421,10 +421,13 @@ export class MandateService {
       const hash = cartHash(fields)
       this.repo.lockProposal(row.id, hash, this.signer.sign(lockMessage(row.id, hash)), now)
       const method = stamp?.method ?? (assertion ? 'passkey' : 'owner-key')
-      const base = { actor: 'owner', cartHash: hash, method }
-      const payload = assertion
-        ? { ...base, assertion, ...(stamp?.fingerprint ? { fingerprint: stamp.fingerprint } : {}) }
-        : base
+      const payload: Record<string, unknown> = { actor: 'owner', cartHash: hash, method }
+      if (assertion) payload.assertion = assertion
+      if (stamp?.fingerprint) payload.fingerprint = stamp.fingerprint
+      if (stamp?.publicKey) payload.publicKey = stamp.publicKey
+      if (stamp?.rpId) payload.rpId = stamp.rpId
+      if (stamp?.origin) payload.origin = stamp.origin
+      if (stamp?.challenge) payload.challenge = stamp.challenge
       this.repo.insertEvent(randomUUID(), row.id, 'proposal.approved', row.clause, payload, now)
       return { status: 200, body: toView(this.require(id)) }
     })

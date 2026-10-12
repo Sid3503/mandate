@@ -1,0 +1,29 @@
+{
+  "actor": "owner",
+  "cartHash": "2e78c8a8b221a642f94a32510673a5ef1e6bc7d8a2b1c0ee87e1d6bb3c0f23ce",
+  "method": "passkey",
+  "assertion": {
+    "id": "mnC73uU-_ROqdl9db66th7K0wrbAM8dREQuZ69VP6oY",
+    "rawId": "mnC73uU-_ROqdl9db66th7K0wrbAM8dREQuZ69VP6oY",
+    "response": {
+      "authenticatorData": "SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAw",
+      "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiU0Zoa1ZHVk5VMkV5WkV4WlUxcHljbWxmVFdwbFJWWnpVMFE1U1VKVU5YVkpNVlp6ZUUwemJXdDNTUSIsIm9yaWdpbiI6Imh0dHA6Ly9sb2NhbGhvc3Q6ODc3NyIsImNyb3NzT3JpZ2luIjpmYWxzZSwib3RoZXJfa2V5c19jYW5fYmVfYWRkZWRfaGVyZSI6ImRvIG5vdCBjb21wYXJlIGNsaWVudERhdGFKU09OIGFnYWluc3QgYSB0ZW1wbGF0ZS4gU2VlIGh0dHBzOi8vZ29vLmdsL3lhYlBleCJ9",
+      "signature": "MEUCIQCWRRqOUXWVAaDsXdeywM_hkrelgOsMp4vJzwbkr11qwwIgGzgvbW0Kc2hGweRH0Lgi5SN8eLhdAlsuWzP9lEl07mU",
+      "userHandle": "MTE5YmVjMDItNzYwMi00ODk0LWEwYjgtZTY5YzNkZjZiOWJk"
+    },
+    "type": "public-key",
+    "clientExtensionResults": {},
+    "authenticatorAttachment": "platform"
+  },
+  "fingerprint": "9a70bbdee53efd13",
+  "publicKey": {
+    "kty": "EC",
+    "crv": "P-256",
+    "alg": -7,
+    "x": "19DCYcGIRBAfDBxZnnOON79fOBaWJ9s_b1IFOfvia9A",
+    "y": "uPxzA52dMuP_JJNl9r_CuHmfChCD3rtl3cIGmffns1E"
+  },
+  "rpId": "localhost",
+  "origin": "http://localhost:8777",
+  "challenge": "SFhkVGVNU2EyZExZU1pycmlfTWplRVZzU0Q5SUJUNXVJMVZzeE0zbWt3SQ"
+}

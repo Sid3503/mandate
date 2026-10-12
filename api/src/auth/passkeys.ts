@@ -5,6 +5,7 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from '@simplewebauthn/server'
+import { cose, decodeCredentialPublicKey } from '@simplewebauthn/server/helpers'
 import type { AuthenticationResponseJSON, RegistrationResponseJSON, WebAuthnCredential } from '@simplewebauthn/server'
 import type { ControlStore } from '../control/store'
 
@@ -16,6 +17,19 @@ function b64(bytes: Uint8Array): string {
 
 export function credentialFingerprint(publicKey: Uint8Array): string {
   return createHash('sha256').update(publicKey).digest('hex').slice(0, 16)
+}
+
+export type Es256Jwk = { kty: 'EC'; crv: 'P-256'; alg: -7; x: string; y: string }
+
+/** ES256 P-256 only. Any other key is null, so the receipt says it cannot verify that algorithm. */
+export function es256PublicJwk(publicKeyBase64Url: string): Es256Jwk | null {
+  const decoded = decodeCredentialPublicKey(new Uint8Array(Buffer.from(publicKeyBase64Url, 'base64url'))) as Map<number, unknown>
+  const alg = decoded.get(cose.COSEKEYS.alg)
+  const crv = decoded.get(cose.COSEKEYS.crv)
+  const x = decoded.get(cose.COSEKEYS.x)
+  const y = decoded.get(cose.COSEKEYS.y)
+  if (alg !== cose.COSEALG.ES256 || crv !== cose.COSECRV.P256 || !(x instanceof Uint8Array) || !(y instanceof Uint8Array)) return null
+  return { kty: 'EC', crv: 'P-256', alg: -7, x: Buffer.from(x).toString('base64url'), y: Buffer.from(y).toString('base64url') }
 }
 
 /** Binding for the grant that turns the workspace passkey rule on or off. */

@@ -3,6 +3,7 @@ import { copyFileSync, mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { verifyPasskey, verifyReceipt } from '../../web/src/lib/verify'
 import { createApp } from '../src/app'
 import { passkeyRuleBinding } from '../src/auth/passkeys'
 import { ControlStore } from '../src/control/store'
@@ -608,6 +609,15 @@ describe('signature column and existing routes', () => {
     expect(packet.json.approvalProof).toMatchObject({ method: 'passkey', tone: 'ink', how: 'passkey' })
     expect(packet.json.approvalProof.fingerprint).toHaveLength(8)
     expect((approval.payload as { fingerprint?: string }).fingerprint).toHaveLength(16)
+    const passkey = (await verifyReceipt(packet.json, [])).checks.find((check) => check.id === 'passkey')
+    expect(passkey?.ok).toBe(true)
+    expect(passkey?.detail).toContain('valid signature by this key')
+    expect(passkey?.detail).not.toContain('Meera')
+    const payload = approval.payload as unknown as { publicKey: { alg: number } }
+    const skipped = await verifyPasskey({ ...payload, publicKey: { ...payload.publicKey, alg: -8 } })
+    expect(skipped.ok).toBe(false)
+    expect(skipped.detail).toBe('cannot verify here')
+    expect(skipped.detail).not.toContain('valid')
     expect((await call(h.app, 'POST', '/v1/invites/revoke', { body: {} })).status).toBe(404)
     expect((await call(h.app, 'POST', '/v1/keys', { body: {} })).status).toBe(404)
     expect((await call(h.app, 'POST', '/v1/members', { body: {} })).status).toBe(404)

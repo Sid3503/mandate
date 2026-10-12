@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeInvoices } from '../src/paypal/fake'
-import { parseKeys, verifyReceipt, type Receipt } from '../../web/src/lib/verify'
+import { parseKeys, verifyPasskey, verifyReceipt, type PasskeyMaterial, type Receipt } from '../../web/src/lib/verify'
 import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
@@ -87,5 +88,48 @@ describe('the receipt verifier in the browser agrees with the server', () => {
     const verdict = await verifyReceipt(receipt, keys)
     expect(verdict.ok).toBe(false)
     expect(verdict.checks[0]!.detail).toContain('never locked')
+  })
+
+  it('checks a Chromium virtual-authenticator vector and five one-bit changes', async () => {
+    const vector = JSON.parse(readFileSync(new URL('../../web/src/lib/passkey-vector.json', import.meta.url), 'utf8')) as PasskeyMaterial
+    const good = await verifyPasskey(vector)
+    expect(good.ok).toBe(true)
+    expect(good.detail).toContain('valid signature by this key')
+    expect(good.detail).toContain(`Fingerprint ${vector.fingerprint}`)
+    expect(good.detail).toContain(`RP ID ${vector.rpId}`)
+    expect(good.detail).toContain(`Origin ${vector.origin}`)
+    expect(good.detail).not.toContain('Meera')
+    const matched = await verifyPasskey(vector, vector.fingerprint)
+    expect(matched.detail).toContain('matches the fingerprint you typed')
+    const other = await verifyPasskey(vector, '0000000000000000')
+    expect(other.ok).toBe(false)
+    expect(other.detail).not.toContain('valid')
+
+    const flip = (value: string) => {
+      const bytes = Buffer.from(value, 'base64url')
+      bytes[0] = (bytes[0] ?? 0) ^ 0x01
+      return bytes.toString('base64url')
+    }
+    const response = () => structuredClone(vector.assertion!.response!)
+    const signature = structuredClone(vector)
+    signature.assertion = { ...vector.assertion, response: { ...response(), signature: flip(response().signature!) } }
+    const authData = structuredClone(vector)
+    authData.assertion = { ...vector.assertion, response: { ...response(), authenticatorData: flip(response().authenticatorData!) } }
+    const clientData = structuredClone(vector)
+    clientData.assertion = { ...vector.assertion, response: { ...response(), clientDataJSON: flip(response().clientDataJSON!) } }
+    const challenge = structuredClone(vector)
+    challenge.challenge = `${vector.challenge?.slice(0, -1)}${vector.challenge?.endsWith('A') ? 'B' : 'A'}`
+    const rpId = structuredClone(vector)
+    rpId.rpId = `${vector.rpId?.slice(0, -1)}${vector.rpId?.endsWith('t') ? 'u' : 't'}`
+    for (const changed of [signature, authData, clientData, challenge, rpId]) {
+      const result = await verifyPasskey(changed)
+      expect(result.ok).toBe(false)
+      expect(result.detail).not.toContain('valid')
+    }
+    const unknown = structuredClone(vector)
+    unknown.publicKey = { ...vector.publicKey, alg: -8 }
+    const skipped = await verifyPasskey(unknown)
+    expect(skipped.detail).toBe('cannot verify here')
+    expect(skipped.detail).not.toContain('valid')
   })
 })
