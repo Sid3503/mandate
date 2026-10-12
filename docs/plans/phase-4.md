@@ -1,6 +1,6 @@
 # Phase 4 plan: passkey-signed approvals
 
-Status: APPROVED WITH 5 CHANGES. Branch: `phase/4-stepup`, cut from `repair/hardening` at `86441c0`. Do not push. Do not merge. Stop after the phase report.
+Status: T1 through T7 are done on `phase/4-stepup`, cut from `repair/hardening` at `86441c0`. Do not push. Do not merge.
 
 Goal: the tap is a signature a third party can check. `REQUIRE_PASSKEY_FOR_MONEY` stays off in `api/.env.example` and on Render. Tests may turn a workspace setting on, or the flag on, only inside that test. Rollback is the setting off, the flag at 0, or leaving this branch unmerged.
 
@@ -58,7 +58,7 @@ These routes do not exist. Do not add them:
 - [x] P4.T4. Enrollment shows the fingerprint and "Save this". The receipt line is who, how, when, and a short fingerprint. A standing-rule payout names the warrant version and whether that version has a signature. Proof colors: missing passkey assertion is red, `owner-key` and `demo` are amber, legacy rows are grey.
 - [x] P4.T5. Browser verify checks ES256. DER becomes raw r and s. Check rpIdHash, UP, UV, type, and the challenge. Commit Chromium virtual-authenticator vectors and the five negative bit flips. Wording is "valid signature by this key". An unknown algorithm says "cannot verify here". One new passkey-project Playwright test signs in, approves, downloads the receipt, verifies it, tampers, and sees the failure. `gates:fast` does not run Playwright, so that project is run on its own.
 - [x] P4.T6. Demo mode gets a "Demo tap" button that sends `x-mandate-demo-tap: 1` and method `demo`. The receipt shows that line in amber. An optional "Try with my passkey" enrolls a demo passkey. The server still refuses a demo tap outside a demo workspace.
-- [ ] P4.T7. The Today approval card shows amount, payee, category, evidence, a short hash, and the clause before the prompt. After success the toast says "Signed and sent".
+- [x] P4.T7. The Today approval card shows amount, payee, category, evidence, a short hash, and the clause before the prompt. After success the toast says "Signed and sent".
 
 No new dependency. The passkey library stays on the pinned versions. Do not edit `web/e2e/job.spec.ts` except the toast string if "Signed and sent" replaces the current one.
 

@@ -17,6 +17,7 @@ import { ToolTrail } from '../components/ToolTrail'
 import { dollars } from '../lib/money'
 import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useToday, useWarrant } from '../lib/hooks'
 import type { Delivery, Proposal, Today as TodayData, TodayAction, TodayItem } from '../lib/types'
+import { canonicalCart } from '../lib/verify'
 import { explain, isPayout, KIND, type Names } from '../lib/words'
 
 const HOW: Record<NonNullable<TodayItem['how']>, { label: string; tone: 'auto' | 'ink' }> = {
@@ -445,6 +446,44 @@ const ACTION: Record<Exclude<TodayAction, 'open'>, (item: TodayItem) => string> 
   cancel_payout: () => 'Cancel and return the money',
 }
 
+/** The cart hash the tap will lock. A locked row already has it. A waiting row is hashed the same way the server hashes it. */
+function useLockPreview(proposal: Proposal): string | null {
+  const [preview, setPreview] = useState<string | null>(proposal.cartHash)
+  useEffect(() => {
+    if (proposal.cartHash) {
+      setPreview(proposal.cartHash)
+      return
+    }
+    if (!proposal.payeeId || !proposal.category || !proposal.evidenceUrl) {
+      setPreview(null)
+      return
+    }
+    let cancel = false
+    const text = canonicalCart({
+      id: proposal.id,
+      warrantId: proposal.warrantId,
+      warrantVersion: proposal.warrantVersion,
+      payeeId: proposal.payeeId,
+      amountCents: proposal.amountCents,
+      currency: proposal.currency,
+      category: proposal.category,
+      evidenceUrl: proposal.evidenceUrl,
+      kind: proposal.kind,
+      parentCaptureId: proposal.parentCaptureId,
+      jobId: proposal.jobId,
+      fundingCaptureId: proposal.fundingCaptureId,
+      dealId: proposal.dealId,
+      milestone: proposal.milestone,
+    })
+    void crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)).then((buf) => {
+      if (cancel) return
+      setPreview([...new Uint8Array(buf)].map((byte) => byte.toString(16).padStart(2, '0')).join(''))
+    })
+    return () => { cancel = true }
+  }, [proposal])
+  return preview
+}
+
 function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   proposal: Proposal
   names: Names
@@ -457,7 +496,8 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   const refresh = useRefreshMoney()
   const toast = useToast()
   const demo = session.mode() === 'demo'
-  const approve = useMutation({ mutationFn: (how: 'auto' | 'demo' | 'passkey') => api.approve(proposal.id, how), onSuccess: (locked) => { onLocked(locked); toast({ title: `Approved ${dollars(locked.amountCents)}`, body: 'Locked and signed. Nothing has moved yet.' }); void refresh() } })
+  const lockPreview = useLockPreview(proposal)
+  const approve = useMutation({ mutationFn: (how: 'auto' | 'demo' | 'passkey') => api.approve(proposal.id, how), onSuccess: (locked) => { onLocked(locked); toast({ title: 'Signed and sent', body: 'Nothing has moved yet.' }); void refresh() } })
   const reject = useMutation({ mutationFn: () => api.reject(proposal.id), onSuccess: () => { toast({ title: 'Rejected', body: 'Nothing moved.', tone: 'info' }); void refresh() } })
   const locked = proposal.phase !== 'pending_approval'
   const kind = KIND[proposal.kind]
@@ -481,6 +521,8 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
           <div><dt>Funded by</dt><dd>{funding ? <>{names(funding.payeeId)} <Money cents={funding.capturedAmountCents} size="sm" /> settled ✓</> : <span className="mono">{proposal.fundingCaptureId ?? 'none'}</span>}</dd></div>
         ) : null}
         {proposal.jobId ? <div className="opt"><dt>Job</dt><dd><Link to={`/jobs/${proposal.jobId}`} className="mono">{proposal.jobId}</Link></dd></div> : null}
+        <div><dt>Hash</dt><dd><Hash value={lockPreview} /></dd></div>
+        <div><dt>Clause</dt><dd className="mono">{proposal.clause}</dd></div>
         <div data-tour="approval-why"><dt>Why you?</dt><dd>{why}</dd></div>
         {proposal.prompt ? <div className="opt"><dt>Asked as</dt><dd className="quote">“{proposal.prompt}”</dd></div> : null}
       </dl>
