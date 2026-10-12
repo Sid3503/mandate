@@ -401,8 +401,11 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     const control = requireControl(ctx)
     const body = await c.req.json() as { token?: string; name?: string }
     if (!body.token || !body.name) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Send the invite and a name.')
-    const invite = control.takeInvite(body.token, ctx.now().toISOString())
-    if (!invite || invite.workspace_id !== ctx.workspaceId) throw new Problem(400, 'invite/invalid', 'Invite is not valid', 'That invite is used, expired, or for another studio.')
+    const now = ctx.now().toISOString()
+    const peek = control.peekInvite(body.token, now)
+    if (!peek || peek.expired || peek.workspace_id !== ctx.workspaceId) throw new Problem(400, 'invite/invalid', 'Invite is not valid', 'That invite is used, expired, or for another studio.')
+    const invite = control.takeInvite(body.token, now)
+    if (!invite) throw new Problem(400, 'invite/invalid', 'Invite is not valid', 'That invite is used, expired, or for another studio.')
     const memberId = randomUUID()
     control.addMember({ id: memberId, workspaceId: invite.workspace_id, name: body.name, role: invite.role, now: ctx.now().toISOString(), createdBy: 'invite' })
     const sessionToken = randomBytes(32).toString('base64url')
