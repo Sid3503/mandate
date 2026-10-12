@@ -40,3 +40,15 @@ Recorded while building phases 1 to 12. The human asked to implement every phase
 - D6. `npm audit` of `@simplewebauthn/browser` reported 0 vulnerabilities. The api audit still reports highs inside `@paypal/agent-toolkit` (langchain, langsmith, mathjs, jsondiffpatch) and a moderate `@hono/node-server`. Those were already in the tree. They were not introduced by the new packages and were not force-fixed.
 
 `npm run preflight` checks that the new secrets exist when the doors are on. It does not print the values.
+
+## D2 age check
+
+Checked against the npm registry on 12 October 2026. Fourteen days before that date is 28 September 2026. All three pins are older than that.
+
+| Package | Version | Published | Age on 12 October 2026 |
+|---|---|---|---|
+| `@simplewebauthn/server` | 14.0.3 | 2026-09-25 | 17 days |
+| `@simplewebauthn/browser` | 14.0.0 | 2026-09-02 | 40 days |
+| `fast-check` | 4.10.2 | 2026-09-19 | 23 days |
+
+License remains MIT. The pins stay exact. This check does not approve a newer release.
