@@ -12,7 +12,7 @@ This file is the product story: what it is, why it exists, what we built, how it
 
 ## Where the product is today (7 October 2026)
 
-The test counts and model scores in this file were not re-run for this change.
+The API test count below was re-run on 12 October 2026 (509). The browser counts, Lighthouse, and model scores in this file were not re-run for this change.
 
 **What runs, end to end, on the PayPal sandbox:** staff and AI agents ask; a pure function of the owner's signed rules decides; the owner says yes once (standing rules, autopilot) and taps for exceptions; PayPal moves exactly the locked cents. The whole job runs by itself under those rules: deal, delivery, the client's own agent accepts, invoice, client pays, contractor paid, proof.
 
@@ -24,7 +24,7 @@ The test counts and model scores in this file were not re-run for this change.
 
 **A second screen, built with AG Studio** (`/app/control-room`, desktop). The Ledger page is the table of requests (AG Grid); the control room is the dashboard the owner builds from them: money in and out, refusals by rule, how each request was approved, who still owes what. Studio is handed plain rows copied from the ledger and can only display them: it has no connection to PayPal or to Mandate, and the tiles count only what PayPal confirmed. A chat analyst inside Studio reads the ledger copy, sets filters and asks Studio's page and widget agents to draw. It runs on Mandate's own model through one route that holds no ledger service and no PayPal client, so the worst it can do is change the dashboard.
 
-**Numbers:** 498 API tests (56 of them a red team), 112 browser runs (56 tests, on desktop and on phone), an axe accessibility scan on every screen.
+**Numbers:** 509 API tests (56 of them a red team), 112 browser runs (56 tests, on desktop and on phone), an axe accessibility scan on every screen.
 
 **Not yet:** a real open dispute (the sandbox cannot create one), the demo video, the deck and the Devpost write-up. The webhook id and the deploy hook are in §11.
 
@@ -179,7 +179,7 @@ An installable React app served at `/app/`.
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 498 API tests (56 of them a red team) and 112 browser runs (56 tests, on desktop and on phone), with an accessibility scan on every screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 509 API tests (56 of them a red team) and 112 browser runs (56 tests, on desktop and on phone), with an accessibility scan on every screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -280,7 +280,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 10. Proof
 
-- **498 API tests** (Vitest; 56 are the red team) and **112 end-to-end runs** (Playwright: 56 tests, on desktop and on phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
+- **509 API tests** (Vitest; 56 are the red team) and **112 end-to-end runs** (Playwright: 56 tests, on desktop and on phone, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation).
 - **The whole frozen job has run on the real PayPal sandbox, both milestones:** agents negotiated and signed $300; Northwind paid two real invoices; the locks verified; two real $90 payouts reached a sandbox account (the second with no tap, under a standing rule); the job reads **$300 in, $180 out, $120 kept**; and cancelling an unclaimed payout returned the money.
 - **Proof** checks `locks.valid`, `moved.authorised`, `amounts.match`, `payouts.funded`, `cap.respected`, `jobs.in_covers_out`, `history.complete`, `deals.signed`, `billing.accepted`, `agents.no_reach` and `safety.respected`, and `paypal.agrees` when PayPal is asked. The tests tamper with the database eight ways to check the right one fails.

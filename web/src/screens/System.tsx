@@ -9,7 +9,7 @@ import { FeaturePanel, ToolTiers } from '../components/PayPalFeatures'
 import { Chip, KV, Loading, PageHead } from '../components/ui'
 import { api, ApiError } from '../lib/api'
 import { SCOPE_WORDS } from '../lib/connect'
-import type { AgentRow, ClientKeyRow } from '../lib/types'
+import type { AgentRow, ClientKeyRow, ServerFlags } from '../lib/types'
 import { when } from '../lib/format'
 import { useIsOwner, useSession, useWarrant } from '../lib/hooks'
 import { session } from '../lib/session'
@@ -137,6 +137,48 @@ function ClientKeys() {
   )
 }
 
+const FLAG_WORDS: Record<keyof ServerFlags, string> = {
+  tenancy: 'Separate workspace for each studio',
+  demoEnabled: 'A private demo for a visitor',
+  demoTtlHours: 'Demo lifetime, hours',
+  demoMaxActive: 'Demos open at once',
+  demoMaxPerIpHour: 'Demos one address may start in an hour',
+  passkeys: 'Passkey sign-in',
+  requirePasskeyForMoney: 'A passkey signature on every payment',
+  legacyOwnerKeyEnabled: 'The pasted owner key still works',
+  invites: 'Invite a person',
+  inviteTtlHours: 'Invite lifetime, hours',
+  safetyBreaker: 'Extra emergency brake',
+  payeeBook: 'Payee book',
+  newPayeeWaitHours: 'Hours before a new payee can be paid',
+  policyPaste: 'Paste a written policy',
+  secondReader: 'A second reader on a draft',
+  mcpExposeReadTools: 'Expose only read tools to agents',
+  paypalLogin: 'Log in with PayPal',
+  modelEnabled: 'AI agents',
+}
+
+function FlagsPanel() {
+  const flags = useQuery({ queryKey: ['flags'], queryFn: api.flags })
+  return (
+    <section className="panel" aria-labelledby="h-flags" data-testid="flags-panel">
+      <h2 className="panel-title" id="h-flags">Switches</h2>
+      <p className="fine">Read from the server. Off means that feature is not active. These switches do not approve or pay.</p>
+      {flags.isLoading ? <Loading /> : null}
+      {flags.isError ? <p className="fine">The switches could not be read.</p> : null}
+      {flags.data ? (
+        <div className="kvs">
+          {(Object.keys(FLAG_WORDS) as Array<keyof ServerFlags>).map((name) => {
+            const value = flags.data?.[name]
+            const shown = typeof value === 'boolean' ? (value ? 'On' : 'Off') : String(value)
+            return <KV key={name} label={FLAG_WORDS[name]}>{shown}</KV>
+          })}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 export function System() {
   const where = useLocation()
   const health = useQuery({ queryKey: ['health'], queryFn: api.health })
@@ -168,6 +210,7 @@ export function System() {
         <button type="button" className="btn btn-ghost" onClick={() => guide.start('welcome')}>Take the full tour</button>
         <button type="button" className="btn btn-ghost" onClick={lock}>Lock console</button>
       </PageHead>
+      {owner ? <FlagsPanel /> : null}
       <FeaturePanel />
       {safety.data ? (
         <section className="panel" aria-labelledby="h-safety" data-testid="safety-panel">

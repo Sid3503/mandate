@@ -6,6 +6,7 @@ import { createApp } from './app'
 import { buildServices } from './services/container'
 import { AgentService } from './agents/service'
 import { loadConfig } from './config'
+import { loadFlags } from './flags'
 import { migrate, openDatabase, seed } from './db/database'
 import { loadSigner } from './domain/signing'
 import { buildModels } from './agents/model'
@@ -78,6 +79,7 @@ const app = createApp({
     webhookId: config.paypalWebhookId,
     clientAgent: config.clientAgent,
     demoReset: config.demoReset,
+    flags: loadFlags(process.env),
   },
 })
 

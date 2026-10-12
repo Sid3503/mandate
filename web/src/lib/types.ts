@@ -3,6 +3,28 @@ import type { components } from './openapi'
 export type Proposal = components['schemas']['Proposal']
 export type Warrant = components['schemas']['Warrant']
 export type Session = components['schemas']['Session']
+
+/** Planned switches from GET /v1/flags. Off means that feature is not active. */
+export type ServerFlags = {
+  tenancy: boolean
+  demoEnabled: boolean
+  demoTtlHours: number
+  demoMaxActive: number
+  demoMaxPerIpHour: number
+  passkeys: boolean
+  requirePasskeyForMoney: boolean
+  legacyOwnerKeyEnabled: boolean
+  invites: boolean
+  inviteTtlHours: number
+  safetyBreaker: boolean
+  payeeBook: boolean
+  newPayeeWaitHours: number
+  policyPaste: boolean
+  secondReader: boolean
+  mcpExposeReadTools: boolean
+  paypalLogin: boolean
+  modelEnabled: boolean
+}
 export type Deal = components['schemas']['Deal']
 export type Kind = Proposal['kind']
 export type Gate = Proposal['gate']
