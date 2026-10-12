@@ -14,6 +14,9 @@
     "gates": "npm run gates:fast && npm run build && npm --prefix web run e2e",
     "ci": "npm run check && npm run build && npm --prefix web run e2e",
     "smoke": "npm --prefix api run smoke --",
+    "preflight": "node scripts/preflight.mjs",
+    "db:backup": "node scripts/db-backup.mjs",
+    "db:restore": "node scripts/db-restore.mjs",
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "license": "MIT"

@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { DEMO_BUYER_RULES, DEMO_SELLER_RULES, PartyRulesSchema } from '../domain/deal'
 import { LINE_STUDIO_WARRANT, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
+import { applySqlSteps, OPS_STEPS } from './sql-migrations'
 
 /** Northwind, the demo client. Its deal rules are keyed by the client id on the warrant. */
 export const BUYER_PARTY_ID = 'client_northwind'
@@ -284,6 +285,9 @@ export function migrate(db: DatabaseSync): void {
   // written through the API (the seed wrote before it existed), so they count as already written.
   const rulesColumns = new Set((db.prepare('PRAGMA table_info(party_rules)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!rulesColumns.has('origin')) db.exec(`ALTER TABLE party_rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'written'`)
+  applySqlSteps(db, OPS_STEPS)
+  const eventColumns = new Set((db.prepare('PRAGMA table_info(events)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!eventColumns.has('actor_json')) db.exec('ALTER TABLE events ADD COLUMN actor_json TEXT')
 }
 
 export function seed(db: DatabaseSync, now: Date): void {
@@ -295,6 +299,11 @@ export function seed(db: DatabaseSync, now: Date): void {
       JSON.stringify(body),
       now.toISOString(),
     )
+  }
+  const payeeCount = db.prepare('SELECT COUNT(*) AS n FROM payees').get() as { n: number }
+  if (payeeCount.n === 0) {
+    const insert = db.prepare('INSERT INTO payees (id, email, status, verified_method, first_seen, total_paid_cents) VALUES (?, ?, ?, ?, ?, 0)')
+    for (const payee of LINE_STUDIO_WARRANT.payees) insert.run(payee.id, payee.email, 'active', 'owner_attested', now.toISOString())
   }
   // Each company's deal rules are versioned data too. Seeded once per party, never overwritten. The seed's rows
   // are marked as examples: they work only once a person has looked at them and kept them (or written better ones).

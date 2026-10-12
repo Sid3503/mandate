@@ -31,21 +31,31 @@ export class ApiError extends Error {
 
 type Options = { method?: string; body?: unknown; idempotencyKey?: string; key?: string; headers?: Record<string, string> }
 
+/** Prefix tenant routes only. Public doors (/demo/start, /workspaces, /join) stay on the outer server. */
+function scopePath(path: string): { path: string; credentials: RequestCredentials; client: boolean } {
+  const workspace = session.workspace()
+  const tenant = Boolean(workspace) && (path.startsWith('/v1/') || path.startsWith('/auth/'))
+  return { path: tenant && workspace ? `/w/${workspace}${path}` : path, credentials: workspace ? 'include' : 'same-origin', client: Boolean(workspace) }
+}
+
 async function request<T>(path: string, options: Options = {}): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' }
   const key = options.key ?? session.get()
   if (key) headers.authorization = `Bearer ${key}`
+  const scoped = scopePath(path)
+  if (scoped.client) headers['x-mandate-client'] = 'web'
   if (options.body !== undefined) headers['content-type'] = 'application/json'
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey
   if (options.headers) Object.assign(headers, options.headers)
   let response: Response
   try {
     // A server that does not answer in 30 seconds is treated as not answering, not waited on forever.
-    response = await fetch(path, {
+    response = await fetch(scoped.path, {
       method: options.method ?? 'GET',
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       cache: 'no-store',
+      credentials: scoped.credentials,
       signal: AbortSignal.timeout(30_000),
     })
   } catch (error) {
@@ -106,13 +116,15 @@ export type NegotiationEvent =
  */
 async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, signal: AbortSignal): Promise<void> {
   const key = session.get()
+  const scoped = scopePath('/v1/negotiations/stream')
   let response: Response
   try {
-    response = await fetch('/v1/negotiations/stream', {
+    response = await fetch(scoped.path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(scoped.client ? { 'x-mandate-client': 'web' } : {}), ...(key ? { authorization: `Bearer ${key}` } : {}) },
       body: '{}',
       cache: 'no-store',
+      credentials: scoped.credentials,
       signal,
     })
   } catch (error) {
@@ -152,13 +164,15 @@ async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, sig
  */
 async function postStream<E>(path: string, body: unknown, onEvent: (event: E) => void, signal?: AbortSignal): Promise<void> {
   const key = session.get()
+  const scoped = scopePath(path)
   let response: Response
   try {
-    response = await fetch(path, {
+    response = await fetch(scoped.path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(scoped.client ? { 'x-mandate-client': 'web' } : {}), ...(key ? { authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify(body),
       cache: 'no-store',
+      credentials: scoped.credentials,
       signal,
     })
   } catch {
@@ -206,6 +220,13 @@ export const api = {
   safety: () => request<Safety>('/v1/safety'),
   suggestions: () => request<Suggestions>('/v1/suggestions'),
   guarantees: () => request<Guarantees>('/v1/guarantees'),
+  demoStart: () => request<{ workspaceId: string; expiresAt: string; role: string; mode: string }>('/demo/start', { method: 'POST', body: {} }),
+  createStudio: (name: string) => request<{ workspaceId: string; memberId: string; challengeId: string; options: Record<string, unknown>; paypal: string }>('/workspaces', { method: 'POST', body: { name } }),
+  passkeyRegisterVerify: (body: { challengeId: string; response: unknown }) => request<{ credentialId: string }>('/auth/register/verify', { method: 'POST', body }),
+  passkeyLoginOptions: () => request<{ challengeId: string; options: Record<string, unknown> }>('/auth/login/options', { method: 'POST', body: {} }),
+  passkeyLoginVerify: (body: { challengeId: string; response: unknown }) => request<{ workspaceId: string; role: string; displayName: string }>('/auth/login/verify', { method: 'POST', body }),
+  joinPreview: (token: string) => request<{ workspaceId: string; name: string; role: string }>('/join/preview', { method: 'POST', body: { token } }),
+  join: (workspaceId: string, token: string, name: string) => request<{ memberId: string; role: string; workspaceId: string }>(workspaceId === 'ws_default' ? '/join' : `/w/${workspaceId}/join`, { method: 'POST', body: { token, name } }),
   tryRequest: (requestBody: Record<string, unknown>, rules?: unknown) => request<TryOne>('/v1/rules/try', { method: 'POST', body: { request: requestBody, ...(rules ? { rules } : {}) } }),
   tryCases: (rules?: unknown) => request<TryCases>('/v1/rules/cases', { method: 'POST', body: rules ? { rules } : {} }),
   pause: (reason: string) => request<Safety>('/v1/safety/pause', { method: 'POST', body: { reason } }),

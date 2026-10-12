@@ -7,6 +7,7 @@ import { buildServices } from './services/container'
 import { AgentService } from './agents/service'
 import { loadConfig } from './config'
 import { loadFlags } from './flags'
+import { openProduct } from './boot'
 import { migrate, openDatabase, seed } from './db/database'
 import { loadSigner } from './domain/signing'
 import { buildModels } from './agents/model'
@@ -34,7 +35,13 @@ const sandbox = config.paypal ? !config.paypal.baseUrl.includes('api-m.paypal.co
 const paypal = config.paypal ? createPayPalClient(config.paypal) : null
 const invoices = config.invoices && config.paypal ? createToolkitInvoices({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
 const watch = config.paypal ? createToolkitWatch({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
-const services = buildServices({ db, paypal, invoices, watch, publicUrl: config.publicUrl, now: () => new Date(), signer, safety: { tripAfter: config.breakerRefusals, windowSeconds: config.breakerWindowSeconds } })
+const flags = loadFlags(process.env)
+const services = buildServices({
+  db, paypal, invoices, watch, publicUrl: config.publicUrl, now: () => new Date(), signer,
+  safety: { tripAfter: config.breakerRefusals, windowSeconds: config.breakerWindowSeconds },
+  payeeBook: flags.payeeBook,
+  newPayeeWaitHours: flags.newPayeeWaitHours,
+})
 
 // Ollama Cloud's open-weights models power the agents. With no key they are off and everything else works.
 const { primary: model, drafter: drafterModel, fallback: fallbackModel } = buildModels({
@@ -43,8 +50,18 @@ const { primary: model, drafter: drafterModel, fallback: fallbackModel } = build
   AGENT_MODEL: config.agentModel,
   DRAFTER_MODEL: config.drafterModel,
 })
+const product = openProduct({
+  databasePath: config.databasePath,
+  flags,
+  env: process.env,
+  publicUrl: config.publicUrl,
+  now: () => new Date(),
+  nodeEnv: config.nodeEnv,
+  model,
+  drafterModel,
+})
 // If the main model errors, the fallback is tried once before the person sees a failure.
-const agents = new AgentService(services, model, () => new Date(), drafterModel, fallbackModel)
+const agents = new AgentService(services, model, () => new Date(), drafterModel, fallbackModel, product.budget)
 
 installProcessGuards()
 let draining = false
@@ -79,8 +96,21 @@ const app = createApp({
     webhookId: config.paypalWebhookId,
     clientAgent: config.clientAgent,
     demoReset: config.demoReset,
-    flags: loadFlags(process.env),
+    flags,
+    adminKey: product.adminKey,
+    cookieSecure: product.cookieSecure,
+    trustProxy: product.trustProxy,
+    redact: product.redact,
+    webauthn: product.webauthn,
+    classedRates: product.classedRates,
+    idleHours: product.idleHours,
+    absoluteDays: product.absoluteDays,
   },
+  control: product.control,
+  registry: product.registry,
+  budget: product.budget,
+  masterKey: product.masterKey,
+  demo: product.demo,
 })
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
@@ -128,6 +158,7 @@ function shutdown() {
   if (reviewTimer) clearInterval(reviewTimer)
   console.log(JSON.stringify({ level: 'info', message: 'draining' }))
   const done = () => {
+    try { product.close() } catch { /* already closed */ }
     try { db.close() } catch { /* already closed */ }
     process.exit(0)
   }

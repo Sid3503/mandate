@@ -27,3 +27,16 @@ The numbers from the last run of those commands are filled in under "Baseline" a
 ## Flags
 
 `GET /v1/flags` reads switches from the environment and returns them to the owner. Defaults are off, except `legacyOwnerKeyEnabled` and `modelEnabled`, which match this studio today. The route does not approve, pay, or turn a feature on by itself.
+
+## D1 to D6
+
+Recorded while building phases 1 to 12. The human asked to implement every phase. These are the defaults that request named. No new paid service was added.
+
+- D1. Tenancy is a cached app per workspace behind `/w/:id`. Handlers still close over their own services. The change stayed under 40 files. The single-studio fallback was not taken.
+- D2. `@simplewebauthn/server` 14.0.3 (modified 2026-09-25, MIT) and `@simplewebauthn/browser` 14.0.0 (2026-09-02, MIT). `fast-check` 4.10.2 (2026-09-19, MIT) is an api dev dependency. Each is pinned exact and older than 14 days.
+- D3. Studio workspaces and demos use Fake PayPal only. A row marked live is not opened.
+- D4. A new payee waits 24 hours unless the server sets `NEW_PAYEE_WAIT_HOURS`. A demo workspace waits 0 hours. Seeded payees stay `owner_attested`, so the wait does not catch them.
+- D5. `PAYPAL_LOGIN_ENABLED` stays off. Log in with PayPal was not built.
+- D6. `npm audit` of `@simplewebauthn/browser` reported 0 vulnerabilities. The api audit still reports highs inside `@paypal/agent-toolkit` (langchain, langsmith, mathjs, jsondiffpatch) and a moderate `@hono/node-server`. Those were already in the tree. They were not introduced by the new packages and were not force-fixed.
+
+`npm run preflight` checks that the new secrets exist when the doors are on. It does not print the values.

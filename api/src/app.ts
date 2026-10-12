@@ -1,4 +1,14 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
+import { cookieWriteAllowed, readSessionCookie } from './auth/cookies'
+import type { ControlStore } from './control/store'
+import { mountExtra, type ProductCtx } from './http/extra'
+import { clientIp } from './ops/client-ip'
+import { API_CSP, securityHeaders } from './ops/headers'
+import { Metrics } from './ops/metrics'
+import type { ModelBudget } from './ops/budget'
+import { RateLimiter, rateClass } from './ops/ratelimit'
+import { redactText } from './ops/redact'
+import type { TenantRegistry } from './tenancy/registry'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { DatabaseSync } from 'node:sqlite'
@@ -75,7 +85,23 @@ export type AppDeps = {
     demoReset?: boolean
     /** Planned switches. Missing means the defaults: new features off. */
     flags?: ServerFlags
+    adminKey?: string | null
+    cookieSecure?: boolean
+    trustProxy?: boolean
+    redact?: string[]
+    webauthn?: { rpID: string; rpName: string; origins: string[] } | null
+    classedRates?: boolean
+    idleHours?: number
+    absoluteDays?: number
   }
+  control?: ControlStore | null
+  registry?: TenantRegistry | null
+  workspace?: { id: string; mode: 'default' | 'demo' | 'studio' | 'live' }
+  nested?: boolean
+  budget?: ModelBudget | null
+  metrics?: Metrics
+  masterKey?: string | null
+  demo?: { root: string; template: string } | null
 }
 
 const ClerkMessageSchema = z.object({
@@ -99,7 +125,7 @@ const NegotiationSchema = z.object({
   maxOffers: z.number().int().min(2).max(8).optional(),
 }).strict()
 
-const PUBLIC = new Set(['/', '/health', '/ready', '/openapi.json', '/v1/webhooks/paypal', '/.well-known/mandate-keys.json'])
+const PUBLIC = new Set(['/', '/health', '/ready', '/healthz', '/readyz', '/openapi.json', '/v1/webhooks/paypal', '/.well-known/mandate-keys.json', '/demo/start', '/workspaces', '/join', '/join/preview', '/ops/metrics', '/ops/model/kill'])
 
 /** Routes only the owner key may call. A proposer, such as an agent, can ask but never decide or move money. */
 const OWNER_ONLY = [
@@ -108,7 +134,8 @@ const OWNER_ONLY = [
   // A PUT to /v1/party-rules/:partyId is not owner-only: each company may write its own sheet. The route decides
   // whose sheet that is; the other side's sheet stays out of reach, so both limits stay private.
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
-  { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay|try|cases|policy|policy\/stream)$/ },
+  { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay|try|cases|simulate|policy|policy\/stream)$/ },
+  { method: 'GET', pattern: /^\/v1\/payees$/ },
   { method: 'POST', pattern: /^\/v1\/ask$/ },
   { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
@@ -163,6 +190,10 @@ function isWeb(path: string): boolean {
   return path === '/app' || path.startsWith('/app/')
 }
 
+function isAnonymous(path: string): boolean {
+  return PUBLIC.has(path) || path.startsWith('/auth/')
+}
+
 const AgentCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   scopes: z.array(z.enum(['read', 'propose', 'stream', 'mcp', 'deals'])).min(1),
@@ -192,11 +223,13 @@ const ClientErrorSchema = z.object({
 })
 
 export function createApp(deps: AppDeps) {
-  const app = new Hono<{ Variables: { requestId: string; principal: Principal } }>()
+  const app = new Hono<{ Variables: { requestId: string; principal: Principal; viaCookie?: boolean; memberRole?: string; memberId?: string; approvalLimit?: number | null } }>()
   const services = deps.services ?? buildServices({ ...deps, publicUrl: deps.config.publicUrl })
   const { mandate: service, deals } = services
-  const agents = deps.agents ?? new AgentService(services, deps.model ?? null, deps.now, deps.drafterModel ?? null)
+  const agents = deps.agents ?? new AgentService(services, deps.model ?? null, deps.now, deps.drafterModel ?? null, null, deps.budget ?? null)
   const buckets = new Map<string, { count: number; reset: number }>()
+  const classes = new RateLimiter(() => deps.now().getTime())
+  const metrics = deps.metrics ?? new Metrics()
   const clientErrorWindow = new Map<string, number[]>()
   const openapi = buildOpenApi(deps.config.publicUrl)
 
@@ -206,25 +239,25 @@ export function createApp(deps: AppDeps) {
     c.set('requestId', requestId)
     c.header('x-request-id', requestId)
     c.header('cache-control', 'no-store')
-    c.header('x-content-type-options', 'nosniff')
-    c.header('referrer-policy', 'no-referrer')
-    c.header('x-frame-options', 'DENY')
+    for (const [key, value] of Object.entries(securityHeaders(deps.config.cookieSecure === true))) c.header(key, value)
+    if (!isWeb(c.req.path)) c.header('content-security-policy', API_CSP)
     const started = performance.now()
     await next()
+    metrics.record(c.res.status)
     if (deps.config.log) {
-      console.log(JSON.stringify({
+      console.log(redactText(JSON.stringify({
         level: 'info',
         requestId,
         method: c.req.method,
         path: c.req.path,
         status: c.res.status,
         ms: Math.round(performance.now() - started),
-      }))
+      }), deps.config.redact ?? []))
     }
   })
 
   app.use('*', async (c, next) => {
-    if (c.req.path === '/health' || c.req.path === '/ready' || isWeb(c.req.path)) return next()
+    if (c.req.path === '/health' || c.req.path === '/ready' || c.req.path === '/healthz' || c.req.path === '/readyz' || isWeb(c.req.path)) return next()
     const limit = deps.config.rateLimitPerMinute
     if (limit <= 0) return next()
     // A caller with no key is counted by where it comes from, so one noisy visitor cannot use up everyone else's allowance.
@@ -237,21 +270,55 @@ export function createApp(deps: AppDeps) {
       c.header('retry-after', '60')
       throw new Problem(429, 'rate.limited', 'Too many requests', 'The per-minute limit for this credential has been reached.')
     } else bucket.count += 1
+    if (deps.config.classedRates) {
+      const decision = classes.take({
+        className: rateClass(c.req.method, c.req.path),
+        ip: clientIp({ get: (name) => c.req.header(name) }, deps.config.trustProxy === true),
+        principal: key,
+      })
+      if (!decision.ok) {
+        c.header('retry-after', String(decision.retryAfter))
+        throw new Problem(429, 'rate/limited', 'Too many requests', 'This action is limited. Try again after the stated wait.')
+      }
+    }
     await next()
   })
 
   app.use('*', async (c, next) => {
-    if (PUBLIC.has(c.req.path) || isWeb(c.req.path) || isShareRead(c.req.method, c.req.path)) return next()
+    if (isAnonymous(c.req.path) || isWeb(c.req.path) || isShareRead(c.req.method, c.req.path)) return next()
+    if (!deps.nested && c.req.path.startsWith('/w/')) return next()
     const header = c.req.header('authorization') ?? ''
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
-    const owner = token !== '' && sameSecret(token, deps.config.apiKey)
+    const flags = deps.config.flags ?? defaultFlags()
+    const legacyOwner = flags.legacyOwnerKeyEnabled && (deps.workspace?.mode ?? 'default') === 'default'
+    const owner = legacyOwner && token !== '' && sameSecret(token, deps.config.apiKey)
     const studio = !owner && token !== '' && Boolean(deps.config.proposerKey) && sameSecret(token, deps.config.proposerKey!)
     const buyer = !owner && !studio && token !== '' && Boolean(deps.config.buyerAgentKey) && sameSecret(token, deps.config.buyerAgentKey!)
     let principal: Principal
     if (owner) principal = OWNER
     else if (studio) principal = STUDIO
     else if (buyer) principal = buyerPrincipal(deps.config.buyerAgentParty ?? 'client_northwind')
-    else {
+    else if (!token && deps.control) {
+      const raw = readSessionCookie(c.req.header('cookie'), deps.config.cookieSecure === true)
+      const session = raw ? deps.control.session(raw, deps.now().toISOString()) : null
+      const member = session ? deps.control.member(session.member_id) : null
+      const here = deps.workspace?.id ?? 'ws_default'
+      if (!session || !member || member.status !== 'active' || member.workspace_id !== here) {
+        throw new Problem(404, 'tenant/not-found', 'Not found', 'No workspace has that session.')
+      }
+      c.set('viaCookie', true)
+      c.set('memberRole', member.role)
+      c.set('memberId', member.id)
+      c.set('approvalLimit', member.approval_limit_cents)
+      if (member.role === 'viewer' || member.role === 'payee') {
+        if (c.req.method !== 'GET' && c.req.method !== 'HEAD') throw new Problem(403, 'auth/forbidden', 'Read only', 'This role can look, not change.')
+        principal = STUDIO
+      } else if (member.role === 'proposer') principal = STUDIO
+      else principal = OWNER
+      if (session.method === 'recovery' && c.req.method !== 'GET' && !c.req.path.startsWith('/auth/')) {
+        throw new Problem(403, 'auth/forbidden', 'Recovery cannot approve', 'A recovery session can only add a passkey.')
+      }
+    } else {
       // A client's own key, issued from the System page and bound to one client on the warrant. It is the same
       // kind of caller as the environment's buyer key, except the owner can issue one per client and revoke it.
       const keyHash = createHash('sha256').update(token).digest('hex')
@@ -279,6 +346,17 @@ export function createApp(deps: AppDeps) {
     }
     if (principal.role !== 'owner' && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
       throw new Problem(403, 'auth.forbidden', 'Owner key required', 'A proposer key can propose and read. Only the owner can approve, reject, capture, or change the warrant.')
+    }
+    if (c.get('memberRole') === 'approver' && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
+      const pause = c.req.method === 'POST' && c.req.path === '/v1/safety/pause'
+      const approve = c.req.method === 'POST' && /^\/v1\/proposals\/[^/]+\/approve$/.test(c.req.path)
+      if (!pause && !approve) throw new Problem(403, 'auth/forbidden', 'Outside this role', 'An approver can approve up to their limit, and pause. They cannot publish rules.')
+    }
+    if (c.get('viaCookie') && c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+      const origin = deps.config.webauthn?.origins ?? [new URL(deps.config.publicUrl).origin]
+      if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, origin)) {
+        throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+      }
     }
     if (principal.side === 'buyer' && !buyerMayCall(c.req.method, c.req.path)) {
       throw new Problem(403, 'auth.forbidden', 'Not available to a client agent', 'A client agent can make and read deal offers for its own client. Nothing else.')
@@ -471,7 +549,9 @@ export function createApp(deps: AppDeps) {
     assertJson(c)
     const header = c.req.header('x-expected-version')
     if (header !== undefined && !/^\d{1,6}$/.test(header)) throw new Problem(400, 'rules.expected_version_invalid', 'X-Expected-Version is invalid', 'Send the version number you started from, for example 3.')
-    const result = service.publishWarrant(await readJson(c), header === undefined ? undefined : Number(header))
+    const body = await readJson(c)
+    requireStep(c, deps, 'rules', createHash('sha256').update(JSON.stringify(body)).digest('hex'))
+    const result = service.publishWarrant(body, header === undefined ? undefined : Number(header))
     return send(c, result)
   })
 
@@ -497,7 +577,14 @@ export function createApp(deps: AppDeps) {
 
   app.post('/v1/proposals/:id/approve', async (c) => {
     await assertEmpty(c)
-    return send(c, service.approve(c.req.param('id')))
+    const id = c.req.param('id')
+    if (c.get('memberRole') === 'approver') {
+      const limit = c.get('approvalLimit')
+      const amount = service.packet(id).proposal.amountCents
+      if (limit != null && amount > limit) throw new Problem(403, 'approval.over_limit', 'Over your limit', 'This amount is above what you can approve.')
+    }
+    requireStep(c, deps, 'approve', id)
+    return send(c, service.approve(id))
   })
   app.post('/v1/proposals/:id/reject', async (c) => {
     await assertEmpty(c)
@@ -859,7 +946,51 @@ export function createApp(deps: AppDeps) {
     return c.json(service.listLedger(query.data.limit, query.data.cursor ? decodeCursor(query.data.cursor) : null))
   })
 
+  const flags = deps.config.flags ?? defaultFlags()
+  const product: ProductCtx = {
+    flags,
+    now: deps.now,
+    control: deps.control ?? null,
+    registry: deps.registry ?? null,
+    workspaceId: deps.workspace?.id ?? 'ws_default',
+    workspaceMode: deps.workspace?.mode ?? 'default',
+    nested: deps.nested === true,
+    adminKey: deps.config.adminKey ?? null,
+    webauthn: deps.config.webauthn ?? null,
+    metrics,
+    budget: deps.budget ?? null,
+    cookieSecure: deps.config.cookieSecure === true,
+    idleHours: deps.config.idleHours ?? 12,
+    absoluteDays: deps.config.absoluteDays ?? 7,
+    trustProxy: deps.config.trustProxy === true,
+    demo: deps.demo ?? null,
+    masterKey: deps.masterKey ?? null,
+    paypal: deps.paypal as ProductCtx['paypal'],
+    tryOne: (body: unknown) => {
+      const parsed = TrySchema.safeParse(body)
+      if (!parsed.success) throw invalidRequest(parsed.error)
+      return service.tryRequest(parsed.data.request, parsed.data.rules)
+    },
+    counts: () => ({
+      proposals: tableCount(deps.db, 'proposals'),
+      events: tableCount(deps.db, 'events'),
+      payees: tableCount(deps.db, 'payees'),
+    }),
+    listPayees: () => services.repo.listPayees(),
+  }
+  mountExtra(app, product, (request) => app.fetch(request))
+
   return app
+}
+
+function requireStep(c: { req: { header: (name: string) => string | undefined } }, deps: AppDeps, kind: string, binding: string): void {
+  const flags = deps.config.flags ?? defaultFlags()
+  if (!flags.requirePasskeyForMoney) return
+  if ((deps.workspace?.mode ?? 'default') === 'demo' && c.req.header('x-mandate-demo-tap') === '1') return
+  const grant = c.req.header('x-mandate-stepup')
+  if (!grant || !deps.control?.consumeGrant(grant, kind, binding, deps.now().toISOString())) {
+    throw new Problem(401, 'auth/stepup-required', 'Sign this with your passkey', 'The tap needs a fresh passkey signature.')
+  }
 }
 
 function health(c: { json: (body: unknown, status?: number, headers?: Record<string, string>) => Response }, status: 'pass' | 'fail', checks: Record<string, unknown[]>, code = 200, releaseId: string | null = null) {
@@ -910,6 +1041,11 @@ async function readJson(c: { req: { text: () => Promise<string> } }): Promise<un
   } catch {
     throw new Problem(400, 'request.invalid', 'Request is invalid', 'Body is not JSON.')
   }
+}
+
+function tableCount(db: DatabaseSync, table: 'proposals' | 'events' | 'payees'): number {
+  const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
+  return row.n
 }
 
 function sameSecret(presented: string, expected: string): boolean {

@@ -233,6 +233,7 @@ h1, h2, h3 { margin: 0; }
 .brand-mobile { display: none; }
 .topbar-status { display: flex; gap: 8px; align-items: center; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 .topbar-sys { font: 600 12px var(--mono); color: var(--mute); text-decoration: none; }
+.demo-banner { background: #f6e7a8; color: var(--ink); padding: 10px 40px; font-size: 14px; border-bottom: 2px solid var(--ink); }
 .offline { background: var(--ink); color: var(--paper); padding: 10px 40px; font-size: 14px; }
 .offline strong { color: var(--lime); text-transform: uppercase; font-family: var(--mono); margin-right: 8px; }
 .main { padding: 36px 40px 64px; max-width: 1280px; width: 100%; outline: none; }

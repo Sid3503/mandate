@@ -1,9 +1,14 @@
-import { live, stamp } from '../services/live'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import type { DatabaseSync } from 'node:sqlite'
 import type { PartyRules } from '../domain/deal'
 import { PartyRulesSchema } from '../domain/deal'
 import type { WarrantBody } from '../domain/schemas'
 import { WarrantBodySchema } from '../domain/schemas'
+import { live, stamp } from '../services/live'
+
+/** Who caused the ledger event on this request. Absent means an older owner-key or system write. */
+export type ActorStamp = { memberId: string; displayName: string; role: string; via: string }
+export const actorContext = new AsyncLocalStorage<ActorStamp>()
 
 export type ProposalKind = 'payment' | 'charge' | 'refund'
 
@@ -377,12 +382,22 @@ export class Repo {
    */
   stampEvents: (() => Record<string, unknown>) | null = null
 
+  payeeRow(id: string): { status: string; change_pending: number; first_seen: string; verified_method: string; total_paid_cents: number } | null {
+    return this.db.prepare('SELECT status, change_pending, first_seen, verified_method, total_paid_cents FROM payees WHERE id = ?').get(id) as { status: string; change_pending: number; first_seen: string; verified_method: string; total_paid_cents: number } | undefined ?? null
+  }
+
+  /** The payout book. Reading it does not change a payment. */
+  listPayees(): Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number }> {
+    return this.db.prepare('SELECT id, email, status, verified_method, first_seen, total_paid_cents, change_pending FROM payees ORDER BY email').all() as Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number }>
+  }
+
   insertEvent(id: string, proposalId: string, type: string, clause: string | null, payload: unknown, now: string): void {
     const extra = this.stampEvents?.()
     if (extra && Object.keys(extra).length > 0 && payload && typeof payload === 'object' && !Array.isArray(payload)) payload = { ...(payload as object), ...extra }
+    const actor = actorContext.getStore() ?? null
     this.db.prepare(
-      'INSERT INTO events (id, proposal_id, type, clause, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(id, proposalId, type, clause, JSON.stringify(payload), now)
+      'INSERT INTO events (id, proposal_id, type, clause, payload_json, created_at, actor_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(id, proposalId, type, clause, JSON.stringify(payload), now, actor ? JSON.stringify(actor) : null)
     live.publish({ type: 'changed', scope: 'ledger', what: type, id: proposalId, at: stamp() })
   }
 
