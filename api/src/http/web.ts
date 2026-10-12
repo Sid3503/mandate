@@ -58,7 +58,16 @@ export function webAsset(dist: string, requestPath: string, acceptEncoding = '')
   const root = resolve(dist)
   const index = join(root, 'index.html')
   if (!existsSync(index)) return null
-  const relative = decodeURIComponent(requestPath.replace(/^\/app\/?/, ''))
+  const rawPath = requestPath.replace(/^\/app\/?/, '')
+  if (rawPath.includes('\\') || rawPath.includes('\0') || /%(2e|2f|5c|00)/i.test(rawPath)) return null
+  let relative: string
+  try {
+    relative = decodeURIComponent(rawPath)
+  } catch {
+    return null
+  }
+  if (relative.includes('\\') || relative.includes('\0') || relative.includes('%')) return null
+  if (relative.split('/').includes('..')) return null
   const target = normalize(join(root, relative))
   if (target !== root && !target.startsWith(root + sep)) return null
   const isFile = relative !== '' && existsSync(target) && statSync(target).isFile()
