@@ -16,7 +16,7 @@ import { assessProof } from './proof'
 import { explainRules } from './explainer'
 import { readBack } from './intent'
 import { claimsMoneyMoved, composeReply, unsupportedAmounts, type Outcome } from './guard'
-import type { ModelBudget } from '../ops/budget'
+import { usageTokens, type ModelBudget } from '../ops/budget'
 import type { AgentModel } from './model'
 import { clerkSystem, negotiatorSystem, PROMPT_VERSIONS, promptVersion, reviewerSystem, untrusted, type PromptId } from './prompts'
 import { runAgent, type AgentEvent, type RunOutput, type TraceStep } from './runtime'
@@ -113,7 +113,9 @@ export class AgentService {
    * same model when there is no other). Every call is counted in the model's health. Nothing is retried after a Problem
    * that is not about the model (a stop, a refusal), and no retry can send a request twice: a request's key is the run id.
    */
-  private async withModels<T extends { ms: number; usage?: { inputTokens?: number | undefined; outputTokens?: number | undefined } }>(run: (model: AgentModel) => Promise<T>, options: { retrySame?: boolean; primary?: AgentModel } = {}): Promise<{ output: T; model: AgentModel; fellBack: boolean }> {
+  private async withModels<T extends { ms: number; usage?: { inputTokens?: unknown; outputTokens?: unknown } }>(run: (model: AgentModel) => Promise<T>, options: { retrySame?: boolean; primary?: AgentModel } = {}): Promise<{ output: T; model: AgentModel; fellBack: boolean }> {
+    const paused = this.budget?.blocked()
+    if (paused) throw new Problem(503, 'budget/exhausted', 'AI is paused', paused)
     const primary = options.primary ?? this.need()
     const other = this.fallbackModel && this.fallbackModel.name !== primary.name ? this.fallbackModel : null
     let order: AgentModel[] = other ? [primary, other] : options.retrySame ? [primary, primary] : [primary]
@@ -123,7 +125,8 @@ export class AgentService {
     for (const [index, model] of order.entries()) {
       try {
         const output = await run(model)
-        this.health.success(model.name, output.ms, output.usage)
+        this.health.success(model.name, output.ms, output.usage as { inputTokens?: number; outputTokens?: number } | undefined)
+        if (output.usage) this.budget?.correct(usageTokens(output.usage.inputTokens), usageTokens(output.usage.outputTokens))
         return { output, model, fellBack: model.name !== primary.name }
       } catch (error) {
         last = error
@@ -161,7 +164,7 @@ export class AgentService {
       // The clerk acts as a studio proposer whoever is typing. The owner's own key does not make the clerk stronger.
       // Its words are streamed to the screen as they are written, through a guard that takes them back the moment they
       // claim money moved or state a figure nobody supplied (the final reply is still checked the same way).
-      ;({ output: run, model: usedModel, fellBack } = await this.withModels((chosen) => runAgent({ ...options, model: chosen, onEvent: hooks.onEvent ? guardedStream(userText, hooks.onEvent) : undefined })))
+      ;({ output: run, model: usedModel, fellBack } = await this.withModels((chosen) => runAgent({ ...options, model: chosen, onEvent: hooks.onEvent ? guardedStream(userText, hooks.onEvent) : undefined }), { primary: model }))
     } catch (error) {
       this.record({ id: runId, agent: 'clerk', who, conversationId, model: model.name, input: input.message, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0 })
       throw error
@@ -241,7 +244,7 @@ export class AgentService {
     let run: RunOutput
     let used = model
     try {
-      ;({ output: run, model: used } = await this.withModels((chosen) => runAgent({ model: chosen, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'decide_delivery', toolChoice: 'required', timeoutMs: 45_000, onEvent })))
+      ;({ output: run, model: used } = await this.withModels((chosen) => runAgent({ model: chosen, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'decide_delivery', toolChoice: 'required', timeoutMs: 45_000, onEvent }), { primary: model }))
     } catch (error) {
       this.record({ id: runId, agent: 'reviewer', who, conversationId: runId, model: model.name, input: prompt, output: null, steps: [checkStep], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0, prompt: 'reviewer' })
       live.publish({ type: 'review', stage: 'failed', dealId, milestone, model: model.name, note: error instanceof Problem ? error.detail : 'The model call failed.', at: stamp() })
@@ -374,10 +377,10 @@ export class AgentService {
    * the browser, against a copy of the ledger. Nothing here is handed a service, the ledger or PayPal.
    */
   async studioTurn(turn: StudioTurn, who: Principal, hooks: { onEvent: (event: StudioEvent) => void; signal?: AbortSignal }) {
-    this.need()
+    const model = this.need()
     this.limit(who, 'studio', 40)
-    const { output: done, model } = await this.withModels((chosen) => runStudioTurn({ model: chosen, turn, signal: hooks.signal, onEvent: hooks.onEvent }))
-    this.record({ id: randomUUID(), agent: 'studio', who, conversationId: randomUUID(), model: model.name, input: JSON.stringify(turn.input.slice(-1)[0] ?? {}).slice(0, 2000), output: JSON.stringify(done.output).slice(0, 4000), steps: [], status: 'ok', error: null, ms: done.ms, usage: { inputTokens: done.usage?.inputTokens, outputTokens: done.usage?.outputTokens } })
+    const { output: done, model: used } = await this.withModels((chosen) => runStudioTurn({ model: chosen, turn, signal: hooks.signal, onEvent: hooks.onEvent }), { primary: model })
+    this.record({ id: randomUUID(), agent: 'studio', who, conversationId: randomUUID(), model: used.name, input: JSON.stringify(turn.input.slice(-1)[0] ?? {}).slice(0, 2000), output: JSON.stringify(done.output).slice(0, 4000), steps: [], status: 'ok', error: null, ms: done.ms, usage: { inputTokens: done.usage?.inputTokens, outputTokens: done.usage?.outputTokens } })
     const { emitted: _emitted, ms: _ms, ...response } = done
     return response
   }
@@ -467,7 +470,7 @@ export class AgentService {
       try {
         // A model service can hiccup. One quiet retry (on the fallback model if there is one) saves a live demo.
         // Only the model call is retried: an offer that reached the rules is never sent twice (its key is the run id).
-        ;({ output: run, model: turnModel } = await this.withModels((chosen) => runAgent({ model: chosen, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'offer_deal', toolChoice: 'required', timeoutMs: 45_000, signal: hooks.signal, onEvent }), { retrySame: true }))
+        ;({ output: run, model: turnModel } = await this.withModels((chosen) => runAgent({ model: chosen, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'offer_deal', toolChoice: 'required', timeoutMs: 45_000, signal: hooks.signal, onEvent }), { primary: model, retrySame: true }))
       } catch (error) {
         if (hooks.signal?.aborted) {
           stopped = true
