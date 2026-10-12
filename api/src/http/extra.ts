@@ -6,7 +6,7 @@ import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simp
 import { generateAuthenticationOptions, verifyAuthenticationResponse } from '@simplewebauthn/server'
 import type { WebAuthnCredential } from '@simplewebauthn/server'
 import { clearSessionCookie, cookieWriteAllowed, readSessionCookie, writeSessionCookie } from '../auth/cookies'
-import { applyCounterRollback, beginLogin, beginRegistration, finishLogin, finishRegistration, passkeyRuleBinding, type WebAuthnConfig } from '../auth/passkeys'
+import { applyCounterRollback, beginLogin, beginRegistration, finishLogin, finishRegistration, passkeyRuleBinding, stepBinding, type WebAuthnConfig } from '../auth/passkeys'
 import { ControlStore } from '../control/store'
 import { defaultFlags, type ServerFlags } from '../flags'
 import { Problem } from './problem'
@@ -43,6 +43,7 @@ export type ProductCtx = {
   listPayees?: () => Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number }>
   /** Cart hash of a proposal that is waiting for a signature. */
   approvalHash?: (proposalId: string) => string | null
+  requireStep?: (c: { req: { header: (name: string) => string | undefined }; get: (key: 'memberId') => string | undefined }, kind: string, binding: string) => void
 }
 
 function sameSecret(presented: string, expected: string): boolean {
@@ -325,7 +326,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       throw new Problem(401, 'auth/stepup-failed', 'Passkey was not accepted', 'The signature did not match.')
     }
     const grant = randomUUID()
-    ctx.control.putGrant({ id: grant, memberId: who.member.id, workspaceId: who.member.workspace_id, kind: row.binding_kind ?? 'approve', binding: row.binding_hash ?? '', now: ctx.now().toISOString() })
+    ctx.control.putGrant({ id: grant, memberId: who.member.id, workspaceId: who.member.workspace_id, kind: row.binding_kind ?? 'approve', binding: row.binding_hash ?? '', now: ctx.now().toISOString(), assertion: JSON.stringify(body.response) })
     return c.json({ grant, kind: row.binding_kind, binding: row.binding_hash })
   })
 
@@ -397,6 +398,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     }
     const body = await c.req.json() as { role?: 'approver' | 'proposer' | 'viewer' | 'payee'; label?: string }
     if (!body.role) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name a role.')
+    ctx.requireStep?.(c, 'invite', stepBinding('invite', JSON.stringify({ role: body.role, label: body.label ?? null })))
     const token = randomBytes(32).toString('base64url')
     const now = ctx.now()
     ctx.control.createInvite({

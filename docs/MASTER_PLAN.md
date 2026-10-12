@@ -56,8 +56,8 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P3.T9 | partial | `revokeCredential` refuses the last key in `api/src/control/store.ts`. No HTTP test | `9a2ea0b` |
 | P3.T10 | not started | no Chromium virtual authenticator test | |
 | P4.T1 | partial | `workspaces.passkey_for_money` is on for a new studio and off for the default studio and a demo. Turning it on is tested. Approve grants bind the cart hash | `fd1432b` |
-| P4.T2 | partial | Approve grant is one use, 120 seconds, member plus cart hash. Parallel approve and both rollback outcomes are tested. Other owner routes do not require a step-up yet | `fd1432b` |
-| P4.T3 | not started | receipts do not store the assertion | |
+| P4.T2 | done | Approve grant is one use, 120 seconds, member plus cart hash. Parallel approve and both rollback outcomes are tested | `283544d` |
+| P4.T3 | done | `proposal.approved` stores the assertion. `0002_warrant_signature` adds `warrants.signature_json` and a file copy is taken first. An older file still reads `{ actor, cartHash }`. Existing money routes require a step-up. The missing key, member, invite-revoke, and payee routes stay 404 | |
 | P4.T4 | not started | no "Meera, passkey" receipt line | |
 | P4.T5 | not started | verify page checks the cart, not a passkey | |
 | P4.T6 | not started | Proof does not require an assertion | |
@@ -124,15 +124,15 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 6 Key brute force 429 and lockout, timing-safe | `api/test/repair-pass.test.ts` "counts wrong keys on the client ip and still accepts the real key" | wrong keys share one bucket per client IP |
 | 7 Revoked member loses every session | `api/test/repair-pass.test.ts` "drops a revoked member session and will not remove the last owner" | store call, then the cookie. No members route. Same test as case 8 |
 | 8 Last owner cannot be removed or demoted | `api/test/repair-pass.test.ts` "drops a revoked member session and will not remove the last owner" | store call. No members route. Same test as case 7 |
-| 9 Assertion replay fails | partial: "registers a passkey and signs in with it" replays a registration challenge | not a step-up replay |
-| 10 Assertion for lock A fails on lock B | none | |
-| 11 UV flag off fails | none | |
-| 12 Revoked credential fails | none | |
-| 13 Assertion from another member fails | none | |
-| 14 Wrong origin or RP ID fails | none | |
-| 15 Counter rollback revokes the credential | none | |
-| 16 Approver over the limit is `approval.over_limit` | none | code only |
-| 17 Proposer approve is 403 | `api/test/api.test.ts` "lets a proposer key ask and read, but never decide, capture, or change the warrant" | bearer key, not a cookie proposer |
+| 9 Assertion replay fails | `api/test/stepup.test.ts` "a step-up assertion cannot be used twice" | |
+| 10 Assertion for lock A fails on lock B | `api/test/stepup.test.ts` "an assertion bound to one cart hash does not approve another" | title is "changed since you looked" |
+| 11 UV flag off fails | `api/test/stepup.test.ts` "a step-up with user verification off is refused" | |
+| 12 Revoked credential fails | `api/test/stepup.test.ts` "a revoked passkey cannot sign a step-up" | |
+| 13 Assertion from another member fails | `api/test/stepup.test.ts` "a passkey from another member cannot approve" | |
+| 14 Wrong origin or RP ID fails | `api/test/stepup.test.ts` "a step-up from the wrong origin or relying party id is refused" | |
+| 15 Counter rollback revokes the credential | `api/test/stepup.test.ts` "a step-up counter that moves backwards revokes the passkey when another one exists" and "marks the last passkey suspect and keeps it" | login has the same two outcomes |
+| 16 Approver over the limit is `approval.over_limit` | `api/test/stepup.test.ts` "an approver over their limit gets approval.over_limit" | cookie approver limit 1000 against a 15000 cent charge |
+| 17 Proposer approve is 403 | `api/test/api.test.ts` "lets a proposer key ask and read, but never decide, capture, or change the warrant" and `api/test/stepup.test.ts` "a cookie proposer cannot approve" | |
 | 18 Changed stored approval turns Proof red | `web/e2e/job.spec.ts` "a receipt can be checked in the browser without a key, and a tampered one is caught" | cart tamper, not a passkey assertion |
 | 19 Reused, expired, or revoked invite fails | `api/test/repair-pass.test.ts` "does not burn an invite on the wrong studio, and a used, expired, or revoked invite fails" | no HTTP revoke route. The test sets `revoked_at` in the row. Same test as case 21 |
 | 20 Two parallel joins, one wins | `api/test/repair-pass.test.ts` "lets one of two joins win" | |

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -507,5 +507,110 @@ describe('step-up grants', () => {
       status = response.status
     }
     expect(status).toBe(429)
+  })
+})
+
+describe('signature column and existing routes', () => {
+  it('migrates a copy of an older database and still reads an old approval', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mandate-p4-migrate-'))
+    const older = join(dir, 'older.sqlite')
+    const raw = openDatabase(older)
+    raw.exec(`
+      CREATE TABLE warrants (
+        id TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        body_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (id, version)
+      );
+      CREATE TABLE proposals (
+        id TEXT PRIMARY KEY,
+        warrant_id TEXT NOT NULL,
+        warrant_version INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        parent_capture_id TEXT,
+        payee_id TEXT,
+        amount_cents INTEGER NOT NULL,
+        currency TEXT NOT NULL,
+        category TEXT,
+        description TEXT NOT NULL,
+        evidence_url TEXT,
+        prompt TEXT,
+        gate TEXT NOT NULL,
+        clause TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        cart_hash TEXT,
+        order_id TEXT,
+        capture_id TEXT,
+        refund_id TEXT,
+        approve_url TEXT,
+        captured_amount_cents INTEGER,
+        reserved_at TEXT,
+        job_id TEXT,
+        funding_capture_id TEXT,
+        payout_batch_id TEXT,
+        payout_item_id TEXT,
+        payout_status TEXT,
+        payout_txn_id TEXT,
+        payout_fee_cents INTEGER,
+        deal_id TEXT,
+        milestone INTEGER,
+        lock_sig TEXT,
+        lock_key_id TEXT,
+        invoice_id TEXT,
+        invoice_url TEXT,
+        invoice_status TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE events (
+        id TEXT PRIMARY KEY,
+        proposal_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        clause TEXT,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+    `)
+    raw.prepare(`INSERT INTO proposals (
+      id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at
+    ) VALUES ('prop_old', 'wnt_line_studio', 1, 'payment', 100, 'USD', 'old', 'NEEDS_APPROVAL', 'standing.matched', 'old', 'locked', ?, ?)`).run(NOW.toISOString(), NOW.toISOString())
+    raw.prepare('INSERT INTO warrants (id, version, body_json, created_at) VALUES (?, 1, ?, ?)').run('wnt_line_studio', '{}', NOW.toISOString())
+    raw.prepare('INSERT INTO events (id, proposal_id, type, clause, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(
+      'evt_old', 'prop_old', 'proposal.approved', 'standing.matched', JSON.stringify({ actor: 'owner', cartHash: 'abc' }), NOW.toISOString(),
+    )
+    raw.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    raw.close()
+    const copy = join(dir, 'copy.sqlite')
+    copyFileSync(older, copy)
+    const db = openDatabase(copy)
+    migrate(db)
+    const columns = db.prepare('PRAGMA table_info(warrants)').all() as Array<{ name: string }>
+    expect(columns.some((column) => column.name === 'signature_json')).toBe(true)
+    const payload = JSON.parse((db.prepare('SELECT payload_json FROM events WHERE id = ?').get('evt_old') as { payload_json: string }).payload_json) as { actor: string; cartHash: string }
+    expect(payload).toEqual({ actor: 'owner', cartHash: 'abc' })
+    expect(readdirSync(join(dir, 'backups')).some((name) => name.endsWith('.sqlite'))).toBe(true)
+    db.close()
+  })
+
+  it('stores the assertion on the approval and does not add the missing routes', async () => {
+    const { h, controlDb, headers } = ruledOwner()
+    const { auth } = await enroll(h.app, headers)
+    const id = await proposeCharge(h.app)
+    const signed = await signApprove(h.app, headers, auth, id)
+    const approved = await h.app.request(`http://mandate.test/v1/proposals/${id}/approve`, { method: 'POST', headers: { ...headers, 'x-mandate-stepup': signed.grant } })
+    expect(approved.status).toBe(200)
+    const packet = await call(h.app, 'GET', `/v1/proposals/${id}/packet`)
+    const approval = packet.json.approval as { payload: { actor: string; assertion?: { id?: string } } }
+    expect(approval.payload.actor).toBe('owner')
+    expect(approval.payload.assertion?.id).toBeTruthy()
+    expect((await call(h.app, 'POST', '/v1/invites/revoke', { body: {} })).status).toBe(404)
+    expect((await call(h.app, 'POST', '/v1/keys', { body: {} })).status).toBe(404)
+    expect((await call(h.app, 'POST', '/v1/members', { body: {} })).status).toBe(404)
+    expect((await call(h.app, 'PATCH', '/v1/payees/payee_priya', { body: {} })).status).toBe(404)
+    const resume = await h.app.request('http://mandate.test/v1/safety/resume', { method: 'POST', headers })
+    expect(resume.status).toBe(401)
+    controlDb.close()
   })
 })

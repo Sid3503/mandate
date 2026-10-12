@@ -97,7 +97,8 @@ CREATE TABLE IF NOT EXISTS stepup_grants (
   binding TEXT NOT NULL,
   created_at TEXT NOT NULL,
   used_at TEXT,
-  expires_at TEXT
+  expires_at TEXT,
+  assertion_json TEXT
 );
 CREATE TABLE IF NOT EXISTS auth_events (
   id TEXT PRIMARY KEY,
@@ -176,6 +177,7 @@ export class ControlStore {
     this.ensureColumn('workspaces', 'passkey_for_money', 'ALTER TABLE workspaces ADD COLUMN passkey_for_money INTEGER NOT NULL DEFAULT 0')
     this.ensureColumn('stepup_grants', 'expires_at', 'ALTER TABLE stepup_grants ADD COLUMN expires_at TEXT')
     this.ensureColumn('credentials', 'suspect_at', 'ALTER TABLE credentials ADD COLUMN suspect_at TEXT')
+    this.ensureColumn('stepup_grants', 'assertion_json', 'ALTER TABLE stepup_grants ADD COLUMN assertion_json TEXT')
   }
 
   /** Older control files predate these columns. The added passkey rule stays off. */
@@ -360,13 +362,13 @@ export class ControlStore {
     return Number(result.changes) > 0
   }
 
-  putGrant(input: { id: string; memberId: string; workspaceId: string; kind: string; binding: string; now: string }): void {
+  putGrant(input: { id: string; memberId: string; workspaceId: string; kind: string; binding: string; now: string; assertion?: string | null }): void {
     const expiresAt = new Date(Date.parse(input.now) + 120_000).toISOString()
-    this.db.prepare('INSERT INTO stepup_grants (id, member_id, workspace_id, kind, binding, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(input.id, input.memberId, input.workspaceId, input.kind, input.binding, input.now, expiresAt)
+    this.db.prepare('INSERT INTO stepup_grants (id, member_id, workspace_id, kind, binding, created_at, expires_at, assertion_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(input.id, input.memberId, input.workspaceId, input.kind, input.binding, input.now, expiresAt, input.assertion ?? null)
   }
 
-  grant(id: string): { member_id: string; kind: string; binding: string; used_at: string | null; expires_at: string | null } | null {
-    return this.db.prepare('SELECT member_id, kind, binding, used_at, expires_at FROM stepup_grants WHERE id = ?').get(id) as { member_id: string; kind: string; binding: string; used_at: string | null; expires_at: string | null } | undefined ?? null
+  grant(id: string): { member_id: string; kind: string; binding: string; used_at: string | null; expires_at: string | null; assertion_json: string | null } | null {
+    return this.db.prepare('SELECT member_id, kind, binding, used_at, expires_at, assertion_json FROM stepup_grants WHERE id = ?').get(id) as { member_id: string; kind: string; binding: string; used_at: string | null; expires_at: string | null; assertion_json: string | null } | undefined ?? null
   }
 
   /** One use. The member, kind, payload hash, and expiry all have to match. Two callers: one update wins. */
