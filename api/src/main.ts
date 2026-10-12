@@ -52,6 +52,7 @@ const { primary: model, drafter: drafterModel, fallback: fallbackModel } = build
 })
 const product = openProduct({
   databasePath: config.databasePath,
+  ledger: db,
   flags,
   env: process.env,
   publicUrl: config.publicUrl,

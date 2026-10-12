@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs'
+import type { DatabaseSync } from 'node:sqlite'
 import { dirname, join } from 'node:path'
 import type { AgentModel } from './agents/model'
 import { ControlStore } from './control/store'
@@ -6,7 +7,7 @@ import { migrate, openDatabase, seed } from './db/database'
 import { loadSigner } from './domain/signing'
 import type { ServerFlags } from './flags'
 import { createApp } from './app'
-import { ModelBudget, OPEN_CAPS } from './ops/budget'
+import { ModelBudget, capsFromEnv, sqliteBudgetStore } from './ops/budget'
 import { proxyHops } from './ops/client-ip'
 import { FakePayPal } from './paypal/fake'
 import { buildServices } from './services/container'
@@ -53,12 +54,15 @@ export function openProduct(input: {
   publicUrl: string
   now: () => Date
   nodeEnv: string
+  /** The ledger that is already open. Counters and the kill switch are stored here so a restart keeps them. */
+  ledger?: DatabaseSync | null
   model?: AgentModel | null
   drafterModel?: AgentModel | null
 }): ProductBoot {
   const flags = input.flags
-  const budget = new ModelBudget(OPEN_CAPS, input.now, 'ws_default')
-  if (!flags.modelEnabled) budget.kill()
+  const budget = new ModelBudget(capsFromEnv(input.env), input.now, 'ws_default', input.ledger ? sqliteBudgetStore(input.ledger) : null)
+  // A flag that is off pauses this process only. A persisted kill would stay on after a later boot turns the model back on.
+  if (!flags.modelEnabled) budget.pause()
   const masterKey = input.env.MASTER_KEY?.trim() || null
   const pepper = input.env.KEY_PEPPER?.trim() || null
   const adminKey = input.env.ADMIN_KEY?.trim() || null
