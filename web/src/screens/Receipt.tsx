@@ -36,6 +36,7 @@ export function Receipt() {
           <section className="panel" data-tour="receipt-decision">
             <div className="row between"><h2 className="panel-title">The decision</h2><GateChip gate={p.gate} past={p.phase === 'captured' || p.phase === 'refunded' ? 'approved' : p.phase === 'rejected' ? 'refused' : undefined} /></div>
             <p className="decision-words">{explain(p.clause, p, warrant, names)}</p>
+            {data.approvalProof ? <ProofLine proof={data.approvalProof} /> : null}
             <p className="server-words"><span>Server · {p.clause}</span>{p.detail}</p>
             {p.gate === 'DENY' ? <NoMoneyMoved /> : null}
             {p.gate === 'DENY' && data.whatWouldPass && data.whatWouldPass.length > 0 ? (
@@ -129,6 +130,17 @@ export function Receipt() {
         </div>
       </div>
     </div>
+  )
+}
+
+function ProofLine({ proof }: { proof: NonNullable<Packet['approvalProof']> }) {
+  return (
+    <p className={`proof-line proof-${proof.tone}`} data-testid="proof-line">
+      <span>{proof.who}</span>
+      <span>{proof.how}</span>
+      {proof.at ? <span>{when(proof.at)}</span> : null}
+      {proof.fingerprint ? <span className="mono">{proof.fingerprint}</span> : null}
+    </p>
   )
 }
 

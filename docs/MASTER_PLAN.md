@@ -57,8 +57,8 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P3.T10 | not started | no Chromium virtual authenticator test | |
 | P4.T1 | partial | `workspaces.passkey_for_money` is on for a new studio and off for the default studio and a demo. Turning it on is tested. Approve grants bind the cart hash | `fd1432b` |
 | P4.T2 | done | Approve grant is one use, 120 seconds, member plus cart hash. Parallel approve and both rollback outcomes are tested | `283544d` |
-| P4.T3 | done | `proposal.approved` stores the assertion. `0002_warrant_signature` adds `warrants.signature_json` and a file copy is taken first. An older file still reads `{ actor, cartHash }`. Existing money routes require a step-up. The missing key, member, invite-revoke, and payee routes stay 404 | |
-| P4.T4 | not started | no "Meera, passkey" receipt line | |
+| P4.T3 | done | `proposal.approved` stores the assertion. `0002_warrant_signature` adds `warrants.signature_json` and a file copy is taken first. An older file still reads `{ actor, cartHash }`. Existing money routes require a step-up. The missing key, member, invite-revoke, and payee routes stay 404 | `751ac9f` |
+| P4.T4 | done | Enrollment shows the fingerprint with "Save this". The receipt line is who, how, when, and 8 hex characters. A missing passkey assertion is red. Owner-key and demo are amber. Old rows are grey and marked legacy | |
 | P4.T5 | not started | verify page checks the cart, not a passkey | |
 | P4.T6 | not started | Proof does not require an assertion | |
 | P4.T7 | partial | `x-mandate-demo-tap` in `requireStep`. No button, no amber receipt, no test | `9a2ea0b` |
@@ -133,7 +133,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 15 Counter rollback revokes the credential | `api/test/stepup.test.ts` "a step-up counter that moves backwards revokes the passkey when another one exists" and "marks the last passkey suspect and keeps it" | login has the same two outcomes |
 | 16 Approver over the limit is `approval.over_limit` | `api/test/stepup.test.ts` "an approver over their limit gets approval.over_limit" | cookie approver limit 1000 against a 15000 cent charge |
 | 17 Proposer approve is 403 | `api/test/api.test.ts` "lets a proposer key ask and read, but never decide, capture, or change the warrant" and `api/test/stepup.test.ts` "a cookie proposer cannot approve" | |
-| 18 Changed stored approval turns Proof red | `web/e2e/job.spec.ts` "a receipt can be checked in the browser without a key, and a tampered one is caught" | cart tamper, not a passkey assertion |
+| 18 Changed stored approval turns Proof red | `api/test/audit.test.ts` "turns a missing passkey signature red and leaves owner-key, demo, and legacy grey or amber" | cart tamper is still the job spec. The passkey verify page and the passkey Playwright flow are not done |
 | 19 Reused, expired, or revoked invite fails | `api/test/repair-pass.test.ts` "does not burn an invite on the wrong studio, and a used, expired, or revoked invite fails" | no HTTP revoke route. The test sets `revoked_at` in the row. Same test as case 21 |
 | 20 Two parallel joins, one wins | `api/test/repair-pass.test.ts` "lets one of two joins win" | |
 | 21 Invite for A fails on B | `api/test/repair-pass.test.ts` "does not burn an invite on the wrong studio, and a used, expired, or revoked invite fails" | a join on the wrong studio does not consume the invite. Same test as case 19 |
