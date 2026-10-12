@@ -17,6 +17,8 @@ async function arm(page: Page) {
 }
 
 test('sign in, approve, verify the receipt, then see a tampered one fail', async ({ page }) => {
+  // The approval card now shows the hash and the clause, so Approve sits under the welcome tour.
+  await page.addInitScript(() => localStorage.setItem('mandate.tour.welcome', '1'))
   await arm(page)
   await page.goto('/app/studio')
   await page.getByLabel('Studio name').fill('Verify Studio')

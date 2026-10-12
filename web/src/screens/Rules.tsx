@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { EmailNotice } from '../components/EmailNotice'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
@@ -246,9 +246,9 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
   })()
   const problem = draft && draft.automation?.payOnSettle && draft.standing.length === 0 ? 'Paying when the client pays needs at least one standing rule, to say whom to pay.' : null
   const changes = draft ? diff(start, draft) : []
-  // Keep the work: leave the screen or reload and it is still here, marked unpublished.
+  // Keep the work before paint. A later effect can lose the race with a fast leave, and the banner never appears.
   const snapshot = draft ? JSON.stringify(draft) : null
-  useEffect(() => {
+  useLayoutEffect(() => {
     onKeep(draft && changes.length > 0 ? draft : null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot])
