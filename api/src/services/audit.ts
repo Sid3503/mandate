@@ -1,3 +1,4 @@
+import { approvalProof } from '../domain/approvalProof'
 import type { ProposalRow, Repo } from '../db/repo'
 import { fundableCents } from '../domain/gate'
 import { monthWindow } from '../domain/period'
@@ -66,6 +67,7 @@ export class AuditService {
     const checks: AuditCheck[] = [
       this.locks(locked),
       this.authorised(moved, byProposal),
+      this.proofColors(events),
       this.amounts(proposals),
       this.funded(proposals, versions),
       this.cap(proposals, versions, latest),
@@ -113,6 +115,32 @@ export class AuditService {
       else if (!tapped && !byRule) failures.push({ proposalId: row.id, detail: 'money moved without the owner\'s tap or a rule the owner signed' })
     }
     return this.check('moved.authorised', 'Every payment had a yes', 'Money moves only after the owner taps, or when a rule the owner signed (the automatic line, a standing rule, billing a signed deal) covers it. Here is every request that moved money, re-checked.', moved.length, failures)
+  }
+
+  /** A passkey tap with no stored assertion is a failure. Owner-key, demo, and legacy rows are counted, not failed. */
+  private proofColors(events: Array<{ proposal_id: string; type: string; payload_json: string; created_at: string }>): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    const counts = { passkey: 0, ownerKey: 0, demo: 0, legacy: 0 }
+    let looked = 0
+    for (const event of events) {
+      if (event.type !== 'proposal.approved') continue
+      looked += 1
+      const payload = JSON.parse(event.payload_json) as Record<string, unknown>
+      const line = approvalProof({ payload, at: event.created_at, warrantVersion: null, warrantSigned: false })
+      if (line.tone === 'red') failures.push({ proposalId: event.proposal_id, detail: 'passkey approval is missing its signature' })
+      else if (line.method === 'owner-key') counts.ownerKey += 1
+      else if (line.method === 'demo') counts.demo += 1
+      else if (line.method === 'legacy') counts.legacy += 1
+      else if (line.method === 'passkey') counts.passkey += 1
+    }
+    return this.check(
+      'approval.proof',
+      'Passkey approvals keep their signature',
+      'A tap that says it was a passkey still has the assertion. An owner key and a demo tap are amber. A row from before methods were stored is grey and marked legacy.',
+      looked,
+      failures,
+      `${counts.passkey} passkey. ${counts.ownerKey} owner-key (amber). ${counts.demo} demo (amber). ${counts.legacy} legacy (grey).`,
+    )
   }
 
   /** What PayPal settled is what was locked, to the cent. */

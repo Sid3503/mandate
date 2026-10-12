@@ -12,6 +12,7 @@ export function Studio() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [step, setStep] = useState<'name' | 'done'>('name')
+  const [fingerprint, setFingerprint] = useState<string | null>(null)
   const passkeys = typeof window !== 'undefined' && typeof window.PublicKeyCredential !== 'undefined'
 
   const submit = async (event: FormEvent) => {
@@ -21,7 +22,8 @@ export function Studio() {
     try {
       const started = await api.createStudio(name.trim())
       const registered = await startRegistration({ optionsJSON: started.options as never })
-      await api.passkeyRegisterVerify({ challengeId: started.challengeId, response: registered })
+      const saved = await api.passkeyRegisterVerify({ challengeId: started.challengeId, response: registered })
+      setFingerprint(saved.fingerprint)
       const login = await api.passkeyLoginOptions()
       const signed = await startAuthentication({ optionsJSON: login.options as never })
       const me = await api.passkeyLoginVerify({ challengeId: login.challengeId, response: signed })
@@ -51,7 +53,9 @@ export function Studio() {
         {step === 'done' ? (
           <div className="stack">
             <h2>Studio ready</h2>
-            <p>PayPal here is simulated. No real money. You can add a second passkey later from this browser. Recovery codes are not issued yet.</p>
+            <p>Save this</p>
+            {fingerprint ? <p className="mono" data-testid="passkey-fingerprint">{fingerprint}</p> : null}
+            <p>This is the fingerprint of the key that can sign. A receipt shows the first 8 characters. PayPal here is simulated. No real money. You can add a second passkey later from this browser. Recovery codes are not issued yet.</p>
             <button type="button" className="btn btn-lime btn-block" onClick={() => navigate('/')}>Open Today</button>
           </div>
         ) : (

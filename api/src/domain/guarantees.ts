@@ -22,6 +22,7 @@ export const GUARANTEES: Guarantee[] = [
   { id: 'once', promise: 'A request is never paid twice, however often it is repeated, retried or replayed.', tests: ['test/property.test.ts', 'test/api.test.ts', 'test/resilience.test.ts'], random: true },
   { id: 'lock', promise: 'Once approved, a request cannot be changed: the payee, amount, proof, job and funding are locked and signed.', audit: 'locks.valid', tests: ['test/api.test.ts', 'test/redteam.test.ts'] },
   { id: 'yes', promise: 'Every payment that moved had the owner\'s tap or a standing rule the owner signed.', audit: 'moved.authorised', tests: ['test/audit.test.ts', 'test/standing.test.ts'] },
+  { id: 'proof', promise: 'A passkey tap with no stored signature is red. An owner key and a demo tap are amber. An older row is grey and marked legacy.', audit: 'approval.proof', tests: ['test/audit.test.ts', 'test/stepup.test.ts'] },
   { id: 'agents', promise: 'No AI can approve, pay, change the rules, or call a PayPal tool that moves money.', audit: 'agents.no_reach', tests: ['test/mcp.test.ts', 'test/tiers.test.ts', 'test/redteam.test.ts'] },
   { id: 'words', promise: 'A model\'s sentence never claims that money moved, or states a figure nobody supplied: it is taken back.', tests: ['test/harness.test.ts', 'test/agents.test.ts'] },
   { id: 'paused', promise: 'While Mandate is paused nothing runs on its own, and the history of pauses is signed.', audit: 'safety.respected', tests: ['test/safety.test.ts', 'test/property.test.ts'], random: true },

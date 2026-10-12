@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { RESERVED_PHASES, type Repo, type ProposalRow, type ProposalKind, type PayoutUpdate } from '../db/repo'
 import { clearingState, Clause, decide, fundableCents, type Decision, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
+import { approvalProof, type ApprovalProof } from '../domain/approvalProof'
 import { cartHash, stableHash, type CartFields } from '../domain/hash'
 import { acceptanceMessage, lockMessage, proofHash, type Signer } from '../domain/signing'
 import { monthWindow } from '../domain/period'
@@ -377,7 +378,7 @@ export class MandateService {
     return cartHash(this.cartFields(row))
   }
 
-  approve(id: string, assertion: unknown = null): HttpResult {
+  approve(id: string, assertion: unknown = null, stamp: { method: 'passkey' | 'owner-key' | 'demo'; fingerprint?: string | null } | null = null): HttpResult {
     const now = this.iso()
     return this.repo.transaction(() => {
       const row = this.require(id)
@@ -419,7 +420,12 @@ export class MandateService {
       const fields = this.cartFields(row)
       const hash = cartHash(fields)
       this.repo.lockProposal(row.id, hash, this.signer.sign(lockMessage(row.id, hash)), now)
-      this.repo.insertEvent(randomUUID(), row.id, 'proposal.approved', row.clause, assertion ? { actor: 'owner', cartHash: hash, assertion } : { actor: 'owner', cartHash: hash }, now)
+      const method = stamp?.method ?? (assertion ? 'passkey' : 'owner-key')
+      const base = { actor: 'owner', cartHash: hash, method }
+      const payload = assertion
+        ? { ...base, assertion, ...(stamp?.fingerprint ? { fingerprint: stamp.fingerprint } : {}) }
+        : base
+      this.repo.insertEvent(randomUUID(), row.id, 'proposal.approved', row.clause, payload, now)
       return { status: 200, body: toView(this.require(id)) }
     })
   }
@@ -990,6 +996,18 @@ export class MandateService {
     return { data, nextCursor: rows.length > limit && last ? encodeCursor(last.createdAt, last.id) : null }
   }
 
+  private approvalLine(row: ProposalRow, warrant: { signatureJson: string | null } | null, approval: { payload: unknown; createdAt: string } | null): ApprovalProof | null {
+    const signed = warrant?.signatureJson != null
+    if (approval) {
+      const payload = approval.payload && typeof approval.payload === 'object' ? approval.payload as Record<string, unknown> : {}
+      return approvalProof({ payload, at: approval.createdAt, warrantVersion: row.warrant_version, warrantSigned: signed })
+    }
+    if (row.clause === 'standing.matched' || row.clause === 'standing.billing') {
+      return approvalProof({ payload: null, at: null, warrantVersion: row.warrant_version, warrantSigned: signed })
+    }
+    return null
+  }
+
   packet(id: string) {
     const row = this.require(id)
     const warrant = this.repo.warrant(row.warrant_id, row.warrant_version)
@@ -1006,7 +1024,8 @@ export class MandateService {
     return {
       proposal: toView(row),
       payee,
-      warrant: warrant ? { id: warrant.id, version: warrant.version, currency: warrant.body.currency, monthlyCapCents: warrant.body.monthlyCapCents, autoSettleUnderCents: warrant.body.autoSettleUnderCents } : null,
+      warrant: warrant ? { id: warrant.id, version: warrant.version, currency: warrant.body.currency, monthlyCapCents: warrant.body.monthlyCapCents, autoSettleUnderCents: warrant.body.autoSettleUnderCents, signed: warrant.signatureJson != null } : null,
+      approvalProof: this.approvalLine(row, warrant, approval),
       prompt: row.prompt,
       clause: row.clause,
       approval,

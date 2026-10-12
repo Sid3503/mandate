@@ -44,7 +44,15 @@ export type LedgerEvent = {
 export type Packet = {
   proposal: Proposal
   payee: Party | null
-  warrant: { id: string; version: number; currency: string; monthlyCapCents: number; autoSettleUnderCents: number } | null
+  warrant: { id: string; version: number; currency: string; monthlyCapCents: number; autoSettleUnderCents: number; signed: boolean } | null
+  approvalProof: {
+    method: 'passkey' | 'owner-key' | 'demo' | 'legacy' | 'rule'
+    tone: 'red' | 'amber' | 'grey' | 'ink'
+    who: string
+    how: string
+    at: string | null
+    fingerprint: string | null
+  } | null
   prompt: string | null
   clause: string
   approval: LedgerEvent | null

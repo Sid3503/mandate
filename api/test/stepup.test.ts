@@ -605,6 +605,9 @@ describe('signature column and existing routes', () => {
     const approval = packet.json.approval as { payload: { actor: string; assertion?: { id?: string } } }
     expect(approval.payload.actor).toBe('owner')
     expect(approval.payload.assertion?.id).toBeTruthy()
+    expect(packet.json.approvalProof).toMatchObject({ method: 'passkey', tone: 'ink', how: 'passkey' })
+    expect(packet.json.approvalProof.fingerprint).toHaveLength(8)
+    expect((approval.payload as { fingerprint?: string }).fingerprint).toHaveLength(16)
     expect((await call(h.app, 'POST', '/v1/invites/revoke', { body: {} })).status).toBe(404)
     expect((await call(h.app, 'POST', '/v1/keys', { body: {} })).status).toBe(404)
     expect((await call(h.app, 'POST', '/v1/members', { body: {} })).status).toBe(404)

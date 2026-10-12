@@ -654,7 +654,11 @@ export function createApp(deps: AppDeps) {
     }
     requireStep(c, deps, 'approve', hash ?? id)
     const assertion = grant?.assertion_json ? JSON.parse(grant.assertion_json) as unknown : null
-    return send(c, service.approve(id, assertion))
+    const credentialId = assertion && typeof assertion === 'object' && 'id' in assertion ? String((assertion as { id: unknown }).id) : ''
+    const fingerprint = credentialId ? deps.control?.credential(credentialId)?.fingerprint ?? null : null
+    const demo = !assertion && workspacePasskeyOn(deps).mode === 'demo' && c.req.header('x-mandate-demo-tap') === '1'
+    const method = assertion ? 'passkey' : demo ? 'demo' : 'owner-key'
+    return send(c, service.approve(id, assertion, { method, fingerprint }))
   })
   app.post('/v1/proposals/:id/reject', async (c) => {
     await assertEmpty(c)

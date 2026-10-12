@@ -45,6 +45,39 @@ describe('the audit', () => {
     expect(Object.fromEntries(report.checks.map((check: { id: string; checked: number }) => [check.id, check.checked]))).toMatchObject({ 'locks.valid': 4, 'moved.authorised': 4, 'amounts.match': 4, 'deals.signed': 3 })
   })
 
+  it('turns a missing passkey signature red and leaves owner-key, demo, and legacy grey or amber', async () => {
+    const h = await worked()
+    const tapped = await call(h.app, 'GET', `/v1/proposals/${h.tapped}/packet`)
+    expect(tapped.json.approvalProof).toMatchObject({ method: 'owner-key', tone: 'amber', how: 'owner key' })
+    const standing = await call(h.app, 'GET', `/v1/proposals/${h.auto}/packet`)
+    expect(standing.json.approvalProof).toMatchObject({ method: 'rule', tone: 'grey' })
+    expect(standing.json.approvalProof.how).toContain('Rules v')
+    expect(standing.json.approvalProof.how).toContain('has no signature')
+    const proof = (await audit(h.app)).checks.find((check: { id: string }) => check.id === 'approval.proof')
+    expect(proof.status).toBe('pass')
+    expect(proof.note).toContain('owner-key (amber)')
+    expect(proof.note).toContain('legacy (grey)')
+
+    const stored = JSON.parse((h.db.prepare(`SELECT payload_json FROM events WHERE proposal_id = ? AND type = 'proposal.approved'`).get(h.tapped) as { payload_json: string }).payload_json) as { cartHash: string }
+    h.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: stored.cartHash, method: 'passkey' }), h.tapped)
+    const red = await audit(h.app)
+    expect(failing(red)).toContain('approval.proof')
+    expect(red.checks.find((check: { id: string }) => check.id === 'approval.proof').failures[0]).toMatchObject({ proposalId: h.tapped, detail: 'passkey approval is missing its signature' })
+    expect((await call(h.app, 'GET', `/v1/proposals/${h.tapped}/packet`)).json.approvalProof.tone).toBe('red')
+
+    const h2 = await worked()
+    const kept = JSON.parse((h2.db.prepare(`SELECT payload_json FROM events WHERE proposal_id = ? AND type = 'proposal.approved'`).get(h2.tapped) as { payload_json: string }).payload_json) as { cartHash: string }
+    h2.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: kept.cartHash }), h2.tapped)
+    const legacy = await audit(h2.app)
+    expect(failing(legacy)).not.toContain('approval.proof')
+    expect((await call(h2.app, 'GET', `/v1/proposals/${h2.tapped}/packet`)).json.approvalProof).toMatchObject({ method: 'legacy', tone: 'grey', how: 'legacy' })
+    h2.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: kept.cartHash, method: 'demo' }), h2.tapped)
+    const demo = await audit(h2.app)
+    expect(failing(demo)).not.toContain('approval.proof')
+    expect(demo.checks.find((check: { id: string }) => check.id === 'approval.proof').note).toContain('demo (amber)')
+    expect((await call(h2.app, 'GET', `/v1/proposals/${h2.tapped}/packet`)).json.approvalProof).toMatchObject({ method: 'demo', tone: 'amber' })
+  })
+
   it('catches an amount changed after approval', async () => {
     const h = await worked()
     h.db.prepare('UPDATE proposals SET amount_cents = 90000 WHERE id = ?').run(h.tapped)
