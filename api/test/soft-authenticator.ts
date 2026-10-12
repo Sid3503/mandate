@@ -65,10 +65,17 @@ export class SoftAuthenticator {
     }
   }
 
-  authenticate(challenge: string): AuthenticationResponseJSON {
-    this.counter += 1
-    const clientDataJSON = this.clientData('webauthn.get', challenge)
-    const authData = this.authData(false)
+  authenticate(challenge: string, opts: { userVerified?: boolean; counter?: number; origin?: string; rpID?: string } = {}): AuthenticationResponseJSON {
+    if (opts.counter === undefined) this.counter += 1
+    else this.counter = opts.counter
+    const origin = opts.origin ?? this.origin
+    const rpID = opts.rpID ?? this.rpID
+    const clientDataJSON = Buffer.from(JSON.stringify({ type: 'webauthn.get', challenge, origin, crossOrigin: false })).toString('base64url')
+    const rpHash = createHash('sha256').update(rpID).digest()
+    const flags = opts.userVerified === false ? 0x01 : 0x05
+    const count = Buffer.alloc(4)
+    count.writeUInt32BE(this.counter)
+    const authData = Buffer.concat([rpHash, Buffer.from([flags]), count])
     return {
       id: this.id,
       rawId: this.id,

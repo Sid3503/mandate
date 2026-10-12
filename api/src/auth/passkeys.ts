@@ -90,6 +90,24 @@ export async function beginLogin(input: { config: WebAuthnConfig; store: Control
   return { challengeId, options }
 }
 
+/** A counter that moves backwards is always refused. The last remaining passkey is kept and marked suspect. */
+export function applyCounterRollback(store: ControlStore, credentialId: string, memberId: string, now: string, workspaceId?: string | null): 'revoked' | 'suspect' {
+  const others = store.credentials(memberId).filter((row) => !row.revoked_at && row.credential_id !== credentialId)
+  if (others.length > 0) {
+    store.forceRevokeCredential(credentialId, now)
+    store.event({ id: randomUUID(), at: now, workspaceId, memberId, event: 'passkey.counter', result: 'revoked', detail: credentialId })
+    return 'revoked'
+  }
+  store.markSuspect(credentialId, now)
+  store.event({ id: randomUUID(), at: now, workspaceId, memberId, event: 'passkey.counter', result: 'suspect', detail: credentialId })
+  return 'suspect'
+}
+
+function counterRolledBack(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : ''
+  return message.toLowerCase().includes('counter')
+}
+
 export async function finishLogin(input: { config: WebAuthnConfig; store: ControlStore; challengeId: string; response: AuthenticationResponseJSON; now: Date }): Promise<{ memberId: string; credentialId: string }> {
   const row = input.store.takeChallenge(input.challengeId, input.now.toISOString())
   if (!row || row.purpose !== 'login') throw new Error('challenge')
@@ -110,17 +128,11 @@ export async function finishLogin(input: { config: WebAuthnConfig; store: Contro
       requireUserVerification: true,
     })
     if (!verified.verified) throw new Error('verify')
-    const next = verified.authenticationInfo.newCounter
-    if (stored.counter > 0 && next > 0 && next <= stored.counter) {
-      input.store.forceRevokeCredential(stored.credential_id, input.now.toISOString())
-      throw new Error('counter')
-    }
-    input.store.setCounter(stored.credential_id, next, input.now.toISOString())
+    input.store.setCounter(stored.credential_id, verified.authenticationInfo.newCounter, input.now.toISOString())
     return { memberId: stored.member_id, credentialId: stored.credential_id }
   } catch (error) {
-    const message = error instanceof Error ? error.message : ''
-    if (message.includes('counter')) {
-      input.store.forceRevokeCredential(stored.credential_id, input.now.toISOString())
+    if (counterRolledBack(error)) {
+      applyCounterRollback(input.store, stored.credential_id, stored.member_id, input.now.toISOString())
     }
     throw error
   }
