@@ -15,7 +15,7 @@ import { FakePayPal } from '../src/paypal/fake'
 import { buildServices } from '../src/services/container'
 import { openSeal } from '../src/tenancy/envelope'
 import { TenantRegistry } from '../src/tenancy/registry'
-import { call, closeAll, EVIDENCE, harness, JOB, NOW, type Requester } from './support'
+import { call, closeAll, EVIDENCE, harness, JOB, NOW, OWNER_KEY, type Requester } from './support'
 import { SoftAuthenticator } from './soft-authenticator'
 
 afterEach(closeAll)
@@ -625,5 +625,35 @@ describe('signature column and existing routes', () => {
     const resume = await h.app.request('http://mandate.test/v1/safety/resume', { method: 'POST', headers })
     expect(resume.status).toBe(401)
     controlDb.close()
+  })
+})
+
+describe('demo tap', () => {
+  it('records a demo tap as amber and ignores that header outside a demo', async () => {
+    const h = moneyDesk()
+    const started = await h.app.request('http://mandate.test/demo/start', { method: 'POST' })
+    expect(started.status).toBe(200)
+    const demo = await started.json() as { workspaceId: string }
+    const cookie = (started.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
+    const headers = { ...WEB, cookie }
+    const asked = await ask(h.app, `/w/${demo.workspaceId}`, headers)
+    expect(asked.gate).toBe('NEEDS_APPROVAL')
+    const approved = await h.app.request(`http://mandate.test/w/${demo.workspaceId}/v1/proposals/${asked.id}/approve`, {
+      method: 'POST',
+      headers: { ...headers, 'x-mandate-demo-tap': '1' },
+    })
+    expect(approved.status).toBe(200)
+    const packet = await h.app.request(`http://mandate.test/w/${demo.workspaceId}/v1/proposals/${asked.id}/packet`, { headers })
+    expect((await packet.json()).approvalProof).toMatchObject({ method: 'demo', tone: 'amber', how: 'demo' })
+
+    const home = await ask(h.app, '', { authorization: `Bearer ${OWNER_KEY}`, ...WEB })
+    const outside = await h.app.request(`http://mandate.test/v1/proposals/${home.id}/approve`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${OWNER_KEY}`, 'x-mandate-demo-tap': '1' },
+    })
+    expect(outside.status).toBe(200)
+    const homePacket = await call(h.app, 'GET', `/v1/proposals/${home.id}/packet`)
+    expect(homePacket.json.approvalProof).toMatchObject({ method: 'owner-key', tone: 'amber' })
+    h.controlDb.close()
   })
 })

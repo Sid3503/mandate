@@ -7,6 +7,7 @@ import { useAsk } from '../components/Ask'
 import { BalanceNote } from '../components/PayPalFeatures'
 import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
+import { session } from '../lib/session'
 import { useQuery } from '@tanstack/react-query'
 import { relative } from '../lib/format'
 import { reviewKey, useLive, type ReviewState } from '../lib/live'
@@ -387,7 +388,7 @@ function ItemRow({ item }: { item: TodayItem }) {
       if (action === 'settle' || action === 'check') return api.capture(item.proposalId)
       if (action === 'remind') return api.remindInvoice(item.proposalId)
       if (action === 'cancel_payout') return api.cancelPayout(item.proposalId)
-      if (action === 'approve') return api.approve(item.proposalId)
+      if (action === 'approve') return api.approve(item.proposalId, session.mode() === 'demo' ? 'demo' : 'auto')
       if (action === 'reject') return api.reject(item.proposalId)
       return Promise.resolve(null)
     },
@@ -455,7 +456,8 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   const online = useOnline()
   const refresh = useRefreshMoney()
   const toast = useToast()
-  const approve = useMutation({ mutationFn: () => api.approve(proposal.id), onSuccess: (locked) => { onLocked(locked); toast({ title: `Approved ${dollars(locked.amountCents)}`, body: 'Locked and signed. Nothing has moved yet.' }); void refresh() } })
+  const demo = session.mode() === 'demo'
+  const approve = useMutation({ mutationFn: (how: 'auto' | 'demo' | 'passkey') => api.approve(proposal.id, how), onSuccess: (locked) => { onLocked(locked); toast({ title: `Approved ${dollars(locked.amountCents)}`, body: 'Locked and signed. Nothing has moved yet.' }); void refresh() } })
   const reject = useMutation({ mutationFn: () => api.reject(proposal.id), onSuccess: () => { toast({ title: 'Rejected', body: 'Nothing moved.', tone: 'info' }); void refresh() } })
   const locked = proposal.phase !== 'pending_approval'
   const kind = KIND[proposal.kind]
@@ -493,9 +495,10 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
         </div>
       ) : (
         <div className="approval-actions">
-          <button type="button" className="btn btn-lime btn-big" data-tour="approve" disabled={disabled} onClick={() => approve.mutate()}>
-            {approve.isPending ? 'Locking…' : <>Approve <span className="money">{dollars(proposal.amountCents, proposal.currency)}</span></>}
+          <button type="button" className="btn btn-lime btn-big" data-tour="approve" disabled={disabled} onClick={() => approve.mutate(demo ? 'demo' : 'auto')}>
+            {approve.isPending ? 'Locking…' : demo ? 'Demo tap' : <>Approve <span className="money">{dollars(proposal.amountCents, proposal.currency)}</span></>}
           </button>
+          {demo ? <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => approve.mutate('passkey')}>Try with my passkey</button> : null}
           <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => reject.mutate()}>{reject.isPending ? 'Rejecting…' : 'Reject'}</button>
           {!owner ? <p className="fine">This key can ask and read. Only the owner key can approve.</p> : null}
         </div>
