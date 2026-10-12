@@ -36,4 +36,4 @@ A studio's rules decide whether money may move. PayPal moves only the locked cen
 
 ## What the flags add
 
-Workspaces, passkeys, cookie sessions, step-up on money, invites, the payee book, and the model kill switch are in the server. Their flags default to off, except the model, which stays on, and the legacy owner key, which stays on for the default studio.
+Workspaces, passkeys, cookie sessions, step-up on money, invites, the payee book, and the model kill switch are in the server. `POST /ops/model/resume` clears the kill with the admin key. It is 404 until `ADMIN_KEY` is set and 401 when the key is wrong. Their flags default to off, except the model, which stays on, and the legacy owner key, which stays on for the default studio.

@@ -252,6 +252,44 @@ describe('model budget', () => {
     expect(model.calls()).toBe(0)
     expect(drafter.calls()).toBe(0)
   })
+
+  it('a resume clears the kill row and the clerk can run again', async () => {
+    const missing = harness({})
+    expect((await missing.app.request('http://mandate.test/ops/model/resume', { method: 'POST' })).status).toBe(404)
+    const dir = mkdtempSync(join(tmpdir(), 'mandate-resume-'))
+    const path = join(dir, 'ledger.sqlite')
+    const db = openDatabase(path)
+    migrate(db)
+    const product = openProduct({ databasePath: path, ledger: db, flags: loadFlags({}), env: {}, publicUrl: 'http://127.0.0.1:8787', now: () => NOW, nodeEnv: 'test' })
+    const model = scriptedModel(() => ({ text: 'back' }))
+    const h = harness({ model, budget: product.budget, adminKey: 'admin-repair-key-32chars' })
+    const killed = await h.app.request('http://mandate.test/ops/model/kill', {
+      method: 'POST',
+      headers: { authorization: 'Bearer admin-repair-key-32chars' },
+    })
+    expect(killed.status).toBe(200)
+    expect(product.budget.stopped).toBe(true)
+    const denied = await h.app.request('http://mandate.test/ops/model/resume', {
+      method: 'POST',
+      headers: { authorization: 'Bearer wrong-admin-key-32chars' },
+    })
+    expect(denied.status).toBe(401)
+    expect(product.budget.stopped).toBe(true)
+    const resumed = await h.app.request('http://mandate.test/ops/model/resume', {
+      method: 'POST',
+      headers: { authorization: 'Bearer admin-repair-key-32chars' },
+    })
+    expect(resumed.status).toBe(200)
+    expect(product.budget.stopped).toBe(false)
+    const agents = new AgentService(h.services, model, () => NOW, null, null, product.budget)
+    await agents.studioTurn({ input: [{ type: 'message', role: 'user', content: [{ type: 'text', text: 'hi' }] }] }, OWNER, { onEvent: () => undefined })
+    expect(model.calls()).toBe(1)
+    db.close()
+    const again = openDatabase(path)
+    const second = openProduct({ databasePath: path, ledger: again, flags: loadFlags({ MODEL_ENABLED: '1' }), env: {}, publicUrl: 'http://127.0.0.1:8787', now: () => NOW, nodeEnv: 'test' })
+    expect(second.budget.stopped).toBe(false)
+    again.close()
+  })
 })
 
 describe('static files and security headers', () => {

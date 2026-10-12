@@ -91,6 +91,12 @@ export class ModelBudget {
     this.store?.setKilled(true)
   }
 
+  /** Clears an ops kill, including the stored row. The next process is not stuck. */
+  resume(): void {
+    this.killed = false
+    this.store?.setKilled(false)
+  }
+
   /** This process only. Used when the model flag is off, so a later boot with the flag on is not stuck. */
   pause(): void {
     this.killed = true
