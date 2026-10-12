@@ -55,14 +55,14 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P3.T8 | partial | `useRecovery` and the recovery block in code. No issue, use, or regenerate test | `9a2ea0b` |
 | P3.T9 | partial | `revokeCredential` refuses the last key in `api/src/control/store.ts`. No HTTP test | `9a2ea0b` |
 | P3.T10 | not started | no Chromium virtual authenticator test | |
-| P4.T1 | partial | `workspaces.passkey_for_money` is on for a new studio and off for the default studio and a demo. Turning it on is tested. Approve grants bind the cart hash | `fd1432b` |
+| P4.T1 | done | `workspaces.passkey_for_money` is on for a new studio and off for the default studio and a demo. Turning it on is tested | `fd1432b` |
 | P4.T2 | done | Approve grant is one use, 120 seconds, member plus cart hash. Parallel approve and both rollback outcomes are tested | `283544d` |
 | P4.T3 | done | `proposal.approved` stores the assertion. `0002_warrant_signature` adds `warrants.signature_json` and a file copy is taken first. An older file still reads `{ actor, cartHash }`. Existing money routes require a step-up. The missing key, member, invite-revoke, and payee routes stay 404 | `751ac9f` |
 | P4.T4 | done | Enrollment shows the fingerprint with "Save this". The receipt line is who, how, when, and 8 hex characters. A missing passkey assertion is red. Owner-key and demo are amber. Old rows are grey and marked legacy | `b6cb07f` |
 | P4.T5 | done | Verify checks ES256 from a Chromium virtual-authenticator vector, including five one-bit changes. Wording is "valid signature by this key". Unknown algorithms say "cannot verify here". One passkey Playwright test signs in, approves, verifies, and sees a tampered receipt fail | `e5913da` |
-| P4.T6 | not started | Proof does not require an assertion | |
+| P4.T6 | done | A passkey approval with no assertion is red and fails `approval.proof`. Owner-key and demo are amber and do not fail. Old rows are grey and marked legacy. A standing rule with no signature stays grey and says that version has no signature | `b6cb07f` |
 | P4.T7 | done | Demo tap sends `x-mandate-demo-tap` and stores method `demo`. The receipt proof is amber. The Today card shows Demo tap and Try with my passkey. The same header outside a demo stores owner-key. gates:fast 567 | `6968dcd` |
-| P4.T8 | done | The Today approval card shows amount, payee, category, evidence, a short cart hash, and the clause before the prompt. The success toast says Signed and sent. Approved · locked stays | |
+| P4.T8 | done | The Today approval card shows amount, payee, category, evidence, a short cart hash, and the clause before the prompt. The success toast says Signed and sent. Approved · locked stays | `1cdbfef` |
 | P5.T1 | partial | `web/src/screens/Landing.tsx` has the three doors and the trust strip. The h1 is still "Agents can ask." No test of the new doors | `9a2ea0b` |
 | P5.T2 | partial | `api.demoStart` and the demo banner in `web/src/components/Shell.tsx`. No role switcher, reset, or live-proof page. No test | `9a2ea0b` |
 | P5.T3 | partial | `web/src/screens/Studio.tsx` is name plus one passkey. No second passkey, recovery codes, or saved progress | `9a2ea0b` |
@@ -152,7 +152,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 34 Simulate writes zero rows | `api/test/phases.test.ts` "tries a payment without writing a row" | |
 | 35 No test output or log contains a canary | partial: "redacts a canary and a bearer token" and `scripts/check-secrets.mjs` | not a log sweep of the suite |
 
-Cases with no test: 10, 11, 12, 13, 14, 15, 16. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 23, 24, 25, 26, 29, 31, and 32 gained a test in the repair pass.
+Cases 9 to 18 have the tests named in the table. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 23, 24, 25, 26, 29, 31, and 32 gained a test in the repair pass. Cases still partial, with no full test, are 22, 27, 28, 30, and 35.
 
 ## Confirmed facts, not changes
 
