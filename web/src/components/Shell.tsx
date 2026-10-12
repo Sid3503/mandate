@@ -225,6 +225,9 @@ function ShellFrame() {
             <NavLink to="/system" className="topbar-sys" aria-label="System">v{me.data?.version ?? '—'}</NavLink>
           </div>
         </header>
+        {session.mode() === 'demo' ? (
+          <div className="demo-banner" role="status">Simulated PayPal. No real money. Your demo ends in 24 hours.</div>
+        ) : null}
         {!online ? (
           <div className="offline" role="status">
             <strong>Offline</strong> Reading what was already loaded. Nothing that moves money can be sent until you are back online.

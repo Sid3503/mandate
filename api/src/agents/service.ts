@@ -16,6 +16,7 @@ import { assessProof } from './proof'
 import { explainRules } from './explainer'
 import { readBack } from './intent'
 import { claimsMoneyMoved, composeReply, unsupportedAmounts, type Outcome } from './guard'
+import type { ModelBudget } from '../ops/budget'
 import type { AgentModel } from './model'
 import { clerkSystem, negotiatorSystem, PROMPT_VERSIONS, promptVersion, reviewerSystem, untrusted, type PromptId } from './prompts'
 import { runAgent, type AgentEvent, type RunOutput, type TraceStep } from './runtime'
@@ -77,10 +78,12 @@ export class AgentService {
     private readonly drafterModel: AgentModel | null = null,
     /** Tried once if the main model errors, so a bad model day does not end the conversation. */
     private readonly fallbackModel: AgentModel | null = null,
+    /** When set, a call past the cap or after the kill switch never reaches the model. */
+    private readonly budget: ModelBudget | null = null,
   ) {}
 
   get enabled(): boolean {
-    return this.model !== null
+    return this.model !== null && this.budget?.blocked() == null
   }
 
   get modelName(): string | null {
@@ -89,6 +92,8 @@ export class AgentService {
 
   private need(): AgentModel {
     if (!this.model) throw new Problem(503, 'agents.unconfigured', 'No language model is configured', 'Set OLLAMA_API_KEY to turn the agents on. The rules and the console work without it.')
+    const paused = this.budget?.reserve()
+    if (paused) throw new Problem(503, 'budget/exhausted', 'AI is paused', paused)
     return this.model
   }
 

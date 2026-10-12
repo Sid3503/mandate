@@ -19,7 +19,9 @@ import { session } from './lib/session'
 import { Today } from './screens/Today'
 import { Proof } from './screens/Proof'
 import { Verify } from './screens/Verify'
+import { Join } from './screens/Join'
 import { Landing } from './screens/Landing'
+import { Studio } from './screens/Studio'
 import { Clerk } from './screens/Clerk'
 import { Deals } from './screens/Deals'
 import { JobScreen, Jobs } from './screens/Jobs'
@@ -84,7 +86,7 @@ function GlobalGuards() {
 function RequireKey({ children }: { children: ReactNode }) {
   const where = useLocation()
   // The front door: a visitor with no key sees what Mandate is before being asked for one.
-  if (!session.get()) return <Navigate to={where.pathname === '/' ? '/welcome' : '/unlock'} replace state={{ from: where.pathname }} />
+  if (!session.get() && !session.workspace()) return <Navigate to={where.pathname === '/' ? '/welcome' : '/unlock'} replace state={{ from: where.pathname }} />
   return <>{children}</>
 }
 
@@ -98,6 +100,8 @@ createRoot(document.getElementById('root')!).render(
         <Routes>
           <Route path="/welcome" element={<Landing />} />
           <Route path="/unlock" element={<Unlock />} />
+          <Route path="/studio" element={<Studio />} />
+          <Route path="/join" element={<Join />} />
           <Route path="/verify" element={<Verify />} />
           <Route path="/s/:token" element={<SharedStatus />} />
           <Route element={<RequireKey><LiveProvider><Shell /></LiveProvider></RequireKey>}>

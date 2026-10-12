@@ -1,5 +1,8 @@
 import { createApp, type AppDeps } from '../src/app'
+import type { ControlStore } from '../src/control/store'
 import type { ServerFlags } from '../src/flags'
+import type { ModelBudget } from '../src/ops/budget'
+import type { TenantRegistry } from '../src/tenancy/registry'
 import { migrate, openDatabase, seed } from '../src/db/database'
 import { Repo } from '../src/db/repo'
 import type { InvoicePort } from '../src/paypal/invoices'
@@ -24,7 +27,7 @@ export function closeAll() {
 
 export type Requester = { request: (input: string, init?: RequestInit) => Response | Promise<Response> }
 
-export function harness(options: { commit?: string | null; demoReset?: boolean; flags?: ServerFlags; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: { tripAfter: number; windowSeconds?: number } } = {}) {
+export function harness(options: { commit?: string | null; demoReset?: boolean; flags?: ServerFlags; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: { tripAfter: number; windowSeconds?: number }; control?: ControlStore | null; registry?: TenantRegistry | null; budget?: ModelBudget | null; adminKey?: string | null; webauthn?: { rpID: string; rpName: string; origins: string[] } | null; workspace?: { id: string; mode: 'default' | 'demo' | 'studio' | 'live' }; masterKey?: string | null; demo?: { root: string; template: string } | null; classedRates?: boolean; redact?: string[] } = {}) {
   const db = openDatabase(':memory:')
   open.push(db)
   migrate(db)
@@ -42,6 +45,12 @@ export function harness(options: { commit?: string | null; demoReset?: boolean; 
     watch: options.watch,
     model: options.model,
     draining: options.draining,
+    control: options.control,
+    registry: options.registry,
+    budget: options.budget,
+    workspace: options.workspace,
+    masterKey: options.masterKey,
+    demo: options.demo,
     services: (services = buildServices({ db, paypal, invoices: options.invoices, watch: options.watch, publicUrl: 'http://127.0.0.1:8787', now: () => clock, signer: useSigner, safety: options.breaker ?? { tripAfter: 0 } })),
     now: () => clock,
     config: {
@@ -59,6 +68,10 @@ export function harness(options: { commit?: string | null; demoReset?: boolean; 
       clientAgent: options.clientAgent,
       demoReset: options.demoReset,
       flags: options.flags,
+      adminKey: options.adminKey,
+      webauthn: options.webauthn,
+      classedRates: options.classedRates,
+      redact: options.redact,
     },
   })
   const app = build()

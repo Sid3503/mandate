@@ -79,6 +79,7 @@ export function Unlock() {
           <ProblemCard error={error} />
         </form>
         <p className="fine"><Link to="/welcome" className="link">← What is Mandate?</Link></p>
+        <p className="fine">A key is authority. Owner, staff, client, and agent keys each see only their side.</p>
         <p className="fine">The owner key can approve, settle and change the rules. A proposer key, the kind an agent gets, can only ask and read.</p>
       </section>
     </div>

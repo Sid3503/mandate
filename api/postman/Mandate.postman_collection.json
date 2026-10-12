@@ -101,6 +101,15 @@
           ]
         },
         {
+          "name": "Healthz",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/healthz"
+          }
+        },
+        {
           "name": "Flags",
           "request": {
             "method": "GET",

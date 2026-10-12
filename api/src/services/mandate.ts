@@ -13,6 +13,7 @@ import { assessFeatures } from '../domain/paypalFeatures'
 import { reconcile } from '../domain/reconcile'
 import { Problem } from '../http/problem'
 import { paypalProblem } from './paypalProblem'
+import { applyPayeeBook, type PayeeView } from '../domain/payee-book'
 import { applyPause, NOT_PAUSED } from '../domain/safety'
 import type { SafetyService } from './safety'
 import { runIdempotent } from './idempotency'
@@ -138,6 +139,9 @@ export class MandateService {
       /** The emergency stop and the breaker. Absent in tests that do not need it. */
       safety?: SafetyService
       agents?: import('./agents').AgentService
+      /** When set, a new payee cannot pass on a standing rule alone. Off unless the caller turns the book on. */
+      payeeBook?: boolean
+      newPayeeWaitHours?: number
     } = {},
   ) {}
 
@@ -1063,6 +1067,22 @@ export class MandateService {
     }
   }
 
+  private payeeView(id: string | null, nowMs: number): PayeeView | null {
+    if (!id) return null
+    const row = this.repo.payeeRow(id)
+    if (!row) return { status: 'missing', changePending: false, waitUntil: null }
+    const waitHours = this.options.newPayeeWaitHours ?? 24
+    const seen = Date.parse(row.first_seen)
+    const waitUntilMs = Number.isFinite(seen) ? seen + waitHours * 3_600_000 : nowMs
+    const cooling = row.verified_method !== 'owner_attested' && row.total_paid_cents === 0 && waitHours > 0 && nowMs < waitUntilMs
+    const status = row.status === 'active' || row.status === 'pending' || row.status === 'disabled' ? row.status : 'missing'
+    return {
+      status: status === 'active' && cooling ? 'pending' : status,
+      changePending: row.change_pending === 1,
+      waitUntil: cooling ? new Date(waitUntilMs).toISOString() : null,
+    }
+  }
+
   /**
    * The gate's answer to a request under a set of rules, against the ledger as it is now. Nothing is stored. It is the one
    * place a request is read into the gate's terms, used both to file a request and to try one without filing it.
@@ -1106,7 +1126,10 @@ export class MandateService {
       milestone,
       deal,
     }, { ...cap, nowMs: Date.parse(now) }), this.options.safety?.state() ?? NOT_PAUSED, actor)
-    return { decision, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap }
+    const withPayee = this.options.payeeBook && input.kind === 'payment'
+      ? applyPayeeBook(decision, this.payeeView(payee?.id ?? null, Date.parse(now)))
+      : decision
+    return { decision: withPayee, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap }
   }
 
   /** A settled client payment with money left to fund a payout, for the try-it cases to cite. Null when there is none yet. */
