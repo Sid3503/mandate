@@ -162,6 +162,10 @@ Cases 9 to 18 have the tests named in the table. Cases 1, 2, 3, 4, 5, 6, 7, 8, 1
 
 ## Gates
 
+The baseline before Phase 4 is the repair pass in `docs/DECISIONS.md`: 46 files, 543 API tests, 114 Playwright tests, axe pass. The 522 API tests and 112 Playwright tests below are the earlier audit on the same day, before that repair. They are not the Phase 4 baseline.
+
+Q0 on `q0-verify`, later the same day: `npm run gates` exited 0. 47 files, 568 API tests, 7.71s. Secret check 313 tracked files. `ControlRoom` still 4,602.45 kB. Playwright 116 passed (7.5m), axe included. The counts are in `docs/DECISIONS.md`.
+
 `npm run gates` on 12 October 2026. Exit code 0. The command is hygiene, typecheck, the API suite, the secret check, the web build, then Playwright. Lighthouse is not part of this command and was not run. This run ticks no extra task.
 
 Hygiene (`node scripts/ci/hygiene.mjs`): 23 checks passed. Node pin, both lockfiles, no tracked secret files, Render deploy-after-checks and `/ready`, production `NODE_ENV`, no secrets in `render.yaml`, and the four workflows declare permissions, pin actions to a SHA, and do not use `pull_request_target`.

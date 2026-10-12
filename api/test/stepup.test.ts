@@ -656,4 +656,26 @@ describe('demo tap', () => {
     expect(homePacket.json.approvalProof).toMatchObject({ method: 'owner-key', tone: 'amber' })
     h.controlDb.close()
   })
+
+  it('a downloaded receipt holds no owner key, master key, pepper, or PayPal token', async () => {
+    const paypal = 'paypal-canary-token-32chars-xxxx'
+    const h = moneyDesk()
+    const started = await h.app.request('http://mandate.test/demo/start', { method: 'POST' })
+    expect(started.status).toBe(200)
+    const demo = await started.json() as { workspaceId: string }
+    const cookie = (started.headers.get('set-cookie') ?? '').split(';')[0] ?? ''
+    const headers = { ...WEB, cookie }
+    const asked = await ask(h.app, `/w/${demo.workspaceId}`, headers)
+    const approved = await h.app.request(`http://mandate.test/w/${demo.workspaceId}/v1/proposals/${asked.id}/approve`, {
+      method: 'POST',
+      headers: { ...headers, 'x-mandate-demo-tap': '1' },
+    })
+    expect(approved.status).toBe(200)
+    const packet = await h.app.request(`http://mandate.test/w/${demo.workspaceId}/v1/proposals/${asked.id}/packet`, { headers })
+    const text = JSON.stringify(await packet.json())
+    for (const secret of [OWNER_KEY, MASTER, 'pepper-p4', 'tenant-owner-key-32chars', paypal]) {
+      expect(text).not.toContain(secret)
+    }
+    h.controlDb.close()
+  })
 })

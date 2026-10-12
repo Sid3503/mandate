@@ -22,7 +22,7 @@ migrate(db)
 seed(db, new Date())
 // Chrome rejects an IP address as a WebAuthn relying party id. localhost is allowed, and it matches the page host.
 const publicUrl = `http://localhost:${port}`
-const flags = loadFlags({ FLAG_TENANCY: '1', FLAG_PASSKEYS: '1', MODEL_ENABLED: '0' })
+const flags = loadFlags({ FLAG_TENANCY: '1', FLAG_PASSKEYS: '1', DEMO_ENABLED: '1', MODEL_ENABLED: '0' })
 const product = openProduct({
   databasePath,
   ledger: db,
