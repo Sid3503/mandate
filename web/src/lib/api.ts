@@ -334,7 +334,24 @@ export const api = {
   flags: () => request<ServerFlags>('/v1/flags'),
   warrant: () => request<Warrant>('/v1/warrant'),
   warrantVersions: () => request<{ data: Warrant[] }>('/v1/warrant/versions'),
-  publishWarrant: (body: unknown, expectedVersion?: number) => request<Warrant>('/v1/warrant', { method: 'PUT', body, headers: expectedVersion === undefined ? undefined : { 'x-expected-version': String(expectedVersion) } }),
+  publishWarrant: async (body: unknown, expectedVersion?: number) => {
+    try {
+      return await request<Warrant>('/v1/warrant', { method: 'PUT', body, headers: expectedVersion === undefined ? undefined : { 'x-expected-version': String(expectedVersion) } })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'rules', rules: body } })
+      const signed = await startAuthentication({ optionsJSON: started.options as never })
+      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+      return request<Warrant>('/v1/warrant', {
+        method: 'PUT',
+        body,
+        headers: {
+          ...(expectedVersion === undefined ? {} : { 'x-expected-version': String(expectedVersion) }),
+          'x-mandate-stepup': verified.grant,
+        },
+      })
+    }
+  },
   proposals: (cursor?: string | null) => request<Page<Proposal>>(`/v1/proposals?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
   proposal: (id: string) => request<Proposal>(`/v1/proposals/${id}`),
   packet: (id: string) => request<Packet>(`/v1/proposals/${id}/packet`),

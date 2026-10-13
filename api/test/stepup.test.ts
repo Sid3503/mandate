@@ -282,7 +282,75 @@ async function signApprove(app: Requester, headers: Record<string, string>, auth
   return { status: verified.status, grant: body.grant ?? '', code: body.code ?? '' }
 }
 
+async function signRules(app: Requester, headers: Record<string, string>, auth: SoftAuthenticator, rules: unknown) {
+  const step = await app.request('http://mandate.test/auth/stepup/options', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ kind: 'rules', rules }),
+  })
+  const started = await step.json() as { challengeId?: string; options?: { challenge: string }; code?: string }
+  if (step.status !== 200 || !started.challengeId || !started.options) return { status: step.status, grant: '', code: started.code ?? '' }
+  const verified = await app.request('http://mandate.test/auth/stepup/verify', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ challengeId: started.challengeId, response: auth.authenticate(started.options.challenge) }),
+  })
+  const body = await verified.json() as { grant?: string; code?: string }
+  return { status: verified.status, grant: body.grant ?? '', code: body.code ?? '' }
+}
+
 describe('step-up grants', () => {
+  it('publishing rules requires a passkey step-up and binds cryptographically to the rules body', async () => {
+    const { h, controlDb, headers } = ruledOwner()
+    const { auth } = await enroll(h.app, headers)
+    const current = (await (await h.app.request('http://mandate.test/v1/warrant', { headers })).json()) as Record<string, unknown>
+    const { id: _id, version, createdAt: _createdAt, ...nextBody } = current
+    const modified = { ...nextBody, monthlyCapCents: 15_000 }
+
+    // 1. Without stepup, PUT /v1/warrant is rejected with 401 auth/stepup-required
+    const noStep = await h.app.request('http://mandate.test/v1/warrant', {
+      method: 'PUT',
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify(modified),
+    })
+    expect(noStep.status).toBe(401)
+    expect((await noStep.json() as { code: string }).code).toBe('auth/stepup-required')
+
+    // 2. Obtain stepup grant signed for modified rules
+    const signed = await signRules(h.app, headers, auth, modified)
+    expect(signed.status).toBe(200)
+    expect(signed.grant).toBeTruthy()
+
+    // 3. With wrong rules body, grant is refused (binding mismatch)
+    const wrongBody = { ...modified, monthlyCapCents: 20_000 }
+    const wrongPut = await h.app.request('http://mandate.test/v1/warrant', {
+      method: 'PUT',
+      headers: { ...headers, 'content-type': 'application/json', 'x-mandate-stepup': signed.grant },
+      body: JSON.stringify(wrongBody),
+    })
+    expect(wrongPut.status).toBe(401)
+    expect((await wrongPut.json() as { code: string }).code).toBe('auth/stepup-required')
+
+    // 4. With matching rules body, PUT /v1/warrant publishes new version
+    const validPut = await h.app.request('http://mandate.test/v1/warrant', {
+      method: 'PUT',
+      headers: { ...headers, 'content-type': 'application/json', 'x-mandate-stepup': signed.grant },
+      body: JSON.stringify(modified),
+    })
+    expect(validPut.status).toBe(201)
+    const published = await validPut.json() as { version: number; monthlyCapCents: number }
+    expect(published.version).toBe(Number(version) + 1)
+    expect(published.monthlyCapCents).toBe(15_000)
+
+    // 5. Grant cannot be reused
+    const reusedPut = await h.app.request('http://mandate.test/v1/warrant', {
+      method: 'PUT',
+      headers: { ...headers, 'content-type': 'application/json', 'x-mandate-stepup': signed.grant },
+      body: JSON.stringify(modified),
+    })
+    expect(reusedPut.status).toBe(401)
+    controlDb.close()
+  })
   it('a step-up assertion cannot be used twice', async () => {
     const { h, control, controlDb, headers } = ruledOwner()
     const { auth } = await enroll(h.app, headers)
