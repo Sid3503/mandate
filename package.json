@@ -7,6 +7,7 @@
     "start": "npm --prefix api start",
     "test": "npm --prefix api test && npm --prefix web run e2e",
     "demo": "npm --prefix web run build && node api/node_modules/tsx/dist/cli.mjs api/src/dev/e2e-server.ts",
+    "admin:reset-owner": "node api/node_modules/tsx/dist/cli.mjs api/scripts/reset-owner.ts",
     "typecheck": "npm --prefix api run typecheck && npm --prefix web run typecheck",
     "hygiene": "node scripts/ci/hygiene.mjs",
     "check": "npm run hygiene && npm run typecheck && npm --prefix api test",

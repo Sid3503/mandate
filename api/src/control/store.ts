@@ -112,6 +112,12 @@ CREATE TABLE IF NOT EXISTS auth_events (
   ua_summary TEXT,
   detail TEXT
 );
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id TEXT PRIMARY KEY,
+  at TEXT NOT NULL,
+  event TEXT NOT NULL,
+  detail TEXT
+);
 CREATE TABLE IF NOT EXISTS recovery_codes (
   id TEXT PRIMARY KEY,
   member_id TEXT NOT NULL,
@@ -285,7 +291,31 @@ export class ControlStore {
     if (member.role === 'owner' && this.ownerCount(member.workspace_id) <= 1) return 'last-owner'
     this.db.prepare(`UPDATE members SET status = 'revoked', revoked_at = ? WHERE id = ?`).run(now, id)
     this.revokeSessions(id, now)
+    this.db.prepare('UPDATE credentials SET revoked_at = ? WHERE member_id = ? AND revoked_at IS NULL').run(now, id)
     return 'ok'
+  }
+
+  /** Promote one active member, or end every active owner's sessions. Never removes the last owner. */
+  resetOwner(memberId: string | null, now: string): 'ok' | 'missing' {
+    if (memberId) {
+      const member = this.member(memberId)
+      if (!member || member.status !== 'active') return 'missing'
+      this.db.prepare(`UPDATE members SET role = 'owner' WHERE id = ?`).run(memberId)
+      this.adminEvent('owner.reset', 'promoted', now)
+      return 'ok'
+    }
+    const owners = this.db.prepare(`SELECT id FROM members WHERE role = 'owner' AND status = 'active'`).all() as Array<{ id: string }>
+    for (const owner of owners) this.revokeSessions(owner.id, now)
+    this.adminEvent('owner.reset', 'sessions-ended', now)
+    return 'ok'
+  }
+
+  adminAudit(): Array<{ at: string; event: string; detail: string | null }> {
+    return this.db.prepare('SELECT at, event, detail FROM admin_audit ORDER BY at').all() as Array<{ at: string; event: string; detail: string | null }>
+  }
+
+  private adminEvent(event: string, detail: string, now: string): void {
+    this.db.prepare('INSERT INTO admin_audit (id, at, event, detail) VALUES (?, ?, ?, ?)').run(randomUUID(), now, event, detail)
   }
 
   putSession(input: { token: string; memberId: string; workspaceId: string; method: string; now: string; idleHours: number; absoluteDays: number; ip?: string; ua?: string }): void {

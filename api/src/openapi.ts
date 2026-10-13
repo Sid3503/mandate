@@ -176,6 +176,29 @@ export function buildOpenApi(publicUrl: string) {
   })
   registry.registerPath({
     method: 'get',
+    path: '/v1/members',
+    tags: ['auth'],
+    summary: 'Owner lists members. Names and roles only.',
+    responses: { 200: { description: 'Members' }, 401: problem, 403: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/members/{id}/role',
+    tags: ['auth'],
+    summary: 'Owner changes a role. The last owner stays. Sessions for that member end. A passkey grant is required when the studio rule is on.',
+    request: { params: z.object({ id: z.uuid() }) },
+    responses: { 200: { description: 'Role changed' }, 400: problem, 401: problem, 403: problem, 404: problem, 409: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/members/{id}/revoke',
+    tags: ['auth'],
+    summary: 'Owner revokes a member. Sessions and passkeys end. The body lists proposals still waiting on a person. The last owner stays.',
+    request: { params: z.object({ id: z.uuid() }) },
+    responses: { 200: { description: 'Revoked, with open request ids' }, 401: problem, 403: problem, 404: problem, 409: problem },
+  })
+  registry.registerPath({
+    method: 'get',
     path: '/auth/credentials',
     tags: ['auth'],
     summary: 'This member\'s passkeys. The public key is not returned.',

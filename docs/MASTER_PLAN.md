@@ -72,8 +72,8 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P5.T7 | not started | the old tour is unchanged. No 3-mark coach | |
 | P5.T8 | partial | `web/src/screens/Studio.tsx` says the browser cannot use passkeys | `9a2ea0b` |
 | P5.T9 | not started | no new browser tests. Phone checklist not run | |
-| P6.T1 | done | Create needs a passkey when the rule is on. Revoke is owner-only. The join page names the inviter and the role. Two joins: one wins. | `q1-identity` |
-| P6.T2 | partial | last owner is protected in the store. `GET /v1/members` exists. No members screen | `9a2ea0b` |
+| P6.T1 | done | Create needs a passkey when the rule is on. Revoke is owner-only. The join page names the inviter and the role. Two joins: one wins. | `6105e8d` |
+| P6.T2 | done | Role change and revoke. The last owner stays. Revoke ends sessions and passkeys and lists open requests. `npm run admin:reset-owner` writes `admin_audit`. Screen `/app/members`. | `q1-identity` |
 | P6.T3 | not started | old `mnd_ag_` and `mnd_cl_` keys were left as they are | |
 | P6.T4 | partial | `web/e2e/job.spec.ts` "Connect any agent shows how to plug in an MCP agent". Not the new template wizard | `1ac59cd` |
 | P6.T5 | partial | `api/test/agent-keys.test.ts` hourly counts and last seen. Not a scorecard into a new breaker | `1ac59cd` |
