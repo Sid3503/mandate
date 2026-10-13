@@ -400,7 +400,7 @@ describe('members', () => {
     }
     control.saveCredential({ id: randomUUID(), memberId: proposerId, credentialId: 'arun-key', publicKey: 'cHVibGlj', alg: -7, counter: 0, fingerprint: 'aaaa', backupEligible: false, backupState: false, now })
     control.saveCredential({ id: randomUUID(), memberId: samId, credentialId: 'sam-key', publicKey: 'cHVibGlj', alg: -7, counter: 0, fingerprint: 'bbbb', backupEligible: false, backupState: false, now })
-    const h = harness({ flags: loadFlags({ FLAG_PASSKEYS: '1' }), control, webauthn: WA })
+    const h = harness({ flags: loadFlags({ FLAG_PASSKEYS: '1', FLAG_INVITES: '1' }), control, webauthn: WA })
     return { h, control, controlDb, ownerId, proposerId, samId, otherId, ownerToken, proposerToken, samToken, approverToken, viewerToken, now }
   }
 
@@ -519,5 +519,84 @@ describe('members', () => {
     expect(JSON.stringify(control.adminAudit())).not.toContain(token)
     expect(control.resetOwner(randomUUID(), now)).toBe('missing')
     controlDb.close()
+  })
+
+  it('P6.T6: sets delegation end date, expires access once passed, and allows owner renewal', async () => {
+    const d = people()
+    const tomorrow = new Date(NOW.getTime() + 86_400_000).toISOString()
+    const yesterday = new Date(NOW.getTime() - 86_400_000).toISOString()
+
+    // Owner sets delegation end date for proposer
+    const updated = await post(d.h.app, `/v1/members/${d.proposerId}/role`, d.ownerToken, { role: 'proposer', expiresAt: tomorrow })
+    expect(updated.status).toBe(200)
+    const updatedBody = await updated.json() as { expiresAt: string }
+    expect(updatedBody.expiresAt).toBe(tomorrow)
+
+    // Member has active status in list and can act with fresh session
+    const listBefore = await d.h.app.request('http://mandate.test/v1/members', { headers: headers(d.ownerToken) })
+    const membersBefore = (await listBefore.json() as { members: Array<{ id: string; status: string; expiresAt: string | null }> }).members
+    const arunBefore = membersBefore.find((m) => m.id === d.proposerId)
+    expect(arunBefore?.status).toBe('active')
+    expect(arunBefore?.expiresAt).toBe(tomorrow)
+
+    // Give Arun a new session after role change
+    const arunToken = 'arun-delegation-token-32chars-ok'
+    d.control.putSession({ token: arunToken, memberId: d.proposerId, workspaceId: 'ws_default', method: 'passkey', now: NOW.toISOString(), idleHours: 12, absoluteDays: 7 })
+
+    // Arun can list sessions while delegation is active
+    const activeReq = await d.h.app.request('http://mandate.test/auth/sessions', { headers: headers(arunToken) })
+    expect(activeReq.status).toBe(200)
+
+    // Expire Arun's delegation by setting end date in the past
+    const expiredSet = await post(d.h.app, `/v1/members/${d.proposerId}/role`, d.ownerToken, { role: 'proposer', expiresAt: yesterday })
+    expect(expiredSet.status).toBe(200)
+
+    // Arun's session is now refused (401 sign in required / delegation expired)
+    const arunExpiredToken = 'arun-delegation-token-expired'
+    d.control.putSession({ token: arunExpiredToken, memberId: d.proposerId, workspaceId: 'ws_default', method: 'passkey', now: NOW.toISOString(), idleHours: 12, absoluteDays: 7 })
+    const expiredReq = await d.h.app.request('http://mandate.test/auth/sessions', { headers: headers(arunExpiredToken) })
+    expect(expiredReq.status).toBe(401)
+
+    // List shows Arun as expired
+    const listAfter = await d.h.app.request('http://mandate.test/v1/members', { headers: headers(d.ownerToken) })
+    const membersAfter = (await listAfter.json() as { members: Array<{ id: string; status: string }> }).members
+    const arunAfter = membersAfter.find((m) => m.id === d.proposerId)
+    expect(arunAfter?.status).toBe('expired')
+
+    // Owner renews delegation with null (open-ended)
+    const renewed = await post(d.h.app, `/v1/members/${d.proposerId}/role`, d.ownerToken, { role: 'proposer', expiresAt: null })
+    expect(renewed.status).toBe(200)
+    const renewedToken = 'arun-delegation-token-renewed'
+    d.control.putSession({ token: renewedToken, memberId: d.proposerId, workspaceId: 'ws_default', method: 'passkey', now: NOW.toISOString(), idleHours: 12, absoluteDays: 7 })
+    const renewedReq = await d.h.app.request('http://mandate.test/auth/sessions', { headers: headers(renewedToken) })
+    expect(renewedReq.status).toBe(200)
+
+    d.controlDb.close()
+  })
+
+  it('P6.T6: invite carries delegation end date to joined member', async () => {
+    const d = people()
+    const endDate = new Date(NOW.getTime() + 7 * 86_400_000).toISOString()
+    const made = await d.h.app.request('http://mandate.test/v1/invites', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ role: 'proposer', delegationExpiresAt: endDate }),
+    })
+    expect(made.status).toBe(200)
+    const token = (await made.json() as { token: string }).token
+
+    const joined = await d.h.app.request('http://mandate.test/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token, name: 'Taylor' }),
+    })
+    expect(joined.status).toBe(200)
+    const memberId = (await joined.json() as { memberId: string }).memberId
+
+    const member = d.control.member(memberId, NOW.toISOString())
+    expect(member?.status).toBe('active')
+    expect(member?.expires_at).toBe(endDate)
+
+    d.controlDb.close()
   })
 })

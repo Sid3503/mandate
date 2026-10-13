@@ -77,7 +77,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P6.T3 | done | Upgrade replaces the secret and keeps the same agent or client. A legacy hash of the bare secret is rewritten on first use. | `q1-identity` |
 | P6.T4 | done | Connect an agent screen with template wizard, scope checklist, can and cannot preview, expiry, and key testing. Screen /app/connect. Proof: web/e2e/passkey-repair-agent-connect.spec.ts | q1-identity |
 | P6.T5 | done | Agent scorecard (requests, refusals, auto, needs-tap, last seen, breaker status). Screen /app/system. Proof: api/test/agent-keys.test.ts and web/e2e/passkey-repair-agent-scorecard.spec.ts | q1-identity |
-| P6.T6 | not started | no delegation end date | |
+| P6.T6 | done | Delegation end date: `expires_at` on members and invites, session refusal on expiration, and owner renewal. Proof: `api/test/identity.test.ts` | |
 | P7.T1 | done | `safety` is a plain gate input to decide, matching request returns `DENY system.paused`, and reads still work while paused. Proof: `api/test/safety.test.ts` | |
 | P7.T2 | done | Pause controls for all, autopilot, and one agent key. Approver can pause, only owner can resume, step-up required for resume when passkey rule active. Proof: `api/test/safety.test.ts` | |
 | P7.T3 | done | Auto-trip breakers (3 refusals/2m, 2 unknown payees/10m, 20 agent req/m, 3 autopilot failures) and owner edits settings with step-up. Proof: `api/test/safety.test.ts` | |

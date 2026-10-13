@@ -31,8 +31,11 @@ export function Members() {
           <ul className="stack-l">
             {rows.map((row) => (
               <li key={row.id} className="panel" data-testid="member-row">
-                <p><strong>{row.name}</strong> · {row.role} · {row.status}</p>
-                {row.status === 'active' ? (
+                <p>
+                  <strong>{row.name}</strong> · {row.role} · {row.status}
+                  {row.expiresAt ? <span className="muted"> · Delegation ends {row.expiresAt.slice(0, 10)}</span> : null}
+                </p>
+                {row.status === 'active' || row.status === 'expired' ? (
                   <p>
                     <label className="field">
                       <span>Role</span>
