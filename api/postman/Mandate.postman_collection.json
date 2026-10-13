@@ -1163,6 +1163,52 @@
             "body": { "mode": "raw", "raw": "{}" },
             "url": "{{baseUrl}}/auth/sessions/revoke-others"
           }
+        },
+        {
+          "name": "Issue recovery codes",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{baseUrl}}/auth/recovery/issue",
+            "description": "Codes are returned once. A missing session is 401."
+          }
+        },
+        {
+          "name": "I saved these",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"saved\":true}" },
+            "url": "{{baseUrl}}/auth/recovery/ack",
+            "description": "saved false is 400 with the words I saved these. The codes are not returned."
+          }
+        },
+        {
+          "name": "Replace recovery codes",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" },
+              { "key": "x-mandate-stepup", "value": "" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{baseUrl}}/auth/recovery/regenerate",
+            "description": "Needs a fresh passkey grant. A second use of the same grant is 401."
+          }
         }
       ]
     }

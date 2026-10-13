@@ -180,6 +180,7 @@ export class ControlStore {
     this.ensureColumn('credentials', 'suspect_at', 'ALTER TABLE credentials ADD COLUMN suspect_at TEXT')
     this.ensureColumn('stepup_grants', 'assertion_json', 'ALTER TABLE stepup_grants ADD COLUMN assertion_json TEXT')
     this.ensureColumn('sessions', 'public_id', 'ALTER TABLE sessions ADD COLUMN public_id TEXT')
+    this.ensureColumn('members', 'recovery_saved_at', 'ALTER TABLE members ADD COLUMN recovery_saved_at TEXT')
     this.db.exec(`UPDATE sessions SET public_id = lower(hex(randomblob(8))) WHERE public_id IS NULL`)
   }
 
@@ -401,6 +402,19 @@ export class ControlStore {
 
   events(workspaceId: string, limit = 50): Array<{ at: string; event: string; result: string; member_id: string | null }> {
     return this.db.prepare('SELECT at, event, result, member_id FROM auth_events WHERE workspace_id = ? ORDER BY at DESC LIMIT ?').all(workspaceId, limit) as Array<{ at: string; event: string; result: string; member_id: string | null }>
+  }
+
+  markRecoverySaved(memberId: string, now: string): void {
+    this.db.prepare('UPDATE members SET recovery_saved_at = ? WHERE id = ?').run(now, memberId)
+  }
+
+  clearRecoverySaved(memberId: string): void {
+    this.db.prepare('UPDATE members SET recovery_saved_at = NULL WHERE id = ?').run(memberId)
+  }
+
+  recoverySaved(memberId: string): boolean {
+    const row = this.db.prepare('SELECT recovery_saved_at FROM members WHERE id = ?').get(memberId) as { recovery_saved_at: string | null } | undefined
+    return Boolean(row?.recovery_saved_at)
   }
 
   saveRecovery(memberId: string, codes: string[], nowIgnored = ''): void {

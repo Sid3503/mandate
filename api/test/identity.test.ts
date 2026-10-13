@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
+import { stepBinding } from '../src/auth/passkeys'
 import { ControlStore } from '../src/control/store'
 import { openDatabase } from '../src/db/database'
 import { loadFlags } from '../src/flags'
@@ -32,7 +33,7 @@ function desk() {
   control.putSession({ token: strangerToken, memberId: strangerId, workspaceId: 'ws_default', method: 'passkey', now, idleHours: 12, absoluteDays: 7 })
   control.event({ id: randomUUID(), at: now, workspaceId: 'ws_default', memberId: ownerId, event: 'login', result: 'ok' })
   const h = harness({ flags: loadFlags({ FLAG_PASSKEYS: '1' }), control, webauthn: WA })
-  return { h, controlDb, ownerToken, proposerToken, strangerToken }
+  return { h, control, controlDb, ownerId, ownerToken, proposerToken, strangerToken }
 }
 
 const headers = (token: string) => ({ cookie: `mnd_session=${token}`, ...WEB })
@@ -112,6 +113,95 @@ describe('sessions and sign-in history', () => {
     for (let i = 0; i < 6; i += 1) {
       status = (await h.app.request('http://mandate.test/auth/sessions')).status
     }
+    expect(status).toBe(429)
+  })
+})
+
+describe('recovery codes', () => {
+  it('issues codes once, hides them in the database, and accepts them only after they are unused', async () => {
+    const d = desk()
+    const issued = await d.h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST', headers: headers(d.ownerToken) })
+    expect(issued.status).toBe(200)
+    const body = await issued.json() as { codes: string[]; saved: boolean }
+    expect(body.codes).toHaveLength(8)
+    expect(body.saved).toBe(false)
+    const stored = (d.control as unknown as { db: { prepare: (sql: string) => { all: () => Array<{ code_hash: string }> } } }).db.prepare('SELECT code_hash FROM recovery_codes').all()
+    expect(JSON.stringify(stored)).not.toContain(body.codes[0])
+    const bare = await d.h.app.request('http://mandate.test/auth/recovery/ack', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ saved: false }),
+    })
+    expect(bare.status).toBe(400)
+    expect((await bare.json() as { detail: string }).detail).toBe('I saved these')
+    const ack = await d.h.app.request('http://mandate.test/auth/recovery/ack', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ saved: true }),
+    })
+    expect(ack.status).toBe(200)
+    expect(JSON.stringify(await ack.json())).not.toContain(body.codes[0])
+    const used = await d.h.app.request('http://mandate.test/auth/recovery/use', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ memberId: d.ownerId, code: body.codes[0] }),
+    })
+    expect(used.status).toBe(200)
+    const again = await d.h.app.request('http://mandate.test/auth/recovery/use', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ memberId: d.ownerId, code: body.codes[0] }),
+    })
+    expect(again.status).toBe(401)
+    d.controlDb.close()
+  })
+
+  it('refuses a missing session and replaces codes only with a matching step-up', async () => {
+    const d = desk()
+    const missing = await d.h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST' })
+    expect(missing.status).toBe(401)
+    const first = await d.h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST', headers: headers(d.ownerToken) })
+    const oldCodes = (await first.json() as { codes: string[] }).codes
+    const denied = await d.h.app.request('http://mandate.test/auth/recovery/regenerate', { method: 'POST', headers: headers(d.ownerToken) })
+    expect(denied.status).toBe(401)
+    const binding = stepBinding('recovery', 'regenerate')
+    const wrong = randomUUID()
+    d.control.putGrant({ id: wrong, memberId: d.ownerId, workspaceId: 'ws_default', kind: 'recovery', binding: 'other', now: NOW.toISOString() })
+    const mismatch = await d.h.app.request('http://mandate.test/auth/recovery/regenerate', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'x-mandate-stepup': wrong },
+    })
+    expect(mismatch.status).toBe(401)
+    const grant = randomUUID()
+    d.control.putGrant({ id: grant, memberId: d.ownerId, workspaceId: 'ws_default', kind: 'recovery', binding, now: NOW.toISOString() })
+    const replaced = await d.h.app.request('http://mandate.test/auth/recovery/regenerate', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'x-mandate-stepup': grant },
+    })
+    expect(replaced.status).toBe(200)
+    const fresh = (await replaced.json() as { codes: string[]; saved: boolean })
+    expect(fresh.saved).toBe(false)
+    expect(fresh.codes).toHaveLength(8)
+    const stale = await d.h.app.request('http://mandate.test/auth/recovery/use', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ memberId: d.ownerId, code: oldCodes[0] }),
+    })
+    expect(stale.status).toBe(401)
+    const spent = await d.h.app.request('http://mandate.test/auth/recovery/regenerate', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'x-mandate-stepup': grant },
+    })
+    expect(spent.status).toBe(401)
+    d.controlDb.close()
+  })
+
+  it('counts recovery issue in the auth rate-limit class', async () => {
+    expect(rateClass('POST', '/auth/recovery/issue')).toBe('auth')
+    expect(rateClass('POST', '/auth/recovery/regenerate')).toBe('auth')
+    const h = harness({ classedRates: true, rateLimitPerMinute: 100, flags: loadFlags({ FLAG_PASSKEYS: '1' }), webauthn: WA })
+    let status = 0
+    for (let i = 0; i < 6; i += 1) status = (await h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST' })).status
     expect(status).toBe(429)
   })
 })

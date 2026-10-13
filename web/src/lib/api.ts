@@ -245,6 +245,14 @@ export const api = {
   authEvents: () => request<{ events: Array<{ at: string; event: string; result: string }> }>('/auth/events'),
   revokeSession: (publicId: string) => request<{ ok: boolean }>('/auth/sessions/revoke', { method: 'POST', body: { publicId } }),
   revokeOtherSessions: () => request<{ ended: number }>('/auth/sessions/revoke-others', { method: 'POST', body: {} }),
+  issueRecovery: () => request<{ codes: string[]; saved: boolean }>('/auth/recovery/issue', { method: 'POST', body: {} }),
+  ackRecovery: () => request<{ saved: boolean }>('/auth/recovery/ack', { method: 'POST', body: { saved: true } }),
+  regenerateRecovery: async () => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'recovery' } })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+    return request<{ codes: string[]; saved: boolean }>('/auth/recovery/regenerate', { method: 'POST', body: {}, headers: { 'x-mandate-stepup': verified.grant } })
+  },
   joinPreview: (token: string) => request<{ workspaceId: string; name: string; role: string }>('/join/preview', { method: 'POST', body: { token } }),
   join: (workspaceId: string, token: string, name: string) => request<{ memberId: string; role: string; workspaceId: string }>(workspaceId === 'ws_default' ? '/join' : `/w/${workspaceId}/join`, { method: 'POST', body: { token, name } }),
   tryRequest: (requestBody: Record<string, unknown>, rules?: unknown) => request<TryOne>('/v1/rules/try', { method: 'POST', body: { request: requestBody, ...(rules ? { rules } : {}) } }),

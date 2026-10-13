@@ -1,10 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Loading, PageHead, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { when } from '../lib/format'
 
 export function Sessions() {
   const client = useQueryClient()
+  const [codes, setCodes] = useState<string[] | null>(null)
+  const [savedCodes, setSavedCodes] = useState(false)
   const me = useQuery({ queryKey: ['auth-me'], queryFn: api.authMe, retry: false })
   const sessions = useQuery({ queryKey: ['sessions'], queryFn: api.sessions })
   const events = useQuery({ queryKey: ['auth-events'], queryFn: api.authEvents, enabled: me.data?.role === 'owner', retry: false })
@@ -16,6 +19,9 @@ export function Sessions() {
     mutationFn: () => api.revokeOtherSessions(),
     onSuccess: () => client.invalidateQueries({ queryKey: ['sessions'] }),
   })
+  const issue = useMutation({ mutationFn: () => api.issueRecovery(), onSuccess: (body) => { setCodes(body.codes); setSavedCodes(false) } })
+  const ack = useMutation({ mutationFn: () => api.ackRecovery(), onSuccess: () => { setCodes(null); setSavedCodes(true) } })
+  const replace = useMutation({ mutationFn: () => api.regenerateRecovery(), onSuccess: (body) => { setCodes(body.codes); setSavedCodes(false) } })
   if (sessions.isLoading) return <div className="page"><Loading label="Loading sessions" /></div>
   if (sessions.isError) return <div className="page"><PageHead eyebrow="Account" title="Sessions" /><ProblemCard error={sessions.error} onRetry={() => void sessions.refetch()} /></div>
   const rows = sessions.data?.sessions ?? []
@@ -38,6 +44,21 @@ export function Sessions() {
         </ul>
       )}
       {revoke.isError ? <ProblemCard error={revoke.error} /> : null}
+      <section className="panel" data-testid="recovery-codes">
+        <h2 className="panel-title">Recovery codes</h2>
+        <p className="fine">Each code works once. A recovery session can add a passkey. It cannot approve or replace these codes.</p>
+        {codes ? (
+          <ol>{codes.map((code) => <li key={code} className="mono">{code}</li>)}</ol>
+        ) : <p>{savedCodes ? 'Saved.' : 'No codes are showing.'}</p>}
+        <div className="row gap-s wrap">
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => issue.mutate()} disabled={issue.isPending}>Create recovery codes</button>
+          <button type="button" className="btn btn-ink btn-small" onClick={() => ack.mutate()} disabled={!codes || ack.isPending}>I saved these</button>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => replace.mutate()} disabled={replace.isPending}>Replace recovery codes</button>
+        </div>
+        {issue.isError ? <ProblemCard error={issue.error} /> : null}
+        {ack.isError ? <ProblemCard error={ack.error} /> : null}
+        {replace.isError ? <ProblemCard error={replace.error} /> : null}
+      </section>
       {me.data?.role === 'owner' ? (
         <section className="panel" data-testid="login-history">
           <h2 className="panel-title">Sign-in history</h2>
