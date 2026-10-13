@@ -53,8 +53,8 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P3.T6 | partial | `actor_json` written in `api/src/db/repo.ts`. No test | `9a2ea0b` |
 | P3.T7 | done | Sessions list, revoke, revoke others, and owner sign-in history. The list hides the token. Screen `/app/sessions`. | `52fde09` |
 | P3.T8 | done | Issue, confirm with "I saved these", use once, and regenerate with a passkey step-up. Codes are hashed. | `5f7d0c5` |
-| P3.T9 | done | Add a passkey and refuse to remove the last one. Another member's id is 404. The screen is `/app/sessions`. | `q1-identity` |
-| P3.T10 | not started | no Chromium virtual authenticator test | |
+| P3.T9 | done | Add a passkey and refuse to remove the last one. Another member's id is 404. The screen is `/app/sessions`. | `2904707` |
+| P3.T10 | done | Chromium virtual authenticator covers register, sign in again, step-up approve, a second passkey, and recovery replace. | `q1-identity` |
 | P4.T1 | done | `workspaces.passkey_for_money` is on for a new studio and off for the default studio and a demo. Turning it on is tested | `fd1432b` |
 | P4.T2 | done | Approve grant is one use, 120 seconds, member plus cart hash. Parallel approve and both rollback outcomes are tested | `283544d` |
 | P4.T3 | done | `proposal.approved` stores the assertion. `0002_warrant_signature` adds `warrants.signature_json` and a file copy is taken first. An older file still reads `{ actor, cartHash }`. Existing money routes require a step-up. The missing key, member, invite-revoke, and payee routes stay 404 | `751ac9f` |

@@ -16,6 +16,22 @@ export function Unlock() {
   const [busy, setBusy] = useState(false)
   const from = (where.state as { from?: string } | null)?.from ?? '/'
 
+  const signIn = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const me = await api.signInWithPasskey()
+      session.setWorkspace(me.workspaceId)
+      session.setMode('studio')
+      client.clear()
+      navigate(from, { replace: true })
+    } catch (caught) {
+      setError(caught)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     setBusy(true)
@@ -78,6 +94,9 @@ export function Unlock() {
           </button>
           <ProblemCard error={error} />
         </form>
+        <button type="button" className="btn btn-ghost btn-block" onClick={() => void signIn()} disabled={busy}>
+          {busy ? 'Waiting for the passkey…' : 'Sign in with a passkey'}
+        </button>
         <p className="fine"><Link to="/welcome" className="link">← What is Mandate?</Link></p>
         <p className="fine">A key is authority. Owner, staff, client, and agent keys each see only their side.</p>
         <p className="fine">The owner key can approve, settle and change the rules. A proposer key, the kind an agent gets, can only ask and read.</p>

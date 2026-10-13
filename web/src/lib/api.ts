@@ -240,6 +240,11 @@ export const api = {
   passkeyRegisterVerify: (body: { challengeId: string; response: unknown }) => request<{ credentialId: string; fingerprint: string }>('/auth/register/verify', { method: 'POST', body }),
   passkeyLoginOptions: () => request<{ challengeId: string; options: Record<string, unknown> }>('/auth/login/options', { method: 'POST', body: {} }),
   passkeyLoginVerify: (body: { challengeId: string; response: unknown }) => request<{ workspaceId: string; role: string; displayName: string }>('/auth/login/verify', { method: 'POST', body }),
+  signInWithPasskey: async () => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/login/options', { method: 'POST', body: {} })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    return request<{ workspaceId: string; role: string; displayName: string }>('/auth/login/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+  },
   authMe: () => request<{ role: string; displayName: string; method: string }>('/auth/me'),
   sessions: () => request<{ sessions: Array<{ publicId: string; at: string; lastSeen: string; method: string; revoked: boolean; current: boolean }> }>('/auth/sessions'),
   authEvents: () => request<{ events: Array<{ at: string; event: string; result: string }> }>('/auth/events'),
