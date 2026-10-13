@@ -40,7 +40,7 @@ export type ProductCtx = {
   /** Pure rule try. Absent only in a half-built app. */
   tryOne?: (body: unknown) => unknown
   counts?: () => { proposals: number; events: number; payees: number }
-  listPayees?: () => Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number }>
+  listPayees?: () => Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number; change_email?: string | null }>
   /** Cart hash of a proposal that is waiting for a signature. */
   approvalHash?: (proposalId: string) => string | null
   /** Proposal ids waiting on a person. The ledger has no member column, so this is the studio list. */
@@ -692,10 +692,5 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     }
     return c.json({ ok: true, wrote: false, verdict })
   })
-
-  app.get('/v1/payees', (c) => {
-    if (!flags.payeeBook) throw new Problem(404, 'flag/disabled', 'Not available', 'The payee book is off on this server.')
-    if (!ctx.listPayees) throw new Problem(503, 'flag/disabled', 'Not configured', 'The payee book is not wired on this server.')
-    return c.json({ payees: ctx.listPayees() })
-  })
 }
+

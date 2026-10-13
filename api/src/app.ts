@@ -19,7 +19,7 @@ import { databaseReady, resetDemo } from './db/database'
 import { z } from 'zod'
 import { BillMilestoneSchema, DealOfferSchema, DecideDeliverySchema } from './domain/deal'
 import type { Signer } from './domain/signing'
-import { IdempotencyKeySchema, ProposalCreateSchema, CaptureSchema, ListQuerySchema, WarrantBodySchema, SafetyConfigSchema } from './domain/schemas'
+import { IdempotencyKeySchema, ProposalCreateSchema, CaptureSchema, ListQuerySchema, WarrantBodySchema, SafetyConfigSchema, type WarrantBody } from './domain/schemas'
 import { onError, Problem, sendProblem, invalidRequest } from './http/problem'
 import { WEB_CSP, webAsset } from './http/web'
 import { buildOpenApi } from './openapi'
@@ -139,7 +139,8 @@ const OWNER_ONLY = [
   // whose sheet that is; the other side's sheet stays out of reach, so both limits stay private.
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
   { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay|try|cases|simulate|policy|policy\/stream)$/ },
-  { method: 'GET', pattern: /^\/v1\/payees$/ },
+  { method: 'GET', pattern: /^\/v1\/payees(\/[^/]+)?$/ },
+  { method: 'POST', pattern: /^\/v1\/payees\/[^/]+\/(change|confirm-change|cancel-change|attest)$/ },
   { method: 'POST', pattern: /^\/v1\/ask$/ },
   { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
@@ -665,6 +666,149 @@ export function createApp(deps: AppDeps) {
   app.post('/v1/safety/resume/autopilot', async (c) => {
     requireStep(c, deps, 'resume', stepBinding('resume', 'safety.resume'))
     return c.json(await services.safety.resumeAutopilot('owner'))
+  })
+  // ---------- payee book ----------
+  const enrichPayee = (
+    row: { id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number; change_email: string | null },
+    warrant: { body: WarrantBody } | null,
+    nowMs: number,
+    waitHours: number,
+    history: Array<{ id: string; kind: string; amountCents: number; currency: string; phase: string; clause: string | null; description: string; createdAt: string }> = [],
+  ) => {
+    const warrantPayee = warrant?.body.payees.find((p) => p.id === row.id)
+    const seen = Date.parse(row.first_seen)
+    const waitUntilMs = Number.isFinite(seen) ? seen + waitHours * 3_600_000 : nowMs
+    const cooling = row.verified_method !== 'owner_attested' && row.total_paid_cents === 0 && waitHours > 0 && nowMs < waitUntilMs
+
+    let canPay = true
+    let reason = 'This payee is active and verified. Payments matching standing rules or approved by the owner can be paid.'
+    let clause: string | null = null
+
+    if (services.safety.paused()) {
+      canPay = false
+      reason = 'Automation and payouts are paused globally. Resume Mandate to enable payments.'
+      clause = 'system.paused'
+    } else if (row.change_pending === 1) {
+      canPay = false
+      reason = 'This payee has a payout account change waiting confirmation. Payouts are blocked until the owner confirms this change with a passkey.'
+      clause = 'payee.change_pending'
+    } else if (row.status === 'disabled') {
+      canPay = false
+      reason = 'This payee is disabled.'
+      clause = 'payee.not_active'
+    } else if (cooling) {
+      canPay = false
+      reason = `First payment cooling period is active (ends ${new Date(waitUntilMs).toISOString()}). Payments require owner approval until the cooling period ends or the owner attests the payee.`
+      clause = 'payee.not_active'
+    } else if (warrant && !warrantPayee) {
+      canPay = false
+      reason = 'This payee is not in the active spending warrant rules.'
+      clause = 'payee.unknown'
+    }
+
+    return {
+      id: row.id,
+      name: warrantPayee?.displayName ?? row.id,
+      email: row.email,
+      status: row.status === 'active' && cooling ? 'pending' : row.status,
+      verified_method: row.verified_method,
+      first_seen: row.first_seen,
+      total_paid_cents: row.total_paid_cents,
+      change_pending: row.change_pending === 1,
+      change_email: row.change_email,
+      cooling,
+      waitUntil: cooling ? new Date(waitUntilMs).toISOString() : null,
+      diagnostics: {
+        canPay,
+        reason,
+        clause,
+      },
+      history,
+    }
+  }
+
+  const getPayeeOr404 = (id: string) => {
+    const row = services.repo.payeeRow(id)
+    if (!row) throw new Problem(404, 'payee.not_found', 'Payee not found', `No payee with id ${id} exists.`)
+    return row
+  }
+
+  app.get('/v1/payees', (c) => {
+    const flags = deps.config.flags ?? defaultFlags()
+    if (!flags.payeeBook) throw new Problem(404, 'flag/disabled', 'Not available', 'The payee book is off on this server.')
+    const warrant = services.repo.latestWarrant()
+    const nowMs = deps.now().getTime()
+    const waitHours = flags.newPayeeWaitHours ?? 24
+    const payees = services.repo.listPayees().map((row) => enrichPayee(row, warrant, nowMs, waitHours))
+    return c.json({ payees })
+  })
+
+  app.get('/v1/payees/:id', (c) => {
+    const flags = deps.config.flags ?? defaultFlags()
+    if (!flags.payeeBook) throw new Problem(404, 'flag/disabled', 'Not available', 'The payee book is off on this server.')
+    const row = getPayeeOr404(c.req.param('id'))
+    const warrant = services.repo.latestWarrant()
+    const nowMs = deps.now().getTime()
+    const waitHours = flags.newPayeeWaitHours ?? 24
+    const history = services.repo.payeeHistory(row.id)
+    return c.json({ payee: enrichPayee(row, warrant, nowMs, waitHours, history) })
+  })
+
+  app.post('/v1/payees/:id/change', async (c) => {
+    const flags = deps.config.flags ?? defaultFlags()
+    if (!flags.payeeBook) throw new Problem(404, 'flag/disabled', 'Not available', 'The payee book is off on this server.')
+    assertJson(c)
+    const parsed = z.object({ email: z.string().email() }).safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const id = c.req.param('id')
+    getPayeeOr404(id)
+    services.repo.requestPayeeChange(id, parsed.data.email)
+    const row = getPayeeOr404(id)
+    const warrant = services.repo.latestWarrant()
+    const nowMs = deps.now().getTime()
+    const waitHours = flags.newPayeeWaitHours ?? 24
+    return c.json({ ok: true, payee: enrichPayee(row, warrant, nowMs, waitHours) })
+  })
+
+  app.post('/v1/payees/:id/confirm-change', (c) => {
+    const flags = deps.config.flags ?? defaultFlags()
+    if (!flags.payeeBook) throw new Problem(404, 'flag/disabled', 'Not available', 'The payee book is off on this server.')
+    const id = c.req.param('id')
+    getPayeeOr404(id)
+    requireStep(c, deps, 'payee.change', stepBinding('payee.change', id))
+    services.repo.confirmPayeeChange(id)
+    const row = getPayeeOr404(id)
+    const warrant = services.repo.latestWarrant()
+    const nowMs = deps.now().getTime()
+    const waitHours = flags.newPayeeWaitHours ?? 24
+    return c.json({ ok: true, payee: enrichPayee(row, warrant, nowMs, waitHours) })
+  })
+
+  app.post('/v1/payees/:id/cancel-change', (c) => {
+    const flags = deps.config.flags ?? defaultFlags()
+    if (!flags.payeeBook) throw new Problem(404, 'flag/disabled', 'Not available', 'The payee book is off on this server.')
+    const id = c.req.param('id')
+    getPayeeOr404(id)
+    services.repo.cancelPayeeChange(id)
+    const row = getPayeeOr404(id)
+    const warrant = services.repo.latestWarrant()
+    const nowMs = deps.now().getTime()
+    const waitHours = flags.newPayeeWaitHours ?? 24
+    return c.json({ ok: true, payee: enrichPayee(row, warrant, nowMs, waitHours) })
+  })
+
+  app.post('/v1/payees/:id/attest', (c) => {
+    const flags = deps.config.flags ?? defaultFlags()
+    if (!flags.payeeBook) throw new Problem(404, 'flag/disabled', 'Not available', 'The payee book is off on this server.')
+    const id = c.req.param('id')
+    getPayeeOr404(id)
+    requireStep(c, deps, 'payee.attest', stepBinding('payee.attest', id))
+    services.repo.attestPayee(id)
+    const row = getPayeeOr404(id)
+    const warrant = services.repo.latestWarrant()
+    const nowMs = deps.now().getTime()
+    const waitHours = flags.newPayeeWaitHours ?? 24
+    return c.json({ ok: true, payee: enrichPayee(row, warrant, nowMs, waitHours) })
   })
   app.get('/v1/session', (c) => c.json({ role: c.get('memberRole') ?? c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName }, demoReset: deps.config.demoReset === true }))
   app.get('/v1/flags', (c) => c.json(deps.config.flags ?? defaultFlags()))
