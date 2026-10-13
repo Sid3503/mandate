@@ -1209,6 +1209,33 @@
             "url": "{{baseUrl}}/auth/recovery/regenerate",
             "description": "Needs a fresh passkey grant. A second use of the same grant is 401."
           }
+        },
+        {
+          "name": "List passkeys",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/auth/credentials",
+            "description": "This member's passkeys. The public key is not returned. A missing session is 401."
+          }
+        },
+        {
+          "name": "Remove a passkey",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"id\":\"\"}" },
+            "url": "{{baseUrl}}/auth/credentials/revoke",
+            "description": "The last passkey stays (409). Another member's id is 404. A call without the web client header is 403."
+          }
         }
       ]
     }

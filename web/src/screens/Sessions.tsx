@@ -22,6 +22,15 @@ export function Sessions() {
   const issue = useMutation({ mutationFn: () => api.issueRecovery(), onSuccess: (body) => { setCodes(body.codes); setSavedCodes(false) } })
   const ack = useMutation({ mutationFn: () => api.ackRecovery(), onSuccess: () => { setCodes(null); setSavedCodes(true) } })
   const replace = useMutation({ mutationFn: () => api.regenerateRecovery(), onSuccess: (body) => { setCodes(body.codes); setSavedCodes(false) } })
+  const keys = useQuery({ queryKey: ['credentials'], queryFn: api.credentials, retry: false })
+  const addKey = useMutation({
+    mutationFn: () => api.addCredential(),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['credentials'] }),
+  })
+  const dropKey = useMutation({
+    mutationFn: (id: string) => api.revokeCredential(id),
+    onSuccess: () => client.invalidateQueries({ queryKey: ['credentials'] }),
+  })
   if (sessions.isLoading) return <div className="page"><Loading label="Loading sessions" /></div>
   if (sessions.isError) return <div className="page"><PageHead eyebrow="Account" title="Sessions" /><ProblemCard error={sessions.error} onRetry={() => void sessions.refetch()} /></div>
   const rows = sessions.data?.sessions ?? []
@@ -44,6 +53,23 @@ export function Sessions() {
         </ul>
       )}
       {revoke.isError ? <ProblemCard error={revoke.error} /> : null}
+      <section className="panel" data-testid="passkeys">
+        <h2 className="panel-title">Passkeys</h2>
+        <p className="fine">The last passkey stays. Add another before you remove one.</p>
+        {keys.isLoading ? <Loading label="Loading passkeys" /> : null}
+        {keys.isError ? <ProblemCard error={keys.error} /> : null}
+        <ul className="stack-l">
+          {(keys.data?.credentials ?? []).filter((row) => !row.revoked).map((row) => (
+            <li key={row.id} data-testid="passkey-row">
+              <p className="mono">{row.fingerprint}</p>
+              <button type="button" className="btn btn-ghost btn-small" onClick={() => dropKey.mutate(row.id)} disabled={dropKey.isPending}>Remove</button>
+            </li>
+          ))}
+        </ul>
+        <button type="button" className="btn btn-ink btn-small" onClick={() => addKey.mutate()} disabled={addKey.isPending}>Add a passkey</button>
+        {addKey.isError ? <ProblemCard error={addKey.error} /> : null}
+        {dropKey.isError ? <ProblemCard error={dropKey.error} /> : null}
+      </section>
       <section className="panel" data-testid="recovery-codes">
         <h2 className="panel-title">Recovery codes</h2>
         <p className="fine">Each code works once. A recovery session can add a passkey. It cannot approve or replace these codes.</p>

@@ -6,6 +6,7 @@ import { openDatabase } from '../src/db/database'
 import { loadFlags } from '../src/flags'
 import { rateClass } from '../src/ops/ratelimit'
 import { closeAll, harness, NOW } from './support'
+import { SoftAuthenticator } from './soft-authenticator'
 
 afterEach(closeAll)
 
@@ -202,6 +203,79 @@ describe('recovery codes', () => {
     const h = harness({ classedRates: true, rateLimitPerMinute: 100, flags: loadFlags({ FLAG_PASSKEYS: '1' }), webauthn: WA })
     let status = 0
     for (let i = 0; i < 6; i += 1) status = (await h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST' })).status
+    expect(status).toBe(429)
+  })
+})
+
+async function addPasskey(app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }, token: string) {
+  const options = await app.request('http://mandate.test/auth/register/options', { method: 'POST', headers: headers(token) })
+  expect(options.status).toBe(200)
+  const started = await options.json() as { challengeId: string; options: { challenge: string } }
+  const auth = new SoftAuthenticator('http://127.0.0.1:8787', 'localhost')
+  const verified = await app.request('http://mandate.test/auth/register/verify', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ challengeId: started.challengeId, response: auth.register(started.options.challenge) }),
+  })
+  expect(verified.status).toBe(200)
+}
+
+describe('passkeys on the account', () => {
+  it('adds a second passkey and will not remove the last one', async () => {
+    const d = desk()
+    await addPasskey(d.h.app, d.ownerToken)
+    const one = await d.h.app.request('http://mandate.test/auth/credentials', { headers: headers(d.ownerToken) })
+    expect(one.status).toBe(200)
+    const first = await one.json() as { credentials: Array<{ id: string; fingerprint: string }> }
+    expect(first.credentials).toHaveLength(1)
+    expect(JSON.stringify(first)).not.toContain('public_key')
+    const last = await d.h.app.request('http://mandate.test/auth/credentials/revoke', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ id: first.credentials[0]?.id }),
+    })
+    expect(last.status).toBe(409)
+    expect((await last.json() as { title: string }).title).toBe('The last passkey stays')
+    await addPasskey(d.h.app, d.ownerToken)
+    const two = await (await d.h.app.request('http://mandate.test/auth/credentials', { headers: headers(d.ownerToken) })).json() as { credentials: Array<{ id: string }> }
+    expect(two.credentials).toHaveLength(2)
+    const removed = await d.h.app.request('http://mandate.test/auth/credentials/revoke', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ id: two.credentials[0]?.id }),
+    })
+    expect(removed.status).toBe(200)
+    const left = await (await d.h.app.request('http://mandate.test/auth/credentials', { headers: headers(d.ownerToken) })).json() as { credentials: Array<{ revoked: boolean }> }
+    expect(left.credentials.filter((row) => !row.revoked)).toHaveLength(1)
+    const again = await d.h.app.request('http://mandate.test/auth/credentials/revoke', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ id: two.credentials[1]?.id }),
+    })
+    expect(again.status).toBe(409)
+    const stolen = await d.h.app.request('http://mandate.test/auth/credentials/revoke', {
+      method: 'POST',
+      headers: { ...headers(d.proposerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ id: two.credentials[1]?.id }),
+    })
+    expect(stolen.status).toBe(404)
+    const bare = await d.h.app.request('http://mandate.test/auth/credentials/revoke', {
+      method: 'POST',
+      headers: { cookie: `mnd_session=${d.ownerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ id: two.credentials[1]?.id }),
+    })
+    expect(bare.status).toBe(403)
+    const missing = await d.h.app.request('http://mandate.test/auth/credentials')
+    expect(missing.status).toBe(401)
+    d.controlDb.close()
+  })
+
+  it('counts passkey reads in the auth rate-limit class', async () => {
+    expect(rateClass('GET', '/auth/credentials')).toBe('auth')
+    expect(rateClass('POST', '/auth/credentials/revoke')).toBe('auth')
+    const h = harness({ classedRates: true, rateLimitPerMinute: 100, flags: loadFlags({ FLAG_PASSKEYS: '1' }), webauthn: WA })
+    let status = 0
+    for (let i = 0; i < 6; i += 1) status = (await h.app.request('http://mandate.test/auth/credentials')).status
     expect(status).toBe(429)
   })
 })

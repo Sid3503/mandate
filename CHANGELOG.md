@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Passkeys on the account: `GET /auth/credentials` and `POST /auth/credentials/revoke`. The last passkey stays. Another member's id is not found. The screen is `/app/sessions`.
 - Recovery codes: `POST /auth/recovery/issue`, `POST /auth/recovery/ack` ("I saved these"), and `POST /auth/recovery/regenerate` with a passkey step-up. Codes are hashed. A used code fails the second time.
 - Sessions: `GET /auth/sessions`, `POST /auth/sessions/revoke`, `POST /auth/sessions/revoke-others`, and owner `GET /auth/events`. The list does not return the session token. The screen is `/app/sessions`.
 - `POST /ops/model/resume` clears the model kill with the admin key. The day's token counters stay.
