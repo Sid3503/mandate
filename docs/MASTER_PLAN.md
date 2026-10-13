@@ -89,7 +89,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P8.T2 | done | Try-it box and boundary cases verified with side-by-side draft comparison. Proof: `api/test/try.test.ts`, `web/e2e/job.spec.ts` | |
 | P8.T3 | done | Tap to rule with suggestion drafter navigation and monthly tap count on Today. Proof: `web/e2e/job.spec.ts` | |
 | P8.T4 | done | Passkey publish ceremony cryptographically bound to warrant body and grant reuse rejection. Proof: `api/test/stepup.test.ts`, `web/src/lib/api.ts` | |
-| P8.T5 | partial | `api/test/policy.test.ts`, `api/test/intent.test.ts`, e2e "a pasted policy is read sentence by sentence". The 20,000 character cap and `FLAG_POLICY_PASTE` are not what that screen uses | `1ac59cd` |
+| P8.T5 | done | Policy paste with 20,000 character cap, FLAG_POLICY_PASTE gating, at most 3 passes, segment table, and fenced untrusted prompt. Proof: `api/test/policy.test.ts`, `web/e2e/job.spec.ts` | |
 | P8.T6 | not started | `FLAG_SECOND_READER` is parsed and unused | `9a2ea0b` |
 | P8.T7 | not started | no 30-wording eval | |
 | P9.T1 | partial | `web/e2e/job.spec.ts` "Ask Mandate opens from any screen" | `1ac59cd` |

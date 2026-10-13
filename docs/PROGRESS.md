@@ -37,6 +37,7 @@
 - Q4.6 P7.T7: Payee screen (`/app/payees`) with contractor accounts list, status chips, "Why can I not pay this account?" card with payability diagnostics, payout history, and passkey-guarded payout account change form. Proof: `web/e2e/passkey-repair-payees.spec.ts`, `docs/evidence/q4/payees.png`.
 - Q5.1 P6.T6: Delegation end date: `expires_at` on members and invites, session refusal on expiration, owner renewal and role setting with `expiresAt`, and members UI display. Proof: `api/test/identity.test.ts`.
 - Q5.2 P8.T2 P8.T3 P8.T4: Try-it box and boundary cases verified with side-by-side draft comparison (`api/test/try.test.ts`), tap to rule with drafter navigation and monthly tap counts on Today (`Today.tsx`, `job.spec.ts`), and passkey warrant publish ceremony with cryptographic binding to rules body and grant reuse rejection (`extra.ts`, `web/src/lib/api.ts`, `api/test/stepup.test.ts`).
+- Q5.3 P8.T5: Policy paste with 20,000 character cap (`POLICY_MAX_CHARS`, `POLICY_LIMIT`, `openapi.ts`), FLAG_POLICY_PASTE gating on `/v1/rules/policy` routes and UI PolicyBox, at most 3 passes, segment table display, and fenced untrusted text prompt. Proof: `api/test/policy.test.ts`.
 
 ## Test counts
 
@@ -59,6 +60,7 @@
 - Full `npm run gates` after Q4 on 13 October 2026: 55 files, 639 API tests, 11.29s, secret check 368 tracked files, Playwright 134 passed (8.5m), axe included, exit 0.
 - `gates:fast` after Q5.1: 55 files, 641 API tests, 11.47s, secret check 371 tracked files, exit 0.
 - `gates:fast` after Q5.2: 55 files, 642 API tests, 18.14s, secret check 371 tracked files, exit 0.
+- `gates:fast` after Q5.3: 55 files, 643 API tests, 19.61s, secret check 371 tracked files, exit 0.
 
 ## Open items
 
@@ -102,4 +104,4 @@
 
 ## Next
 
-Q5.3 P8.T5: policy paste with 20000 char cap, flag gating (FLAG_POLICY_PASTE), 3 passes, and fenced prompt.
+Q5.4 P8.T7: 30-wording eval with scripted model in CI and token cap in drafter eval.
