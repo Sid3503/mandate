@@ -161,6 +161,29 @@ function ShellFrame() {
     toast({ title: 'Locked', body: 'The key is gone from this tab.', tone: 'info', key: 'lock' })
     navigate('/unlock', { replace: true })
   }
+
+  const onSwitchDemoRole = async (role: 'owner' | 'approver' | 'proposer' | 'viewer' | 'payee') => {
+    try {
+      await api.switchDemoRole(role)
+      await client.invalidateQueries()
+      toast({ title: `Switched to ${role}`, body: `You are now browsing as ${role}.`, tone: 'info', key: 'demo-role' })
+      const landing = role === 'proposer' ? '/clerk' : role === 'viewer' ? '/proof' : role === 'payee' ? '/deals' : '/'
+      navigate(landing)
+    } catch {
+      toast({ title: 'Could not switch role', body: 'The demo role switch failed.', tone: 'warn', key: 'demo-role-error' })
+    }
+  }
+
+  const onResetDemo = async () => {
+    try {
+      await api.resetDemo()
+      await client.invalidateQueries()
+      toast({ title: 'Demo reset', body: 'The ledger and rules are back to a fresh Line Studio.', tone: 'info', key: 'demo-reset' })
+      navigate('/')
+    } catch {
+      toast({ title: 'Could not reset demo', body: 'Reset failed.', tone: 'warn', key: 'demo-reset-error' })
+    }
+  }
   return (
     <div className="shell" data-collapsed={collapsed ? 'true' : 'false'}>
       <a className="skip" href="#main">Skip to content</a>
@@ -226,7 +249,37 @@ function ShellFrame() {
           </div>
         </header>
         {session.mode() === 'demo' ? (
-          <div className="demo-banner" role="status">Simulated PayPal. No real money. Your demo ends in 24 hours.</div>
+          <div className="demo-banner" role="status" data-testid="demo-banner">
+            <div className="row between align-center wrap gap-s">
+              <div>
+                Simulated PayPal. No real money. Your demo ends in 24 hours.{' '}
+                <Link to="/live-proof" className="link small" data-testid="live-proof-link" style={{ marginLeft: 6 }}>Live proof ↗</Link>
+              </div>
+              <div className="row gap-xs align-center demo-controls" data-testid="demo-role-switcher">
+                <span className="small muted">Role:</span>
+                {(['owner', 'approver', 'proposer', 'viewer', 'payee'] as const).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    className={`btn btn-small ${me.data?.role === r ? 'btn-ink' : 'btn-ghost'}`}
+                    data-testid={`demo-role-${r}`}
+                    onClick={() => void onSwitchDemoRole(r)}
+                  >
+                    {r}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  data-testid="demo-reset-btn"
+                  onClick={() => void onResetDemo()}
+                  title="Reset the demo to start clean"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          </div>
         ) : null}
         {!online ? (
           <div className="offline" role="status">
