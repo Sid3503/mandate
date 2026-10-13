@@ -12,3 +12,5 @@ web/test-results/
 web/playwright-report/
 web/e2e/shots/
 web/openapi.json
+KT-auth-login-etc
+docs/KT-THIS-PASS.md

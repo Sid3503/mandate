@@ -125,7 +125,9 @@ export function openProduct(input: {
       now: input.now,
       nested: true,
       control,
-      budget,
+      budget: row.mode === 'demo'
+        ? new ModelBudget({ globalDailyTokens: 10_000_000, workspaceDailyTokens: 50_000, maxOutputTokens: 2048, maxSteps: 4 }, input.now, id, sqliteBudgetStore(db))
+        : budget,
       masterKey,
       workspace: { id, mode: row.mode },
       services,

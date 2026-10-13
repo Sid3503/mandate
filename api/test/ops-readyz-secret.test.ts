@@ -11,7 +11,7 @@ describe('boot secrets in SecretString', () => {
       API_KEY: 'a'.repeat(20),
       PROPOSER_KEY: 'b'.repeat(20),
       BUYER_AGENT_KEY: 'c'.repeat(20),
-      SIGNING_KEY: '-----BEGIN PRIVATE KEY-----\nMIIB...',
+      SIGNING_KEY: 'test_signing_key_material',
       PAYPAL_CLIENT_ID: 'client_id_test',
       PAYPAL_CLIENT_SECRET: 'secret_test_12345',
       OLLAMA_API_KEY: 'ollama_secret_key',
@@ -27,7 +27,7 @@ describe('boot secrets in SecretString', () => {
 
     expect(config.secrets.proposerKey?.reveal()).toBe('b'.repeat(20))
     expect(config.secrets.buyerAgentKey?.reveal()).toBe('c'.repeat(20))
-    expect(config.secrets.signingKey?.reveal()).toBe('-----BEGIN PRIVATE KEY-----\nMIIB...')
+    expect(config.secrets.signingKey?.reveal()).toBe('test_signing_key_material')
     expect(config.secrets.paypalClientSecret?.reveal()).toBe('secret_test_12345')
     expect(config.secrets.ollamaApiKey?.reveal()).toBe('ollama_secret_key')
   })

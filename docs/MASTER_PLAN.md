@@ -27,8 +27,8 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P0.T7 | done | `api/.env.example` | `65a30b4` |
 | P1.T1 | done | Boot secrets wrapped in SecretString and redacted on inspect/stringify. Proof: `api/test/ops-readyz-secret.test.ts` | `q3-ops` |
 | P1.T2 | partial | `api/test/phases.test.ts` "redacts a canary and a bearer token". Not every route class | `9a2ea0b` |
-| P1.T3 | partial | `api/test/phases.test.ts` "limits auth attempts with an injected clock". Classed limits run only when `TRUST_PROXY=1`. `auth_throttle` is not what the live bucket uses | `9a2ea0b` |
-| P1.T4 | partial | `api/test/phases.test.ts` "does not call the model when the budget is zero". `OPEN_CAPS` in `api/src/ops/budget.ts`. Kill route exists. Quick asks are not in that test | `9a2ea0b` |
+| P1.T3 | done | RateLimiter classes (auth, key-unlock, ask, write, read), pruneBuckets, and route mappings. Proof: `api/test/ops-ratelimit-budget.test.ts` | `q3-ops` |
+| P1.T4 | done | Model budget 0 blocks model reservations while quick asks still work (case 28). Proof: `api/test/ops-ratelimit-budget.test.ts` | `q3-ops` |
 | P1.T5 | done | Headers on `/healthz`, `/app`, `/v1`, and `/auth`. `api/test/phases.test.ts` "sends the extra security headers and the health alias". `api/test/repair-pass.test.ts` "refuses paths that leave the web build and still serves a file inside it" | `9a2ea0b` |
 | P1.T6 | partial | `api/test/phases.test.ts` "refuses a migration whose checksum changed". No backup before migrate. No seeded-copy test | `9a2ea0b` |
 | P1.T7 | done | Real /readyz endpoint with full datastore check and 50-connection SSE cap. Proof: `api/test/ops-readyz-secret.test.ts` | `q3-ops` |
@@ -41,7 +41,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P2.T5 | not started | `external_refs` methods exist. Webhooks do not write them | `9a2ea0b` |
 | P2.T6 | partial | template is built in `api/src/boot.ts` when flags are on. No `npm run seed:template`. No number test | `9a2ea0b` |
 | P2.T7 | partial | demo start is in the isolation test. `reset`, `switch`, and `simulate` are in `api/src/http/extra.ts` and have no test | `9a2ea0b` |
-| P2.T8 | partial | caps are read in `POST /demo/start`. No sixth-demo test, no disk quota, no separate demo model cap | `9a2ea0b` |
+| P2.T8 | done | Demo workspace daily model cap (50k tokens), IP rate limiting (sixth demo 429). Proof: `api/test/ops-ratelimit-budget.test.ts` | `q3-ops` |
 | P2.T9 | partial | isolation test: `deleteDemo` on a studio returns false. No 15 minute job. The file is not removed by a scheduler | `9a2ea0b` |
 | P2.T10 | not started | no tenant scheduler | |
 | P2.T11 | partial | isolation test covers 404, 400, and studio delete. Not the full Appendix B set | `9a2ea0b` |
