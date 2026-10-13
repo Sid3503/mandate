@@ -36,15 +36,15 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P1.T9 | done | db:backup and db:restore script tests with safety backups and validation. Proof: `api/test/ops-backup-migration.test.ts` | `q3-ops` |
 | P2.T1 | partial | `api/src/control/store.ts` `ensureDefault`. `api/test/phases.test.ts` "stays a single studio when the flags are off" | `9a2ea0b` |
 | P2.T2 | partial | `api/src/tenancy/registry.ts` max 50, idle 10 minutes. Handlers were not moved onto the request | `9a2ea0b` |
-| P2.T3 | partial | `api/test/phases.test.ts` "isolates a demo, rejects a bad id, and will not delete a studio". MCP is not under `/w` | `9a2ea0b` |
-| P2.T4 | partial | seal and open in that same test. No per-workspace public key route | `9a2ea0b` |
-| P2.T5 | not started | `external_refs` methods exist. Webhooks do not write them | `9a2ea0b` |
+| P2.T3 | done | MCP under /w/:workspace/mcp and routing under /w/:workspace/... Proof: `api/test/ops-tenant-routing.test.ts` | `q3-ops` |
+| P2.T4 | done | Per-workspace signing keys with envelope encryption and public keys at GET /w/:id/.well-known/mandate-keys.json. Proof: `api/test/ops-tenant-routing.test.ts` | `q3-ops` |
+| P2.T5 | done | Webhook routing through external_refs across payout, invoice, and order events. Proof: `api/test/ops-tenant-routing.test.ts` | `q3-ops` |
 | P2.T6 | done | npm run seed:template script and frozen numbers test for Line Studio template. Proof: `api/test/ops-demo-template.test.ts` | `q3-ops` |
 | P2.T7 | done | Integration tests for demo reset (/v1/demo/reset), role switch (/v1/demo/switch), and simulate (/v1/demo/simulate). Proof: `api/test/ops-demo-template.test.ts` | `q3-ops` |
 | P2.T8 | done | Demo workspace daily model cap (50k tokens), IP rate limiting (sixth demo 429). Proof: `api/test/ops-ratelimit-budget.test.ts` | `q3-ops` |
-| P2.T9 | partial | isolation test: `deleteDemo` on a studio returns false. No 15 minute job. The file is not removed by a scheduler | `9a2ea0b` |
-| P2.T10 | not started | no tenant scheduler | |
-| P2.T11 | partial | isolation test covers 404, 400, and studio delete. Not the full Appendix B set | `9a2ea0b` |
+| P2.T9 | done | 15-minute cleanup job removes expired demo workspaces and SQLite files, preserving default, studio, and live workspaces. Proof: `api/test/ops-cleanup-scheduler.test.ts` | `q3-ops` |
+| P2.T10 | done | Single tenant scheduler sweeps active invoice/payout tenants without per-tenant timers; on-demand demo ticks. Proof: `api/test/ops-cleanup-scheduler.test.ts` | `q3-ops` |
+| P2.T11 | done | Tenant isolation tests (Appendix B cases 22, 23, 24, 27). Proof: `api/test/ops-cleanup-scheduler.test.ts` | `q3-ops` |
 | P3.T1 | partial | `api/src/control/store.ts` schema. No migration test | `9a2ea0b` |
 | P3.T2 | partial | `api/test/phases.test.ts` "registers a passkey and signs in with it" | `9a2ea0b` |
 | P3.T3 | partial | `api/src/auth/cookies.ts`, CSRF in `api/src/app.ts`. No origin test | `9a2ea0b` |
@@ -137,13 +137,13 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 19 Reused, expired, or revoked invite fails | `api/test/repair-pass.test.ts` "does not burn an invite on the wrong studio, and a used, expired, or revoked invite fails" | no HTTP revoke route. The test sets `revoked_at` in the row. Same test as case 21 |
 | 20 Two parallel joins, one wins | `api/test/repair-pass.test.ts` "lets one of two joins win" | |
 | 21 Invite for A fails on B | `api/test/repair-pass.test.ts` "does not burn an invite on the wrong studio, and a used, expired, or revoked invite fails" | a join on the wrong studio does not consume the invite. Same test as case 19 |
-| 22 Cookie, key, or id from A on B is 404 | partial: "isolates a demo, rejects a bad id, and will not delete a studio" | demo cookie on `ws_default` only |
-| 23 Workspace id with `../` is 400 | `api/test/repair-pass.test.ts` "rejects a workspace id that is not an id" | |
-| 24 Random work in A leaves B's checksum unchanged | `api/test/repair-pass.test.ts` "hashes table rows, so work in one studio does not change the other" | hash of ledger rows, not file bytes |
+| 22 Cookie, key, or id from A on B is 404 | `api/test/ops-cleanup-scheduler.test.ts` "Case 22: cookie, key, or id from A on B is 404" | |
+| 23 Workspace id with `../` is 400 | `api/test/repair-pass.test.ts` "rejects a workspace id that is not an id", `api/test/ops-cleanup-scheduler.test.ts` "Case 23: workspace id with path traversal or invalid format is 400" | |
+| 24 Random work in A leaves B's checksum unchanged | `api/test/repair-pass.test.ts` "hashes table rows, so work in one studio does not change the other", `api/test/ops-cleanup-scheduler.test.ts` "Case 24: random work in A leaves B checksum completely unchanged" | hash of ledger rows, not file bytes |
 | 25 Demo switch, simulate, and demo tap fail outside a demo | `api/test/repair-pass.test.ts` "hides demo doors on the default studio and ignores a demo tap there" | |
 | 26 Sixth demo from one IP in an hour is 429 | `api/test/repair-pass.test.ts` "shares one direct bucket when the proxy is not trusted", "gives two real addresses their own five demos", "with two trusted hops the client is the address two from the right" | two addresses get separate fives when the proxy is trusted |
-| 27 Cleanup never deletes default, studio, or live | partial: same isolation test, `deleteDemo` on a studio is false | no cleanup job, no default or live row |
-| 28 Budget 0 means zero model calls, quick asks still work | partial: "does not call the model when the budget is zero" | quick asks are not asserted |
+| 27 Cleanup never deletes default, studio, or live | `api/test/ops-cleanup-scheduler.test.ts` "never deletes default, studio, or live workspaces even if expires_at is set (Appendix B Case 27)" | |
+| 28 Budget 0 means zero model calls, quick asks still work | `api/test/ops-ratelimit-budget.test.ts` "budget 0 blocks reservations while quick asks still succeed" | |
 | 29 Kill switch stops all agents | `api/test/repair-pass.test.ts` "a kill stops the clerk path and a drafter that already has a model" | studio turn and a drafter that already has a model |
 | 30 Spam trips the breaker, resume needs step-up, proposer cannot pause | partial: `api/test/agent-keys.test.ts` "suspends only the misbehaving agent" and e2e pause | no step-up resume, no proposer pause test |
 | 31 First payment to a new payee needs approval | `api/test/repair-pass.test.ts` "holds a first payment and refuses one while a change is pending" | same test as case 32 |
@@ -152,7 +152,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 34 Simulate writes zero rows | `api/test/phases.test.ts` "tries a payment without writing a row" | |
 | 35 No test output or log contains a canary | partial: "redacts a canary and a bearer token" and `scripts/check-secrets.mjs` | not a log sweep of the suite |
 
-Cases 9 to 18 have the tests named in the table. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 23, 24, 25, 26, 29, 31, and 32 gained a test in the repair pass. Cases still partial, with no full test, are 22, 27, 28, 30, and 35.
+Cases 9 to 18 have the tests named in the table. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, and 32 gained tests in the repair pass and Q3 ops suites. Cases still partial, with no full test, are 30 and 35.
 
 ## Confirmed facts, not changes
 

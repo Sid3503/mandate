@@ -14,6 +14,8 @@ import { buildServices } from './services/container'
 import { openSeal } from './tenancy/envelope'
 import { TenantRegistry } from './tenancy/registry'
 
+import { cleanupExpiredDemos, runTenantSchedulerSweep } from './ops/scheduler'
+
 export type ProductBoot = {
   control: ControlStore | null
   registry: TenantRegistry | null
@@ -29,6 +31,10 @@ export type ProductBoot = {
   idleHours: number
   absoluteDays: number
   redact: string[]
+  cleanupTimer?: NodeJS.Timeout | null
+  schedulerTimer?: NodeJS.Timeout | null
+  cleanupNow?: () => { cleaned: string[]; skipped: string[] }
+  sweepNow?: () => Promise<{ swept: string[] }>
   close: () => void
 }
 
@@ -158,10 +164,41 @@ export function openProduct(input: {
         redact,
       },
     })
-    return { id, fetch: (request) => app.fetch(request), close: () => db.close() }
+    return {
+      id,
+      fetch: (request) => app.fetch(request),
+      close: () => db.close(),
+      sweep: async () => {
+        await services.mandate.sweepStanding()
+        await services.mandate.sweepPending()
+      },
+    }
   }) : null
+
+  const cleanupTimer = (flags.tenancy || flags.demoEnabled)
+    ? setInterval(() => {
+        cleanupExpiredDemos({ control, registry, now: input.now() })
+      }, 15 * 60_000)
+    : null
+  cleanupTimer?.unref()
+
+  const schedulerTimer = (flags.tenancy && registry)
+    ? setInterval(() => {
+        void runTenantSchedulerSweep({ control, registry }).catch(() => undefined)
+      }, 15_000)
+    : null
+  schedulerTimer?.unref()
+
   return {
     control, registry, budget, masterKey, demo, adminKey, webauthn, cookieSecure, trustProxy, trustedProxyHops, classedRates, idleHours, absoluteDays, redact,
-    close: () => { try { controlDb.close() } catch { /* already closed */ } },
+    cleanupTimer,
+    schedulerTimer,
+    cleanupNow: () => cleanupExpiredDemos({ control, registry, now: input.now() }),
+    sweepNow: () => (registry ? runTenantSchedulerSweep({ control, registry }) : Promise.resolve({ swept: [] })),
+    close: () => {
+      if (cleanupTimer) clearInterval(cleanupTimer)
+      if (schedulerTimer) clearInterval(schedulerTimer)
+      try { controlDb.close() } catch { /* already closed */ }
+    },
   }
 }

@@ -72,7 +72,13 @@
 - Boot secrets: loadConfig wraps boot secrets in SecretString so secrets are never leaked in logs or JSON serializations.
 - Real /readyz: /readyz executes identical datastore readiness check directly, avoiding probe redirect loops.
 - SSE cap: /v1/stream caps active connections at 50, returning 429 when capacity is reached.
+- MCP under /w: mounted per workspace under /w/:workspaceId/mcp and isolated to that tenant.
+- Public keys under /w: per-workspace public key endpoint under GET /w/:workspaceId/.well-known/mandate-keys.json.
+- Webhook routing: top-level webhook deliveries resolve recipient tenant via external_refs ('payout', 'invoice', 'order').
+- 15-minute cleanup job: cleanupExpiredDemos sweeps every 15 minutes, deleting only expired demo workspaces (mode='demo' and expires_at < now) and their SQLite files from disk, while unconditionally preserving default, studio, and live workspaces.
+- Tenant scheduler: runTenantSchedulerSweep sweeps only workspaces with active external_refs without per-tenant timers. Demo workspaces tick sweeps on demand on simulate actions and when Today is opened.
+- Isolation suite: verified Appendix B cases 22 (session cookie, key, or id from A on B is 404/401), 23 (path traversal ../ is 400), 24 (operations in A leave B database checksum identical), and 27 (cleanup never deletes default, studio, or live).
 
 ## Next
 
-Q3.5 P2.T3 P2.T4 P2.T5: MCP under /w/:workspaceId/mcp, per-workspace public keys route GET /w/:workspaceId/.well-known/mandate-keys.json, and tenant webhook routing via external_refs.
+Q3 gates run: hygiene, typecheck, API test suite, secret check, web build, and e2e Playwright suite.
