@@ -198,6 +198,38 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     return c.json(started)
   })
 
+  app.get('/auth/credentials', (c) => {
+    if (!flags.passkeys) throw new Problem(404, 'flag/disabled', 'Not available', 'Passkeys are off on this server.')
+    const who = memberFromCookie(c, ctx)
+    if (!who || !ctx.control) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
+    return c.json({
+      credentials: ctx.control.credentials(who.member.id).map((row) => ({
+        id: row.id,
+        fingerprint: row.fingerprint,
+        revoked: Boolean(row.revoked_at),
+      })),
+    })
+  })
+
+  app.post('/auth/credentials/revoke', async (c) => {
+    if (!flags.passkeys) throw new Problem(404, 'flag/disabled', 'Not available', 'Passkeys are off on this server.')
+    const who = memberFromCookie(c, ctx)
+    const control = requireControl(ctx)
+    if (!who) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
+    const body = await c.req.json().catch(() => null) as { id?: string } | null
+    if (!body?.id) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the passkey.')
+    const rows = control.credentials(who.member.id)
+    const row = rows.find((item) => item.id === body.id)
+    if (!row || row.revoked_at) throw new Problem(404, 'passkey/not-found', 'Not found', 'That passkey is not yours, or it is already removed.')
+    if (!control.revokeCredential(row.id, who.member.id, ctx.now().toISOString())) {
+      throw new Problem(409, 'passkey/last', 'The last passkey stays', 'Add another passkey before removing this one.')
+    }
+    return c.json({ ok: true })
+  })
+
   app.post('/auth/register/verify', async (c) => {
     if (!flags.passkeys) throw new Problem(404, 'flag/disabled', 'Not available', 'Passkeys are off on this server.')
     const control = requireControl(ctx)

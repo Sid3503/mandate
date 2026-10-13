@@ -155,6 +155,20 @@ export function buildOpenApi(publicUrl: string) {
   })
   registry.registerPath({
     method: 'get',
+    path: '/auth/credentials',
+    tags: ['auth'],
+    summary: 'This member\'s passkeys. The public key is not returned.',
+    responses: { 200: { description: 'Passkeys' }, 401: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/auth/credentials/revoke',
+    tags: ['auth'],
+    summary: 'Remove one passkey. The last passkey stays. Another member\'s id is not found.',
+    responses: { 200: { description: 'Removed' }, 401: problem, 403: problem, 404: problem, 409: problem },
+  })
+  registry.registerPath({
+    method: 'get',
     path: '/auth/sessions',
     tags: ['auth'],
     summary: 'This member\'s sessions. The token hash is not returned.',

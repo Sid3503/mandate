@@ -245,6 +245,13 @@ export const api = {
   authEvents: () => request<{ events: Array<{ at: string; event: string; result: string }> }>('/auth/events'),
   revokeSession: (publicId: string) => request<{ ok: boolean }>('/auth/sessions/revoke', { method: 'POST', body: { publicId } }),
   revokeOtherSessions: () => request<{ ended: number }>('/auth/sessions/revoke-others', { method: 'POST', body: {} }),
+  credentials: () => request<{ credentials: Array<{ id: string; fingerprint: string; revoked: boolean }> }>('/auth/credentials'),
+  revokeCredential: (id: string) => request<{ ok: boolean }>('/auth/credentials/revoke', { method: 'POST', body: { id } }),
+  addCredential: async () => {
+    const reg = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/register/options', { method: 'POST', body: {} })
+    const registered = await startRegistration({ optionsJSON: reg.options as never })
+    return request<{ credentialId: string; fingerprint: string }>('/auth/register/verify', { method: 'POST', body: { challengeId: reg.challengeId, response: registered } })
+  },
   issueRecovery: () => request<{ codes: string[]; saved: boolean }>('/auth/recovery/issue', { method: 'POST', body: {} }),
   ackRecovery: () => request<{ saved: boolean }>('/auth/recovery/ack', { method: 'POST', body: { saved: true } }),
   regenerateRecovery: async () => {

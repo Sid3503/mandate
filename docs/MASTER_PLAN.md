@@ -52,8 +52,8 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P3.T5 | partial | role checks in `api/src/app.ts`. No role-matrix test | `9a2ea0b` |
 | P3.T6 | partial | `actor_json` written in `api/src/db/repo.ts`. No test | `9a2ea0b` |
 | P3.T7 | done | Sessions list, revoke, revoke others, and owner sign-in history. The list hides the token. Screen `/app/sessions`. | `52fde09` |
-| P3.T8 | done | Issue, confirm with "I saved these", use once, and regenerate with a passkey step-up. Codes are hashed. | `q1-identity` |
-| P3.T9 | partial | `revokeCredential` refuses the last key in `api/src/control/store.ts`. No HTTP test | `9a2ea0b` |
+| P3.T8 | done | Issue, confirm with "I saved these", use once, and regenerate with a passkey step-up. Codes are hashed. | `5f7d0c5` |
+| P3.T9 | done | Add a passkey and refuse to remove the last one. Another member's id is 404. The screen is `/app/sessions`. | `q1-identity` |
 | P3.T10 | not started | no Chromium virtual authenticator test | |
 | P4.T1 | done | `workspaces.passkey_for_money` is on for a new studio and off for the default studio and a demo. Turning it on is tested | `fd1432b` |
 | P4.T2 | done | Approve grant is one use, 120 seconds, member plus cart hash. Parallel approve and both rollback outcomes are tested | `283544d` |
