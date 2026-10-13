@@ -7,7 +7,7 @@ import { generateAuthenticationOptions, verifyAuthenticationResponse } from '@si
 import type { WebAuthnCredential } from '@simplewebauthn/server'
 import { clearSessionCookie, cookieWriteAllowed, readSessionCookie, writeSessionCookie } from '../auth/cookies'
 import { applyCounterRollback, beginLogin, beginRegistration, finishLogin, finishRegistration, passkeyRuleBinding, stepBinding, type WebAuthnConfig } from '../auth/passkeys'
-import { ControlStore } from '../control/store'
+import { ControlStore, hashToken } from '../control/store'
 import { defaultFlags, type ServerFlags } from '../flags'
 import { Problem } from './problem'
 import type { Metrics } from '../ops/metrics'
@@ -347,7 +347,40 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
   app.get('/auth/sessions', (c) => {
     const who = memberFromCookie(c, ctx)
     if (!who || !ctx.control) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
-    return c.json({ sessions: ctx.control.listSessions(who.member.id).map((row) => ({ at: row.created_at, lastSeen: row.last_seen_at, revoked: Boolean(row.revoked_at) })) })
+    const mine = hashToken(who.token)
+    return c.json({
+      sessions: ctx.control.listSessions(who.member.id).map((row) => ({
+        publicId: row.public_id,
+        at: row.created_at,
+        lastSeen: row.last_seen_at,
+        method: row.method,
+        revoked: Boolean(row.revoked_at),
+        current: row.id_hash === mine,
+      })),
+    })
+  })
+
+  app.post('/auth/sessions/revoke', async (c) => {
+    const who = memberFromCookie(c, ctx)
+    if (!who || !ctx.control) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
+    const body = await c.req.json().catch(() => null) as { publicId?: string } | null
+    if (!body?.publicId) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the session.')
+    const ok = ctx.control.revokeSessionByPublicId(who.member.id, body.publicId, ctx.now().toISOString())
+    if (!ok) throw new Problem(404, 'session/not-found', 'Not found', 'That session is not yours, or it is already ended.')
+    return c.json({ ok: true })
+  })
+
+  app.post('/auth/sessions/revoke-others', (c) => {
+    const who = memberFromCookie(c, ctx)
+    if (!who || !ctx.control) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
+    const ended = ctx.control.revokeOtherSessions(who.member.id, who.token, ctx.now().toISOString())
+    return c.json({ ended })
   })
 
   app.get('/auth/events', (c) => {

@@ -155,6 +155,34 @@ export function buildOpenApi(publicUrl: string) {
   })
   registry.registerPath({
     method: 'get',
+    path: '/auth/sessions',
+    tags: ['auth'],
+    summary: 'This member\'s sessions. The token hash is not returned.',
+    responses: { 200: { description: 'Sessions' }, 401: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/auth/sessions/revoke',
+    tags: ['auth'],
+    summary: 'End one of this member\'s sessions. Another member\'s id is not found.',
+    responses: { 200: { description: 'Ended' }, 401: problem, 403: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/auth/sessions/revoke-others',
+    tags: ['auth'],
+    summary: 'End every session except the one making this call.',
+    responses: { 200: { description: 'Count ended' }, 401: problem, 403: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/auth/events',
+    tags: ['auth'],
+    summary: 'Owner only. Sign-in history for this studio.',
+    responses: { 200: { description: 'Events' }, 401: problem, 403: problem },
+  })
+  registry.registerPath({
+    method: 'get',
     path: '/v1/warrant',
     tags: ['warrant'],
     security: bearer,
