@@ -310,6 +310,7 @@ export function System() {
           </div>
           <a className="btn btn-ghost" href="/openapi.json" target="_blank" rel="noreferrer">OpenAPI 3.1 contract ↗</a>
           <Link className="btn btn-ghost" to="/sessions">Sessions and sign-in history</Link>
+          <Link className="btn btn-ghost" to="/members">Members</Link>
         </section>
       </div>
     </div>

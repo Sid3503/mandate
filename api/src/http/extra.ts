@@ -7,7 +7,7 @@ import { generateAuthenticationOptions, verifyAuthenticationResponse } from '@si
 import type { WebAuthnCredential } from '@simplewebauthn/server'
 import { clearSessionCookie, cookieWriteAllowed, readSessionCookie, writeSessionCookie } from '../auth/cookies'
 import { applyCounterRollback, beginLogin, beginRegistration, finishLogin, finishRegistration, passkeyRuleBinding, stepBinding, type WebAuthnConfig } from '../auth/passkeys'
-import { ControlStore, hashToken } from '../control/store'
+import { ControlStore, hashToken, type MemberRole } from '../control/store'
 import { defaultFlags, type ServerFlags } from '../flags'
 import { Problem } from './problem'
 import type { Metrics } from '../ops/metrics'
@@ -43,6 +43,8 @@ export type ProductCtx = {
   listPayees?: () => Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number }>
   /** Cart hash of a proposal that is waiting for a signature. */
   approvalHash?: (proposalId: string) => string | null
+  /** Proposal ids waiting on a person. The ledger has no member column, so this is the studio list. */
+  openRequests?: () => string[]
   requireStep?: (c: { req: { header: (name: string) => string | undefined }; get: (key: 'memberId') => string | undefined }, kind: string, binding: string) => void
 }
 
@@ -292,7 +294,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     if (who.session.method === 'recovery') throw new Problem(403, 'auth/forbidden', 'Recovery cannot approve', 'A recovery session can only add a passkey.')
     const control = requireControl(ctx)
     if (!ctx.webauthn) throw new Problem(503, 'flag/disabled', 'Not configured', 'Passkeys need a site name and origin.')
-    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean; role?: string; label?: string | null }
+    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean; role?: string; label?: string | null; memberId?: string }
     const kind = body.kind ?? ''
     let binding = ''
     if (kind === 'approve') {
@@ -305,6 +307,12 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     } else if (kind === 'invite') {
       if (!body.role) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name a role.')
       binding = stepBinding('invite', JSON.stringify({ role: body.role, label: body.label ?? null }))
+    } else if (kind === 'member-role') {
+      if (!body.memberId || !body.role) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the member and the role.')
+      binding = stepBinding('member-role', `${body.memberId}\n${body.role}`)
+    } else if (kind === 'member-revoke') {
+      if (!body.memberId) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the member.')
+      binding = stepBinding('member-revoke', body.memberId)
     } else if (kind === 'passkey-rule') {
       if (typeof body.enabled === 'boolean') binding = passkeyRuleBinding(body.enabled)
       else if (body.binding === passkeyRuleBinding(true) || body.binding === passkeyRuleBinding(false)) binding = body.binding
@@ -580,11 +588,61 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     return c.json({ memberId, role: invite.role, workspaceId: invite.workspace_id })
   })
 
+  const memberRoles = new Set<MemberRole>(['owner', 'approver', 'proposer', 'viewer', 'payee'])
+
+  function ownerMember(c: { req: { header: (name: string) => string | undefined } }) {
+    const who = memberFromCookie(c, ctx)
+    const control = requireControl(ctx)
+    if (!who || who.member.role !== 'owner') throw new Problem(403, 'auth/forbidden', 'Owner required', 'Only an owner can change members.')
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
+    return { who, control }
+  }
+
   app.get('/v1/members', (c) => {
     const who = memberFromCookie(c, ctx)
     if (!who || !ctx.control) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
     if (who.member.role !== 'owner') throw new Problem(403, 'auth/forbidden', 'Owner required', 'Only an owner can list members.')
-    return c.json({ members: ctx.control.members(who.member.workspace_id) })
+    const members = ctx.control.members(who.member.workspace_id).map((row) => ({
+      id: row.id,
+      name: row.display_name,
+      role: row.role,
+      status: row.status,
+      approvalLimitCents: row.approval_limit_cents,
+    }))
+    return c.json({ members })
+  })
+
+  app.post('/v1/members/:id/role', async (c) => {
+    const { who, control } = ownerMember(c)
+    const id = c.req.param('id')
+    const body = await c.req.json().catch(() => null) as { role?: string } | null
+    if (!body?.role || !memberRoles.has(body.role as MemberRole)) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name a role.')
+    const row = control.member(id)
+    if (!row || row.workspace_id !== who.member.workspace_id || row.status !== 'active') {
+      throw new Problem(404, 'member/not-found', 'Not found', 'That member is not in this studio.')
+    }
+    const role = body.role as MemberRole
+    ctx.requireStep?.(c, 'member-role', stepBinding('member-role', `${id}\n${role}`))
+    const result = control.setMemberRole(id, role, ctx.now().toISOString())
+    if (result === 'last-owner') throw new Problem(409, 'member/last-owner', 'The last owner stays', 'Add another owner before you change this one.')
+    if (result !== 'ok') throw new Problem(404, 'member/not-found', 'Not found', 'That member is not in this studio.')
+    return c.json({ ok: true, role })
+  })
+
+  app.post('/v1/members/:id/revoke', async (c) => {
+    const { who, control } = ownerMember(c)
+    const id = c.req.param('id')
+    const row = control.member(id)
+    if (!row || row.workspace_id !== who.member.workspace_id || row.status === 'revoked') {
+      throw new Problem(404, 'member/not-found', 'Not found', 'That member is not in this studio.')
+    }
+    ctx.requireStep?.(c, 'member-revoke', stepBinding('member-revoke', id))
+    const result = control.revokeMember(id, ctx.now().toISOString())
+    if (result === 'last-owner') throw new Problem(409, 'member/last-owner', 'The last owner stays', 'Add another owner before you remove this one.')
+    if (result !== 'ok') throw new Problem(404, 'member/not-found', 'Not found', 'That member is not in this studio.')
+    return c.json({ ok: true, openRequests: ctx.openRequests?.() ?? [] })
   })
 
   app.post('/v1/rules/simulate', async (c) => {

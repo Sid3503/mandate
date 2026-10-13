@@ -161,6 +161,7 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
   { method: 'POST', pattern: /^\/v1\/workspace\/passkey-rule$/ },
+  { method: 'POST', pattern: /^\/v1\/members\/[^/]+\/(role|revoke)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit|flags)$/ },
   { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
   { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
@@ -1070,6 +1071,7 @@ export function createApp(deps: AppDeps) {
     }),
     listPayees: () => services.repo.listPayees(),
     approvalHash: (proposalId) => service.approvalHash(proposalId),
+    openRequests: () => (deps.db.prepare(`SELECT id FROM proposals WHERE phase = 'pending_approval' ORDER BY created_at`).all() as Array<{ id: string }>).map((row) => row.id),
     requireStep: (c, kind, binding) => requireStep(c, deps, kind, binding),
   }
   mountExtra(app, product, (request) => app.fetch(request))

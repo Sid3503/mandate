@@ -5,7 +5,7 @@ import { ControlStore } from '../src/control/store'
 import { openDatabase } from '../src/db/database'
 import { loadFlags } from '../src/flags'
 import { rateClass } from '../src/ops/ratelimit'
-import { closeAll, harness, NOW } from './support'
+import { closeAll, EVIDENCE, harness, JOB, NOW, OWNER_KEY } from './support'
 import { SoftAuthenticator } from './soft-authenticator'
 
 afterEach(closeAll)
@@ -369,5 +369,155 @@ describe('invites', () => {
       status = (await h.app.request('http://mandate.test/v1/invites/revoke', { method: 'POST' })).status
     }
     expect(status).toBe(429)
+  })
+})
+
+describe('members', () => {
+  function people() {
+    const controlDb = openDatabase(':memory:')
+    const control = new ControlStore(controlDb, 'pepper-q1')
+    control.ensureDefault(':memory:', NOW.toISOString())
+    const ownerId = randomUUID()
+    const proposerId = randomUUID()
+    const samId = randomUUID()
+    const approverId = randomUUID()
+    const viewerId = randomUUID()
+    const otherId = randomUUID()
+    const now = NOW.toISOString()
+    control.addMember({ id: ownerId, workspaceId: 'ws_default', name: 'Meera', role: 'owner', now })
+    control.addMember({ id: proposerId, workspaceId: 'ws_default', name: 'Arun', role: 'proposer', now })
+    control.addMember({ id: samId, workspaceId: 'ws_default', name: 'Sam', role: 'proposer', now })
+    control.addMember({ id: approverId, workspaceId: 'ws_default', name: 'Ada', role: 'approver', now })
+    control.addMember({ id: viewerId, workspaceId: 'ws_default', name: 'Vi', role: 'viewer', now })
+    control.addMember({ id: otherId, workspaceId: 'ws_other', name: 'Out', role: 'proposer', now })
+    const ownerToken = 'member-owner-session-token-32ch'
+    const proposerToken = 'member-proposer-session-token-32'
+    const samToken = 'member-sam-session-token-32chars'
+    const approverToken = 'member-approver-session-token-32'
+    const viewerToken = 'member-viewer-session-token-32c'
+    for (const [token, memberId] of [[ownerToken, ownerId], [proposerToken, proposerId], [samToken, samId], [approverToken, approverId], [viewerToken, viewerId]] as const) {
+      control.putSession({ token, memberId, workspaceId: 'ws_default', method: 'passkey', now, idleHours: 12, absoluteDays: 7 })
+    }
+    control.saveCredential({ id: randomUUID(), memberId: proposerId, credentialId: 'arun-key', publicKey: 'cHVibGlj', alg: -7, counter: 0, fingerprint: 'aaaa', backupEligible: false, backupState: false, now })
+    control.saveCredential({ id: randomUUID(), memberId: samId, credentialId: 'sam-key', publicKey: 'cHVibGlj', alg: -7, counter: 0, fingerprint: 'bbbb', backupEligible: false, backupState: false, now })
+    const h = harness({ flags: loadFlags({ FLAG_PASSKEYS: '1' }), control, webauthn: WA })
+    return { h, control, controlDb, ownerId, proposerId, samId, otherId, ownerToken, proposerToken, samToken, approverToken, viewerToken, now }
+  }
+
+  const post = (app: { request: (input: string, init?: RequestInit) => Response | Promise<Response> }, path: string, token: string, body: unknown) => app.request(`http://mandate.test${path}`, {
+    method: 'POST',
+    headers: { ...headers(token), 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  it('changes a role, keeps the last owner, and revoke ends sessions, keys, and lists open requests', async () => {
+    const d = people()
+    const listed = await d.h.app.request('http://mandate.test/v1/members', { headers: headers(d.ownerToken) })
+    expect(listed.status).toBe(200)
+    const names = (await listed.json() as { members: Array<{ name: string; role: string }> }).members.map((row) => row.name)
+    expect(names).toContain('Arun')
+    expect(names).not.toContain('Out')
+    expect((await post(d.h.app, `/v1/members/${d.proposerId}/role`, d.proposerToken, { role: 'viewer' })).status).toBe(403)
+    expect((await post(d.h.app, `/v1/members/${d.proposerId}/role`, d.approverToken, { role: 'viewer' })).status).toBe(403)
+    expect((await post(d.h.app, `/v1/members/${d.proposerId}/role`, d.viewerToken, { role: 'owner' })).status).toBe(403)
+    const demote = await post(d.h.app, `/v1/members/${d.ownerId}/role`, d.ownerToken, { role: 'viewer' })
+    expect(demote.status).toBe(409)
+    expect((await demote.json() as { title: string }).title).toBe('The last owner stays')
+    const stay = await post(d.h.app, `/v1/members/${d.ownerId}/revoke`, d.ownerToken, {})
+    expect(stay.status).toBe(409)
+    expect((await stay.json() as { title: string }).title).toBe('The last owner stays')
+    const bare = await d.h.app.request(`http://mandate.test/v1/members/${d.proposerId}/role`, {
+      method: 'POST',
+      headers: { cookie: `mnd_session=${d.ownerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ role: 'viewer' }),
+    })
+    expect(bare.status).toBe(403)
+    expect((await post(d.h.app, `/v1/members/${d.proposerId}/role`, d.ownerToken, { role: 'cashier' })).status).toBe(400)
+    expect((await post(d.h.app, `/v1/members/${randomUUID()}/role`, d.ownerToken, { role: 'viewer' })).status).toBe(404)
+    expect((await post(d.h.app, `/v1/members/${d.otherId}/revoke`, d.ownerToken, {})).status).toBe(404)
+    expect(d.control.member(d.otherId)?.role).toBe('proposer')
+    const bearer = await d.h.app.request(`http://mandate.test/v1/members/${d.proposerId}/role`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${OWNER_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ role: 'viewer' }),
+    })
+    expect(bearer.status).toBe(403)
+    const asked = await d.h.app.request('http://mandate.test/v1/proposals', {
+      method: 'POST',
+      headers: { ...headers(d.samToken), 'content-type': 'application/json', 'idempotency-key': 'member-open-request-01' },
+      body: JSON.stringify({ kind: 'charge', payee: 'Northwind', amountCents: 15000, currency: 'USD', category: 'design', description: 'Waiting', evidenceUrl: EVIDENCE, jobId: JOB }),
+    })
+    expect(asked.status).toBe(201)
+    const proposalId = (await asked.json() as { id: string }).id
+    const changed = await post(d.h.app, `/v1/members/${d.proposerId}/role`, d.ownerToken, { role: 'viewer' })
+    expect(changed.status).toBe(200)
+    expect(d.control.session(d.proposerToken, d.now)).toBeNull()
+    expect(d.control.credentials(d.proposerId)[0]?.revoked_at).toBeNull()
+    const revoked = await post(d.h.app, `/v1/members/${d.samId}/revoke`, d.ownerToken, {})
+    expect(revoked.status).toBe(200)
+    const body = await revoked.json() as { openRequests: string[] }
+    expect(body.openRequests).toContain(proposalId)
+    expect(d.control.session(d.samToken, d.now)).toBeNull()
+    expect(d.control.credentials(d.samId)[0]?.revoked_at).not.toBeNull()
+    expect((await post(d.h.app, `/v1/members/${d.samId}/revoke`, d.ownerToken, {})).status).toBe(404)
+    d.controlDb.close()
+  })
+
+  it('requires a passkey step-up before a member change when the rule is on', async () => {
+    const d = people()
+    d.controlDb.prepare('UPDATE workspaces SET passkey_for_money = 1 WHERE id = ?').run('ws_default')
+    const blocked = await post(d.h.app, `/v1/members/${d.samId}/revoke`, d.ownerToken, {})
+    expect(blocked.status).toBe(401)
+    expect((await blocked.json() as { title: string }).title).toBe('Sign this with your passkey')
+    const binding = stepBinding('member-revoke', d.samId)
+    const grant = randomUUID()
+    d.control.putGrant({ id: grant, memberId: d.ownerId, workspaceId: 'ws_default', kind: 'member-revoke', binding, now: d.now })
+    const allowed = await d.h.app.request(`http://mandate.test/v1/members/${d.samId}/revoke`, {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json', 'x-mandate-stepup': grant },
+      body: JSON.stringify({}),
+    })
+    expect(allowed.status).toBe(200)
+    const again = await d.h.app.request(`http://mandate.test/v1/members/${d.proposerId}/role`, {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json', 'x-mandate-stepup': grant },
+      body: JSON.stringify({ role: 'viewer' }),
+    })
+    expect(again.status).toBe(401)
+    d.controlDb.close()
+  })
+
+  it('counts member writes in the write rate-limit class', async () => {
+    expect(rateClass('POST', '/v1/members/someone/role')).toBe('write')
+    expect(rateClass('POST', '/v1/members/someone/revoke')).toBe('write')
+    const h = harness({ classedRates: true, rateLimitPerMinute: 100, flags: loadFlags({ FLAG_PASSKEYS: '1' }) })
+    let status = 0
+    for (let i = 0; i < 61; i += 1) {
+      status = (await h.app.request('http://mandate.test/v1/members/someone/revoke', { method: 'POST' })).status
+    }
+    expect(status).toBe(429)
+  })
+
+  it('resetOwner writes an admin_audit row and does not remove the last owner', () => {
+    const controlDb = openDatabase(':memory:')
+    const control = new ControlStore(controlDb, 'pepper-q1')
+    control.ensureDefault(':memory:', NOW.toISOString())
+    const ownerId = randomUUID()
+    const staffId = randomUUID()
+    const now = NOW.toISOString()
+    control.addMember({ id: ownerId, workspaceId: 'ws_default', name: 'Meera', role: 'owner', now })
+    control.addMember({ id: staffId, workspaceId: 'ws_default', name: 'Arun', role: 'proposer', now })
+    const token = 'reset-owner-session-token-32chr'
+    control.putSession({ token, memberId: ownerId, workspaceId: 'ws_default', method: 'passkey', now, idleHours: 12, absoluteDays: 7 })
+    expect(control.resetOwner(staffId, now)).toBe('ok')
+    expect(control.member(staffId)?.role).toBe('owner')
+    expect(control.member(ownerId)?.role).toBe('owner')
+    expect(control.resetOwner(null, now)).toBe('ok')
+    expect(control.session(token, now)).toBeNull()
+    expect(control.member(ownerId)?.status).toBe('active')
+    expect(control.adminAudit().map((row) => row.detail)).toEqual(['promoted', 'sessions-ended'])
+    expect(JSON.stringify(control.adminAudit())).not.toContain(token)
+    expect(control.resetOwner(randomUUID(), now)).toBe('missing')
+    controlDb.close()
   })
 })

@@ -273,6 +273,19 @@ export const api = {
     return request<{ token: string; join: string }>('/v1/invites', { method: 'POST', body: { role, label: null }, headers: { 'x-mandate-stepup': verified.grant } })
   },
   revokeInvite: (token: string) => request<{ ok: boolean }>('/v1/invites/revoke', { method: 'POST', body: { token } }),
+  members: () => request<{ members: Array<{ id: string; name: string; role: string; status: string }> }>('/v1/members'),
+  setMemberRole: async (id: string, role: string) => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'member-role', memberId: id, role } })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+    return request<{ ok: boolean; role: string }>(`/v1/members/${encodeURIComponent(id)}/role`, { method: 'POST', body: { role }, headers: { 'x-mandate-stepup': verified.grant } })
+  },
+  revokeMember: async (id: string) => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'member-revoke', memberId: id } })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+    return request<{ ok: boolean; openRequests: string[] }>(`/v1/members/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: {}, headers: { 'x-mandate-stepup': verified.grant } })
+  },
   join: (workspaceId: string, token: string, name: string) => request<{ memberId: string; role: string; workspaceId: string }>(workspaceId === 'ws_default' ? '/join' : `/w/${workspaceId}/join`, { method: 'POST', body: { token, name } }),
   tryRequest: (requestBody: Record<string, unknown>, rules?: unknown) => request<TryOne>('/v1/rules/try', { method: 'POST', body: { request: requestBody, ...(rules ? { rules } : {}) } }),
   tryCases: (rules?: unknown) => request<TryCases>('/v1/rules/cases', { method: 'POST', body: rules ? { rules } : {} }),

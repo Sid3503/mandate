@@ -1287,6 +1287,56 @@
           }
         }
       ]
+    },
+    {
+      "name": "Members",
+      "item": [
+        {
+          "name": "List members",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/v1/members",
+            "description": "Owner cookie. A proposer is 403."
+          }
+        },
+        {
+          "name": "Change a member role",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" },
+              { "key": "x-mandate-stepup", "value": "" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"role\":\"viewer\"}" },
+            "url": "{{baseUrl}}/v1/members/{{memberId}}/role",
+            "description": "Owner cookie. The last owner stays (409). Unknown role is 400. Another studio is 404. When the passkey rule is on, a missing grant is 401."
+          }
+        },
+        {
+          "name": "Revoke a member",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" },
+              { "key": "x-mandate-stepup", "value": "" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{baseUrl}}/v1/members/{{memberId}}/revoke",
+            "description": "Owner cookie. Sessions and passkeys end. The body lists open request ids. The last owner stays (409)."
+          }
+        }
+      ]
     }
   ]
 }
