@@ -1145,7 +1145,8 @@ export class MandateService {
     const dealId = input.kind === 'charge' ? input.dealId ?? null : null
     const milestone = dealId ? input.milestone ?? null : null
     const deal = input.kind === 'charge' ? this.dealContext(dealId, milestone, jobId, evidenceUrl) : null
-    const decision = applyPause(decide(warrant.body, {
+    const safety = this.options.safety?.state() ?? NOT_PAUSED
+    const decision = decide(warrant.body, {
       kind: input.kind,
       payeeId: payee?.id ?? null,
       amountCents: input.amountCents,
@@ -1167,7 +1168,9 @@ export class MandateService {
       dealId,
       milestone,
       deal,
-    }, { ...cap, nowMs: Date.parse(now) }), this.options.safety?.state() ?? NOT_PAUSED, actor)
+      safety,
+      actor,
+    }, { ...cap, nowMs: Date.parse(now) })
     const withPayee = this.options.payeeBook && input.kind === 'payment'
       ? applyPayeeBook(decision, this.payeeView(payee?.id ?? null, Date.parse(now)))
       : decision
