@@ -31,6 +31,7 @@ export function Unlock() {
       const me = await api.signInWithPasskey()
       session.setWorkspace(me.workspaceId)
       session.setMode('studio')
+      try { localStorage.removeItem('mandate.session.expired') } catch {}
       client.clear()
       const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : roleLanding(me.role)
       navigate(target, { replace: true })
@@ -48,6 +49,7 @@ export function Unlock() {
     try {
       const me = await api.session(key.trim())
       session.set(key.trim())
+      try { localStorage.removeItem('mandate.session.expired') } catch {}
       client.clear()
       client.setQueryData(['session'], me)
       const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : roleLanding(me.role, me.side)
@@ -61,6 +63,12 @@ export function Unlock() {
 
   const db = ready.data?.checks['sqlite:read']?.[0]?.status
   const paypal = ready.data?.checks['paypal:credentials']?.[0]?.status
+
+  const isExpired = Boolean(
+    (where.state as { reason?: string } | null)?.reason === 'expired' ||
+    where.search.includes('expired') ||
+    (typeof localStorage !== 'undefined' && localStorage.getItem('mandate.session.expired') === '1')
+  )
 
   return (
     <div className="unlock">
@@ -83,6 +91,24 @@ export function Unlock() {
             {ready.data ? <Chip tone="muted">v{ready.data.version}</Chip> : null}
           </div>
         </div>
+        {isExpired ? (
+          <div className="stack gap-s" style={{ marginBottom: 20 }} data-testid="expired-session-box">
+            <div className="row between align-center">
+              <span className="eyebrow" style={{ margin: 0 }}>Session expired</span>
+              <Chip tone="need">Biometric unlock</Chip>
+            </div>
+            <p className="fine" style={{ margin: 0 }}>Your session ended. Unlock with Face ID or your device passkey to continue.</p>
+            <button
+              type="button"
+              className="btn btn-lime btn-block"
+              data-testid="unlock-faceid-btn"
+              onClick={() => void signIn()}
+              disabled={busy}
+            >
+              {busy ? 'Scanning biometric…' : 'Unlock with Face ID'}
+            </button>
+          </div>
+        ) : null}
         <form onSubmit={submit} className="stack">
           <h2 id="unlock-title">Unlock</h2>
           <label className="field">

@@ -55,7 +55,8 @@ queryClient.getQueryCache().subscribe((event) => {
   const error = event.query.state.error
   if (error instanceof ApiError && error.status === 401) {
     session.clear()
-    if (!location.pathname.endsWith('/unlock')) location.assign('/app/unlock')
+    try { localStorage.setItem('mandate.session.expired', '1') } catch {}
+    if (!location.pathname.endsWith('/unlock')) location.assign('/app/unlock?reason=expired')
   }
 })
 
