@@ -36,6 +36,7 @@
 - Q4.5 P7.T5 P7.T6: Payee book enriched with diagnostics ("Why can I not pay this account?"), cooling period for new payees (`NEEDS_APPROVAL payee.not_active`, Case 31), owner attestation (`POST /v1/payees/:id/attest`) with step-up, payout account change lock (`DENY payee.change_pending`, Case 32), and confirm change (`POST /v1/payees/:id/confirm-change`) with passkey step-up. Proof: `api/test/safety.test.ts`, `api/test/repair-pass.test.ts`, `api/test/phases.test.ts`.
 - Q4.6 P7.T7: Payee screen (`/app/payees`) with contractor accounts list, status chips, "Why can I not pay this account?" card with payability diagnostics, payout history, and passkey-guarded payout account change form. Proof: `web/e2e/passkey-repair-payees.spec.ts`, `docs/evidence/q4/payees.png`.
 - Q5.1 P6.T6: Delegation end date: `expires_at` on members and invites, session refusal on expiration, owner renewal and role setting with `expiresAt`, and members UI display. Proof: `api/test/identity.test.ts`.
+- Q5.2 P8.T2 P8.T3 P8.T4: Try-it box and boundary cases verified with side-by-side draft comparison (`api/test/try.test.ts`), tap to rule with drafter navigation and monthly tap counts on Today (`Today.tsx`, `job.spec.ts`), and passkey warrant publish ceremony with cryptographic binding to rules body and grant reuse rejection (`extra.ts`, `web/src/lib/api.ts`, `api/test/stepup.test.ts`).
 
 ## Test counts
 
@@ -57,6 +58,7 @@
 - `gates:fast` after Q4.6: 55 files, 639 API tests, 11.29s, secret check 368 tracked files, exit 0.
 - Full `npm run gates` after Q4 on 13 October 2026: 55 files, 639 API tests, 11.29s, secret check 368 tracked files, Playwright 134 passed (8.5m), axe included, exit 0.
 - `gates:fast` after Q5.1: 55 files, 641 API tests, 11.47s, secret check 371 tracked files, exit 0.
+- `gates:fast` after Q5.2: 55 files, 642 API tests, 18.14s, secret check 371 tracked files, exit 0.
 
 ## Open items
 
@@ -100,4 +102,4 @@
 
 ## Next
 
-Cut branch `q4-safety` and execute Q4 Safety (P7.T1 through P7.T7).
+Q5.3 P8.T5: policy paste with 20000 char cap, flag gating (FLAG_POLICY_PASTE), 3 passes, and fenced prompt.

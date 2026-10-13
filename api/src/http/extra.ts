@@ -297,7 +297,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     if (who.session.method === 'recovery') throw new Problem(403, 'auth/forbidden', 'Recovery cannot approve', 'A recovery session can only add a passkey.')
     const control = requireControl(ctx)
     if (!ctx.webauthn) throw new Problem(503, 'flag/disabled', 'Not configured', 'Passkeys need a site name and origin.')
-    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean; role?: string; label?: string | null; memberId?: string; input?: unknown; payload?: unknown; payeeId?: string; id?: string }
+    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean; role?: string; label?: string | null; memberId?: string; input?: unknown; payload?: unknown; payeeId?: string; id?: string; rules?: unknown }
     const kind = body.kind ?? ''
     let binding = ''
     if (kind === 'approve') {
@@ -326,6 +326,8 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       const payeeId = body.payeeId ?? body.id ?? ''
       if (!payeeId) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the payee.')
       binding = stepBinding(kind, payeeId)
+    } else if (kind === 'rules') {
+      binding = body.binding ?? (body.rules ? createHash('sha256').update(JSON.stringify(body.rules)).digest('hex') : '')
     } else {
       binding = body.binding ?? ''
     }

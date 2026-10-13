@@ -178,7 +178,7 @@ function TapToRule() {
       <div>
         <span className="eyebrow">You keep saying yes</span>
         <p>You have approved {first.payeeName}'s payouts from {first.clientName}'s money {first.approved} times ({dollars(first.totalCents)} in all, the largest {dollars(first.largestCents)}) and never said no.
-          {taps && taps.thisMonth > 0 ? <> That is {taps.thisMonth} {taps.thisMonth === 1 ? 'tap' : 'taps'} this month.</> : null}</p>
+          {taps && typeof taps.thisMonth === 'number' ? <> That is {taps.thisMonth} {taps.thisMonth === 1 ? 'tap' : 'taps'} this month.</> : null}</p>
         <p className="fine">Make it a rule and these payouts need no tap. You will see exactly what it allows before you sign anything.</p>
       </div>
       <Link className="btn btn-ink btn-small" to="/rules" state={{ draft: first.draft }}>Draft this rule</Link>
