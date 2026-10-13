@@ -26,6 +26,9 @@
 - Q3.2 P1.T3 P1.T4 P2.T8: RateLimiter classes (auth, key-unlock, ask, write, read), pruneBuckets, method/path mappings. Model budget 0 blocks model reservations while quick asks still work (case 28). Per-demo workspace model daily cap (50k tokens) and IP rate limiting (sixth demo 429, case 26). Proof: `api/test/ops-ratelimit-budget.test.ts`.
 - Q3.3 P1.T6 P1.T9: Pre-migration backup on file database before applying new steps, seeded-copy upgrade test, migration checksum tamper rejection, db:backup and db:restore script tests with automatic safety backups. Proof: `api/test/ops-backup-migration.test.ts`.
 - Q3.4 P2.T6 P2.T7: npm run seed:template script with frozen numbers test (warrants, buyer rules, seller rules, payees). Integration tests for demo reset (/v1/demo/reset), role switcher (/v1/demo/switch), and simulate (/v1/demo/simulate). Proof: `api/test/ops-demo-template.test.ts`.
+- Q3.5 P2.T3 P2.T4 P2.T5: MCP under `/w/:workspaceId/mcp`, per-workspace public keys route `GET /w/:workspaceId/.well-known/mandate-keys.json`, and tenant webhook routing via `external_refs`. Proof: `api/test/ops-tenant-routing.test.ts`.
+- Q3.6 P2.T9 P2.T10 P2.T11: 15-minute cleanup job (`cleanupExpiredDemos`) deletes only expired demo workspaces and SQLite files, preserving default, studio, and live workspaces. Single tenant scheduler (`runTenantSchedulerSweep`) sweeps active external_refs without per-tenant timers; on-demand demo ticks on simulate and Today. Isolation test suite (Cases 22, 23, 24, 27). Proof: `api/test/ops-cleanup-scheduler.test.ts`.
+- Q3.7 Case 35: Suite-wide secret and canary log redaction sweep test. Proof: `api/test/ops-readyz-secret.test.ts`.
 
 ## Test counts
 
@@ -38,10 +41,11 @@
 - `gates:fast` after Q3.2: 51 files, 609 API tests, 9.62s, secret check 360 tracked files, exit 0.
 - `gates:fast` after Q3.3: 52 files, 615 API tests, 12.27s, secret check 361 tracked files, exit 0.
 - `gates:fast` after Q3.4: 53 files, 623 API tests, 11.73s, secret check 362 tracked files, exit 0.
+- `gates:fast` after Q3.7: 55 files, 635 API tests, 12.25s, secret check 368 tracked files, exit 0.
 
 ## Open items
 
-- Appendix B cases still partial: 22, 27, 30, and 35. (Case 28 complete).
+- Appendix B cases still partial: 30. (Cases 22, 27, 28, 35 complete).
 
 ## Human todo
 
