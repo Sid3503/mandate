@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useLocation } from 'react-router-dom'
 import { CircleHelp } from 'lucide-react'
 import { useSession } from '../lib/hooks'
+import { session } from '../lib/session'
 import { TOURS, tourFor, TOUR_LABEL, type TourId } from '../lib/tours'
 import { findTarget, Tour, useTour, type TourStep } from './ui/product-tour'
 
@@ -9,7 +10,7 @@ const storageKey = (id: TourId) => `mandate.tour.${id}`
 
 function isSeen(id: TourId): boolean {
   try {
-    return localStorage.getItem(storageKey(id)) === '1' || (id === 'welcome' && localStorage.getItem('mandate.coach.seen') === '1')
+    return localStorage.getItem(storageKey(id)) === '1'
   } catch {
     return false
   }
@@ -18,7 +19,7 @@ function isSeen(id: TourId): boolean {
 function markSeen(id: TourId): void {
   try {
     localStorage.setItem(storageKey(id), '1')
-    if (id === 'welcome') {
+    if (id === 'coach') {
       localStorage.setItem('mandate.coach.seen', '1')
     }
   } catch {
@@ -72,11 +73,21 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   }, [active])
 
   useEffect(() => {
-    if (!me.data || isSeen('welcome')) return
-    const timer = window.setTimeout(() => {
-      if (!isOpen.current) start('welcome')
-    }, 700)
-    return () => window.clearTimeout(timer)
+    if (!me.data) return
+    const isDemo = session.mode() === 'demo'
+    if (isDemo) {
+      if (localStorage.getItem('mandate.coach.seen') === '1') return
+      const timer = window.setTimeout(() => {
+        if (!isOpen.current) start('coach')
+      }, 700)
+      return () => window.clearTimeout(timer)
+    } else {
+      if (isSeen('welcome')) return
+      const timer = window.setTimeout(() => {
+        if (!isOpen.current) start('welcome')
+      }, 700)
+      return () => window.clearTimeout(timer)
+    }
   }, [me.data, start])
 
   const screen = tourFor(location.pathname)
