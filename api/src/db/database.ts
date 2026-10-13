@@ -8,7 +8,7 @@ import { applySqlSteps, OPS_STEPS } from './sql-migrations'
 /** Northwind, the demo client. Its deal rules are keyed by the client id on the warrant. */
 export const BUYER_PARTY_ID = 'client_northwind'
 
-const SCHEMA = `
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS warrants (
   id TEXT NOT NULL,
   version INTEGER NOT NULL,

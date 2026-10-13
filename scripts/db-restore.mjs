@@ -1,6 +1,5 @@
-// Restores a backup onto DATABASE_PATH. Requires --yes. Copies the current file aside first. Deletes nothing.
-import { copyFileSync, existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 
 const file = process.argv[2]
 const yes = process.argv.includes('--yes')
@@ -15,9 +14,11 @@ if (!existsSync(source)) {
 }
 const target = resolve(process.env.DATABASE_PATH ?? 'api/data/mandate.sqlite')
 if (existsSync(target)) {
+  mkdirSync(resolve('backups'), { recursive: true })
   const aside = resolve('backups', `before-restore-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`)
   copyFileSync(target, aside)
   console.log(aside)
 }
+mkdirSync(dirname(target), { recursive: true })
 copyFileSync(source, target)
 console.log(target)
