@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { PageHead, Loading } from '../components/ui'
+import { PageHead, Loading, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 
 export function LiveProof() {
@@ -22,6 +22,7 @@ export function LiveProof() {
         </p>
 
         {query.isLoading ? <Loading label="Loading live proof…" /> : null}
+        <ProblemCard error={query.error} />
 
         {!query.isLoading && files.length === 0 ? (
           <div className="empty-state" data-testid="live-proof-empty" style={{ padding: '32px 0' }}>

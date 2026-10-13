@@ -19,14 +19,15 @@
 - Q2.1 P5.T1 `fda497e`: welcome headline, line of proof, three doors, trust strip with verify link. Proof: `web/e2e/onboarding-doors.spec.ts`. Screenshot `docs/evidence/q2/doors.png`.
 - Q2.2 P5.T2 `fdd1ca4`: demo banner, role switcher (owner, approver, proposer, viewer, payee), reset, and live proof page. Proof: `api/test/demo-onboarding.test.ts` and `web/e2e/passkey-repair-demo.spec.ts`. Screenshot `docs/evidence/q2/demo-banner.png`.
 - Q2.3 P5.T5 `8dbab75`: role landings for owner/approver on Today, proposer on Ask Mandate, viewer on Proof, payee on Payments, client on Deals. Proof: `web/e2e/passkey-repair-role-landings.spec.ts` with axe. Screenshot `docs/evidence/q2/payee-landing.png`.
-- Q2.4 P5.T6: PWA unlock with Face ID on expired session, workbox denylist for authenticated paths. Proof: `web/e2e/passkey-repair-pwa-unlock.spec.ts` with axe. Screenshot `docs/evidence/q2/unlock-faceid.png`.
+- Q2.4 P5.T6 `7706128`: PWA unlock with Face ID on expired session, workbox denylist for authenticated paths. Proof: `web/e2e/passkey-repair-pwa-unlock.spec.ts` with axe. Screenshot `docs/evidence/q2/unlock-faceid.png`.
+- Q2.5 P5.T7: first-run 3-mark coach tour (Waiting, Ask, Rules), mandate.coach.seen persistence, screen states (loading, empty, error). Proof: `web/e2e/passkey-repair-coach.spec.ts` with axe. Screenshot `docs/evidence/q2/coach-marks.png`.
 
 ## Test counts
 
 - Baseline before Phase 4: 46 files, 543 API tests, 114 Playwright, axe pass. The 522 and 112 numbers are the earlier audit.
 - Full `npm run gates` on 12 October 2026, `q0-verify`: 47 files, 568 API tests, 7.71s, secret check 313, Playwright 116, axe included.
 - Full `npm run gates` after Q1 on 13 October 2026: 48 files, 594 API tests, 10.00s, secret check 345 tracked files, Playwright 125 passed (8.1m), axe included, exit 0.
-- `gates:fast` after Q2.4: 49 files, 596 API tests, 9.33s, secret check 354 tracked files, exit 0.
+- `gates:fast` after Q2.5: 49 files, 596 API tests, 9.97s, secret check 356 tracked files, exit 0.
 
 ## Open items
 
@@ -55,7 +56,8 @@
 - Live proof reads `docs/live-proof/*.json`. If empty, the page displays "not added yet".
 - Role landings: owner and approver land on Today, proposer on Ask Mandate (/app/clerk), viewer on Proof (/app/proof), payee on Payments (/app/payments), client on Deals (/app/deals). Direct navigation to /app/ redirects non-owner roles to their role landing. useToday query only runs for owner/approver.
 - PWA unlock with Face ID: on expired session (401 or ?reason=expired or mandate.session.expired), /app/unlock presents an immediate biometric unlock button "Unlock with Face ID" alongside manual key unlock. Workbox denylists /v1/, /auth/, /w/, and /mcp/ paths from navigation fallback.
+- First-run coach marks: exactly 3 marks on initial onboarding (Today Waiting, Ask Mandate, Rules). Tracked in mandate.coach.seen and mandate.tour.welcome, dismissable and never repeated. Loading, empty, and error states provided across all screens.
 
 ## Next
 
-Q2.5 P5.T7: first-run coach marks (at most 3) and screen states (loading, empty, error).
+Q2.6 P5.T8 P5.T9: mobile/desktop validation and write docs/PHONE_CHECKLIST.md.

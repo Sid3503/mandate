@@ -9,7 +9,7 @@ const storageKey = (id: TourId) => `mandate.tour.${id}`
 
 function isSeen(id: TourId): boolean {
   try {
-    return localStorage.getItem(storageKey(id)) === '1'
+    return localStorage.getItem(storageKey(id)) === '1' || (id === 'welcome' && localStorage.getItem('mandate.coach.seen') === '1')
   } catch {
     return false
   }
@@ -18,6 +18,9 @@ function isSeen(id: TourId): boolean {
 function markSeen(id: TourId): void {
   try {
     localStorage.setItem(storageKey(id), '1')
+    if (id === 'welcome') {
+      localStorage.setItem('mandate.coach.seen', '1')
+    }
   } catch {
     // Private mode: the tour simply offers itself again next time.
   }
