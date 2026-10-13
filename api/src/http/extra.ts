@@ -268,6 +268,8 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       const hash = ctx.approvalHash?.(body.proposalId) ?? null
       if (!hash) throw new Problem(409, 'proposal.state', 'Proposal cannot be approved', 'That request is not waiting for a signature.')
       binding = hash
+    } else if (kind === 'recovery') {
+      binding = stepBinding('recovery', 'regenerate')
     } else if (kind === 'passkey-rule') {
       if (typeof body.enabled === 'boolean') binding = passkeyRuleBinding(body.enabled)
       else if (body.binding === passkeyRuleBinding(true) || body.binding === passkeyRuleBinding(false)) binding = body.binding
@@ -328,6 +330,57 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     const grant = randomUUID()
     ctx.control.putGrant({ id: grant, memberId: who.member.id, workspaceId: who.member.workspace_id, kind: row.binding_kind ?? 'approve', binding: row.binding_hash ?? '', now: ctx.now().toISOString(), assertion: JSON.stringify(body.response) })
     return c.json({ grant, kind: row.binding_kind, binding: row.binding_hash })
+  })
+
+  app.post('/auth/recovery/issue', (c) => {
+    if (!flags.passkeys) throw new Problem(404, 'flag/disabled', 'Not available', 'Passkeys are off on this server.')
+    const who = memberFromCookie(c, ctx)
+    const control = requireControl(ctx)
+    if (!who) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
+    const codes = Array.from({ length: 8 }, () => randomBytes(8).toString('base64url'))
+    control.saveRecovery(who.member.id, codes)
+    control.clearRecoverySaved(who.member.id)
+    control.event({ id: randomUUID(), at: ctx.now().toISOString(), workspaceId: who.member.workspace_id, memberId: who.member.id, event: 'recovery.issued', result: 'ok' })
+    return c.json({ codes, saved: false })
+  })
+
+  app.post('/auth/recovery/ack', async (c) => {
+    if (!flags.passkeys) throw new Problem(404, 'flag/disabled', 'Not available', 'Passkeys are off on this server.')
+    const who = memberFromCookie(c, ctx)
+    const control = requireControl(ctx)
+    if (!who) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
+    const body = await c.req.json().catch(() => null) as { saved?: boolean } | null
+    if (body?.saved !== true) throw new Problem(400, 'request.invalid', 'Request is invalid', 'I saved these')
+    control.markRecoverySaved(who.member.id, ctx.now().toISOString())
+    control.event({ id: randomUUID(), at: ctx.now().toISOString(), workspaceId: who.member.workspace_id, memberId: who.member.id, event: 'recovery.saved', result: 'ok' })
+    return c.json({ saved: true })
+  })
+
+  app.post('/auth/recovery/regenerate', (c) => {
+    if (!flags.passkeys) throw new Problem(404, 'flag/disabled', 'Not available', 'Passkeys are off on this server.')
+    const who = memberFromCookie(c, ctx)
+    const control = requireControl(ctx)
+    if (!who) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
+    if (who.session.method === 'recovery') throw new Problem(403, 'auth/forbidden', 'Recovery cannot approve', 'A recovery session can only add a passkey.')
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
+    const binding = stepBinding('recovery', 'regenerate')
+    const grant = c.req.header('x-mandate-stepup')
+    if (!grant || !control.consumeGrant(grant, who.member.id, 'recovery', binding, ctx.now().toISOString())) {
+      throw new Problem(401, 'auth/stepup-required', 'Sign this with your passkey', 'Replacing recovery codes needs a fresh passkey signature.')
+    }
+    const codes = Array.from({ length: 8 }, () => randomBytes(8).toString('base64url'))
+    control.saveRecovery(who.member.id, codes)
+    control.clearRecoverySaved(who.member.id)
+    control.event({ id: randomUUID(), at: ctx.now().toISOString(), workspaceId: who.member.workspace_id, memberId: who.member.id, event: 'recovery.issued', result: 'ok' })
+    return c.json({ codes, saved: false })
   })
 
   app.post('/auth/recovery/use', async (c) => {

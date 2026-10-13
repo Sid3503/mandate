@@ -175,6 +175,27 @@ export function buildOpenApi(publicUrl: string) {
     responses: { 200: { description: 'Count ended' }, 401: problem, 403: problem },
   })
   registry.registerPath({
+    method: 'post',
+    path: '/auth/recovery/issue',
+    tags: ['auth'],
+    summary: 'Issue eight recovery codes. They are shown once. The database stores only hashes.',
+    responses: { 200: { description: 'Codes' }, 401: problem, 403: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/auth/recovery/ack',
+    tags: ['auth'],
+    summary: 'The person confirms with the words I saved these. The codes are not returned again.',
+    responses: { 200: { description: 'Saved' }, 400: problem, 401: problem, 403: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/auth/recovery/regenerate',
+    tags: ['auth'],
+    summary: 'Replace recovery codes. Needs a fresh passkey step-up. A recovery session cannot do this.',
+    responses: { 200: { description: 'New codes' }, 401: problem, 403: problem },
+  })
+  registry.registerPath({
     method: 'get',
     path: '/auth/events',
     tags: ['auth'],
