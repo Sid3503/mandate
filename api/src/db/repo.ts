@@ -720,8 +720,8 @@ export class Repo {
     return this.db.prepare('SELECT * FROM agent_runs WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(conversationId, limit) as AgentRunRow[]
   }
 
-  safetyState(): { paused: number; reason: string | null; since: string | null; by: string | null; epoch: number; autopilot_paused?: number } {
-    return this.db.prepare('SELECT paused, reason, since, by, epoch, autopilot_paused FROM safety_state WHERE id = 1').get() as never
+  safetyState(): { paused: number; reason: string | null; since: string | null; by: string | null; epoch: number; autopilot_paused?: number; config_json?: string | null } {
+    return this.db.prepare('SELECT paused, reason, since, by, epoch, autopilot_paused, config_json FROM safety_state WHERE id = 1').get() as never
   }
 
   setSafetyState(state: { paused: boolean; reason: string | null; since: string | null; by: string | null; epoch: number; autopilotPaused?: boolean }): void {
@@ -733,6 +733,20 @@ export class Repo {
       state.epoch,
       state.autopilotPaused ? 1 : 0,
     )
+  }
+
+  safetyConfig<T = unknown>(): T | null {
+    const row = this.db.prepare('SELECT config_json FROM safety_state WHERE id = 1').get() as { config_json?: string | null } | undefined
+    if (row?.config_json) {
+      try {
+        return JSON.parse(row.config_json) as T
+      } catch {}
+    }
+    return null
+  }
+
+  setSafetyConfig(config: unknown): void {
+    this.db.prepare('UPDATE safety_state SET config_json = ? WHERE id = 1').run(JSON.stringify(config))
   }
 
   insertSafetyEvent(row: { id: string; at: string; type: string; by: string; reason: string | null; detail: string | null; sig: string | null; keyId: string | null }): void {

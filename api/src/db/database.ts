@@ -174,7 +174,8 @@ CREATE TABLE IF NOT EXISTS safety_state (
   since TEXT,
   by TEXT,
   epoch INTEGER NOT NULL DEFAULT 0,
-  autopilot_paused INTEGER NOT NULL DEFAULT 0
+  autopilot_paused INTEGER NOT NULL DEFAULT 0,
+  config_json TEXT
 );
 INSERT OR IGNORE INTO safety_state (id, paused, epoch, autopilot_paused) VALUES (1, 0, 0, 0);
 
@@ -294,6 +295,7 @@ export function migrate(db: DatabaseSync): void {
   if (!agentColumns.has('expires_at')) db.exec('ALTER TABLE agents ADD COLUMN expires_at TEXT')
   const safetyColumns = new Set((db.prepare('PRAGMA table_info(safety_state)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!safetyColumns.has('autopilot_paused')) db.exec('ALTER TABLE safety_state ADD COLUMN autopilot_paused INTEGER NOT NULL DEFAULT 0')
+  if (!safetyColumns.has('config_json')) db.exec('ALTER TABLE safety_state ADD COLUMN config_json TEXT')
 }
 
 /** Copies a file database aside before a new checksum step. Memory databases are skipped. */

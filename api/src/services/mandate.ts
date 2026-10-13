@@ -297,6 +297,7 @@ export class MandateService {
     }
     try {
       await this.capture(id)
+      this.options.safety?.noteAutopilotSuccess()
     } catch (error) {
       if (!(error instanceof Problem)) throw error
       const now = this.iso()
@@ -308,6 +309,7 @@ export class MandateService {
         }
       } else if (this.require(id).phase !== 'capture_refused') {
         // The lock, the funding or the state is wrong. Retrying cannot fix that, and it must not hold the money forever.
+        this.options.safety?.noteAutopilotFailure(error.code)
         this.repo.transaction(() => {
           this.repo.setPhase(id, 'capture_refused', now)
           this.repo.insertEvent(randomUUID(), id, 'capture.refused', error.code, { detail: error.detail, via: 'standing rule' }, now)

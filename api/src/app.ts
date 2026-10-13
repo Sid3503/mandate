@@ -19,7 +19,7 @@ import { databaseReady, resetDemo } from './db/database'
 import { z } from 'zod'
 import { BillMilestoneSchema, DealOfferSchema, DecideDeliverySchema } from './domain/deal'
 import type { Signer } from './domain/signing'
-import { IdempotencyKeySchema, ProposalCreateSchema, CaptureSchema, ListQuerySchema, WarrantBodySchema } from './domain/schemas'
+import { IdempotencyKeySchema, ProposalCreateSchema, CaptureSchema, ListQuerySchema, WarrantBodySchema, SafetyConfigSchema } from './domain/schemas'
 import { onError, Problem, sendProblem, invalidRequest } from './http/problem'
 import { WEB_CSP, webAsset } from './http/web'
 import { buildOpenApi } from './openapi'
@@ -156,6 +156,8 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/client-errors$/ },
   { method: 'GET', pattern: /^\/v1\/suggestions$/ },
   { method: 'POST', pattern: /^\/v1\/safety\/(pause|resume)(\/autopilot)?$/ },
+  { method: 'PUT', pattern: /^\/v1\/safety\/config$/ },
+  { method: 'POST', pattern: /^\/v1\/safety\/config$/ },
   { method: 'POST', pattern: /^\/v1\/demo\/reset$/ },
   { method: 'GET', pattern: /^\/v1\/notify$/ },
   { method: 'POST', pattern: /^\/v1\/notify\/test$/ },
@@ -383,6 +385,9 @@ export function createApp(deps: AppDeps) {
     }
     c.set('principal', principal)
     if (principal.role === 'agent') {
+      if (services.safety.noteAgentRequest(principal.agentId)) {
+        throw new Problem(429, 'agent.rate_limit', 'Agent suspended for rate limit', `The agent exceeded ${services.safety.config.agentRateLimitPerMinute} requests/minute and has been suspended by the breaker.`)
+      }
       const scope = requiredAgentScope(c.req.method, c.req.path)
       if (scope === null || !principal.scopes.includes(scope)) {
         throw new Problem(403, 'agent.scope', 'This agent key lacks the scope for this route', `Granted scopes: ${principal.scopes.join(', ') || 'none'}. The owner can issue a new key with it.`)
@@ -592,7 +597,18 @@ export function createApp(deps: AppDeps) {
   // What Mandate promises and where each promise is checked. Static, so it answers when everything else does not.
   app.get('/v1/guarantees', (c) => c.json({ guarantees: GUARANTEES, deepRun: DEEP_RUN, everyChange: EVERY_CHANGE_RUN }))
   // The emergency stop. Anyone with a key can see whether Mandate is paused; only the owner can pause or resume it.
-  app.get('/v1/safety', (c) => c.json({ ...services.safety.state(), breaker: { tripAfter: services.safety.config.tripAfter, windowSeconds: services.safety.config.windowSeconds }, events: services.safety.events(20) }))
+  app.get('/v1/safety', (c) => c.json({ ...services.safety.state(), breaker: services.safety.config, events: services.safety.events(20) }))
+  const handleSafetyConfig = async (c: Context) => {
+    assertJson(c)
+    const body = await readJson(c)
+    const parsed = SafetyConfigSchema.safeParse(body)
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    requireStep(c, deps, 'safety.config', stepBinding('safety.config', JSON.stringify(parsed.data)))
+    const updated = services.safety.updateConfig(parsed.data)
+    return c.json({ ok: true, config: updated })
+  }
+  app.put('/v1/safety/config', handleSafetyConfig)
+  app.post('/v1/safety/config', handleSafetyConfig)
   app.post('/v1/safety/pause', async (c) => {
     const text = await c.req.text()
     let reason: string | null = null
