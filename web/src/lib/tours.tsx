@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import type { TourStep } from '../components/ui/product-tour'
 
-export type TourId = 'welcome' | 'inbox' | 'proof' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk' | 'control-room'
+export type TourId = 'welcome' | 'coach' | 'inbox' | 'proof' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk' | 'control-room'
 
 const p = (children: ReactNode) => <p>{children}</p>
 
 export const TOUR_LABEL: Record<TourId, string> = {
   welcome: 'the console',
+  coach: 'Quick tour',
   inbox: 'Today',
   proof: 'Proof',
   new: 'New request',
@@ -55,6 +56,87 @@ export const FLOW: TourStep = {
 
 export const TOURS: Record<TourId, TourStep[]> = {
   welcome: [
+    {
+      title: 'Welcome to Mandate',
+      placement: 'center',
+      content: (
+        <>
+          {p('This is where you decide what your company’s money can do. People and AI agents can ask to spend. They never hold the PayPal key.')}
+          {p('The rules decide, you tap, and PayPal moves exactly the amount that was locked. This one-minute tour shows where everything is.')}
+          <p className="tour-hint">Use the arrow keys, or press Esc to leave. You can reopen a guide any time with the Guide button.</p>
+        </>
+      ),
+    },
+    FLOW,
+    {
+      target: '[data-tour="nav-waiting"]',
+      title: 'Today',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: (
+        <>
+          {p('Where you land. What is waiting for you, what is in flight, what was done for you and how, and the month in money.')}
+          {p('A request lands under Waiting for you when it is at or above your automatic line, or when the rules say you must decide. Approve locks it. Reject throws it away.')}
+        </>
+      ),
+    },
+    {
+      target: '[data-tour="nav-jobs"]',
+      title: 'Jobs',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: (
+        <>
+          {p('A job ties the money in to the money out. The client pays first. Only then can a contractor be paid, up to the share in your rules.')}
+          {p('Every job shows a track: Agreed, Delivered, Billed, Client paid, Contractor paid. It says where the job is and the one thing to do next. Start a job, or bill a client, from the buttons at the top.')}
+        </>
+      ),
+    },
+    {
+      target: '[data-tour="nav-rules"]',
+      title: 'Rules',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: p('Your limits in plain words: who can be paid, which kinds of work are allowed, the automatic line, the monthly cap and the client-money rule. Paste your policy, or say a change in a sentence, and a model drafts it for you to read before you sign. Changing them makes a new version.'),
+    },
+    {
+      target: '[data-tour="nav-activity"]',
+      title: 'Activity',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: (
+        <>
+          {p('What happened, in three views. The Ledger lists every request ever made, including the refused ones. Proof re-verifies every lock and every amount. The Control room is a dashboard on the same data.')}
+          {p('Ask Mandate (Cmd or Ctrl + K) answers “why did we pay this?” from the ledger, from anywhere.')}
+        </>
+      ),
+    },
+    {
+      target: '[data-tour="keys"]',
+      title: 'Your key',
+      placement: 'right',
+      content: (
+        <>
+          {p('The owner key can approve, send money and change the rules. A proposer key, the kind an agent gets, can only ask and read.')}
+          {p('Lock signs you out of this browser.')}
+        </>
+      ),
+    },
+    {
+      target: '[data-tour="guide"]',
+      title: 'Guide: help on every screen',
+      placement: 'bottom',
+      mobilePlacement: 'bottom',
+      content: (
+        <>
+          {p('Stuck on any screen? Press Guide for a walkthrough of exactly what you are looking at. A lime dot means you have not seen that screen’s guide yet.')}
+          {p('That is the tour. Try New request next: ask for a lunch and see the rules say no.')}
+        </>
+      ),
+    },
+  ],
+
+  coach: [
     {
       target: '[data-tour="nav-waiting"]',
       title: 'What needs you',
