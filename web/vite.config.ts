@@ -46,6 +46,7 @@ export default defineConfig({
         globIgnores: ['landing/**', '**/ControlRoom-*.js'],
         navigateFallback: '/app/index.html',
         navigateFallbackAllowlist: [/^\/app\//],
+        navigateFallbackDenylist: [/^\/v1\//, /^\/auth\//, /^\/w\//, /^\/mcp\//],
         cleanupOutdatedCaches: true,
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
