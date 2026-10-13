@@ -28,6 +28,7 @@ import { PayPalError, type PayPalPort } from './paypal/port'
 import { handleMcp } from './mcp/http'
 import { AgentService, logReviewFailure } from './agents/service'
 import { live } from './services/live'
+import { acceptLegacyMachineKey } from './services/machine-key'
 import type { Notifier } from './services/notify'
 import { StudioTurnSchema } from './agents/studio'
 import { DEEP_RUN, EVERY_CHANGE_RUN, GUARANTEES } from './domain/guarantees'
@@ -145,10 +146,10 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/agents\/health$/ },
   { method: 'GET', pattern: /^\/v1\/agents$/ },
   { method: 'POST', pattern: /^\/v1\/agents$/ },
-  { method: 'POST', pattern: /^\/v1\/agents\/[^/]+\/(revoke|resume)$/ },
+  { method: 'POST', pattern: /^\/v1\/agents\/[^/]+\/(revoke|resume|upgrade)$/ },
   { method: 'GET', pattern: /^\/v1\/client-keys$/ },
   { method: 'POST', pattern: /^\/v1\/client-keys$/ },
-  { method: 'POST', pattern: /^\/v1\/client-keys\/[^/]+\/(revoke|rotate)$/ },
+  { method: 'POST', pattern: /^\/v1\/client-keys\/[^/]+\/(revoke|rotate|upgrade)$/ },
   { method: 'GET', pattern: /^\/v1\/jobs\/[^/]+\/shares$/ },
   { method: 'POST', pattern: /^\/v1\/jobs\/[^/]+\/shares$/ },
   { method: 'POST', pattern: /^\/v1\/shares\/[^/]+\/revoke$/ },
@@ -273,6 +274,7 @@ export function createApp(deps: AppDeps) {
     const header = c.req.header('authorization') ?? ''
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
     if (token === '') return `anon:${ip}`
+    acceptLegacyMachineKey(services.repo, token)
     const digest = createHash('sha256').update(token).digest('hex')
     const known = sameSecret(token, deps.config.apiKey)
       || (deps.config.proposerKey ? sameSecret(token, deps.config.proposerKey) : false)
@@ -348,6 +350,7 @@ export function createApp(deps: AppDeps) {
     } else {
       // A client's own key, issued from the System page and bound to one client on the warrant. It is the same
       // kind of caller as the environment's buyer key, except the owner can issue one per client and revoke it.
+      acceptLegacyMachineKey(services.repo, token)
       const keyHash = createHash('sha256').update(token).digest('hex')
       const clientKey = services.repo.getClientKeyByKeyHash(keyHash)
       if (clientKey) {
@@ -508,6 +511,10 @@ export function createApp(deps: AppDeps) {
     requireStep(c, deps, 'agent.revoke', stepBinding('agent.revoke', c.req.param('id')))
     return c.json(services.agents.revoke(c.req.param('id')))
   })
+  app.post('/v1/agents/:id/upgrade', (c) => {
+    requireStep(c, deps, 'agent.upgrade', stepBinding('agent.upgrade', c.req.param('id')))
+    return c.json(services.agents.upgrade(c.req.param('id')))
+  })
   app.post('/v1/agents/:id/resume', (c) => c.json(services.agents.resume(c.req.param('id'))))
 
   // ---------- client keys ----------
@@ -556,6 +563,10 @@ export function createApp(deps: AppDeps) {
   app.post('/v1/client-keys/:id/rotate', (c) => {
     requireStep(c, deps, 'client-key.rotate', stepBinding('client-key.rotate', c.req.param('id')))
     return c.json(services.clientKeys.rotate(c.req.param('id')), 201)
+  })
+  app.post('/v1/client-keys/:id/upgrade', (c) => {
+    requireStep(c, deps, 'client-key.upgrade', stepBinding('client-key.upgrade', c.req.param('id')))
+    return c.json(services.clientKeys.upgrade(c.req.param('id')))
   })
 
   // What Mandate promises and where each promise is checked. Static, so it answers when everything else does not.

@@ -11,7 +11,8 @@
 - Run book v2 `31d78b3`. No checkpoints. A blocked task is logged and the queue continues.
 - Q1.5 P6.T1 `6105e8d`: invite create needs a passkey when the rule is on. Revoke is owner-only, a proposer is 403, an unknown token is 404. The join page names the inviter and the role. Race: `api/test/repair-pass.test.ts` "lets one of two joins win". Screenshot `docs/evidence/q1/invite.png` shows no token.
 - Q1.6 P6.T2 `f37e3e6`: members list, role change, and revoke. The last owner stays. Revoke ends sessions and passkeys and lists open requests. `npm run admin:reset-owner` writes `admin_audit`. Proof: `api/test/identity.test.ts` and `web/e2e/passkey-repair-members.spec.ts`. Screenshot `docs/evidence/q1/members.png` shows the refusal and no codes.
-- Q1.7 P5.T3: studio wizard. A second passkey or recovery codes are required before Today. PayPal text says the charge is simulated. Rules in words can be skipped. Progress is in local storage. Proof: `web/e2e/passkey-repair-wizard.spec.ts`. Screenshot `docs/evidence/q1/wizard.png` shows no codes.
+- Q1.7 P5.T3 `0a41958`: studio wizard. A second passkey or recovery codes are required before Today. PayPal text says the charge is simulated. Rules in words can be skipped. Progress is in local storage. Proof: `web/e2e/passkey-repair-wizard.spec.ts`. Screenshot `docs/evidence/q1/wizard.png` shows no codes.
+- Q1.8 P6.T3: an owner can replace an `mnd_ag_` or `mnd_cl_` secret and keep the same agent or client. A legacy hash of the bare secret is rewritten on first use. Proof: `api/test/agent-keys.test.ts` and `api/test/client-keys.test.ts`.
 
 ## Test counts
 
@@ -23,10 +24,11 @@
 - `gates:fast` after Q1.5: 48 files, 580 API tests, 9.66s, secret check 331 tracked files, exit 0. The invite browser test passed alone. Full `npm run gates` for Q1 has not run yet.
 - `gates:fast` after Q1.6: 48 files, 584 API tests, 10.17s, secret check 333 tracked files, exit 0. The members browser test passed alone. Full `npm run gates` for Q1 has not run yet.
 - `gates:fast` after Q1.7: 48 files, 584 API tests, 8.66s, secret check 337 tracked files, exit 0. The wizard browser test passed alone. Full `npm run gates` for Q1 has not run yet.
+- `gates:fast` after Q1.8: 48 files, 589 API tests, 8.56s, secret check 339 tracked files, exit 0. No new screen. Full `npm run gates` for Q1 has not run yet.
 
 ## Open items
 
-- Q1 still open: P6.T3, P6.T4, P6.T5. Then Q2 through Q8. No checkpoints.
+- Q1 still open: P6.T4, P6.T5. Then Q2 through Q8. No checkpoints.
 - Appendix B cases still partial: 22, 27, 28, 30, and 35.
 
 ## False assumptions
@@ -43,7 +45,8 @@
 - `FLAG_INVITES` is on only inside `api/src/dev/passkey-server.ts`, same as `DEMO_ENABLED`. A bearer key cannot revoke an invite.
 - Member role and revoke are `POST /v1/members/:id/role` and `POST /v1/members/:id/revoke`. `POST /v1/members` stays absent. Open requests are proposals in `pending_approval`, because the ledger has no member column. Revoke clears every passkey, including the last one. Role change ends sessions and keeps passkeys.
 - The studio wizard stores progress in `mandate.studio.progress`. It does not store recovery codes. Rules in words are not published. Today stays closed until a second passkey or saved codes.
+- Machine key upgrade keeps the same id. New secrets still use `mnd_ag_` and `mnd_cl_`, because the browser suite matches those prefixes. A hash of the bare secret is accepted once and then stored as the hash of the whole key.
 
 ## Next
 
-Q1.8 P6.T3: machine key upgrade. Old `mnd_ag_` and `mnd_cl_` keys.
+Q1.9 P6.T4: connect-an-agent screen.

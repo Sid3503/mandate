@@ -46,6 +46,18 @@ export class ClientKeyService {
     return ClientKeyService.toSummary(this.repo.getClientKey(id)!)
   }
 
+  /** Replaces the secret on the same client key. The old mnd_cl_ key stops matching. The client binding stays. */
+  upgrade(id: string): { key: ClientKeySummary; apiKey: string } {
+    const row = this.repo.getClientKey(id)
+    if (!row) throw new Problem(404, 'client-key.unknown', 'No client key with that id', 'Check the client keys list for the id.')
+    if (row.status === 'revoked') throw new Problem(409, 'client-key.revoked', 'That key was revoked, not paused', 'Issue a new key if you want the access back.')
+    const secret = randomBytes(24).toString('base64url')
+    const apiKey = `mnd_cl_${secret}`
+    this.repo.setClientKeyHash(id, createHash('sha256').update(apiKey).digest('hex'))
+    live.publish({ type: 'changed', scope: 'agents', what: 'client-key.upgraded', at: stamp() })
+    return { key: ClientKeyService.toSummary(this.repo.getClientKey(id)!), apiKey }
+  }
+
   rotate(id: string): { key: ClientKeySummary; apiKey: string } {
     const row = this.repo.getClientKey(id)
     if (!row) throw new Problem(404, 'client-key.unknown', 'No client key with that id', 'Check the client keys list for the id.')

@@ -48,6 +48,18 @@ export class AgentService {
     return row ? AgentService.toSummary(row) : null
   }
 
+  /** Replaces the secret on the same agent. The old mnd_ag_ key stops matching. Scopes and limits stay. */
+  upgrade(id: string): { agent: AgentSummary; apiKey: string } {
+    const row = this.repo.getAgent(id)
+    if (!row) throw new Problem(404, 'agent.unknown', 'No agent with that id', 'Check the agents list for the id.')
+    if (row.status === 'revoked') throw new Problem(409, 'agent.revoked', 'That agent was revoked, not paused', 'Create a new key if you want the access back.')
+    const secret = randomBytes(24).toString('base64url')
+    const apiKey = `mnd_ag_${secret}`
+    this.repo.setAgentKeyHash(id, createHash('sha256').update(apiKey).digest('hex'))
+    live.publish({ type: 'changed', scope: 'agents', what: 'agent.upgraded', at: stamp() })
+    return { agent: this.get(id)!, apiKey }
+  }
+
   revoke(id: string): AgentSummary {
     const row = this.repo.getAgent(id)
     if (!row) throw new Problem(404, 'agent.unknown', 'No agent with that id', 'Check the agents list for the id.')

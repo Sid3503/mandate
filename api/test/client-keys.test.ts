@@ -1,5 +1,6 @@
+import { createHash, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { call, closeAll, harness } from './support'
+import { call, closeAll, harness, NOW, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
 
@@ -67,5 +68,32 @@ describe('client keys', () => {
     expect(dead.json.code).toBe('client-key.revoked')
     expect((await call(app, 'POST', `/v1/client-keys/${rotated.json.key.id}/rotate`)).status).toBe(409)
     expect((await call(app, 'POST', '/v1/client-keys/nope/revoke')).status).toBe(404)
+  })
+
+  it('upgrades an old mnd_cl_ secret and keeps the same client', async () => {
+    const { app, repo } = harness()
+    const secret = 'legacyclientsecretlegacyclient'
+    const apiKey = `mnd_cl_${secret}`
+    const id = randomUUID()
+    repo.createClientKey({
+      id,
+      name: 'Northwind buyer',
+      party_id: 'client_northwind',
+      status: 'active',
+      key_hash: createHash('sha256').update(secret).digest('hex'),
+      created_at: NOW.toISOString(),
+      last_seen_at: null,
+    })
+    expect((await call(app, 'GET', '/v1/party-rules/mine', { key: apiKey })).status).toBe(200)
+    expect(repo.getClientKey(id)?.key_hash).toBe(createHash('sha256').update(apiKey).digest('hex'))
+    const upgraded = await call(app, 'POST', `/v1/client-keys/${id}/upgrade`)
+    expect(upgraded.status).toBe(200)
+    expect(upgraded.json.apiKey).toMatch(/^mnd_cl_[A-Za-z0-9_-]+$/)
+    expect(upgraded.json.key.id).toBe(id)
+    expect(upgraded.json.key.partyId).toBe('client_northwind')
+    expect((await call(app, 'GET', '/v1/party-rules/mine', { key: apiKey })).status).toBe(401)
+    expect((await call(app, 'GET', '/v1/party-rules/mine', { key: upgraded.json.apiKey })).status).toBe(200)
+    expect((await call(app, 'POST', `/v1/client-keys/${id}/upgrade`, { key: STUDIO_KEY })).status).toBe(403)
+    expect(JSON.stringify((await call(app, 'GET', '/v1/client-keys')).json)).not.toContain(upgraded.json.apiKey)
   })
 })
