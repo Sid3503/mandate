@@ -1,12 +1,17 @@
+import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
+import { stepBinding } from '../src/auth/passkeys'
+import { ControlStore } from '../src/control/store'
 import { Clause, decide } from '../src/domain/gate'
 import { ProposalCreateSchema } from '../src/domain/schemas'
 import { applyPause, isSuspiciousRefusal, NOT_PAUSED, RefusalCounter, type PauseState } from '../src/domain/safety'
+import { loadFlags } from '../src/flags'
 import { FakeInvoices } from '../src/paypal/fake'
 import { agree, BUYER_KEY, call, closeAll, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
 
+const WEB = { origin: 'http://127.0.0.1:8787', 'x-mandate-client': 'web' }
 const PAUSED: PauseState = { paused: true, reason: 'test', since: '2026-10-09T00:00:00Z', by: 'owner', epoch: 0 }
 const auto = { gate: 'AUTO', clause: 'amount.auto', detail: 'x' } as const
 const tap = { gate: 'NEEDS_APPROVAL', clause: 'amount.needs_approval', detail: 'x' } as const
@@ -272,5 +277,108 @@ describe('autopilot across a pause', () => {
 
     // Resume
     await call(h.app, 'POST', '/v1/safety/resume')
+  })
+
+  it('P7.T2: pause controls: pause all, pause autopilot, pause one agent key with approver/owner permissions and step-up resume', async () => {
+    const controlDb = new DatabaseSync(':memory:')
+    const control = new ControlStore(controlDb, 'pepper-p7')
+    const now = '2026-10-12T12:00:00Z'
+    control.insertWorkspace({ id: 'ws_default', slug: 'default', name: 'Default', mode: 'default', paypal_mode: 'fake', db_path: ':memory:', status: 'active', created_at: now, expires_at: null, last_active_at: now, signing_key_sealed: 'sealed' })
+    const ownerId = 'mem_owner'
+    const approverId = 'mem_approver'
+    const proposerId = 'mem_proposer'
+    control.addMember({ id: ownerId, workspaceId: 'ws_default', name: 'Owner', role: 'owner', now })
+    control.addMember({ id: approverId, workspaceId: 'ws_default', name: 'Approver', role: 'approver', now, limit: 1000 })
+    control.addMember({ id: proposerId, workspaceId: 'ws_default', name: 'Proposer', role: 'proposer', now })
+    const ownerToken = 'owner-session-token-32chars-test'
+    const approverToken = 'approver-session-token-32ch-test'
+    const proposerToken = 'proposer-session-token-32ch-test'
+    for (const [token, memberId] of [[ownerToken, ownerId], [approverToken, approverId], [proposerToken, proposerId]] as const) {
+      control.putSession({ token, memberId, workspaceId: 'ws_default', method: 'passkey', now, idleHours: 12, absoluteDays: 7 })
+    }
+
+    const h = harness({ control, flags: loadFlags({ FLAG_PASSKEYS: '1' }) })
+    const ownerHeaders = { ...WEB, cookie: `mnd_session=${ownerToken}` }
+    const approverHeaders = { ...WEB, cookie: `mnd_session=${approverToken}` }
+    const proposerHeaders = { ...WEB, cookie: `mnd_session=${proposerToken}` }
+
+    // 1. Proposer cannot pause or resume
+    const proposerPause = await h.app.request('http://mandate.test/v1/safety/pause', { method: 'POST', headers: proposerHeaders })
+    expect(proposerPause.status).toBe(403)
+    const proposerResume = await h.app.request('http://mandate.test/v1/safety/resume', { method: 'POST', headers: proposerHeaders })
+    expect(proposerResume.status).toBe(403)
+
+    // 2. Approver can pause all with NO step-up
+    const approverPause = await h.app.request('http://mandate.test/v1/safety/pause', {
+      method: 'POST',
+      headers: { ...approverHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: 'Approver stop' }),
+    })
+    expect(approverPause.status).toBe(200)
+    expect(((await approverPause.json()) as { paused: boolean }).paused).toBe(true)
+
+    // Approver CANNOT resume
+    const approverResume = await h.app.request('http://mandate.test/v1/safety/resume', { method: 'POST', headers: approverHeaders })
+    expect(approverResume.status).toBe(403)
+
+    // Turn on workspace passkey-for-money rule
+    controlDb.prepare("UPDATE workspaces SET passkey_for_money = 1 WHERE id = 'ws_default'").run()
+    const ownerResumeNoStepup = await h.app.request('http://mandate.test/v1/safety/resume', { method: 'POST', headers: ownerHeaders })
+    expect(ownerResumeNoStepup.status).toBe(401)
+
+    // With stepup grant, owner resumes successfully
+    const grant = 'grant-resume-token'
+    control.putGrant({ id: grant, memberId: ownerId, workspaceId: 'ws_default', kind: 'resume', binding: stepBinding('resume', 'safety.resume'), now })
+    const ownerResumeWithGrant = await h.app.request('http://mandate.test/v1/safety/resume', {
+      method: 'POST',
+      headers: { ...ownerHeaders, 'x-mandate-stepup': grant },
+    })
+    expect(ownerResumeWithGrant.status).toBe(200)
+    expect(((await ownerResumeWithGrant.json()) as { paused: boolean }).paused).toBe(false)
+
+    // 3. Pause autopilot
+    const pauseAutopilot = await h.app.request('http://mandate.test/v1/safety/pause/autopilot', {
+      method: 'POST',
+      headers: { ...approverHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: 'Pause autopilot check' }),
+    })
+    expect(pauseAutopilot.status).toBe(200)
+    const stateWithAutopilotPaused = (await (await h.app.request('http://mandate.test/v1/safety', { headers: ownerHeaders })).json()) as { autopilotPaused: boolean }
+    expect(stateWithAutopilotPaused.autopilotPaused).toBe(true)
+
+    // Autopilot resume with step-up grant
+    const apGrant = 'grant-resume-autopilot-token'
+    control.putGrant({ id: apGrant, memberId: ownerId, workspaceId: 'ws_default', kind: 'resume', binding: stepBinding('resume', 'safety.resume'), now })
+    const resumeAutopilot = await h.app.request('http://mandate.test/v1/safety/resume/autopilot', {
+      method: 'POST',
+      headers: { ...ownerHeaders, 'x-mandate-stepup': apGrant },
+    })
+    expect(resumeAutopilot.status).toBe(200)
+    expect(((await resumeAutopilot.json()) as { autopilotPaused: boolean }).autopilotPaused).toBe(false)
+
+    // 4. Pause one agent key
+    const createdAgent = h.services.agents.create({ name: 'Bot', scopes: ['propose', 'read'] })
+    // Approver can pause agent key with NO step-up
+    const pauseAgent = await h.app.request(`http://mandate.test/v1/agents/${createdAgent.agent.id}/pause`, {
+      method: 'POST',
+      headers: approverHeaders,
+    })
+    expect(pauseAgent.status).toBe(200)
+    expect(((await pauseAgent.json()) as { status: string }).status).toBe('suspended')
+
+    // Calling with suspended agent key is 403
+    const agentCall = await call(h.app, 'POST', '/v1/proposals', { key: createdAgent.apiKey, idem: idem(), body: { kind: 'payment', payee: 'Priya', amountCents: 100, currency: 'USD', category: 'design', description: 'x' } })
+    expect(agentCall.status).toBe(403)
+    expect(agentCall.json.code).toBe('agent.suspended')
+
+    // Owner resumes agent key
+    const resumeAgent = await h.app.request(`http://mandate.test/v1/agents/${createdAgent.agent.id}/resume`, {
+      method: 'POST',
+      headers: ownerHeaders,
+    })
+    expect(resumeAgent.status).toBe(200)
+    expect(((await resumeAgent.json()) as { status: string }).status).toBe('active')
+
+    controlDb.close()
   })
 })

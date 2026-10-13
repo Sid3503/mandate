@@ -79,7 +79,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P6.T5 | done | Agent scorecard (requests, refusals, auto, needs-tap, last seen, breaker status). Screen /app/system. Proof: api/test/agent-keys.test.ts and web/e2e/passkey-repair-agent-scorecard.spec.ts | q1-identity |
 | P6.T6 | not started | no delegation end date | |
 | P7.T1 | done | `safety` is a plain gate input to decide, matching request returns `DENY system.paused`, and reads still work while paused. Proof: `api/test/safety.test.ts` | |
-| P7.T2 | partial | `web/e2e/job.spec.ts` "the owner can stop everything with one button". Resume does not require a passkey. One-agent pause is the older suspend | `1ac59cd` |
+| P7.T2 | done | Pause controls for all, autopilot, and one agent key. Approver can pause, only owner can resume, step-up required for resume when passkey rule active. Proof: `api/test/safety.test.ts` | |
 | P7.T3 | partial | `api/test/agent-keys.test.ts` "suspends only the misbehaving agent". Not the full trip list, and the owner cannot edit it with step-up | `1ac59cd` |
 | P7.T4 | partial | same e2e pause test. No "Stopped" proof on Today | `1ac59cd` |
 | P7.T5 | partial | `api/test/phases.test.ts` "tries a payment without writing a row" sees Priya in `GET /v1/payees` | `9a2ea0b` |

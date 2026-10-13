@@ -277,7 +277,7 @@ export class MandateService {
     const row = this.repo.proposal(id)
     if (!row || !['payment', 'charge'].includes(row.kind) || !STANDING_CLAUSES.includes(row.clause) || !['locked', 'order_created'].includes(row.phase)) return null
     // Paused: a payout the owner's rule already approved waits, locked, and is sent when Mandate is resumed.
-    if (this.options.safety?.paused()) {
+    if (this.options.safety?.isAutopilotPaused()) {
       const last = [...this.repo.eventsFor(id)].reverse().find((event) => event.type === 'standing.waiting')
       if (!last || (JSON.parse(last.payload_json) as { code?: string }).code !== Clause.systemPaused) {
         this.repo.insertEvent(randomUUID(), id, 'standing.waiting', Clause.standingMatched, { code: Clause.systemPaused, detail: 'Mandate is paused, so this waits locked until the owner resumes it' }, this.iso())
@@ -357,7 +357,7 @@ export class MandateService {
    */
   private async remindOverdueInvoices(): Promise<number> {
     const automation = this.repo.latestWarrant()?.body.automation
-    if (this.options.safety?.paused() || !this.invoices || !automation?.remindUnpaidAfterDays || automation.maxReminders < 1) return 0
+    if (this.options.safety?.isAutopilotPaused() || !this.invoices || !automation?.remindUnpaidAfterDays || automation.maxReminders < 1) return 0
     let sent = 0
     for (const row of this.repo.invoicesOut()) {
       const events = this.repo.eventsFor(row.id)
@@ -373,7 +373,7 @@ export class MandateService {
 
   /** Looks for standing-rule payouts that are approved but not yet sent (PayPal was down, or a dispute held them) and sends them. */
   async sweepStanding(): Promise<number> {
-    if (this.options.safety?.paused()) return 0
+    if (this.options.safety?.isAutopilotPaused()) return 0
     const stuck = this.repo.lockedStandingItems()
     for (const row of stuck) await this.dispatchStanding(row.id)
     return stuck.length
@@ -930,7 +930,7 @@ export class MandateService {
     const charge = this.repo.proposal(id)
     if (!charge || charge.kind !== 'charge' || charge.phase !== 'captured' || !charge.capture_id) return
     // Paused: do not ask. Resuming goes back over every settled client payment and asks for what was missed.
-    if (this.options.safety?.paused()) return
+    if (this.options.safety?.isAutopilotPaused()) return
     const warrant = this.repo.latestWarrant()
     if (!warrant?.body.automation.payOnSettle) return
     const body = warrant.body

@@ -87,6 +87,7 @@ export type GateSafety = {
   since?: string | null
   by?: 'owner' | 'breaker' | null
   epoch?: number
+  autopilotPaused?: boolean
 }
 
 export type GateProposal = {
@@ -269,6 +270,13 @@ function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context:
 
 export function decide(warrant: WarrantBody, proposal: GateProposal, context: GateContext): Decision {
   const result = evaluateProposal(warrant, proposal, context)
+  if (proposal.safety?.autopilotPaused && (proposal.actor ?? 'proposer') === 'autopilot' && result.gate !== 'DENY') {
+    return {
+      gate: 'DENY',
+      clause: Clause.systemPaused,
+      detail: 'Autopilot is paused: automatic billing and payouts are stopped until resumed',
+    }
+  }
   if (proposal.safety?.paused && result.gate !== 'DENY') {
     const why = proposal.safety.reason ? ` (${proposal.safety.reason})` : ''
     const actor = proposal.actor ?? 'proposer'

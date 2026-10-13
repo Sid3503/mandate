@@ -720,12 +720,19 @@ export class Repo {
     return this.db.prepare('SELECT * FROM agent_runs WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(conversationId, limit) as AgentRunRow[]
   }
 
-  safetyState(): { paused: number; reason: string | null; since: string | null; by: string | null; epoch: number } {
-    return this.db.prepare('SELECT paused, reason, since, by, epoch FROM safety_state WHERE id = 1').get() as never
+  safetyState(): { paused: number; reason: string | null; since: string | null; by: string | null; epoch: number; autopilot_paused?: number } {
+    return this.db.prepare('SELECT paused, reason, since, by, epoch, autopilot_paused FROM safety_state WHERE id = 1').get() as never
   }
 
-  setSafetyState(state: { paused: boolean; reason: string | null; since: string | null; by: string | null; epoch: number }): void {
-    this.db.prepare('UPDATE safety_state SET paused = ?, reason = ?, since = ?, by = ?, epoch = ? WHERE id = 1').run(state.paused ? 1 : 0, state.reason, state.since, state.by, state.epoch)
+  setSafetyState(state: { paused: boolean; reason: string | null; since: string | null; by: string | null; epoch: number; autopilotPaused?: boolean }): void {
+    this.db.prepare('UPDATE safety_state SET paused = ?, reason = ?, since = ?, by = ?, epoch = ?, autopilot_paused = ? WHERE id = 1').run(
+      state.paused ? 1 : 0,
+      state.reason,
+      state.since,
+      state.by,
+      state.epoch,
+      state.autopilotPaused ? 1 : 0,
+    )
   }
 
   insertSafetyEvent(row: { id: string; at: string; type: string; by: string; reason: string | null; detail: string | null; sig: string | null; keyId: string | null }): void {

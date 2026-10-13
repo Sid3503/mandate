@@ -173,9 +173,10 @@ CREATE TABLE IF NOT EXISTS safety_state (
   reason TEXT,
   since TEXT,
   by TEXT,
-  epoch INTEGER NOT NULL DEFAULT 0
+  epoch INTEGER NOT NULL DEFAULT 0,
+  autopilot_paused INTEGER NOT NULL DEFAULT 0
 );
-INSERT OR IGNORE INTO safety_state (id, paused, epoch) VALUES (1, 0, 0);
+INSERT OR IGNORE INTO safety_state (id, paused, epoch, autopilot_paused) VALUES (1, 0, 0, 0);
 
 CREATE TABLE IF NOT EXISTS safety_events (
   id TEXT PRIMARY KEY,
@@ -291,6 +292,8 @@ export function migrate(db: DatabaseSync): void {
   if (!eventColumns.has('actor_json')) db.exec('ALTER TABLE events ADD COLUMN actor_json TEXT')
   const agentColumns = new Set((db.prepare('PRAGMA table_info(agents)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!agentColumns.has('expires_at')) db.exec('ALTER TABLE agents ADD COLUMN expires_at TEXT')
+  const safetyColumns = new Set((db.prepare('PRAGMA table_info(safety_state)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!safetyColumns.has('autopilot_paused')) db.exec('ALTER TABLE safety_state ADD COLUMN autopilot_paused INTEGER NOT NULL DEFAULT 0')
 }
 
 /** Copies a file database aside before a new checksum step. Memory databases are skipped. */
