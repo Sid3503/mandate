@@ -8,6 +8,7 @@ export function Sessions() {
   const client = useQueryClient()
   const [codes, setCodes] = useState<string[] | null>(null)
   const [savedCodes, setSavedCodes] = useState(false)
+  const [inviteToken, setInviteToken] = useState<string | null>(null)
   const me = useQuery({ queryKey: ['auth-me'], queryFn: api.authMe, retry: false })
   const sessions = useQuery({ queryKey: ['sessions'], queryFn: api.sessions })
   const events = useQuery({ queryKey: ['auth-events'], queryFn: api.authEvents, enabled: me.data?.role === 'owner', retry: false })
@@ -31,6 +32,8 @@ export function Sessions() {
     mutationFn: (id: string) => api.revokeCredential(id),
     onSuccess: () => client.invalidateQueries({ queryKey: ['credentials'] }),
   })
+  const invite = useMutation({ mutationFn: () => api.createInvite('proposer'), onSuccess: (body) => setInviteToken(body.token) })
+  const revokeInvite = useMutation({ mutationFn: () => api.revokeInvite(inviteToken ?? ''), onSuccess: () => setInviteToken(null) })
   if (sessions.isLoading) return <div className="page"><Loading label="Loading sessions" /></div>
   if (sessions.isError) return <div className="page"><PageHead eyebrow="Account" title="Sessions" /><ProblemCard error={sessions.error} onRetry={() => void sessions.refetch()} /></div>
   const rows = sessions.data?.sessions ?? []
@@ -85,6 +88,19 @@ export function Sessions() {
         {ack.isError ? <ProblemCard error={ack.error} /> : null}
         {replace.isError ? <ProblemCard error={replace.error} /> : null}
       </section>
+      {me.data?.role === 'owner' ? (
+        <section className="panel" data-testid="invites">
+          <h2 className="panel-title">Invites</h2>
+          <p className="fine">A proposer can ask. A proposer cannot approve. Creating an invite needs a passkey when the studio requires one.</p>
+          <p>{inviteToken ? 'Invite ready for a proposer.' : 'No invite is waiting.'}</p>
+          <div className="row gap-s wrap">
+            <button type="button" className="btn btn-ink btn-small" onClick={() => invite.mutate()} disabled={invite.isPending}>Invite a proposer</button>
+            <button type="button" className="btn btn-ghost btn-small" onClick={() => revokeInvite.mutate()} disabled={!inviteToken || revokeInvite.isPending}>Revoke this invite</button>
+          </div>
+          {invite.isError ? <ProblemCard error={invite.error} /> : null}
+          {revokeInvite.isError ? <ProblemCard error={revokeInvite.error} /> : null}
+        </section>
+      ) : null}
       {me.data?.role === 'owner' ? (
         <section className="panel" data-testid="login-history">
           <h2 className="panel-title">Sign-in history</h2>

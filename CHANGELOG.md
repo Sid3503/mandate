@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Invites: `POST /v1/invites/revoke`. The join page names the inviter and the role. Creating an invite needs a passkey when the studio rule is on.
 - Unlock has "Sign in with a passkey" for a studio that already enrolled one.
 - Passkeys on the account: `GET /auth/credentials` and `POST /auth/credentials/revoke`. The last passkey stays. Another member's id is not found. The screen is `/app/sessions`.
 - Recovery codes: `POST /auth/recovery/issue`, `POST /auth/recovery/ack` ("I saved these"), and `POST /auth/recovery/regenerate` with a passkey step-up. Codes are hashed. A used code fails the second time.

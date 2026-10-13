@@ -447,6 +447,12 @@ export class ControlStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.id, input.workspaceId, input.role, input.label ?? null, input.limit ?? null, hashToken(input.token), input.expiresAt, input.createdBy, input.now)
   }
 
+  /** Marks an unused invite revoked. Another studio's token is not found. */
+  revokeInvite(workspaceId: string, token: string, now: string): boolean {
+    const result = this.db.prepare('UPDATE invites SET revoked_at = ? WHERE token_hash = ? AND workspace_id = ? AND used_at IS NULL AND revoked_at IS NULL').run(now, hashToken(token), workspaceId)
+    return Number(result.changes) === 1
+  }
+
   /** One invite, one use. Two callers: the first update wins. */
   takeInvite(token: string, now: string): { id: string; workspace_id: string; role: MemberRole; label: string | null } | null {
     const row = this.db.prepare('SELECT id, workspace_id, role, label, expires_at, used_at, revoked_at FROM invites WHERE token_hash = ?').get(hashToken(token)) as { id: string; workspace_id: string; role: MemberRole; label: string | null; expires_at: string; used_at: string | null; revoked_at: string | null } | undefined
@@ -456,10 +462,11 @@ export class ControlStore {
     return row
   }
 
-  peekInvite(token: string, now: string): { workspace_id: string; role: MemberRole; label: string | null; expired: boolean } | null {
-    const row = this.db.prepare('SELECT workspace_id, role, label, expires_at, used_at, revoked_at FROM invites WHERE token_hash = ?').get(hashToken(token)) as { workspace_id: string; role: MemberRole; label: string | null; expires_at: string; used_at: string | null; revoked_at: string | null } | undefined
+  peekInvite(token: string, now: string): { workspace_id: string; role: MemberRole; label: string | null; expired: boolean; inviter: string | null } | null {
+    const row = this.db.prepare(`SELECT i.workspace_id, i.role, i.label, i.expires_at, i.used_at, i.revoked_at, m.display_name AS inviter
+      FROM invites i LEFT JOIN members m ON m.id = i.created_by WHERE i.token_hash = ?`).get(hashToken(token)) as { workspace_id: string; role: MemberRole; label: string | null; expires_at: string; used_at: string | null; revoked_at: string | null; inviter: string | null } | undefined
     if (!row || row.used_at || row.revoked_at) return null
-    return { workspace_id: row.workspace_id, role: row.role, label: row.label, expired: row.expires_at <= now }
+    return { workspace_id: row.workspace_id, role: row.role, label: row.label, expired: row.expires_at <= now, inviter: row.inviter }
   }
 
   rememberRef(kind: string, externalId: string, workspaceId: string): void {

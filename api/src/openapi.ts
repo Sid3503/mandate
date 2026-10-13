@@ -154,6 +154,27 @@ export function buildOpenApi(publicUrl: string) {
     },
   })
   registry.registerPath({
+    method: 'post',
+    path: '/v1/invites',
+    tags: ['auth'],
+    summary: 'Owner creates an invite. A passkey grant is required when the studio rule is on.',
+    responses: { 200: { description: 'Invite token, shown once' }, 401: problem, 403: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/invites/revoke',
+    tags: ['auth'],
+    summary: 'Owner revokes an unused invite. Another member is forbidden. An unknown token is not found.',
+    responses: { 200: { description: 'Revoked' }, 403: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/join/preview',
+    tags: ['auth'],
+    summary: 'Shows the studio, the role, and who invited. The token is not stored in the page query.',
+    responses: { 200: { description: 'Invite preview' }, 400: problem, 404: problem },
+  })
+  registry.registerPath({
     method: 'get',
     path: '/auth/credentials',
     tags: ['auth'],

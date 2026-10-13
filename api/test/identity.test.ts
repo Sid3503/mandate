@@ -279,3 +279,95 @@ describe('passkeys on the account', () => {
     expect(status).toBe(429)
   })
 })
+
+describe('invites', () => {
+  function invites() {
+    const controlDb = openDatabase(':memory:')
+    const control = new ControlStore(controlDb, 'pepper-q1')
+    control.ensureDefault(':memory:', NOW.toISOString())
+    const ownerId = randomUUID()
+    const proposerId = randomUUID()
+    control.addMember({ id: ownerId, workspaceId: 'ws_default', name: 'Meera', role: 'owner', now: NOW.toISOString() })
+    control.addMember({ id: proposerId, workspaceId: 'ws_default', name: 'Arun', role: 'proposer', now: NOW.toISOString() })
+    const ownerToken = 'invite-owner-session-token-32c'
+    const proposerToken = 'invite-proposer-session-token-3'
+    const now = NOW.toISOString()
+    control.putSession({ token: ownerToken, memberId: ownerId, workspaceId: 'ws_default', method: 'passkey', now, idleHours: 12, absoluteDays: 7 })
+    control.putSession({ token: proposerToken, memberId: proposerId, workspaceId: 'ws_default', method: 'passkey', now, idleHours: 12, absoluteDays: 7 })
+    const h = harness({ flags: loadFlags({ FLAG_INVITES: '1', FLAG_PASSKEYS: '1' }), control, webauthn: WA })
+    return { h, control, controlDb, ownerToken, proposerToken }
+  }
+
+  it('shows the inviter, revokes only the owner invite, and refuses a second use', async () => {
+    const d = invites()
+    const made = await d.h.app.request('http://mandate.test/v1/invites', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ role: 'proposer' }),
+    })
+    expect(made.status).toBe(200)
+    const token = (await made.json() as { token: string }).token
+    const preview = await d.h.app.request('http://mandate.test/join/preview', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    expect(preview.status).toBe(200)
+    expect(await preview.json()).toMatchObject({ role: 'proposer', inviter: 'Meera' })
+    const staff = await d.h.app.request('http://mandate.test/v1/invites/revoke', {
+      method: 'POST',
+      headers: { ...headers(d.proposerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    expect(staff.status).toBe(403)
+    const bare = await d.h.app.request('http://mandate.test/v1/invites/revoke', {
+      method: 'POST',
+      headers: { cookie: `mnd_session=${d.ownerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    expect(bare.status).toBe(403)
+    const gone = await d.h.app.request('http://mandate.test/v1/invites/revoke', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 'not-a-real-invite-token' }),
+    })
+    expect(gone.status).toBe(404)
+    const revoked = await d.h.app.request('http://mandate.test/v1/invites/revoke', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
+    expect(revoked.status).toBe(200)
+    const again = await d.h.app.request('http://mandate.test/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token, name: 'Sam' }),
+    })
+    expect(again.status).toBe(400)
+    d.controlDb.close()
+  })
+
+  it('requires a passkey step-up before an owner creates an invite', async () => {
+    const d = invites()
+    d.controlDb.prepare('UPDATE workspaces SET passkey_for_money = 1 WHERE id = ?').run('ws_default')
+    const blocked = await d.h.app.request('http://mandate.test/v1/invites', {
+      method: 'POST',
+      headers: { ...headers(d.ownerToken), 'content-type': 'application/json' },
+      body: JSON.stringify({ role: 'viewer' }),
+    })
+    expect(blocked.status).toBe(401)
+    expect((await blocked.json() as { title: string }).title).toBe('Sign this with your passkey')
+    d.controlDb.close()
+  })
+
+  it('counts invite revoke in the write rate-limit class', async () => {
+    expect(rateClass('POST', '/v1/invites')).toBe('write')
+    expect(rateClass('POST', '/v1/invites/revoke')).toBe('write')
+    const h = harness({ classedRates: true, rateLimitPerMinute: 100, flags: loadFlags({ FLAG_INVITES: '1' }) })
+    let status = 0
+    for (let i = 0; i < 61; i += 1) {
+      status = (await h.app.request('http://mandate.test/v1/invites/revoke', { method: 'POST' })).status
+    }
+    expect(status).toBe(429)
+  })
+})
