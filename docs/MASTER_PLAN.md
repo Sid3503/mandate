@@ -69,7 +69,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P5.T4 | done | `web/src/screens/Unlock.tsx` has the authority sentence. Route `/app/unlock` | `9a2ea0b` |
 | P5.T5 | done | Role landings: owner/approver on Today, proposer on Ask Mandate, viewer on Proof, payee on Payments, client on Deals. Proof: `web/e2e/passkey-repair-role-landings.spec.ts` with axe. Screenshot `docs/evidence/q2/payee-landing.png`. | `q2-onboarding` |
 | P5.T6 | done | PWA Unlock with Face ID on expired session, workbox denylist for authenticated paths. Proof: `web/e2e/passkey-repair-pwa-unlock.spec.ts` with axe. Screenshot `docs/evidence/q2/unlock-faceid.png`. | `q2-onboarding` |
-| P5.T7 | not started | the old tour is unchanged. No 3-mark coach | |
+| P5.T7 | done | First-run 3-mark coach tour (Waiting, Ask, Rules), mandate.coach.seen persistence, screen states (loading, empty, error). Proof: `web/e2e/passkey-repair-coach.spec.ts` with axe. Screenshot `docs/evidence/q2/coach-marks.png`. | `q2-onboarding` |
 | P5.T8 | partial | `web/src/screens/Studio.tsx` says the browser cannot use passkeys | `9a2ea0b` |
 | P5.T9 | not started | no new browser tests. Phone checklist not run | |
 | P6.T1 | done | Create needs a passkey when the rule is on. Revoke is owner-only. The join page names the inviter and the role. Two joins: one wins. | `6105e8d` |
