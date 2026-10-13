@@ -23,6 +23,7 @@
 - Q2.5 P5.T7 `434b93c`: first-run 3-mark coach tour (Waiting, Ask, Rules), mandate.coach.seen persistence, screen states (loading, empty, error). Proof: `web/e2e/passkey-repair-coach.spec.ts` with axe. Screenshot `docs/evidence/q2/coach-marks.png`.
 - Q2.6 P5.T8 P5.T9: mobile and desktop browser validation with axe, docs/PHONE_CHECKLIST.md runbook, Unlock and Studio WebAuthn fallback notice. Proof: `web/e2e/passkey-repair-pwa-unlock.spec.ts`, `web/e2e/onboarding-doors.spec.ts`, `docs/PHONE_CHECKLIST.md`.
 - Q3.1 P1.T1 P1.T7: Boot secrets wrapped in SecretString and redacted on inspect/JSON. Real /readyz endpoint with sqlite datastore check (no redirect). SSE stream connections capped to 50 with 429 refusal on cap overflow. Proof: `api/test/ops-readyz-secret.test.ts`.
+- Q3.2 P1.T3 P1.T4 P2.T8: RateLimiter classes (auth, key-unlock, ask, write, read), pruneBuckets, method/path mappings. Model budget 0 blocks model reservations while quick asks still work (case 28). Per-demo workspace model daily cap (50k tokens) and IP rate limiting (sixth demo 429, case 26). Proof: `api/test/ops-ratelimit-budget.test.ts`.
 
 ## Test counts
 
@@ -32,10 +33,11 @@
 - `gates:fast` after Q2.5: 49 files, 596 API tests, 9.97s, secret check 356 tracked files, exit 0.
 - Full `npm run gates` after Q2 on 13 October 2026: 49 files, 596 API tests, 10.40s, secret check 356 tracked files, Playwright 133 passed (8.5m), axe included, exit 0.
 - `gates:fast` after Q3.1: 50 files, 599 API tests, 9.83s, secret check 359 tracked files, exit 0.
+- `gates:fast` after Q3.2: 51 files, 609 API tests, 9.62s, secret check 360 tracked files, exit 0.
 
 ## Open items
 
-- Appendix B cases still partial: 22, 27, 28, 30, and 35.
+- Appendix B cases still partial: 22, 27, 30, and 35. (Case 28 complete).
 
 ## Human todo
 
@@ -69,4 +71,4 @@
 
 ## Next
 
-Q3.2 P1.T3 P1.T4 P2.T8: Tests for each rate-limit class, demo workspace model caps, and budget checks.
+Q3.3 P1.T6 P1.T9: Pre-migration backup logic and tests, seeded copy test, backup and restore script tests.
