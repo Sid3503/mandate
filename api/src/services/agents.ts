@@ -42,12 +42,18 @@ export class AgentService {
   }
 
   list(): AgentSummary[] {
-    return this.repo.listAgents().map(AgentService.toSummary)
+    return this.repo.listAgents().map((r) => this.toSummary(r))
   }
 
   get(id: string): AgentSummary | null {
     const row = this.repo.getAgent(id)
-    return row ? AgentService.toSummary(row) : null
+    return row ? this.toSummary(row) : null
+  }
+
+  scorecard(id: string): AgentScorecard {
+    const row = this.repo.getAgent(id)
+    if (!row) throw new Problem(404, 'agent.unknown', 'No agent with that id', 'Check the agents list for the id.')
+    return this.toSummary(row).scorecard
   }
 
   /** Replaces the secret on the same agent. The old mnd_ag_ key stops matching. Scopes and limits stay. */
@@ -67,7 +73,7 @@ export class AgentService {
     if (!row) throw new Problem(404, 'agent.unknown', 'No agent with that id', 'Check the agents list for the id.')
     this.repo.setAgentStatus(id, 'revoked', this.now().toISOString())
     live.publish({ type: 'changed', scope: 'agents', what: 'agent.revoked', at: stamp() })
-    return AgentService.toSummary(this.repo.getAgent(id)!)
+    return this.toSummary(this.repo.getAgent(id)!)
   }
 
   resume(id: string): AgentSummary {
@@ -76,7 +82,7 @@ export class AgentService {
     if (row.status === 'revoked') throw new Problem(409, 'agent.revoked', 'That agent was revoked, not paused', 'Create a new key if you want the access back.')
     this.repo.setAgentStatus(id, 'active', this.now().toISOString())
     live.publish({ type: 'changed', scope: 'agents', what: 'agent.resumed', at: stamp() })
-    return AgentService.toSummary(this.repo.getAgent(id)!)
+    return this.toSummary(this.repo.getAgent(id)!)
   }
 
   /** Called when a request is authenticated as this agent. Keeps last_seen_at fresh. */
@@ -102,7 +108,8 @@ export class AgentService {
     this.windows.set(id, window)
   }
 
-  private static toSummary(row: import('../db/repo').AgentRow): AgentSummary {
+  private toSummary(row: import('../db/repo').AgentRow): AgentSummary {
+    const stats = this.repo.agentProposalStats(row.id)
     return {
       id: row.id,
       name: row.name,
@@ -112,8 +119,31 @@ export class AgentService {
       createdAt: row.created_at,
       lastSeenAt: row.last_seen_at,
       expiresAt: row.expires_at ?? null,
+      scorecard: {
+        agentId: row.id,
+        name: row.name,
+        status: row.status as AgentSummary['status'],
+        requests: stats.total,
+        refusals: stats.refusals,
+        auto: stats.auto,
+        needsTap: stats.needsTap,
+        lastSeenAt: row.last_seen_at,
+        breakerTripped: row.status === 'suspended',
+      },
     }
   }
+}
+
+export type AgentScorecard = {
+  agentId: string
+  name: string
+  status: 'active' | 'suspended' | 'revoked'
+  requests: number
+  refusals: number
+  auto: number
+  needsTap: number
+  lastSeenAt: string | null
+  breakerTripped: boolean
 }
 
 export type AgentSummary = {
@@ -125,6 +155,7 @@ export type AgentSummary = {
   createdAt: string
   lastSeenAt: string | null
   expiresAt: string | null
+  scorecard: AgentScorecard
 }
 
 export const AGENT_SCOPES = ['read', 'propose', 'stream', 'mcp', 'deals'] as const

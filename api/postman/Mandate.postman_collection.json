@@ -1364,6 +1364,14 @@
           }
         },
         {
+          "name": "Agent scorecard",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/v1/agents/{{agentId}}/scorecard",
+            "description": "Owner. Returns requests, refusals, auto, needs-tap, last seen, and breaker status."
+          }
+        },
+        {
           "name": "Upgrade a client key",
           "request": {
             "method": "POST",

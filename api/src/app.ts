@@ -144,7 +144,7 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/deals\/[^/]+\/milestones\/\d+\/review$/ },
   { method: 'GET', pattern: /^\/v1\/agent-runs(\/[^/]+)?$/ },
   { method: 'GET', pattern: /^\/v1\/agents\/health$/ },
-  { method: 'GET', pattern: /^\/v1\/agents$/ },
+  { method: 'GET', pattern: /^\/v1\/agents(\/[^/]+\/scorecard)?$/ },
   { method: 'POST', pattern: /^\/v1\/agents$/ },
   { method: 'POST', pattern: /^\/v1\/agents\/[^/]+\/(revoke|resume|upgrade)$/ },
   { method: 'GET', pattern: /^\/v1\/client-keys$/ },
@@ -520,6 +520,7 @@ export function createApp(deps: AppDeps) {
     return c.json(services.agents.upgrade(c.req.param('id')))
   })
   app.post('/v1/agents/:id/resume', (c) => c.json(services.agents.resume(c.req.param('id'))))
+  app.get('/v1/agents/:id/scorecard', (c) => c.json(services.agents.scorecard(c.req.param('id'))))
 
   // ---------- client keys ----------
   // Where the owner is told when something needs them. The webhook address is never returned.

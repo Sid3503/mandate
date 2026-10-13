@@ -779,6 +779,29 @@ export class Repo {
     this.db.prepare('UPDATE agents SET key_hash = ? WHERE id = ?').run(keyHash, id)
   }
 
+  agentProposalStats(agentId: string): { total: number; auto: number; needsTap: number; refusals: number } {
+    const actor = `agent:${agentId}`
+    const rows = this.db.prepare(
+      `SELECT payload_json FROM events WHERE type = 'proposal.created'`
+    ).all() as Array<{ payload_json: string }>
+    let total = 0
+    let auto = 0
+    let needsTap = 0
+    let refusals = 0
+    for (const r of rows) {
+      try {
+        const payload = JSON.parse(r.payload_json) as { actor?: string; gate?: string }
+        if (payload.actor === actor) {
+          total += 1
+          if (payload.gate === 'AUTO') auto += 1
+          else if (payload.gate === 'DENY') refusals += 1
+          else if (payload.gate === 'NEEDS_APPROVAL' || payload.gate === 'TAP') needsTap += 1
+        }
+      } catch {}
+    }
+    return { total, auto, needsTap, refusals }
+  }
+
   createShare(row: ShareRow): void {
     this.db.prepare(`INSERT INTO share_links (id, job_id, party_id, role, label, secret_hash, created_at, expires_at, revoked_at, last_seen_at, views)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.job_id, row.party_id, row.role, row.label, row.secret_hash, row.created_at, row.expires_at, row.revoked_at, row.last_seen_at, row.views)
