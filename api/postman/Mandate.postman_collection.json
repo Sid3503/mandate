@@ -1342,6 +1342,19 @@
       "name": "Machine keys",
       "item": [
         {
+          "name": "Connect an agent",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Invoice clerk\",\n  \"scopes\": [\"mcp\", \"read\", \"propose\"],\n  \"expiryDays\": 90\n}"
+            },
+            "url": "{{baseUrl}}/v1/agents",
+            "description": "Owner. Creates an agent key with template scopes and optional expiry. Returns the key once."
+          }
+        },
+        {
           "name": "Upgrade an agent key",
           "request": {
             "method": "POST",

@@ -13,6 +13,7 @@
 - Q1.6 P6.T2 `f37e3e6`: members list, role change, and revoke. The last owner stays. Revoke ends sessions and passkeys and lists open requests. `npm run admin:reset-owner` writes `admin_audit`. Proof: `api/test/identity.test.ts` and `web/e2e/passkey-repair-members.spec.ts`. Screenshot `docs/evidence/q1/members.png` shows the refusal and no codes.
 - Q1.7 P5.T3 `0a41958`: studio wizard. A second passkey or recovery codes are required before Today. PayPal text says the charge is simulated. Rules in words can be skipped. Progress is in local storage. Proof: `web/e2e/passkey-repair-wizard.spec.ts`. Screenshot `docs/evidence/q1/wizard.png` shows no codes.
 - Q1.8 P6.T3: an owner can replace an `mnd_ag_` or `mnd_cl_` secret and keep the same agent or client. A legacy hash of the bare secret is rewritten on first use. Proof: `api/test/agent-keys.test.ts` and `api/test/client-keys.test.ts`.
+- Q1.9 P6.T4: connect an agent screen with templates, preview, expiry, and key testing. Screen `/app/connect`. Proof: `api/test/agent-keys.test.ts` and `web/e2e/passkey-repair-agent-connect.spec.ts`. Screenshot `docs/evidence/q1/connect-agent.png` shows no secret.
 
 ## Test counts
 
@@ -25,10 +26,11 @@
 - `gates:fast` after Q1.6: 48 files, 584 API tests, 10.17s, secret check 333 tracked files, exit 0. The members browser test passed alone. Full `npm run gates` for Q1 has not run yet.
 - `gates:fast` after Q1.7: 48 files, 584 API tests, 8.66s, secret check 337 tracked files, exit 0. The wizard browser test passed alone. Full `npm run gates` for Q1 has not run yet.
 - `gates:fast` after Q1.8: 48 files, 589 API tests, 8.56s, secret check 339 tracked files, exit 0. No new screen. Full `npm run gates` for Q1 has not run yet.
+- `gates:fast` after Q1.9: 48 files, 591 API tests, 8.89s, secret check 340 tracked files, exit 0. Connect agent browser test passed alone. Full `npm run gates` for Q1 has not run yet.
 
 ## Open items
 
-- Q1 still open: P6.T4, P6.T5. Then Q2 through Q8. No checkpoints.
+- Q1 still open: P6.T5. Then full gates. Then Q2 through Q8. No checkpoints.
 - Appendix B cases still partial: 22, 27, 28, 30, and 35.
 
 ## False assumptions
@@ -49,4 +51,4 @@
 
 ## Next
 
-Q1.9 P6.T4: connect-an-agent screen.
+Q1.10 P6.T5: agent scorecard.

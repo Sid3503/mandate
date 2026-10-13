@@ -33,6 +33,7 @@ import { Sessions } from './screens/Sessions'
 import { System } from './screens/System'
 import { SharedStatus } from './screens/SharedStatus'
 import { Unlock } from './screens/Unlock'
+import { Connect } from './screens/Connect'
 import { Loading } from './components/ui'
 
 const ControlRoom = lazy(() => import('./screens/ControlRoom'))
@@ -121,6 +122,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="system" element={<System />} />
             <Route path="sessions" element={<Sessions />} />
             <Route path="members" element={<Members />} />
+            <Route path="connect" element={<Connect />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

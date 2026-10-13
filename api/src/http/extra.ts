@@ -294,7 +294,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     if (who.session.method === 'recovery') throw new Problem(403, 'auth/forbidden', 'Recovery cannot approve', 'A recovery session can only add a passkey.')
     const control = requireControl(ctx)
     if (!ctx.webauthn) throw new Problem(503, 'flag/disabled', 'Not configured', 'Passkeys need a site name and origin.')
-    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean; role?: string; label?: string | null; memberId?: string }
+    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean; role?: string; label?: string | null; memberId?: string; input?: unknown; payload?: unknown }
     const kind = body.kind ?? ''
     let binding = ''
     if (kind === 'approve') {
@@ -313,6 +313,8 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     } else if (kind === 'member-revoke') {
       if (!body.memberId) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the member.')
       binding = stepBinding('member-revoke', body.memberId)
+    } else if (kind === 'agent.issue') {
+      binding = stepBinding('agent.issue', JSON.stringify(body.input ?? body.payload ?? body))
     } else if (kind === 'passkey-rule') {
       if (typeof body.enabled === 'boolean') binding = passkeyRuleBinding(body.enabled)
       else if (body.binding === passkeyRuleBinding(true) || body.binding === passkeyRuleBinding(false)) binding = body.binding

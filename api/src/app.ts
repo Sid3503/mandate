@@ -204,6 +204,7 @@ const AgentCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   scopes: z.array(z.enum(['read', 'propose', 'stream', 'mcp', 'deals'])).min(1),
   limits: z.object({ proposalsPerHour: z.number().int().min(1).max(10_000).optional(), centsPerHour: z.number().int().min(1).optional() }).strict().optional(),
+  expiryDays: z.number().int().min(1).max(365).optional().nullable(),
 }).strict()
 
 const ClientKeyCreateSchema = z.object({
@@ -363,7 +364,10 @@ export function createApp(deps: AppDeps) {
         if (!agent) throw new Problem(401, 'auth.unauthorized', 'Unauthorized', 'Provide a valid owner key or agent key.')
         if (agent.status === 'revoked') throw new Problem(403, 'agent.revoked', 'This agent key is revoked', 'Ask the owner for a new agent key.')
         if (agent.status === 'suspended') throw new Problem(403, 'agent.suspended', 'This agent is suspended', 'The agent tripped the breaker. The owner can resume it from the System page.')
-        services.repo.setAgentSeen(agent.id, new Date().toISOString())
+        if (agent.expires_at && agent.expires_at <= deps.now().toISOString()) {
+          throw new Problem(403, 'agent.expired', 'This agent key has expired', 'Ask the owner to issue a new agent key or upgrade it.')
+        }
+        services.repo.setAgentSeen(agent.id, deps.now().toISOString())
         principal = { role: 'agent', side: null, buyerId: null, agentId: agent.id, name: agent.name, scopes: JSON.parse(agent.scopes_json) as AgentScope[], limits: JSON.parse(agent.limits_json) as AgentLimits }
       }
     }

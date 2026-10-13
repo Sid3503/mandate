@@ -16,7 +16,7 @@ export class AgentService {
 
   constructor(private readonly repo: Repo, private readonly now: () => Date) {}
 
-  create(input: { name: string; scopes: AgentScope[]; limits?: Partial<AgentLimits> }): { agent: AgentSummary; apiKey: string } {
+  create(input: { name: string; scopes: AgentScope[]; limits?: Partial<AgentLimits>; expiryDays?: number | null }): { agent: AgentSummary; apiKey: string } {
     const name = input.name.trim().slice(0, 120)
     if (!name) throw new Problem(422, 'agent.name', 'The agent needs a name', 'Give the agent a name, such as “CI script” or “Priya\'s assistant”.')
     const scopes = [...new Set(input.scopes)]
@@ -31,9 +31,11 @@ export class AgentService {
     const id = randomUUID()
     const secret = randomBytes(24).toString('base64url')
     const apiKey = `mnd_ag_${secret}`
+    const expiresAt = input.expiryDays ? new Date(this.now().getTime() + input.expiryDays * 86_400_000).toISOString() : null
     this.repo.createAgent({
       id, name, scopes_json: JSON.stringify(scopes), limits_json: JSON.stringify(limits),
       status: 'active', key_hash: createHash('sha256').update(apiKey).digest('hex'), created_at: this.now().toISOString(), last_seen_at: null,
+      expires_at: expiresAt,
     })
     live.publish({ type: 'changed', scope: 'agents', what: 'agent.created', at: stamp() })
     return { agent: this.get(id)!, apiKey }
@@ -101,7 +103,16 @@ export class AgentService {
   }
 
   private static toSummary(row: import('../db/repo').AgentRow): AgentSummary {
-    return { id: row.id, name: row.name, scopes: JSON.parse(row.scopes_json) as AgentScope[], limits: JSON.parse(row.limits_json) as AgentLimits, status: row.status as AgentSummary['status'], createdAt: row.created_at, lastSeenAt: row.last_seen_at }
+    return {
+      id: row.id,
+      name: row.name,
+      scopes: JSON.parse(row.scopes_json) as AgentScope[],
+      limits: JSON.parse(row.limits_json) as AgentLimits,
+      status: row.status as AgentSummary['status'],
+      createdAt: row.created_at,
+      lastSeenAt: row.last_seen_at,
+      expiresAt: row.expires_at ?? null,
+    }
   }
 }
 
@@ -113,6 +124,7 @@ export type AgentSummary = {
   status: 'active' | 'suspended' | 'revoked'
   createdAt: string
   lastSeenAt: string | null
+  expiresAt: string | null
 }
 
 export const AGENT_SCOPES = ['read', 'propose', 'stream', 'mcp', 'deals'] as const
