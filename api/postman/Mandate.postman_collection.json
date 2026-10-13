@@ -1107,6 +1107,64 @@
           }
         }
       ]
+    },
+    {
+      "name": "Sessions",
+      "item": [
+        {
+          "name": "List sessions",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/auth/sessions",
+            "description": "Cookie session. The response has no token and no token hash."
+          }
+        },
+        {
+          "name": "Sign-in history",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/auth/events",
+            "description": "Owner cookie only. A proposer is 403."
+          }
+        },
+        {
+          "name": "End one session",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"publicId\":\"\"}" },
+            "url": "{{baseUrl}}/auth/sessions/revoke",
+            "description": "Another member's id is 404. A call without the web client header is 403."
+          }
+        },
+        {
+          "name": "End other sessions",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{baseUrl}}/auth/sessions/revoke-others"
+          }
+        }
+      ]
     }
   ]
 }

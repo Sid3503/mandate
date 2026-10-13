@@ -1,4 +1,4 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 
 export type WorkspaceMode = 'default' | 'demo' | 'studio' | 'live'
@@ -76,7 +76,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   abs_expires_at TEXT NOT NULL,
   ip_hash TEXT,
   ua_summary TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  public_id TEXT
 );
 CREATE TABLE IF NOT EXISTS webauthn_challenges (
   id TEXT PRIMARY KEY,
@@ -178,6 +179,8 @@ export class ControlStore {
     this.ensureColumn('stepup_grants', 'expires_at', 'ALTER TABLE stepup_grants ADD COLUMN expires_at TEXT')
     this.ensureColumn('credentials', 'suspect_at', 'ALTER TABLE credentials ADD COLUMN suspect_at TEXT')
     this.ensureColumn('stepup_grants', 'assertion_json', 'ALTER TABLE stepup_grants ADD COLUMN assertion_json TEXT')
+    this.ensureColumn('sessions', 'public_id', 'ALTER TABLE sessions ADD COLUMN public_id TEXT')
+    this.db.exec(`UPDATE sessions SET public_id = lower(hex(randomblob(8))) WHERE public_id IS NULL`)
   }
 
   /** Older control files predate these columns. The added passkey rule stays off. */
@@ -288,8 +291,8 @@ export class ControlStore {
     const nowMs = Date.parse(input.now)
     const idle = new Date(nowMs + input.idleHours * 3_600_000).toISOString()
     const abs = new Date(nowMs + input.absoluteDays * 86_400_000).toISOString()
-    this.db.prepare(`INSERT INTO sessions (id_hash, member_id, workspace_id, method, created_at, last_seen_at, idle_expires_at, abs_expires_at, ip_hash, ua_summary)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(hashToken(input.token), input.memberId, input.workspaceId, input.method, input.now, input.now, idle, abs, input.ip ? ipHash(input.ip, this.pepper) : null, input.ua?.slice(0, 80) ?? null)
+    this.db.prepare(`INSERT INTO sessions (id_hash, member_id, workspace_id, method, created_at, last_seen_at, idle_expires_at, abs_expires_at, ip_hash, ua_summary, public_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(hashToken(input.token), input.memberId, input.workspaceId, input.method, input.now, input.now, idle, abs, input.ip ? ipHash(input.ip, this.pepper) : null, input.ua?.slice(0, 80) ?? null, randomUUID())
   }
 
   session(token: string, now: string): { member_id: string; workspace_id: string; method: string; idle_expires_at: string; abs_expires_at: string } | null {
@@ -312,8 +315,20 @@ export class ControlStore {
     this.db.prepare('UPDATE sessions SET revoked_at = ? WHERE member_id = ? AND revoked_at IS NULL').run(now, memberId)
   }
 
-  listSessions(memberId: string): Array<{ id_hash: string; created_at: string; last_seen_at: string; ua_summary: string | null; revoked_at: string | null }> {
-    return this.db.prepare('SELECT id_hash, created_at, last_seen_at, ua_summary, revoked_at FROM sessions WHERE member_id = ? ORDER BY created_at DESC').all(memberId) as Array<{ id_hash: string; created_at: string; last_seen_at: string; ua_summary: string | null; revoked_at: string | null }>
+  /** Revokes one of this member's sessions. Another member's id does not match. */
+  revokeSessionByPublicId(memberId: string, publicId: string, now: string): boolean {
+    const result = this.db.prepare('UPDATE sessions SET revoked_at = ? WHERE member_id = ? AND public_id = ? AND revoked_at IS NULL').run(now, memberId, publicId)
+    return Number(result.changes) === 1
+  }
+
+  /** Revokes every other live session for this member. The current token stays. */
+  revokeOtherSessions(memberId: string, keepToken: string, now: string): number {
+    const result = this.db.prepare('UPDATE sessions SET revoked_at = ? WHERE member_id = ? AND id_hash != ? AND revoked_at IS NULL').run(now, memberId, hashToken(keepToken))
+    return Number(result.changes)
+  }
+
+  listSessions(memberId: string): Array<{ id_hash: string; public_id: string | null; method: string; created_at: string; last_seen_at: string; ua_summary: string | null; revoked_at: string | null }> {
+    return this.db.prepare('SELECT id_hash, public_id, method, created_at, last_seen_at, ua_summary, revoked_at FROM sessions WHERE member_id = ? ORDER BY created_at DESC').all(memberId) as Array<{ id_hash: string; public_id: string | null; method: string; created_at: string; last_seen_at: string; ua_summary: string | null; revoked_at: string | null }>
   }
 
   putChallenge(input: { id: string; purpose: string; challenge: string; expiresAt: string; memberId?: string | null; workspaceId?: string | null; bindingKind?: string | null; bindingHash?: string | null }): void {

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useGuide } from '../components/GuidedTour'
 import { ConnectAgent } from '../components/ConnectAgent'
 import { DemoReset } from '../components/DemoReset'
@@ -309,6 +309,7 @@ export function System() {
             ))}
           </div>
           <a className="btn btn-ghost" href="/openapi.json" target="_blank" rel="noreferrer">OpenAPI 3.1 contract ↗</a>
+          <Link className="btn btn-ghost" to="/sessions">Sessions and sign-in history</Link>
         </section>
       </div>
     </div>

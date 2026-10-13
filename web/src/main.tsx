@@ -28,6 +28,7 @@ import { JobScreen, Jobs } from './screens/Jobs'
 import { NewRequest } from './screens/NewRequest'
 import { Receipt } from './screens/Receipt'
 import { Rules } from './screens/Rules'
+import { Sessions } from './screens/Sessions'
 import { System } from './screens/System'
 import { SharedStatus } from './screens/SharedStatus'
 import { Unlock } from './screens/Unlock'
@@ -117,6 +118,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="rules" element={<Rules />} />
             <Route path="proof" element={<Proof />} />
             <Route path="system" element={<System />} />
+            <Route path="sessions" element={<Sessions />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
