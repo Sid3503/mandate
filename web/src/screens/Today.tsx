@@ -46,6 +46,7 @@ export function Today() {
   const navigate = useNavigate()
 
   useEffect(() => {
+    if (session.mode() !== 'demo') return
     const role = me.data?.role
     if (role === 'proposer') navigate('/clerk', { replace: true })
     else if (role === 'viewer') navigate('/proof', { replace: true })

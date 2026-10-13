@@ -52,7 +52,7 @@ export function Unlock() {
       try { localStorage.removeItem('mandate.session.expired') } catch {}
       client.clear()
       client.setQueryData(['session'], me)
-      const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : roleLanding(me.role, me.side)
+      const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : (session.mode() === 'demo' ? roleLanding(me.role, me.side) : '/')
       navigate(target, { replace: true })
     } catch (caught) {
       setError(caught)

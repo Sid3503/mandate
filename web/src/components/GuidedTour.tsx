@@ -74,20 +74,13 @@ export function GuideProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!me.data) return
+    if (localStorage.getItem('mandate.tour.welcome') === '1' || localStorage.getItem('mandate.coach.seen') === '1') return
     const isDemo = session.mode() === 'demo'
-    if (isDemo) {
-      if (localStorage.getItem('mandate.coach.seen') === '1') return
-      const timer = window.setTimeout(() => {
-        if (!isOpen.current) start('coach')
-      }, 700)
-      return () => window.clearTimeout(timer)
-    } else {
-      if (isSeen('welcome')) return
-      const timer = window.setTimeout(() => {
-        if (!isOpen.current) start('welcome')
-      }, 700)
-      return () => window.clearTimeout(timer)
-    }
+    const targetTour: TourId = isDemo ? 'coach' : 'welcome'
+    const timer = window.setTimeout(() => {
+      if (!isOpen.current) start(targetTour)
+    }, 700)
+    return () => window.clearTimeout(timer)
   }, [me.data, start])
 
   const screen = tourFor(location.pathname)
