@@ -84,7 +84,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P7.T4 | done | UI pause banner with reason/time, header Pause button for owner and approver, and "Stopped" card and refused section on Today. Proof: `web/e2e/job.spec.ts` | |
 | P7.T5 | done | `GET /v1/payees` lists payees with verification, cooling status, and diagnostics. Seeded Priya is active and attested. Proof: `api/test/phases.test.ts`, `api/test/safety.test.ts` | |
 | P7.T6 | done | Payee cooling period (first payment to new payee needs approval: `NEEDS_APPROVAL payee.not_active`), owner attestation with step-up, and pending payout account change lock (`DENY payee.change_pending`). Cases 31 and 32. Proof: `api/test/safety.test.ts`, `api/test/repair-pass.test.ts` | |
-| P7.T7 | not started | no payee screen | |
+| P7.T7 | done | Payee screen (/app/payees) with contractor accounts list, status chips, "Why can I not pay this account?" card with payability diagnostics, payout history, and passkey-guarded payout account change form. Proof: `web/e2e/passkey-repair-payees.spec.ts`, `docs/evidence/q4/payees.png` | |
 | P8.T1 | done | `api/test/phases.test.ts` "tries a payment without writing a row" | `9a2ea0b` |
 | P8.T2 | partial | `web/e2e/job.spec.ts` "the owner can try a request and check the rules with cases" | `1ac59cd` |
 | P8.T3 | partial | same e2e test | `1ac59cd` |

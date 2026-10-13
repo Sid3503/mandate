@@ -34,6 +34,7 @@
 - Q4.3 P7.T3 (Case 30): Auto-trip breakers implemented with defaults: 3 suspicious refusals in 2m (global pause), 2 unknown payee attempts in 10m (global pause), 20 agent req/m (suspends agent key), 3 autopilot failures in a row (pauses autopilot). Owner edits settings via `PUT /v1/safety/config` with passkey step-up when `passkey_for_money` is active; proposer and approver are forbidden (403). Proof: `api/test/safety.test.ts`.
 - Q4.4 P7.T4: UI pause banner (`data-testid="paused-banner"`) with reason/relative time, header Pause button for owner and approver, and Today "Stopped" card (`data-testid="today-stopped-card"`) and "Stopped by the rules" section (`data-testid="today-stopped"`). Proof: `web/e2e/job.spec.ts`.
 - Q4.5 P7.T5 P7.T6: Payee book enriched with diagnostics ("Why can I not pay this account?"), cooling period for new payees (`NEEDS_APPROVAL payee.not_active`, Case 31), owner attestation (`POST /v1/payees/:id/attest`) with step-up, payout account change lock (`DENY payee.change_pending`, Case 32), and confirm change (`POST /v1/payees/:id/confirm-change`) with passkey step-up. Proof: `api/test/safety.test.ts`, `api/test/repair-pass.test.ts`, `api/test/phases.test.ts`.
+- Q4.6 P7.T7: Payee screen (`/app/payees`) with contractor accounts list, status chips, "Why can I not pay this account?" card with payability diagnostics, payout history, and passkey-guarded payout account change form. Proof: `web/e2e/passkey-repair-payees.spec.ts`, `docs/evidence/q4/payees.png`.
 
 ## Test counts
 
@@ -52,6 +53,7 @@
 - `gates:fast` after Q4.2: 55 files, 637 API tests, 10.54s, secret check 368 tracked files, exit 0.
 - `gates:fast` after Q4.3: 55 files, 638 API tests, 11.72s, secret check 368 tracked files, exit 0.
 - `gates:fast` after Q4.5: 55 files, 639 API tests, 11.56s, secret check 368 tracked files, exit 0.
+- `gates:fast` after Q4.6: 55 files, 639 API tests, 11.29s, secret check 368 tracked files, exit 0.
 
 ## Open items
 

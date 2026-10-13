@@ -1,6 +1,6 @@
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 import { session } from './session'
-import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
+import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -387,4 +387,30 @@ export const api = {
   agentRuns: () => request<{ data: Array<{ id: string; agent: string; status: string; model: string; input: string; ms: number; createdAt: string }> }>('/v1/agent-runs'),
   agentRun: (id: string) => request<AgentRun>(`/v1/agent-runs/${id}`),
   ledger: (cursor?: string | null) => request<Page<LedgerEvent>>(`/v1/ledger?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
+  payees: () => request<{ payees: PayeeBookEntry[] }>('/v1/payees'),
+  payee: (id: string) => request<{ payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}`),
+  changePayee: (id: string, email: string) => request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/change`, { method: 'POST', body: { email } }),
+  confirmPayeeChange: async (id: string) => {
+    try {
+      return await request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/confirm-change`, { method: 'POST' })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'payee.change', payeeId: id } })
+      const signed = await startAuthentication({ optionsJSON: started.options as never })
+      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+      return request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/confirm-change`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant } })
+    }
+  },
+  cancelPayeeChange: (id: string) => request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/cancel-change`, { method: 'POST' }),
+  attestPayee: async (id: string) => {
+    try {
+      return await request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/attest`, { method: 'POST' })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'payee.attest', payeeId: id } })
+      const signed = await startAuthentication({ optionsJSON: started.options as never })
+      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+      return request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/attest`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant } })
+    }
+  },
 }
