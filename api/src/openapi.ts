@@ -380,7 +380,7 @@ export function buildOpenApi(publicUrl: string) {
   ownerRoute('post', '/v1/proposals/{id}/cancel-invoice', 'Cancel an invoice that is out and unpaid. The milestone can be billed again.', true)
   ownerRoute('post', '/v1/studio/turn', 'One turn of the dashboard agent in AG Studio: streams the model\'s words and tool calls as AG-UI events. The browser runs the dashboard\'s own tools; this route runs none and holds no ledger, service or PayPal client.')
   ownerRoute('get', '/v1/agents', 'List the issued agent keys (names, scopes, hourly limits, status, last seen). Key material is never returned.')
-  ownerRoute('post', '/v1/agents', 'Issue an agent key. Returns the full API key exactly once; only its hash is stored afterwards.')
+  ownerRoute('post', '/v1/agents', 'Issue an agent key with scopes, hourly limits, and optional expiry. Returns the full API key exactly once; only its hash is stored afterwards.')
   ownerRoute('post', '/v1/agents/{id}/revoke', 'Permanently revoke an agent key.', true)
   ownerRoute('post', '/v1/agents/{id}/upgrade', 'Replace an agent secret. The old mnd_ag_ key stops working. The same agent, scopes, and limits stay. The new key is shown once.', true)
   ownerRoute('post', '/v1/agents/{id}/resume', 'Re-activate an agent the breaker had suspended. Revoked keys stay revoked; create a new one.', true)

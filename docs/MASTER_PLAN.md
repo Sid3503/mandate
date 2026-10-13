@@ -75,7 +75,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P6.T1 | done | Create needs a passkey when the rule is on. Revoke is owner-only. The join page names the inviter and the role. Two joins: one wins. | `6105e8d` |
 | P6.T2 | done | Role change and revoke. The last owner stays. Revoke ends sessions and passkeys and lists open requests. `npm run admin:reset-owner` writes `admin_audit`. Screen `/app/members`. | `f37e3e6` |
 | P6.T3 | done | Upgrade replaces the secret and keeps the same agent or client. A legacy hash of the bare secret is rewritten on first use. | `q1-identity` |
-| P6.T4 | partial | `web/e2e/job.spec.ts` "Connect any agent shows how to plug in an MCP agent". Not the new template wizard | `1ac59cd` |
+| P6.T4 | done | Connect an agent screen with template wizard, scope checklist, can and cannot preview, expiry, and key testing. Screen /app/connect. Proof: web/e2e/passkey-repair-agent-connect.spec.ts | q1-identity |
 | P6.T5 | partial | `api/test/agent-keys.test.ts` hourly counts and last seen. Not a scorecard into a new breaker | `1ac59cd` |
 | P6.T6 | not started | no delegation end date | |
 | P7.T1 | partial | `safety_events` and pause already deny. `api/test/safety.test.ts`. Not a new gate input from this commit | `1ac59cd` |

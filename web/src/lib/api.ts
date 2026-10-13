@@ -35,7 +35,7 @@ type Options = { method?: string; body?: unknown; idempotencyKey?: string; key?:
 /** Prefix tenant routes only. Public doors (/demo/start, /workspaces, /join) stay on the outer server. */
 function scopePath(path: string): { path: string; credentials: RequestCredentials; client: boolean } {
   const workspace = session.workspace()
-  const tenant = Boolean(workspace) && (path.startsWith('/v1/') || path.startsWith('/auth/'))
+  const tenant = Boolean(workspace) && (path.startsWith('/v1/') || path.startsWith('/auth/') || path.startsWith('/mcp'))
   return { path: tenant && workspace ? `/w/${workspace}${path}` : path, credentials: workspace ? 'include' : 'same-origin', client: Boolean(workspace) }
 }
 
@@ -295,7 +295,17 @@ export const api = {
   ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
   replayRules: (rules: unknown) => request<Replay>('/v1/rules/replay', { method: 'POST', body: rules }),
   agents: () => request<AgentRow[]>('/v1/agents'),
-  createAgent: (input: { name: string; scopes: AgentScope[]; limits?: { proposalsPerHour?: number; centsPerHour?: number } }) => request<{ agent: AgentRow; apiKey: string }>('/v1/agents', { method: 'POST', body: input }),
+  createAgent: async (input: { name: string; scopes: AgentScope[]; limits?: { proposalsPerHour?: number; centsPerHour?: number }; expiryDays?: number | null }) => {
+    try {
+      return await request<{ agent: AgentRow; apiKey: string }>('/v1/agents', { method: 'POST', body: input })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'agent.issue', input } })
+      const signed = await startAuthentication({ optionsJSON: started.options as never })
+      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+      return request<{ agent: AgentRow; apiKey: string }>('/v1/agents', { method: 'POST', body: input, headers: { 'x-mandate-stepup': verified.grant } })
+    }
+  },
   revokeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/revoke`, { method: 'POST' }),
   resumeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/resume`, { method: 'POST' }),
   /** Asks the MCP door which tools a key may use. The console is served by the same server, so this needs no CORS. */

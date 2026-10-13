@@ -120,6 +120,32 @@ describe('agent keys', () => {
     expect(status).toBe(429)
   })
 
+  it('creates an agent with an expiry date, and refuses an expired key with 403 agent.expired', async () => {
+    const { app, setNow } = harness()
+    const created = await createAgent(app, { name: 'Temporary auditor', scopes: ['read'], expiryDays: 30 })
+    expect(created.status).toBe(201)
+    expect(created.json.agent.expiresAt).toBeTruthy()
+    const expiry = new Date(created.json.agent.expiresAt)
+    expect(expiry.getTime()).toBeGreaterThan(NOW.getTime())
+
+    // Active before expiry
+    expect((await call(app, 'GET', '/v1/warrant', { key: created.json.apiKey })).status).toBe(200)
+
+    // Move clock past expiry
+    setNow(new Date(expiry.getTime() + 1000))
+    const expired = await call(app, 'GET', '/v1/warrant', { key: created.json.apiKey })
+    expect(expired.status).toBe(403)
+    expect(expired.json.code).toBe('agent.expired')
+  })
+
+  it('rejects agent creation by non-owner or with bad expiry', async () => {
+    const { app } = harness()
+    const forbidden = await call(app, 'POST', '/v1/agents', { key: STUDIO_KEY, body: { name: 'Sneaky', scopes: ['read'] } })
+    expect(forbidden.status).toBe(403)
+    const badExpiry = await createAgent(app, { name: 'Bad expiry', scopes: ['read'], expiryDays: -5 })
+    expect(badExpiry.status).toBe(400)
+  })
+
   it('hides the owner-only surface from agent keys', async () => {
     const { app } = harness()
     const { apiKey } = await createKey(app)

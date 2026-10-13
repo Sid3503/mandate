@@ -1155,6 +1155,10 @@ html { scroll-behavior: smooth; }
 .connect-reveal .row.gap-s { margin-top: 6px; }
 .snippet { margin: 10px 0; border: 2px solid var(--ink); background: #fffdf6; padding: 8px 12px; }
 .snippet pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.connect-preview { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; padding: 12px 14px; border: 1.5px solid var(--ink); background: var(--surface); }
+.connect-preview-col { display: grid; gap: 6px; }
+.connect-preview-col h4 { margin: 0; font: 700 13px/1.2 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.connect-preview-col ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.4; color: var(--ink-2); }
 
 /* A status link: one person's read-only view of one job. */
 .share-page { min-height: 100vh; background: var(--paper); color: var(--ink); }

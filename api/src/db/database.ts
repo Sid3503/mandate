@@ -197,7 +197,8 @@ CREATE TABLE IF NOT EXISTS agents (
   status TEXT NOT NULL DEFAULT 'active',
   key_hash TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL,
-  last_seen_at TEXT
+  last_seen_at TEXT,
+  expires_at TEXT
 );
 CREATE INDEX IF NOT EXISTS agents_status ON agents(status);
 
@@ -288,6 +289,8 @@ export function migrate(db: DatabaseSync): void {
   applySqlSteps(db, OPS_STEPS, new Date().toISOString(), backupFileDatabase)
   const eventColumns = new Set((db.prepare('PRAGMA table_info(events)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!eventColumns.has('actor_json')) db.exec('ALTER TABLE events ADD COLUMN actor_json TEXT')
+  const agentColumns = new Set((db.prepare('PRAGMA table_info(agents)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!agentColumns.has('expires_at')) db.exec('ALTER TABLE agents ADD COLUMN expires_at TEXT')
 }
 
 /** Copies a file database aside before a new checksum step. Memory databases are skipped. */

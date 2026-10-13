@@ -84,6 +84,7 @@ export type AgentRow = {
   key_hash: string
   created_at: string
   last_seen_at: string | null
+  expires_at?: string | null
 }
 
 /** One client's own key: bound to one client on the warrant, never to the studio, never to another client. */
@@ -750,8 +751,8 @@ export class Repo {
   }
 
   createAgent(row: AgentRow): void {
-    this.db.prepare(`INSERT INTO agents (id, name, scopes_json, limits_json, status, key_hash, created_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.scopes_json, row.limits_json, row.status, row.key_hash, row.created_at, row.last_seen_at)
+    this.db.prepare(`INSERT INTO agents (id, name, scopes_json, limits_json, status, key_hash, created_at, last_seen_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.scopes_json, row.limits_json, row.status, row.key_hash, row.created_at, row.last_seen_at, row.expires_at ?? null)
   }
 
   listAgents(): AgentRow[] {
