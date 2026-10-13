@@ -150,9 +150,9 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 32 Pending payee change blocks payouts | `api/test/repair-pass.test.ts` "holds a first payment and refuses one while a change is pending" | same test as case 31 |
 | 33 Pasted policy with a hidden instruction is flagged and not published | `api/test/intent.test.ts` "does not treat a forwarded note"; e2e "a pasted policy is read sentence by sentence" | |
 | 34 Simulate writes zero rows | `api/test/phases.test.ts` "tries a payment without writing a row" | |
-| 35 No test output or log contains a canary | partial: "redacts a canary and a bearer token" and `scripts/check-secrets.mjs` | not a log sweep of the suite |
+| 35 No test output or log contains a canary | `api/test/ops-readyz-secret.test.ts` "Case 35: secret and canary log redaction sweep", `api/test/phases.test.ts` "redacts a canary and a bearer token", and `scripts/check-secrets.mjs` | |
 
-Cases 9 to 18 have the tests named in the table. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, and 32 gained tests in the repair pass and Q3 ops suites. Cases still partial, with no full test, are 30 and 35.
+Cases 9 to 18 have the tests named in the table. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 32, and 35 gained tests in the repair pass and Q3 ops suites. The only case still partial from Appendix B is 30 (scheduled for Q4 Safety).
 
 ## Confirmed facts, not changes
 
