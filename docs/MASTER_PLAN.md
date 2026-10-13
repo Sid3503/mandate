@@ -76,7 +76,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P6.T2 | done | Role change and revoke. The last owner stays. Revoke ends sessions and passkeys and lists open requests. `npm run admin:reset-owner` writes `admin_audit`. Screen `/app/members`. | `f37e3e6` |
 | P6.T3 | done | Upgrade replaces the secret and keeps the same agent or client. A legacy hash of the bare secret is rewritten on first use. | `q1-identity` |
 | P6.T4 | done | Connect an agent screen with template wizard, scope checklist, can and cannot preview, expiry, and key testing. Screen /app/connect. Proof: web/e2e/passkey-repair-agent-connect.spec.ts | q1-identity |
-| P6.T5 | partial | `api/test/agent-keys.test.ts` hourly counts and last seen. Not a scorecard into a new breaker | `1ac59cd` |
+| P6.T5 | done | Agent scorecard (requests, refusals, auto, needs-tap, last seen, breaker status). Screen /app/system. Proof: api/test/agent-keys.test.ts and web/e2e/passkey-repair-agent-scorecard.spec.ts | q1-identity |
 | P6.T6 | not started | no delegation end date | |
 | P7.T1 | partial | `safety_events` and pause already deny. `api/test/safety.test.ts`. Not a new gate input from this commit | `1ac59cd` |
 | P7.T2 | partial | `web/e2e/job.spec.ts` "the owner can stop everything with one button". Resume does not require a passkey. One-agent pause is the older suspend | `1ac59cd` |

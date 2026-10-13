@@ -148,7 +148,18 @@ export type Safety = {
 }
 
 export type AgentScope = 'read' | 'propose' | 'stream' | 'mcp' | 'deals'
-export type AgentRow = { id: string; name: string; scopes: AgentScope[]; limits: { proposalsPerHour: number; centsPerHour: number }; status: 'active' | 'suspended' | 'revoked'; createdAt: string; lastSeenAt: string | null; expiresAt?: string | null }
+export type AgentScorecard = {
+  agentId: string
+  name: string
+  status: 'active' | 'suspended' | 'revoked'
+  requests: number
+  refusals: number
+  auto: number
+  needsTap: number
+  lastSeenAt: string | null
+  breakerTripped: boolean
+}
+export type AgentRow = { id: string; name: string; scopes: AgentScope[]; limits: { proposalsPerHour: number; centsPerHour: number }; status: 'active' | 'suspended' | 'revoked'; createdAt: string; lastSeenAt: string | null; expiresAt?: string | null; scorecard?: AgentScorecard }
 export type ClientKeyRow = { id: string; name: string; partyId: string; status: 'active' | 'revoked'; createdAt: string; lastSeenAt: string | null }
 
 export type Suggestion = { id: string; payeeId: string; payeeName: string; clientId: string; clientName: string; approved: number; totalCents: number; largestCents: number; firstAt: string; draft: string }

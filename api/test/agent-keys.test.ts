@@ -195,3 +195,112 @@ describe('the breaker per agent', () => {
     expect((await call(app, 'GET', '/v1/agents')).json.find((a_: { name: string }) => a_.name === 'noisy').status).toBe('suspended')
   })
 })
+
+describe('agent scorecard', () => {
+  it('rejects scorecard requests from non-owner or for unknown agent', async () => {
+    const { app } = harness()
+    const { apiKey, agent } = await createKey(app)
+    expect((await call(app, 'GET', `/v1/agents/${randomUUID()}/scorecard`)).status).toBe(404)
+    expect((await call(app, 'GET', `/v1/agents/${agent.id}/scorecard`, { key: apiKey })).status).toBe(403)
+  })
+
+  it('tracks requests, auto approvals, needs-tap, and refusals in the scorecard', async () => {
+    const { app } = harness()
+    const { apiKey, agent } = await createKey(app, { name: 'Auditor', scopes: ['read', 'propose'] })
+
+    const initial = await call(app, 'GET', `/v1/agents/${agent.id}/scorecard`)
+    expect(initial.status).toBe(200)
+    expect(initial.json).toMatchObject({
+      agentId: agent.id,
+      name: 'Auditor',
+      status: 'active',
+      requests: 0,
+      auto: 0,
+      needsTap: 0,
+      refusals: 0,
+      breakerTripped: false,
+    })
+
+    const currentWarrant = (await call(app, 'GET', '/v1/warrant')).json
+    const { id: _id, version: _version, createdAt: _createdAt, ...body } = currentWarrant
+    await call(app, 'PUT', '/v1/warrant', { body: { ...body, fundingRequired: false, standing: [] } })
+
+    const autoProp = await call(app, 'POST', '/v1/proposals', {
+      key: apiKey,
+      idem: idem(),
+      body: { kind: 'payment', payee: 'Priya', amountCents: 100, currency: 'USD', category: 'design', description: 'Small icon', evidenceUrl: EVIDENCE, jobId: JOB },
+    })
+    expect(autoProp.status).toBe(201)
+    expect(autoProp.json.gate).toBe('AUTO')
+
+    const tapProp = await call(app, 'POST', '/v1/proposals', {
+      key: apiKey,
+      idem: idem(),
+      body: { kind: 'payment', payee: 'Priya', amountCents: 5000, currency: 'USD', category: 'design', description: 'Full logo suite', evidenceUrl: EVIDENCE, jobId: JOB },
+    })
+    expect(tapProp.status).toBe(201)
+    expect(tapProp.json.gate).toBe('NEEDS_APPROVAL')
+
+    const denyProp = await call(app, 'POST', '/v1/proposals', {
+      key: apiKey,
+      idem: idem(),
+      body: { kind: 'payment', payee: 'Unknown Random Person', amountCents: 100, currency: 'USD', category: 'design', description: 'Invalid', evidenceUrl: EVIDENCE, jobId: JOB },
+    })
+    expect(denyProp.status).toBe(201)
+    expect(denyProp.json.gate).toBe('DENY')
+
+    const card = await call(app, 'GET', `/v1/agents/${agent.id}/scorecard`)
+    expect(card.status).toBe(200)
+    expect(card.json).toMatchObject({
+      agentId: agent.id,
+      name: 'Auditor',
+      status: 'active',
+      requests: 3,
+      auto: 1,
+      needsTap: 1,
+      refusals: 1,
+      breakerTripped: false,
+    })
+
+    const list = await call(app, 'GET', '/v1/agents')
+    const found = list.json.find((a: { id: string }) => a.id === agent.id)
+    expect(found.scorecard).toMatchObject({
+      requests: 3,
+      auto: 1,
+      needsTap: 1,
+      refusals: 1,
+      breakerTripped: false,
+    })
+  })
+
+  it('reflects breaker trip and resumption in scorecard', async () => {
+    const { app } = harness({ breaker: { tripAfter: 2, windowSeconds: 120 } })
+    const { apiKey, agent } = await createKey(app, { name: 'Flaky', scopes: ['propose'] })
+
+    const bad = () => call(app, 'POST', '/v1/proposals', {
+      key: apiKey,
+      idem: idem(),
+      body: { kind: 'payment', payee: 'Nobody', amountCents: 100, currency: 'USD', category: 'design', description: 'd', evidenceUrl: EVIDENCE, jobId: JOB },
+    })
+
+    await bad()
+    await bad()
+    const third = await bad()
+    expect(third.status).toBe(403)
+    expect(third.json.code).toBe('agent.suspended')
+
+    const trippedCard = await call(app, 'GET', `/v1/agents/${agent.id}/scorecard`)
+    expect(trippedCard.status).toBe(200)
+    expect(trippedCard.json).toMatchObject({
+      status: 'suspended',
+      refusals: 2,
+      breakerTripped: true,
+    })
+
+    const resumed = await call(app, 'POST', `/v1/agents/${agent.id}/resume`)
+    expect(resumed.status).toBe(200)
+    expect(resumed.json.status).toBe('active')
+    expect(resumed.json.scorecard.breakerTripped).toBe(false)
+  })
+})
+

@@ -1,6 +1,6 @@
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 import { session } from './session'
-import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
+import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -308,6 +308,7 @@ export const api = {
   },
   revokeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/revoke`, { method: 'POST' }),
   resumeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/resume`, { method: 'POST' }),
+  agentScorecard: (id: string) => request<AgentScorecard>(`/v1/agents/${id}/scorecard`),
   /** Asks the MCP door which tools a key may use. The console is served by the same server, so this needs no CORS. */
   mcpTools: async (key: string) => {
     const answer = await request<{ result?: { tools?: Array<{ name: string }> } }>('/mcp', { method: 'POST', key, body: { jsonrpc: '2.0', id: 1, method: 'tools/list' }, headers: { accept: 'application/json, text/event-stream' } })

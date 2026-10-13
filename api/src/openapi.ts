@@ -384,6 +384,7 @@ export function buildOpenApi(publicUrl: string) {
   ownerRoute('post', '/v1/agents/{id}/revoke', 'Permanently revoke an agent key.', true)
   ownerRoute('post', '/v1/agents/{id}/upgrade', 'Replace an agent secret. The old mnd_ag_ key stops working. The same agent, scopes, and limits stay. The new key is shown once.', true)
   ownerRoute('post', '/v1/agents/{id}/resume', 'Re-activate an agent the breaker had suspended. Revoked keys stay revoked; create a new one.', true)
+  ownerRoute('get', '/v1/agents/{id}/scorecard', 'Get the scorecard for an agent: total requests, refusals, auto approvals, needs-tap count, last seen, and breaker status.')
   ownerRoute('get', '/v1/client-keys', 'List the issued client keys (name, client, status, last seen). Key material is never returned.')
   ownerRoute('post', '/v1/client-keys', 'Issue a client its own key, bound to that client on the warrant. Returns the full API key exactly once; only its hash is stored afterwards.')
   ownerRoute('post', '/v1/client-keys/{id}/revoke', 'Permanently revoke a client key.', true)

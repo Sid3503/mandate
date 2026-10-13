@@ -152,13 +152,13 @@ export function ConnectAgent() {
 
         <section className="connect-preview" data-testid="can-and-cannot-preview" aria-label="Can and cannot preview">
           <div className="connect-preview-col">
-            <h4>Can do ({preview.can.length})</h4>
+            <h3>Can do ({preview.can.length})</h3>
             {preview.can.length === 0 ? <p className="fine">No scopes selected. Add scopes above.</p> : (
               <ul>{preview.can.map((item) => <li key={item}>{item}</li>)}</ul>
             )}
           </div>
           <div className="connect-preview-col">
-            <h4>Cannot do</h4>
+            <h3>Cannot do</h3>
             <ul>{preview.cannot.map((item) => <li key={item}>{item}</li>)}</ul>
           </div>
         </section>
