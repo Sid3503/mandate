@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { SecretString } from './ops/secret'
 
 export const VERSION = '1.0.0'
 const DEV_API_KEY = 'dev-mandate-key-change-me'
@@ -76,6 +77,17 @@ export type AppConfig = {
   paypal: { clientId: string; clientSecret: string; baseUrl: string } | null
   /** The id PayPal gave the webhook when it was registered. With it, every webhook is checked against PayPal's signature. */
   paypalWebhookId: string | null
+  /** Boot secrets wrapped in SecretString so logging or inspection never reveals raw values. */
+  secrets: BootSecrets
+}
+
+export type BootSecrets = {
+  apiKey: SecretString
+  proposerKey: SecretString | null
+  buyerAgentKey: SecretString | null
+  signingKey: SecretString | null
+  paypalClientSecret: SecretString | null
+  ollamaApiKey: SecretString | null
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -136,5 +148,13 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     version: VERSION,
     paypalWebhookId: value.PAYPAL_WEBHOOK_ID ?? null,
     paypal,
+    secrets: {
+      apiKey: new SecretString(apiKey),
+      proposerKey: proposerKey ? new SecretString(proposerKey) : null,
+      buyerAgentKey: value.BUYER_AGENT_KEY ? new SecretString(value.BUYER_AGENT_KEY) : null,
+      signingKey: value.SIGNING_KEY ? new SecretString(value.SIGNING_KEY) : null,
+      paypalClientSecret: paypal ? new SecretString(paypal.clientSecret) : null,
+      ollamaApiKey: value.OLLAMA_API_KEY ? new SecretString(value.OLLAMA_API_KEY) : null,
+    },
   }
 }
