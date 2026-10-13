@@ -29,6 +29,7 @@
 - Q3.5 P2.T3 P2.T4 P2.T5: MCP under `/w/:workspaceId/mcp`, per-workspace public keys route `GET /w/:workspaceId/.well-known/mandate-keys.json`, and tenant webhook routing via `external_refs`. Proof: `api/test/ops-tenant-routing.test.ts`.
 - Q3.6 P2.T9 P2.T10 P2.T11: 15-minute cleanup job (`cleanupExpiredDemos`) deletes only expired demo workspaces and SQLite files, preserving default, studio, and live workspaces. Single tenant scheduler (`runTenantSchedulerSweep`) sweeps active external_refs without per-tenant timers; on-demand demo ticks on simulate and Today. Isolation test suite (Cases 22, 23, 24, 27). Proof: `api/test/ops-cleanup-scheduler.test.ts`.
 - Q3.7 Case 35: Suite-wide secret and canary log redaction sweep test. Proof: `api/test/ops-readyz-secret.test.ts`.
+- Q4.1 P7.T1: Gate receives plain `safety` input in `GateProposal` and `decide`, returning `DENY system.paused` on paused matching request while reads still work completely. Proof: `api/test/safety.test.ts`.
 
 ## Test counts
 
@@ -43,6 +44,7 @@
 - `gates:fast` after Q3.4: 53 files, 623 API tests, 11.73s, secret check 362 tracked files, exit 0.
 - `gates:fast` after Q3.7: 55 files, 635 API tests, 12.25s, secret check 368 tracked files, exit 0.
 - Full `npm run gates` after Q3 on 13 October 2026: 55 files, 635 API tests, 12.35s, secret check 368 tracked files, Playwright 133 passed (9.5m), axe included, exit 0.
+- `gates:fast` after Q4.1: 55 files, 636 API tests, 11.27s, secret check 368 tracked files, exit 0.
 
 ## Open items
 

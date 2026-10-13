@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { Clause } from '../src/domain/gate'
+import { Clause, decide } from '../src/domain/gate'
 import { ProposalCreateSchema } from '../src/domain/schemas'
 import { applyPause, isSuspiciousRefusal, NOT_PAUSED, RefusalCounter, type PauseState } from '../src/domain/safety'
 import { FakeInvoices } from '../src/paypal/fake'
@@ -193,5 +193,84 @@ describe('autopilot across a pause', () => {
     expect(invoices.createCalls).toBe(1)
     const charges = (await call(h.app, 'GET', '/v1/proposals')).json.data.filter((row: { kind: string }) => row.kind === 'charge')
     expect(charges[0]).toMatchObject({ phase: 'invoice_sent', clause: 'standing.billing' })
+  })
+
+  it('P7.T1: gate gets a plain safety input, matching request returns DENY system.paused, and reads still work', async () => {
+    const h = harness()
+    const warrant = (await call(h.app, 'GET', '/v1/warrant')).json
+    const body = { ...(warrant.body ?? warrant), fundingRequired: false, standing: [] }
+
+    // 1. Direct decide evaluation with plain safety input
+    const baseProposal = {
+      kind: 'payment' as const,
+      payeeId: 'payee_priya',
+      amountCents: 1000,
+      currency: 'USD',
+      category: 'design',
+      evidenceUrl: EVIDENCE,
+      parent: null,
+    }
+
+    // When paused, proposer gets DENY system.paused
+    const pausedProposer = decide(body, {
+      ...baseProposal,
+      safety: { paused: true, reason: 'Maintenance window' },
+      actor: 'proposer',
+    }, { reservedCents: 0, priorCaptureIds: [] })
+    expect(pausedProposer).toMatchObject({
+      gate: 'DENY',
+      clause: Clause.systemPaused,
+    })
+    expect(pausedProposer.detail).toContain('Maintenance window')
+
+    // When paused, owner gets NEEDS_APPROVAL system.paused
+    const pausedOwner = decide(body, {
+      ...baseProposal,
+      safety: { paused: true, reason: 'Maintenance window' },
+      actor: 'owner',
+    }, { reservedCents: 0, priorCaptureIds: [] })
+    expect(pausedOwner).toMatchObject({
+      gate: 'NEEDS_APPROVAL',
+      clause: Clause.systemPaused,
+    })
+
+    // If already invalid (e.g. payee unknown), keeps original refusal
+    const pausedUnknown = decide(body, {
+      ...baseProposal,
+      payeeId: null,
+      safety: { paused: true, reason: 'Maintenance window' },
+      actor: 'proposer',
+    }, { reservedCents: 0, priorCaptureIds: [] })
+    expect(pausedUnknown).toMatchObject({
+      gate: 'DENY',
+      clause: Clause.payeeUnknown,
+    })
+
+    // 2. Integration: Pause and verify reads still work completely
+    await publish(h.app, { fundingRequired: false, standing: [] })
+    await call(h.app, 'POST', '/v1/safety/pause', { body: { reason: 'P7.T1 check' } })
+    const denied = await ask(h.app)
+    expect(denied.json).toMatchObject({
+      gate: 'DENY',
+      clause: 'system.paused',
+    })
+
+    // Reads still work while paused
+    const propRes = await call(h.app, 'GET', '/v1/proposals', { key: STUDIO_KEY })
+    expect(propRes.status).toBe(200)
+    expect(propRes.json.data).toBeDefined()
+
+    const warrantRes = await call(h.app, 'GET', '/v1/warrant', { key: STUDIO_KEY })
+    expect(warrantRes.status).toBe(200)
+
+    const todayRes = await call(h.app, 'GET', '/v1/today', { key: OWNER_KEY })
+    expect(todayRes.status).toBe(200)
+
+    const statusRes = await call(h.app, 'GET', '/v1/status', { key: STUDIO_KEY })
+    expect(statusRes.status).toBe(200)
+    expect(statusRes.json.paused).toMatchObject({ reason: 'P7.T1 check' })
+
+    // Resume
+    await call(h.app, 'POST', '/v1/safety/resume')
   })
 })

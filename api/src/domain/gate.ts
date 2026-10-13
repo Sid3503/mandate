@@ -81,6 +81,14 @@ export type DealContext = {
   accepted?: boolean
 }
 
+export type GateSafety = {
+  paused: boolean
+  reason?: string | null
+  since?: string | null
+  by?: 'owner' | 'breaker' | null
+  epoch?: number
+}
+
 export type GateProposal = {
   kind: 'payment' | 'charge' | 'refund'
   payeeId: string | null
@@ -95,6 +103,8 @@ export type GateProposal = {
   dealId?: string | null
   milestone?: number | null
   deal?: DealContext | null
+  safety?: GateSafety | null
+  actor?: string
 }
 
 /** Cents a captured client charge can still fund for contractors under the share rule. */
@@ -139,7 +149,7 @@ function httpsUrl(value: string): boolean {
   }
 }
 
-export function decide(warrant: WarrantBody, proposal: GateProposal, context: GateContext): Decision {
+function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context: GateContext): Decision {
   if (!Number.isInteger(proposal.amountCents) || proposal.amountCents <= 0) {
     return deny(Clause.shapeInvalid, 'amount must be a positive integer number of cents')
   }
@@ -255,6 +265,29 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
     clause: Clause.amountNeedsApproval,
     detail: `at or above ${warrant.autoSettleUnderCents} cents, so the owner has to tap`,
   }
+}
+
+export function decide(warrant: WarrantBody, proposal: GateProposal, context: GateContext): Decision {
+  const result = evaluateProposal(warrant, proposal, context)
+  if (proposal.safety?.paused && result.gate !== 'DENY') {
+    const why = proposal.safety.reason ? ` (${proposal.safety.reason})` : ''
+    const actor = proposal.actor ?? 'proposer'
+    if (actor !== 'owner') {
+      return {
+        gate: 'DENY',
+        clause: Clause.systemPaused,
+        detail: `Mandate is paused${why}, so nothing automatic runs and no agent is served until the owner resumes it`,
+      }
+    }
+    if (result.gate === 'AUTO') {
+      return {
+        gate: 'NEEDS_APPROVAL',
+        clause: Clause.systemPaused,
+        detail: `Mandate is paused${why}: nothing goes without the owner's tap`,
+      }
+    }
+  }
+  return result
 }
 
 /** The standing rule that covers this payout, or null. The other checks have already passed by the time this is asked. */
