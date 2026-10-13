@@ -296,7 +296,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     if (who.session.method === 'recovery') throw new Problem(403, 'auth/forbidden', 'Recovery cannot approve', 'A recovery session can only add a passkey.')
     const control = requireControl(ctx)
     if (!ctx.webauthn) throw new Problem(503, 'flag/disabled', 'Not configured', 'Passkeys need a site name and origin.')
-    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean; role?: string; label?: string | null; memberId?: string; input?: unknown; payload?: unknown }
+    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean; role?: string; label?: string | null; memberId?: string; input?: unknown; payload?: unknown; payeeId?: string; id?: string }
     const kind = body.kind ?? ''
     let binding = ''
     if (kind === 'approve') {
@@ -321,6 +321,10 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       if (typeof body.enabled === 'boolean') binding = passkeyRuleBinding(body.enabled)
       else if (body.binding === passkeyRuleBinding(true) || body.binding === passkeyRuleBinding(false)) binding = body.binding
       else throw new Problem(400, 'request.invalid', 'Request is invalid', 'Say whether the passkey rule is on.')
+    } else if (kind === 'payee.change' || kind === 'payee.attest') {
+      const payeeId = body.payeeId ?? body.id ?? ''
+      if (!payeeId) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the payee.')
+      binding = stepBinding(kind, payeeId)
     } else {
       binding = body.binding ?? ''
     }

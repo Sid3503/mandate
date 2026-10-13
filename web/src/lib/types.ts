@@ -31,6 +31,35 @@ export type Kind = Proposal['kind']
 export type Gate = Proposal['gate']
 export type Party = Warrant['payees'][number]
 
+export type PayeeBookEntry = {
+  id: string
+  name: string
+  email: string
+  status: 'active' | 'pending' | 'disabled'
+  verified_method: string
+  first_seen: string
+  total_paid_cents: number
+  change_pending: boolean
+  change_email: string | null
+  cooling: boolean
+  waitUntil: string | null
+  diagnostics: {
+    canPay: boolean
+    reason: string
+    clause: string | null
+  }
+  history?: Array<{
+    id: string
+    kind: string
+    amountCents: number
+    currency: string
+    phase: string
+    clause: string | null
+    description: string
+    createdAt: string
+  }>
+}
+
 export type Page<T> = { data: T[]; nextCursor: string | null }
 
 export type LedgerEvent = {
