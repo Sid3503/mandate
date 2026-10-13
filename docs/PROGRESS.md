@@ -42,6 +42,7 @@
 - `gates:fast` after Q3.3: 52 files, 615 API tests, 12.27s, secret check 361 tracked files, exit 0.
 - `gates:fast` after Q3.4: 53 files, 623 API tests, 11.73s, secret check 362 tracked files, exit 0.
 - `gates:fast` after Q3.7: 55 files, 635 API tests, 12.25s, secret check 368 tracked files, exit 0.
+- Full `npm run gates` after Q3 on 13 October 2026: 55 files, 635 API tests, 12.35s, secret check 368 tracked files, Playwright 133 passed (9.5m), axe included, exit 0.
 
 ## Open items
 
@@ -85,4 +86,4 @@
 
 ## Next
 
-Q3 gates run: hygiene, typecheck, API test suite, secret check, web build, and e2e Playwright suite.
+Cut branch `q4-safety` and execute Q4 Safety (P7.T1 through P7.T7).
