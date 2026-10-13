@@ -384,13 +384,76 @@ export class Repo {
    */
   stampEvents: (() => Record<string, unknown>) | null = null
 
-  payeeRow(id: string): { status: string; change_pending: number; first_seen: string; verified_method: string; total_paid_cents: number } | null {
-    return this.db.prepare('SELECT status, change_pending, first_seen, verified_method, total_paid_cents FROM payees WHERE id = ?').get(id) as { status: string; change_pending: number; first_seen: string; verified_method: string; total_paid_cents: number } | undefined ?? null
+  payeeRow(id: string): { id: string; email: string; status: string; change_pending: number; change_email: string | null; first_seen: string; verified_method: string; total_paid_cents: number } | null {
+    return this.db.prepare('SELECT id, email, status, change_pending, change_email, first_seen, verified_method, total_paid_cents FROM payees WHERE id = ?').get(id) as { id: string; email: string; status: string; change_pending: number; change_email: string | null; first_seen: string; verified_method: string; total_paid_cents: number } | undefined ?? null
   }
 
   /** The payout book. Reading it does not change a payment. */
-  listPayees(): Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number }> {
-    return this.db.prepare('SELECT id, email, status, verified_method, first_seen, total_paid_cents, change_pending FROM payees ORDER BY email').all() as Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number }>
+  listPayees(): Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number; change_email: string | null }> {
+    return this.db.prepare('SELECT id, email, status, verified_method, first_seen, total_paid_cents, change_pending, change_email FROM payees ORDER BY email').all() as Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number; change_email: string | null }>
+  }
+
+  insertPayee(payee: { id: string; email: string; status?: string; verified_method?: string; first_seen?: string }): void {
+    const status = payee.status ?? 'active'
+    const verified = payee.verified_method ?? 'unverified'
+    const seen = payee.first_seen ?? new Date().toISOString()
+    this.db.prepare(
+      'INSERT OR IGNORE INTO payees (id, email, status, verified_method, first_seen, total_paid_cents, change_pending) VALUES (?, ?, ?, ?, ?, 0, 0)',
+    ).run(payee.id, payee.email, status, verified, seen)
+  }
+
+  updatePayeePaidCents(id: string, amountCents: number): void {
+    this.db.prepare('UPDATE payees SET total_paid_cents = total_paid_cents + ? WHERE id = ?').run(amountCents, id)
+  }
+
+  requestPayeeChange(id: string, newEmail: string): void {
+    this.db.prepare('UPDATE payees SET change_email = ?, change_pending = 1 WHERE id = ?').run(newEmail, id)
+    live.publish({ type: 'changed', scope: 'rules', what: 'payee.change_requested', at: stamp() })
+  }
+
+  confirmPayeeChange(id: string): void {
+    const row = this.payeeRow(id)
+    if (!row || !row.change_email) return
+    const newEmail = row.change_email
+    this.db.prepare('UPDATE payees SET email = change_email, change_email = NULL, change_pending = 0 WHERE id = ?').run(id)
+    const warrant = this.latestWarrant()
+    if (warrant) {
+      const target = warrant.body.payees.find((p) => p.id === id)
+      if (target && target.email !== newEmail) {
+        const updatedPayees = warrant.body.payees.map((p) => p.id === id ? { ...p, email: newEmail } : p)
+        const updatedBody = { ...warrant.body, payees: updatedPayees }
+        this.db.prepare('UPDATE warrants SET body_json = ? WHERE id = ? AND version = ?').run(
+          JSON.stringify(updatedBody), warrant.id, warrant.version,
+        )
+      }
+    }
+    live.publish({ type: 'changed', scope: 'rules', what: 'payee.change_confirmed', at: stamp() })
+  }
+
+  cancelPayeeChange(id: string): void {
+    this.db.prepare('UPDATE payees SET change_email = NULL, change_pending = 0 WHERE id = ?').run(id)
+    live.publish({ type: 'changed', scope: 'rules', what: 'payee.change_cancelled', at: stamp() })
+  }
+
+  attestPayee(id: string): void {
+    this.db.prepare("UPDATE payees SET verified_method = 'owner_attested', status = 'active' WHERE id = ?").run(id)
+    live.publish({ type: 'changed', scope: 'rules', what: 'payee.attested', at: stamp() })
+  }
+
+  payeeHistory(id: string, limit = 20): Array<{ id: string; kind: string; amountCents: number; currency: string; phase: string; clause: string | null; description: string; createdAt: string }> {
+    const rows = this.db.prepare(
+      'SELECT id, kind, amount_cents, currency, phase, clause, description, created_at FROM proposals WHERE payee_id = ? ORDER BY created_at DESC LIMIT ?',
+    ).all(id, limit) as Array<{ id: string; kind: string; amount_cents: number; currency: string; phase: string; clause: string | null; description: string; created_at: string }>
+    return rows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      amountCents: r.amount_cents,
+      currency: r.currency,
+      phase: r.phase,
+      clause: r.clause,
+      description: r.description,
+      createdAt: r.created_at,
+    }))
   }
 
   insertEvent(id: string, proposalId: string, type: string, clause: string | null, payload: unknown, now: string): void {

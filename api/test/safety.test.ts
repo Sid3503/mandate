@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { stepBinding } from '../src/auth/passkeys'
@@ -7,7 +8,7 @@ import { ProposalCreateSchema } from '../src/domain/schemas'
 import { applyPause, isSuspiciousRefusal, NOT_PAUSED, RefusalCounter, type PauseState } from '../src/domain/safety'
 import { loadFlags } from '../src/flags'
 import { FakeInvoices } from '../src/paypal/fake'
-import { agree, BUYER_KEY, call, closeAll, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
 
@@ -528,6 +529,184 @@ describe('autopilot across a pause', () => {
     expect(safetyGet.status).toBe(200)
     const safetyData = (await safetyGet.json()) as { breaker: { tripAfter: number } }
     expect(safetyData.breaker.tripAfter).toBe(5)
+
+    controlDb.close()
+  })
+
+  it('P7.T5 & P7.T6 (Cases 31-32): payee cooling period, owner attestation, and pending change lock with step-up', async () => {
+    const controlDb = new DatabaseSync(':memory:')
+    const control = new ControlStore(controlDb, 'pepper-p7-payee')
+    const now = '2026-10-12T12:00:00.000Z'
+    control.insertWorkspace({ id: 'ws_default', slug: 'default', name: 'Default', mode: 'default', paypal_mode: 'fake', db_path: ':memory:', status: 'active', created_at: now, expires_at: null, last_active_at: now, signing_key_sealed: 'sealed' })
+    const ownerId = 'usr_owner_payee'
+    control.addMember({ id: ownerId, workspaceId: 'ws_default', name: 'Owner', role: 'owner', now })
+    control.setPasskeyForMoney('ws_default', false)
+
+    const ownerToken = 'owner-session-token-32chars-payee'
+    control.putSession({ token: ownerToken, memberId: ownerId, workspaceId: 'ws_default', method: 'passkey', now, idleHours: 12, absoluteDays: 7 })
+    const ownerHeaders = { ...WEB, cookie: `mnd_session=${ownerToken}` }
+
+    const h = harness({
+      control,
+      flags: loadFlags({ FLAG_PAYEE_BOOK: '1', FLAG_PASSKEYS: '1' }),
+    })
+
+    // Seeded Priya is owner_attested and active
+    const initPayees = await h.app.request('http://mandate.test/v1/payees', { headers: ownerHeaders })
+    expect(initPayees.status).toBe(200)
+    const initData = (await initPayees.json()) as { payees: Array<{ id: string; email: string; status: string; verified_method: string; diagnostics: { canPay: boolean } }> }
+    const priya = initData.payees.find((p) => p.id === 'payee_priya')
+    expect(priya).toBeDefined()
+    expect(priya?.verified_method).toBe('owner_attested')
+    expect(priya?.diagnostics.canPay).toBe(true)
+
+    // Settle a client payment to fund Bob's payout
+    const deal = await agree(h.app)
+    const paid = await collect(h.app, deal.id, 0)
+
+    // Publish warrant with a new payee "payee_bob" and standing rule
+    const warrant = (await call(h.app, 'GET', '/v1/warrant')).json
+    const { id: _id, version: _version, createdAt: _createdAt, signatureJson: _sig, ...cleanBody } = warrant
+    const body = cleanBody as any
+    const updatedPayees = [
+      ...body.payees,
+      { id: 'payee_bob', displayName: 'Bob Builder', email: 'bob@example.com' },
+    ]
+    const updatedStanding = [
+      ...(body.standing ?? []),
+      { id: 'bob_rule', payeeId: 'payee_bob', clientIds: ['client_northwind'], requireDeal: false },
+    ]
+    const warrantBody = { ...body, fundingRequired: true, payees: updatedPayees, standing: updatedStanding }
+    const published = await call(h.app, 'PUT', '/v1/warrant', { body: warrantBody })
+    expect(published.status).toBe(201)
+
+    // Now turn on passkey rule for step-up enforcement
+    control.setPasskeyForMoney('ws_default', true)
+
+    // Bob is now registered in payee book as pending/cooling
+    const payeesAfterAdd = await h.app.request('http://mandate.test/v1/payees', { headers: ownerHeaders })
+    expect(payeesAfterAdd.status).toBe(200)
+    const afterData = (await payeesAfterAdd.json()) as { payees: Array<{ id: string; email: string; status: string; cooling: boolean; diagnostics: { canPay: boolean; clause: string } }> }
+    const bob = afterData.payees.find((p) => p.id === 'payee_bob')
+    expect(bob).toBeDefined()
+    expect(bob?.cooling).toBe(true)
+    expect(bob?.status).toBe('pending')
+    expect(bob?.diagnostics.canPay).toBe(false)
+    expect(bob?.diagnostics.clause).toBe('payee.not_active')
+
+    // Case 31: First payment to a new payee without attestation needs approval (NEEDS_APPROVAL payee.not_active)
+    const bobReq = {
+      kind: 'payment',
+      payee: 'Bob Builder',
+      amountCents: 5000,
+      currency: 'USD',
+      category: 'design',
+      description: 'Bob first task',
+      evidenceUrl: EVIDENCE,
+      jobId: JOB,
+      fundingCaptureId: paid.captureId,
+    }
+    const bobSim = await call(h.app, 'POST', '/v1/rules/simulate', { body: { request: bobReq } })
+    expect(bobSim.status).toBe(200)
+    expect(bobSim.json.verdict.live).toMatchObject({
+      gate: 'NEEDS_APPROVAL',
+      clause: 'payee.not_active',
+    })
+
+    // Attest Bob: requires step-up when passkey rule is on
+    const attestNoStep = await h.app.request('http://mandate.test/v1/payees/payee_bob/attest', {
+      method: 'POST',
+      headers: ownerHeaders,
+    })
+    expect(attestNoStep.status).toBe(401)
+
+    // Attest Bob with passkey grant
+    const attestGrant = 'grant-attest-bob'
+    control.putGrant({
+      id: attestGrant,
+      memberId: ownerId,
+      workspaceId: 'ws_default',
+      kind: 'payee.attest',
+      binding: stepBinding('payee.attest', 'payee_bob'),
+      now,
+    })
+    const attestWithGrant = await h.app.request('http://mandate.test/v1/payees/payee_bob/attest', {
+      method: 'POST',
+      headers: { ...ownerHeaders, 'x-mandate-stepup': attestGrant },
+    })
+    expect(attestWithGrant.status).toBe(200)
+    const attestedBob = (await attestWithGrant.json()) as { ok: boolean; payee: { verified_method: string; status: string; cooling: boolean; diagnostics: { canPay: boolean } } }
+    expect(attestedBob.payee.verified_method).toBe('owner_attested')
+    expect(attestedBob.payee.cooling).toBe(false)
+    expect(attestedBob.payee.diagnostics.canPay).toBe(true)
+
+    // Now simulate: with owner attestation, standing rule auto-approves!
+    const bobSimAttested = await call(h.app, 'POST', '/v1/rules/simulate', { body: { request: bobReq } })
+    expect(bobSimAttested.status).toBe(200)
+    expect(bobSimAttested.json.verdict.live.gate).toBe('AUTO')
+
+    // Request payee payout account change
+    const changeReq = await h.app.request('http://mandate.test/v1/payees/payee_bob/change', {
+      method: 'POST',
+      headers: { ...ownerHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'bob.new@example.com' }),
+    })
+    expect(changeReq.status).toBe(200)
+    const changedData = (await changeReq.json()) as { ok: boolean; payee: { change_pending: boolean; change_email: string; diagnostics: { canPay: boolean; clause: string } } }
+    expect(changedData.payee.change_pending).toBe(true)
+    expect(changedData.payee.change_email).toBe('bob.new@example.com')
+    expect(changedData.payee.diagnostics.canPay).toBe(false)
+    expect(changedData.payee.diagnostics.clause).toBe('payee.change_pending')
+
+    // Case 32: While change is pending, payout is DENIED at the gate
+    const bobSimChangePending = await call(h.app, 'POST', '/v1/rules/simulate', { body: { request: bobReq } })
+    expect(bobSimChangePending.status).toBe(200)
+    expect(bobSimChangePending.json.verdict.live).toMatchObject({
+      gate: 'DENY',
+      clause: 'payee.change_pending',
+    })
+
+    // Confirming change requires step-up
+    const confirmNoStep = await h.app.request('http://mandate.test/v1/payees/payee_bob/confirm-change', {
+      method: 'POST',
+      headers: ownerHeaders,
+    })
+    expect(confirmNoStep.status).toBe(401)
+
+    // Confirm with step-up grant
+    const changeGrant = 'grant-change-bob'
+    control.putGrant({
+      id: changeGrant,
+      memberId: ownerId,
+      workspaceId: 'ws_default',
+      kind: 'payee.change',
+      binding: stepBinding('payee.change', 'payee_bob'),
+      now,
+    })
+    const confirmWithGrant = await h.app.request('http://mandate.test/v1/payees/payee_bob/confirm-change', {
+      method: 'POST',
+      headers: { ...ownerHeaders, 'x-mandate-stepup': changeGrant },
+    })
+    expect(confirmWithGrant.status).toBe(200)
+    const confirmedData = (await confirmWithGrant.json()) as { ok: boolean; payee: { email: string; change_pending: boolean; diagnostics: { canPay: boolean } } }
+    expect(confirmedData.payee.email).toBe('bob.new@example.com')
+    expect(confirmedData.payee.change_pending).toBe(false)
+    expect(confirmedData.payee.diagnostics.canPay).toBe(true)
+
+    // After confirmation, payouts can proceed again!
+    const bobSimAfterConfirm = await call(h.app, 'POST', '/v1/rules/simulate', { body: { request: bobReq } })
+    expect(bobSimAfterConfirm.status).toBe(200)
+    expect(bobSimAfterConfirm.json.verdict.live.gate).toBe('AUTO')
+
+    // Role check: proposer cannot access or mutate payee book
+    const proposerRead = await h.app.request('http://mandate.test/v1/payees', { headers: { Authorization: `Bearer ${STUDIO_KEY}` } })
+    expect(proposerRead.status).toBe(403)
+    const proposerChange = await h.app.request('http://mandate.test/v1/payees/payee_bob/change', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${STUDIO_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'hacker@example.com' }),
+    })
+    expect(proposerChange.status).toBe(403)
 
     controlDb.close()
   })

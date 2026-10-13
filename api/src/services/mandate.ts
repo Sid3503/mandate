@@ -244,6 +244,15 @@ export class MandateService {
       const version = current ? current.version + 1 : 1
       const id = current?.id ?? WARRANT_ID
       this.repo.insertWarrant(id, version, parsed.data, now, signatureJson)
+      for (const payee of parsed.data.payees) {
+        this.repo.insertPayee({
+          id: payee.id,
+          email: payee.email,
+          status: 'active',
+          verified_method: 'unverified',
+          first_seen: now,
+        })
+      }
       return { id, version, createdAt: now, ...parsed.data }
     })
     return { status: 201, body: saved }
@@ -771,6 +780,9 @@ export class MandateService {
     const now = this.iso()
     this.repo.transaction(() => {
       this.repo.applyPayout(row.id, update, now)
+      if (update.phase === 'captured' && row.payee_id) {
+        this.repo.updatePayeePaidCents(row.payee_id, item.amountCents)
+      }
       if (row.phase !== update.phase || row.payout_status !== item.status) {
         const type = update.phase === 'captured' ? 'payout.completed'
           : update.phase === 'payout_unclaimed' ? 'payout.unclaimed'

@@ -82,8 +82,8 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P7.T2 | done | Pause controls for all, autopilot, and one agent key. Approver can pause, only owner can resume, step-up required for resume when passkey rule active. Proof: `api/test/safety.test.ts` | |
 | P7.T3 | done | Auto-trip breakers (3 refusals/2m, 2 unknown payees/10m, 20 agent req/m, 3 autopilot failures) and owner edits settings with step-up. Proof: `api/test/safety.test.ts` | |
 | P7.T4 | done | UI pause banner with reason/time, header Pause button for owner and approver, and "Stopped" card and refused section on Today. Proof: `web/e2e/job.spec.ts` | |
-| P7.T5 | partial | `api/test/phases.test.ts` "tries a payment without writing a row" sees Priya in `GET /v1/payees` | `9a2ea0b` |
-| P7.T6 | partial | `api/src/domain/payee-book.ts`. `api/test/phases.test.ts` "never turns a refusal into an approval". No test that a new payee needs approval | `9a2ea0b` |
+| P7.T5 | done | `GET /v1/payees` lists payees with verification, cooling status, and diagnostics. Seeded Priya is active and attested. Proof: `api/test/phases.test.ts`, `api/test/safety.test.ts` | |
+| P7.T6 | done | Payee cooling period (first payment to new payee needs approval: `NEEDS_APPROVAL payee.not_active`), owner attestation with step-up, and pending payout account change lock (`DENY payee.change_pending`). Cases 31 and 32. Proof: `api/test/safety.test.ts`, `api/test/repair-pass.test.ts` | |
 | P7.T7 | not started | no payee screen | |
 | P8.T1 | done | `api/test/phases.test.ts` "tries a payment without writing a row" | `9a2ea0b` |
 | P8.T2 | partial | `web/e2e/job.spec.ts` "the owner can try a request and check the rules with cases" | `1ac59cd` |
@@ -146,8 +146,8 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 28 Budget 0 means zero model calls, quick asks still work | `api/test/ops-ratelimit-budget.test.ts` "budget 0 blocks reservations while quick asks still succeed" | |
 | 29 Kill switch stops all agents | `api/test/repair-pass.test.ts` "a kill stops the clerk path and a drafter that already has a model" | studio turn and a drafter that already has a model |
 | 30 Spam trips the breaker, resume needs step-up, proposer cannot pause | `api/test/safety.test.ts` "P7.T3 (Case 30): auto-trip breakers (unknown payees, agent spam, autopilot failures) and owner edits settings with step-up" | |
-| 31 First payment to a new payee needs approval | `api/test/repair-pass.test.ts` "holds a first payment and refuses one while a change is pending" | same test as case 32 |
-| 32 Pending payee change blocks payouts | `api/test/repair-pass.test.ts` "holds a first payment and refuses one while a change is pending" | same test as case 31 |
+| 31 First payment to a new payee needs approval | `api/test/safety.test.ts` "P7.T5 & P7.T6 (Cases 31-32): payee cooling period, owner attestation, and pending change lock with step-up", `api/test/repair-pass.test.ts` "holds a first payment and refuses one while a change is pending" | |
+| 32 Pending payee change blocks payouts | `api/test/safety.test.ts` "P7.T5 & P7.T6 (Cases 31-32): payee cooling period, owner attestation, and pending change lock with step-up", `api/test/repair-pass.test.ts` "holds a first payment and refuses one while a change is pending" | |
 | 33 Pasted policy with a hidden instruction is flagged and not published | `api/test/intent.test.ts` "does not treat a forwarded note"; e2e "a pasted policy is read sentence by sentence" | |
 | 34 Simulate writes zero rows | `api/test/phases.test.ts` "tries a payment without writing a row" | |
 | 35 No test output or log contains a canary | `api/test/ops-readyz-secret.test.ts` "Case 35: secret and canary log redaction sweep", `api/test/phases.test.ts` "redacts a canary and a bearer token", and `scripts/check-secrets.mjs` | |
