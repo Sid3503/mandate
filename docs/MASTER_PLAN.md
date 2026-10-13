@@ -39,8 +39,8 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P2.T3 | partial | `api/test/phases.test.ts` "isolates a demo, rejects a bad id, and will not delete a studio". MCP is not under `/w` | `9a2ea0b` |
 | P2.T4 | partial | seal and open in that same test. No per-workspace public key route | `9a2ea0b` |
 | P2.T5 | not started | `external_refs` methods exist. Webhooks do not write them | `9a2ea0b` |
-| P2.T6 | partial | template is built in `api/src/boot.ts` when flags are on. No `npm run seed:template`. No number test | `9a2ea0b` |
-| P2.T7 | partial | demo start is in the isolation test. `reset`, `switch`, and `simulate` are in `api/src/http/extra.ts` and have no test | `9a2ea0b` |
+| P2.T6 | done | npm run seed:template script and frozen numbers test for Line Studio template. Proof: `api/test/ops-demo-template.test.ts` | `q3-ops` |
+| P2.T7 | done | Integration tests for demo reset (/v1/demo/reset), role switch (/v1/demo/switch), and simulate (/v1/demo/simulate). Proof: `api/test/ops-demo-template.test.ts` | `q3-ops` |
 | P2.T8 | done | Demo workspace daily model cap (50k tokens), IP rate limiting (sixth demo 429). Proof: `api/test/ops-ratelimit-budget.test.ts` | `q3-ops` |
 | P2.T9 | partial | isolation test: `deleteDemo` on a studio returns false. No 15 minute job. The file is not removed by a scheduler | `9a2ea0b` |
 | P2.T10 | not started | no tenant scheduler | |
