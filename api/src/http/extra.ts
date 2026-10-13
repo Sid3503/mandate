@@ -292,7 +292,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     if (who.session.method === 'recovery') throw new Problem(403, 'auth/forbidden', 'Recovery cannot approve', 'A recovery session can only add a passkey.')
     const control = requireControl(ctx)
     if (!ctx.webauthn) throw new Problem(503, 'flag/disabled', 'Not configured', 'Passkeys need a site name and origin.')
-    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean }
+    const body = await c.req.json() as { kind?: string; binding?: string; proposalId?: string; enabled?: boolean; role?: string; label?: string | null }
     const kind = body.kind ?? ''
     let binding = ''
     if (kind === 'approve') {
@@ -302,6 +302,9 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       binding = hash
     } else if (kind === 'recovery') {
       binding = stepBinding('recovery', 'regenerate')
+    } else if (kind === 'invite') {
+      if (!body.role) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name a role.')
+      binding = stepBinding('invite', JSON.stringify({ role: body.role, label: body.label ?? null }))
     } else if (kind === 'passkey-rule') {
       if (typeof body.enabled === 'boolean') binding = passkeyRuleBinding(body.enabled)
       else if (body.binding === passkeyRuleBinding(true) || body.binding === passkeyRuleBinding(false)) binding = body.binding
@@ -532,6 +535,22 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     return c.json({ token, join: `/app/join#t=${token}` })
   })
 
+  app.post('/v1/invites/revoke', async (c) => {
+    if (!flags.invites) throw new Problem(404, 'flag/disabled', 'Not available', 'Invites are off on this server.')
+    const who = memberFromCookie(c, ctx)
+    const control = requireControl(ctx)
+    if (!who || who.member.role !== 'owner') throw new Problem(403, 'auth/forbidden', 'Owner required', 'Only an owner can revoke an invite.')
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
+    const body = await c.req.json().catch(() => null) as { token?: string } | null
+    if (!body?.token) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Send the invite.')
+    if (!control.revokeInvite(who.member.workspace_id, body.token, ctx.now().toISOString())) {
+      throw new Problem(404, 'invite/not-found', 'Not found', 'That invite is not yours, or it is already used.')
+    }
+    return c.json({ ok: true })
+  })
+
   app.post('/join/preview', async (c) => {
     if (!flags.invites) throw new Problem(404, 'flag/disabled', 'Not available', 'Invites are off on this server.')
     const control = requireControl(ctx)
@@ -540,7 +559,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     const peek = control.peekInvite(body.token, ctx.now().toISOString())
     if (!peek || peek.expired) throw new Problem(400, 'invite/invalid', 'Invite is not valid', 'That invite is used, expired, or unknown.')
     const workspace = control.workspace(peek.workspace_id)
-    return c.json({ workspaceId: peek.workspace_id, name: workspace?.name ?? 'Studio', role: peek.role })
+    return c.json({ workspaceId: peek.workspace_id, name: workspace?.name ?? 'Studio', role: peek.role, inviter: peek.inviter })
   })
 
   app.post('/join', async (c) => {

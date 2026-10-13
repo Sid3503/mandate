@@ -7,7 +7,9 @@
 - Q1.1 P3.T7 `52fde09`: session list, revoke, revoke others, owner sign-in history, screen `/app/sessions`.
 - Q1.2 P3.T8 `5f7d0c5`: recovery codes issued, confirmed with "I saved these", used once, and replaced only with a passkey step-up. Proof: `api/test/identity.test.ts` and `web/e2e/passkey-repair-recovery.spec.ts`.
 - Q1.3 P3.T9 `2904707`: add a passkey and refuse to remove the last one. Another member's id is 404. A call without the web client header is 403. Proof: `api/test/identity.test.ts` and `web/e2e/passkey-repair-passkeys.spec.ts`. Screenshot `docs/evidence/q1/passkeys.png` shows a fingerprint and no codes.
-- Q1.4 P3.T10: Chromium virtual authenticator on register (`passkey-repair.spec.ts`), sign in again (`passkey-repair-login.spec.ts`), step-up approve (`passkey-repair-receipt.spec.ts`), a second passkey (`passkey-repair-passkeys.spec.ts`), and recovery replace (`passkey-repair-recovery.spec.ts`). Unlock has "Sign in with a passkey". Screenshot `docs/evidence/q1/passkey-login.png` shows one active session, one ended session, and no codes.
+- Q1.4 P3.T10 `a9df7ed`: Chromium virtual authenticator on register (`passkey-repair.spec.ts`), sign in again (`passkey-repair-login.spec.ts`), step-up approve (`passkey-repair-receipt.spec.ts`), a second passkey (`passkey-repair-passkeys.spec.ts`), and recovery replace (`passkey-repair-recovery.spec.ts`). Unlock has "Sign in with a passkey". Screenshot `docs/evidence/q1/passkey-login.png` shows one active session, one ended session, and no codes.
+- Run book v2 `31d78b3`. No checkpoints. A blocked task is logged and the queue continues.
+- Q1.5 P6.T1: invite create needs a passkey when the rule is on. Revoke is owner-only, a proposer is 403, an unknown token is 404. The join page names the inviter and the role. Race: `api/test/repair-pass.test.ts` "lets one of two joins win". Screenshot `docs/evidence/q1/invite.png` shows no token.
 
 ## Test counts
 
@@ -16,10 +18,11 @@
 - `gates:fast` after Q1.2: 48 files, 575 API tests, secret check 326 tracked files, exit 0. The recovery browser test passed alone. Full `npm run gates` for Q1 has not run yet.
 - `gates:fast` after Q1.3: 48 files, 577 API tests, 11.06s, secret check 327 tracked files, exit 0. The passkey browser test passed alone.
 - `gates:fast` after Q1.4: 48 files, 577 API tests, 10.50s, secret check 329 tracked files, exit 0. The re-login browser test passed alone.
+- `gates:fast` after Q1.5: 48 files, 580 API tests, 9.66s, secret check 331 tracked files, exit 0. The invite browser test passed alone. Full `npm run gates` for Q1 has not run yet.
 
 ## Open items
 
-- Q1 still open: P5.T3, P6.T1, P6.T2. Then Q2 through Q8. Checkpoints C1, C2, and C3 are ahead.
+- Q1 still open: P5.T3, P6.T2, P6.T3, P6.T4, P6.T5. Then Q2 through Q8. No checkpoints.
 - Appendix B cases still partial: 22, 27, 28, 30, and 35.
 
 ## False assumptions
@@ -33,7 +36,8 @@
 - Master-plan P4.T6 is the proof-color check. The demo tap stays on P4.T7.
 - `DEMO_ENABLED` is on only inside `api/src/dev/passkey-server.ts`.
 - A session's public id is a random id, not the token hash. Revoke of another member's id is 404.
+- `FLAG_INVITES` is on only inside `api/src/dev/passkey-server.ts`, same as `DEMO_ENABLED`. A bearer key cannot revoke an invite.
 
 ## Next
 
-Q1.5 P6.T1: invite revoke route, inviter and role on the join page, and a race test.
+Q1.6 P6.T2: members list, role change, and revoke. The last owner stays. Revoke ends sessions and keys and lists open requests.

@@ -473,7 +473,7 @@ describe('sessions, invites, and demo doors', () => {
       body: JSON.stringify({ token: revoked, name: 'No' }),
     })).status).toBe(400)
     const missing = await h.app.request('http://mandate.test/v1/invites/revoke', { method: 'POST', headers: { authorization: `Bearer ${OWNER_KEY}` } })
-    expect(missing.status).toBe(404)
+    expect(missing.status).toBe(403)
   })
 
   it('lets one of two joins win', async () => {

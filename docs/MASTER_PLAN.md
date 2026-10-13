@@ -54,7 +54,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P3.T7 | done | Sessions list, revoke, revoke others, and owner sign-in history. The list hides the token. Screen `/app/sessions`. | `52fde09` |
 | P3.T8 | done | Issue, confirm with "I saved these", use once, and regenerate with a passkey step-up. Codes are hashed. | `5f7d0c5` |
 | P3.T9 | done | Add a passkey and refuse to remove the last one. Another member's id is 404. The screen is `/app/sessions`. | `2904707` |
-| P3.T10 | done | Chromium virtual authenticator covers register, sign in again, step-up approve, a second passkey, and recovery replace. | `q1-identity` |
+| P3.T10 | done | Chromium virtual authenticator covers register, sign in again, step-up approve, a second passkey, and recovery replace. | `a9df7ed` |
 | P4.T1 | done | `workspaces.passkey_for_money` is on for a new studio and off for the default studio and a demo. Turning it on is tested | `fd1432b` |
 | P4.T2 | done | Approve grant is one use, 120 seconds, member plus cart hash. Parallel approve and both rollback outcomes are tested | `283544d` |
 | P4.T3 | done | `proposal.approved` stores the assertion. `0002_warrant_signature` adds `warrants.signature_json` and a file copy is taken first. An older file still reads `{ actor, cartHash }`. Existing money routes require a step-up. The missing key, member, invite-revoke, and payee routes stay 404 | `751ac9f` |
@@ -72,7 +72,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P5.T7 | not started | the old tour is unchanged. No 3-mark coach | |
 | P5.T8 | partial | `web/src/screens/Studio.tsx` says the browser cannot use passkeys | `9a2ea0b` |
 | P5.T9 | not started | no new browser tests. Phone checklist not run | |
-| P6.T1 | partial | invite hash, join page, `takeInvite` in `api/src/control/store.ts` and `web/src/screens/Join.tsx`. No step-up. No test. Inviter name is not shown | `9a2ea0b` |
+| P6.T1 | done | Create needs a passkey when the rule is on. Revoke is owner-only. The join page names the inviter and the role. Two joins: one wins. | `q1-identity` |
 | P6.T2 | partial | last owner is protected in the store. `GET /v1/members` exists. No members screen | `9a2ea0b` |
 | P6.T3 | not started | old `mnd_ag_` and `mnd_cl_` keys were left as they are | |
 | P6.T4 | partial | `web/e2e/job.spec.ts` "Connect any agent shows how to plug in an MCP agent". Not the new template wizard | `1ac59cd` |

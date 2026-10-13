@@ -17,7 +17,7 @@ export function Join() {
   const navigate = useNavigate()
   const token = typeof window === 'undefined' ? '' : (window.location.hash.match(/(?:^#|[?&])t=([^&]+)/)?.[1] ?? '')
   const [name, setName] = useState('')
-  const [preview, setPreview] = useState<{ workspaceId: string; name: string; role: string } | null>(null)
+  const [preview, setPreview] = useState<{ workspaceId: string; name: string; role: string; inviter: string | null } | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
 
@@ -62,7 +62,8 @@ export function Join() {
         {preview ? (
           <form onSubmit={accept} className="stack">
             <h2>You were invited to {preview.name}</h2>
-            <p>{ROLE[preview.role] ?? 'This role can read.'}</p>
+            <p data-testid="invite-who">Invited by {preview.inviter ?? 'the studio'}.</p>
+            <p data-testid="invite-role">{ROLE[preview.role] ?? 'This role can read.'}</p>
             <label className="field">
               <span>Your name</span>
               <input value={name} onChange={(event) => setName(event.target.value)} required minLength={1} maxLength={80} />

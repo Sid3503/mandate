@@ -1238,6 +1238,55 @@
           }
         }
       ]
+    },
+    {
+      "name": "Invites",
+      "item": [
+        {
+          "name": "Create an invite",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" },
+              { "key": "x-mandate-stepup", "value": "" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"role\":\"proposer\",\"label\":null}" },
+            "url": "{{baseUrl}}/v1/invites",
+            "description": "Owner cookie. When the passkey rule is on, a missing grant is 401. A proposer is 403."
+          }
+        },
+        {
+          "name": "Revoke an invite",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"token\":\"\"}" },
+            "url": "{{baseUrl}}/v1/invites/revoke",
+            "description": "Owner cookie. A proposer is 403. An unknown token is 404. A call without the web client header is 403."
+          }
+        },
+        {
+          "name": "Preview an invite",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"token\":\"\"}" },
+            "url": "{{baseUrl}}/join/preview",
+            "description": "Returns the studio name, the role, and the inviter. A used or revoked invite is 400."
+          }
+        }
+      ]
     }
   ]
 }
