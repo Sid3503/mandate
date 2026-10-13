@@ -1,5 +1,8 @@
+import { createHash, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { call, closeAll, harness, idem, EVIDENCE, JOB } from './support'
+import { loadFlags } from '../src/flags'
+import { rateClass } from '../src/ops/ratelimit'
+import { call, closeAll, harness, idem, EVIDENCE, JOB, NOW, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
 
@@ -53,6 +56,68 @@ describe('agent keys', () => {
     const resumed = await call(app, 'POST', `/v1/agents/${created.agent.id}/resume`)
     expect(resumed.status).toBe(409)
     expect(resumed.json.code).toBe('agent.revoked')
+  })
+
+  it('upgrades an old mnd_ag_ secret and keeps the same agent', async () => {
+    const { app } = harness()
+    const created = await createKey(app)
+    const upgraded = await call(app, 'POST', `/v1/agents/${created.agent.id}/upgrade`)
+    expect(upgraded.status).toBe(200)
+    expect(upgraded.json.apiKey).toMatch(/^mnd_ag_[A-Za-z0-9_-]+$/)
+    expect(upgraded.json.apiKey).not.toBe(created.apiKey)
+    expect(upgraded.json.agent.id).toBe(created.agent.id)
+    expect(JSON.stringify((await call(app, 'GET', '/v1/agents')).json)).not.toContain(upgraded.json.apiKey)
+    expect((await call(app, 'GET', '/v1/warrant', { key: created.apiKey })).status).toBe(401)
+    expect((await call(app, 'GET', '/v1/warrant', { key: upgraded.json.apiKey })).status).toBe(200)
+    expect((await call(app, 'POST', `/v1/agents/${created.agent.id}/upgrade`, { key: STUDIO_KEY })).status).toBe(403)
+    expect((await call(app, 'POST', `/v1/agents/${created.agent.id}/upgrade`, { key: upgraded.json.apiKey })).status).toBe(403)
+    expect((await call(app, 'POST', `/v1/agents/${randomUUID()}/upgrade`)).status).toBe(404)
+  })
+
+  it('accepts a legacy hash of the secret without the prefix, then stores the whole key', async () => {
+    const { app, repo } = harness()
+    const secret = 'legacyagentsecretlegacyagent'
+    const apiKey = `mnd_ag_${secret}`
+    const id = randomUUID()
+    repo.createAgent({
+      id,
+      name: 'Legacy',
+      scopes_json: JSON.stringify(['read']),
+      limits_json: JSON.stringify({ proposalsPerHour: 10, centsPerHour: 100000 }),
+      status: 'active',
+      key_hash: createHash('sha256').update(secret).digest('hex'),
+      created_at: NOW.toISOString(),
+      last_seen_at: null,
+    })
+    expect((await call(app, 'GET', '/v1/warrant', { key: apiKey })).status).toBe(200)
+    expect(repo.getAgent(id)?.key_hash).toBe(createHash('sha256').update(apiKey).digest('hex'))
+    expect((await call(app, 'GET', '/v1/warrant', { key: apiKey })).status).toBe(200)
+  })
+
+  it('requires a passkey before an upgrade when the rule is on', async () => {
+    const { app, repo } = harness({ flags: loadFlags({ REQUIRE_PASSKEY_FOR_MONEY: '1' }) })
+    const id = randomUUID()
+    repo.createAgent({
+      id,
+      name: 'Legacy',
+      scopes_json: JSON.stringify(['read']),
+      limits_json: JSON.stringify({ proposalsPerHour: 10, centsPerHour: 100000 }),
+      status: 'active',
+      key_hash: createHash('sha256').update('mnd_ag_alreadywhole').digest('hex'),
+      created_at: NOW.toISOString(),
+      last_seen_at: null,
+    })
+    const blocked = await call(app, 'POST', `/v1/agents/${id}/upgrade`)
+    expect(blocked.status).toBe(401)
+    expect(blocked.json.title).toBe('Sign this with your passkey')
+  })
+
+  it('counts agent upgrade in the write rate-limit class', async () => {
+    expect(rateClass('POST', '/v1/agents/someone/upgrade')).toBe('write')
+    const { app } = harness({ classedRates: true, rateLimitPerMinute: 100 })
+    let status = 0
+    for (let i = 0; i < 61; i += 1) status = (await call(app, 'POST', '/v1/agents/someone/upgrade')).status
+    expect(status).toBe(429)
   })
 
   it('hides the owner-only surface from agent keys', async () => {

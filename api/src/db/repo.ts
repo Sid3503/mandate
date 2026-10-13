@@ -774,6 +774,10 @@ export class Repo {
     this.db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(at, id)
   }
 
+  setAgentKeyHash(id: string, keyHash: string): void {
+    this.db.prepare('UPDATE agents SET key_hash = ? WHERE id = ?').run(keyHash, id)
+  }
+
   createShare(row: ShareRow): void {
     this.db.prepare(`INSERT INTO share_links (id, job_id, party_id, role, label, secret_hash, created_at, expires_at, revoked_at, last_seen_at, views)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.job_id, row.party_id, row.role, row.label, row.secret_hash, row.created_at, row.expires_at, row.revoked_at, row.last_seen_at, row.views)
@@ -814,6 +818,10 @@ export class Repo {
 
   setClientKeyStatus(id: string, status: string, at: string): void {
     this.db.prepare('UPDATE client_keys SET status = ?, last_seen_at = ? WHERE id = ?').run(status, at, id)
+  }
+
+  setClientKeyHash(id: string, keyHash: string): void {
+    this.db.prepare('UPDATE client_keys SET key_hash = ? WHERE id = ?').run(keyHash, id)
   }
 
   setClientKeySeen(id: string, at: string): void {

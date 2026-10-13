@@ -1337,6 +1337,29 @@
           }
         }
       ]
+    },
+    {
+      "name": "Machine keys",
+      "item": [
+        {
+          "name": "Upgrade an agent key",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/agents/{{agentId}}/upgrade",
+            "description": "Owner. Replaces the mnd_ag_ secret. The same agent stays. The old key is then 401. A proposer is 403. When the passkey rule is on, a missing grant is 401."
+          }
+        },
+        {
+          "name": "Upgrade a client key",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/client-keys/{{clientKeyId}}/upgrade",
+            "description": "Owner. Replaces the mnd_cl_ secret. The same client binding stays. The old key is then 401."
+          }
+        }
+      ]
     }
   ]
 }

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Machine keys: `POST /v1/agents/{id}/upgrade` and `POST /v1/client-keys/{id}/upgrade` replace an `mnd_ag_` or `mnd_cl_` secret and keep the same agent or client. A stored hash of the bare secret is rewritten to the whole key on first use.
 - Studio wizard: a second passkey or recovery codes are required before Today. PayPal is described as simulated. Rules in words can be skipped. Progress is saved in this browser and does not include the codes.
 - Members: `POST /v1/members/{id}/role` and `POST /v1/members/{id}/revoke`. The last owner stays. Revoke ends sessions and passkeys and lists open requests. `npm run admin:reset-owner` writes an `admin_audit` event. The screen is `/app/members`.
 - Invites: `POST /v1/invites/revoke`. The join page names the inviter and the role. Creating an invite needs a passkey when the studio rule is on.
