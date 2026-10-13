@@ -341,7 +341,10 @@ export function createApp(deps: AppDeps) {
       c.set('memberId', member.id)
       c.set('approvalLimit', member.approval_limit_cents)
       if (member.role === 'viewer' || member.role === 'payee') {
-        if (c.req.method !== 'GET' && c.req.method !== 'HEAD') throw new Problem(403, 'auth/forbidden', 'Read only', 'This role can look, not change.')
+        const isDemoAction = deps.workspace?.mode === 'demo' && (c.req.path === '/v1/demo/switch' || c.req.path === '/v1/demo/reset')
+        if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && !isDemoAction) {
+          throw new Problem(403, 'auth/forbidden', 'Read only', 'This role can look, not change.')
+        }
         principal = STUDIO
       } else if (member.role === 'proposer') principal = STUDIO
       else principal = OWNER
@@ -378,10 +381,11 @@ export function createApp(deps: AppDeps) {
         throw new Problem(403, 'agent.scope', 'This agent key lacks the scope for this route', `Granted scopes: ${principal.scopes.join(', ') || 'none'}. The owner can issue a new key with it.`)
       }
     }
-    if (principal.role !== 'owner' && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
+    const isDemoReset = deps.workspace?.mode === 'demo' && c.req.method === 'POST' && c.req.path === '/v1/demo/reset'
+    if (principal.role !== 'owner' && !isDemoReset && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
       throw new Problem(403, 'auth.forbidden', 'Owner key required', 'A proposer key can propose and read. Only the owner can approve, reject, capture, or change the warrant.')
     }
-    if (c.get('memberRole') === 'approver' && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
+    if (c.get('memberRole') === 'approver' && !isDemoReset && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
       const pause = c.req.method === 'POST' && c.req.path === '/v1/safety/pause'
       const approve = c.req.method === 'POST' && /^\/v1\/proposals\/[^/]+\/approve$/.test(c.req.path)
       if (!pause && !approve) throw new Problem(403, 'auth/forbidden', 'Outside this role', 'An approver can approve up to their limit, and pause. They cannot publish rules.')

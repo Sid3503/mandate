@@ -1,5 +1,5 @@
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Hono } from 'hono'
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server'
@@ -508,7 +508,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     if (ctx.workspaceMode !== 'demo') throw new Problem(404, 'tenant/not-found', 'Not found', 'Role switch exists only inside a demo.')
     const control = requireControl(ctx)
     const who = memberFromCookie(c, ctx)
-    if (!who || who.member.role !== 'owner') throw new Problem(403, 'auth/forbidden', 'Owner required', 'Only the demo owner can switch roles.')
+    if (!who) throw new Problem(401, 'auth/required', 'Sign in required', 'The demo session is missing.')
     const body = await c.req.json() as { role?: 'owner' | 'approver' | 'proposer' | 'viewer' | 'payee' }
     const role = body.role
     if (!role) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name a role.')
@@ -518,6 +518,25 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     control.putSession({ token, memberId, workspaceId: ctx.workspaceId, method: 'demo', now: ctx.now().toISOString(), idleHours: ctx.idleHours, absoluteDays: ctx.absoluteDays })
     c.header('set-cookie', writeSessionCookie(ctx.cookieSecure, token, ctx.absoluteDays * 86_400))
     return c.json({ role })
+  })
+
+  app.get('/v1/live-proof', async (c) => {
+    const candidate1 = join(process.cwd(), 'docs', 'live-proof')
+    const candidate2 = join(process.cwd(), '..', 'docs', 'live-proof')
+    const dir = existsSync(candidate1) ? candidate1 : existsSync(candidate2) ? candidate2 : null
+    if (!dir) {
+      return c.json({ files: [] })
+    }
+    const entries = readdirSync(dir).filter((name) => name.endsWith('.json'))
+    const files = entries.map((name) => {
+      try {
+        const text = readFileSync(join(dir, name), 'utf8')
+        return { name, content: JSON.parse(text) }
+      } catch {
+        return { name, content: null }
+      }
+    })
+    return c.json({ files })
   })
 
   app.post('/v1/invites', async (c) => {
