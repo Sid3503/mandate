@@ -17,7 +17,7 @@ import type { IntentFlag } from './intent'
  * to believe something that points at nothing.
  */
 
-export const POLICY_MAX_CHARS = 12_000
+export const POLICY_MAX_CHARS = 20_000
 export const POLICY_MIN_CHARS = 20
 export const POLICY_MAX_SENTENCES = 300
 /** How many sentences go to the drafter at once. A longer policy is drafted in parts. */

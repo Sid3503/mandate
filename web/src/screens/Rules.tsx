@@ -8,7 +8,7 @@ import { StageTrail, type StageView } from '../components/ToolTrail'
 import { TryRules } from '../components/TryRules'
 import { useToast } from '../components/Toast'
 import { when } from '../lib/format'
-import { useAgentsOn, useIsOwner, useOnline, useVersions } from '../lib/hooks'
+import { useAgentsOn, useIsOwner, useOnline, useSession, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { Party, PolicyResult, PolicySentence, Replay, RulesDraft, SentenceStatus, Warrant } from '../lib/types'
 import { wip, type RulesWip } from '../lib/wip'
@@ -57,6 +57,9 @@ export function Rules() {
   const location = useLocation()
   const versions = useVersions()
   const owner = useIsOwner()
+  const session = useSession()
+  const flags = useQuery({ queryKey: ['flags'], queryFn: api.flags })
+  const showPolicyBox = flags.data?.policyPaste === true || session.data?.demoReset === true
   const list = versions.data?.data ?? []
   const [selected, setSelected] = useState<number | null>(null)
   const [editing, setEditing] = useState(false)
@@ -119,7 +122,7 @@ export function Rules() {
           onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }}
         />
       ) : null}
-      {owner && !editing ? <PolicyBox onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }} /> : null}
+      {owner && !editing && showPolicyBox ? <PolicyBox onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }} /> : null}
       {editing ? (
         <Editor
           key={resume ? 'resume' : seed?.runId ?? 'blank'}
@@ -456,7 +459,7 @@ const POLICY_STATUS: Record<SentenceStatus, { label: string; tone: 'deny' | 'aut
   unchecked: { label: 'Not checked', tone: 'need' },
 }
 
-const POLICY_LIMIT = 12_000
+const POLICY_LIMIT = 20_000
 
 /**
  * Paste your written policy. Code sorts it into sentences, sets aside what is not yours or not a rule, a model drafts the

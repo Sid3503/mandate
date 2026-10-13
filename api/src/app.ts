@@ -1155,12 +1155,20 @@ export function createApp(deps: AppDeps) {
   // Paste a written policy; get back which sentences the rules carry out, which cannot be rules, and a draft for the rest.
   app.post('/v1/rules/policy', async (c) => {
     assertJson(c)
+    const flags = deps.config.flags ?? defaultFlags()
+    if (!flags.policyPaste && deps.workspace?.mode !== 'demo' && !deps.config.demoReset) {
+      throw new Problem(404, 'flag/disabled', 'Not available', 'Policy paste is off on this server.')
+    }
     const parsed = PolicySchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
     return c.json(await agents.draftFromPolicy(parsed.data.text, c.get('principal')))
   })
   app.post('/v1/rules/policy/stream', async (c) => {
     assertJson(c)
+    const flags = deps.config.flags ?? defaultFlags()
+    if (!flags.policyPaste && deps.workspace?.mode !== 'demo' && !deps.config.demoReset) {
+      throw new Problem(404, 'flag/disabled', 'Not available', 'Policy paste is off on this server.')
+    }
     const parsed = PolicySchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
     const principal = c.get('principal')

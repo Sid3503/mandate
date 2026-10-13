@@ -7,6 +7,7 @@ import { buildServices } from '../services/container'
 import { migrate, openDatabase, seed } from '../db/database'
 import { createAgentModel } from '../agents/model'
 import { FakeInvoices, FakePayPal, FakeWatch } from '../paypal/fake'
+import { loadFlags } from '../flags'
 import { demoModel } from './demo-model'
 
 const port = Number(process.env.PORT ?? 8799)
@@ -45,6 +46,7 @@ const app = createApp({
     commit: process.env.GIT_COMMIT?.trim() || null,
     // The tests run against a fake PayPal, so the reset a hosted demo uses is safe to offer here.
     demoReset: true,
+    flags: loadFlags({ FLAG_POLICY_PASTE: '1' }),
   },
 })
 
