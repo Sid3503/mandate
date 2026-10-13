@@ -231,7 +231,14 @@ const ClientErrorSchema = z.object({
 
 export function createApp(deps: AppDeps) {
   const app = new Hono<{ Variables: { requestId: string; principal: Principal; viaCookie?: boolean; memberRole?: string; memberId?: string; approvalLimit?: number | null } }>()
-  const services = deps.services ?? buildServices({ ...deps, publicUrl: deps.config.publicUrl })
+  const services = deps.services ?? buildServices({
+    ...deps,
+    publicUrl: deps.config.publicUrl,
+    onExternalRef: (kind, externalId) => deps.control?.rememberRef(kind, externalId, deps.workspace?.id ?? 'ws_default'),
+  })
+  if (deps.control && !services.mandate.hasExternalRef) {
+    services.mandate.setOnExternalRef((kind, externalId) => deps.control?.rememberRef(kind, externalId, deps.workspace?.id ?? 'ws_default'))
+  }
   const { mandate: service, deals } = services
   const agents = deps.agents ?? new AgentService(services, deps.model ?? null, deps.now, deps.drafterModel ?? null, null, deps.budget ?? null)
   const buckets = new Map<string, { count: number; reset: number }>()
@@ -759,18 +766,34 @@ export function createApp(deps: AppDeps) {
       }
       if (!genuine) return c.json({ received: false, error: 'webhook.signature_invalid' }, 401)
     }
-    const eventId = typeof event.id === 'string' && event.id.length <= 128 ? event.id : null
-    const eventType = typeof event.event_type === 'string' ? event.event_type.slice(0, 80) : ''
-    // PayPal retries deliveries. A retry of an event already handled does nothing.
-    if (eventId && !services.repo.claimWebhookEvent(eventId, eventType, deps.now().toISOString())) {
-      return c.json({ received: true, duplicate: true, refreshed: false })
-    }
     const resource = event.resource ?? {}
     const header = resource.batch_header as Record<string, unknown> | undefined
     const found = resource.payout_batch_id ?? header?.payout_batch_id
     const batchId = typeof found === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(found) ? found : null
     const invoice = (resource.invoice as Record<string, unknown> | undefined)?.id ?? (typeof resource.id === 'string' && resource.id.startsWith('INV') ? resource.id : undefined)
     const invoiceId = typeof invoice === 'string' && /^INV[A-Za-z0-9-]{3,64}$/.test(invoice) ? invoice : null
+
+    if (!deps.nested && deps.control && deps.registry) {
+      const targetWorkspace = (batchId ? deps.control.workspaceForRef('payout', batchId) : null)
+        ?? (invoiceId ? deps.control.workspaceForRef('invoice', invoiceId) : null)
+      if (targetWorkspace && targetWorkspace !== (deps.workspace?.id ?? 'ws_default')) {
+        const tenant = deps.registry.get(targetWorkspace)
+        if (tenant) {
+          return tenant.fetch(new Request(c.req.url, {
+            method: c.req.method,
+            headers: c.req.raw.headers,
+            body: raw,
+          }))
+        }
+      }
+    }
+
+    const eventId = typeof event.id === 'string' && event.id.length <= 128 ? event.id : null
+    const eventType = typeof event.event_type === 'string' ? event.event_type.slice(0, 80) : ''
+    // PayPal retries deliveries. A retry of an event already handled does nothing.
+    if (eventId && !services.repo.claimWebhookEvent(eventId, eventType, deps.now().toISOString())) {
+      return c.json({ received: true, duplicate: true, refreshed: false })
+    }
     try {
       if (eventType.startsWith('CUSTOMER.DISPUTE.')) return c.json({ received: true, refreshed: (await service.syncDisputes()).checked })
       if (batchId) return c.json({ received: true, ...(await service.refreshPayoutBatch(batchId)) })

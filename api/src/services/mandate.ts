@@ -143,8 +143,17 @@ export class MandateService {
       /** When set, a new payee cannot pass on a standing rule alone. Off unless the caller turns the book on. */
       payeeBook?: boolean
       newPayeeWaitHours?: number
+      onExternalRef?: (kind: string, externalId: string) => void
     } = {},
   ) {}
+
+  get hasExternalRef(): boolean {
+    return typeof this.options.onExternalRef === 'function'
+  }
+
+  setOnExternalRef(cb: (kind: string, externalId: string) => void): void {
+    this.options.onExternalRef = cb
+  }
 
   /**
    * Boot-time housekeeping. Remembers the public key, and signs locks made before signatures existed, but only
@@ -509,6 +518,7 @@ export class MandateService {
           payeeAttached: created.payeeAttached,
         }, now)
       })
+      this.options.onExternalRef?.('order', created.orderId)
     }
     const saved = this.require(current.id)
     const live = await this.paypal.getOrder(saved.order_id!)
@@ -724,6 +734,7 @@ export class MandateService {
           currency: current.currency,
         }, now)
       })
+      this.options.onExternalRef?.('payout', sent.batchId)
     }
     const saved = this.require(current.id)
     const live = await this.paypal.getPayout(batchId)
@@ -831,6 +842,7 @@ export class MandateService {
         this.repo.saveInvoiceDraft(row.id, invoiceId!, now)
         this.repo.insertEvent(randomUUID(), row.id, 'invoice.created', row.clause, { invoiceId, invoiceNumber: number, amountCents: row.amount_cents }, now)
       })
+      this.options.onExternalRef?.('invoice', invoiceId!)
       row = this.require(row.id)
     }
     // Send once. A drafted invoice is sent; one PayPal already reports as sent, paid or cancelled is only read.
