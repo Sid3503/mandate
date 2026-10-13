@@ -623,6 +623,12 @@ test('the owner can stop everything with one button; agents are refused with the
   })).json()
   expect(['system.paused', 'funding.missing']).toContain(refused.clause)
 
+  // Today shows Stopped proof: paused banner, stopped card, and refusal under Stopped by the rules.
+  await page.goto('/app')
+  await expect(page.getByTestId('paused-banner')).toContainText('Mandate is paused')
+  await expect(page.getByTestId('today-stopped-card')).toContainText('Automation stopped')
+  await expect(page.getByTestId('today-stopped')).toBeVisible()
+
   // The System page shows the history, signed.
   await page.goto('/app/system')
   await expect(page.getByTestId('safety-panel')).toContainText('Paused · Odd requests on Friday')
