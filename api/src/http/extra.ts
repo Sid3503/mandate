@@ -105,7 +105,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
   })
 
   if (!ctx.nested) {
-    app.all('/w/:workspace/*', async (c) => {
+    const forwardTenant = async (c: any) => {
       if (!flags.tenancy) throw new Problem(404, 'flag/disabled', 'Not available', 'Workspaces are off on this server.')
       const id = c.req.param('workspace')
       if (!isWorkspaceId(id)) throw new Problem(400, 'request.invalid', 'Bad workspace id', 'A workspace id is ws_default or ws_ and 20 letters.')
@@ -120,7 +120,9 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       const tenant = ctx.registry?.get(id)
       if (!tenant) throw new Problem(404, 'tenant/not-found', 'Not found', 'No workspace has that id.')
       return tenant.fetch(new Request(url, { method: c.req.method, headers, body }))
-    })
+    }
+    app.all('/w/:workspace', forwardTenant)
+    app.all('/w/:workspace/*', forwardTenant)
 
     app.post('/demo/start', async (c) => {
       if (!flags.tenancy || !flags.demoEnabled) throw new Problem(404, 'flag/disabled', 'Not available', 'The demo door is off on this server.')
