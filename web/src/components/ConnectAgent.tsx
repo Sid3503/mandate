@@ -189,7 +189,7 @@ export function ConnectAgent() {
           <Snippet label="Any client that speaks MCP over HTTP" text={live.generic} />
           <Snippet label="Check it from a terminal (lists its tools)" text={live.curl} />
           <div className="row gap-s wrap">
-            <button type="button" className="btn btn-ink btn-small" data-testid="test-this-key" onClick={() => void runCheck()} disabled={check.state === 'running'}>{check.state === 'running' ? 'Testing key…' : 'Test this key'}</button>
+            <button type="button" className="btn btn-ink btn-small" data-testid="test-this-key" onClick={() => void runCheck()} disabled={check.state === 'running'}>{check.state === 'running' ? 'Checking…' : 'Check the connection from here'}</button>
             <button type="button" className="btn btn-ghost btn-small" onClick={() => { setMade(null); setCheck({ state: 'idle' }) }}>I have saved it</button>
           </div>
           {check.state === 'ok' ? <CheckResult tools={check.tools} /> : null}
