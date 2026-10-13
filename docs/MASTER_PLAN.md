@@ -25,13 +25,13 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P0.T5 | done | `api/test/flags.test.ts` | `65a30b4` |
 | P0.T6 | done | `docs/DECISIONS.md`, `docs/SECURITY.md`, `CHANGELOG.md` | `65a30b4` |
 | P0.T7 | done | `api/.env.example` | `65a30b4` |
-| P1.T1 | partial | `api/src/config.ts` already parsed env. `api/src/ops/secret.ts` `SecretString` is not wrapped around boot secrets | `9a2ea0b` |
+| P1.T1 | done | Boot secrets wrapped in SecretString and redacted on inspect/stringify. Proof: `api/test/ops-readyz-secret.test.ts` | `q3-ops` |
 | P1.T2 | partial | `api/test/phases.test.ts` "redacts a canary and a bearer token". Not every route class | `9a2ea0b` |
 | P1.T3 | partial | `api/test/phases.test.ts` "limits auth attempts with an injected clock". Classed limits run only when `TRUST_PROXY=1`. `auth_throttle` is not what the live bucket uses | `9a2ea0b` |
 | P1.T4 | partial | `api/test/phases.test.ts` "does not call the model when the budget is zero". `OPEN_CAPS` in `api/src/ops/budget.ts`. Kill route exists. Quick asks are not in that test | `9a2ea0b` |
 | P1.T5 | done | Headers on `/healthz`, `/app`, `/v1`, and `/auth`. `api/test/phases.test.ts` "sends the extra security headers and the health alias". `api/test/repair-pass.test.ts` "refuses paths that leave the web build and still serves a file inside it" | `9a2ea0b` |
 | P1.T6 | partial | `api/test/phases.test.ts` "refuses a migration whose checksum changed". No backup before migrate. No seeded-copy test | `9a2ea0b` |
-| P1.T7 | partial | same health alias test. `GET /readyz` redirects. No SSE caps. Shutdown in `api/src/main.ts` is older | `9a2ea0b` |
+| P1.T7 | done | Real /readyz endpoint with full datastore check and 50-connection SSE cap. Proof: `api/test/ops-readyz-secret.test.ts` | `q3-ops` |
 | P1.T8 | partial | `api/test/phases.test.ts` "serves metrics only to the admin key" | `9a2ea0b` |
 | P1.T9 | partial | `scripts/db-backup.mjs`, `scripts/db-restore.mjs`. No test | `9a2ea0b` |
 | P2.T1 | partial | `api/src/control/store.ts` `ensureDefault`. `api/test/phases.test.ts` "stays a single studio when the flags are off" | `9a2ea0b` |

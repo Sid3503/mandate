@@ -77,7 +77,6 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
   const flags = flagsOf(ctx)
 
   app.get('/healthz', (c) => c.json({ status: 'pass' }))
-  app.get('/readyz', (c) => c.redirect('/ready', 307))
 
   app.get('/ops/metrics', (c) => {
     if (!ctx.adminKey) throw new Problem(404, 'route.not_found', 'Not found', 'No route matches this path.')

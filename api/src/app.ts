@@ -10,7 +10,7 @@ import type { ModelBudget } from './ops/budget'
 import { MAX_RATE_BUCKETS, RateLimiter, pruneBuckets, rateClass } from './ops/ratelimit'
 import { redactText } from './ops/redact'
 import type { TenantRegistry } from './tenancy/registry'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { DatabaseSync } from 'node:sqlite'
 import { VERSION } from './config'
@@ -437,7 +437,7 @@ export function createApp(deps: AppDeps) {
     'api:alive': [{ status: 'pass', componentType: 'system', time: deps.now().toISOString() }],
   }, 200, deps.config.commit ?? null))
 
-  app.get('/ready', (c) => {
+  const readyHandler = (c: Context) => {
     if (deps.draining?.()) return health(c, 'fail', { 'process:draining': [{ status: 'fail', componentType: 'system', observedValue: 'shutting down', time: deps.now().toISOString() }] }, 503, deps.config.commit ?? null)
     const dbOk = databaseReady(deps.db)
     const paypalStatus = deps.config.paypalConfigured ? 'pass' : 'warn'
@@ -457,7 +457,9 @@ export function createApp(deps: AppDeps) {
         time: deps.now().toISOString(),
       }],
     }, dbOk ? 200 : 503, deps.config.commit ?? null)
-  })
+  }
+  app.get('/ready', readyHandler)
+  app.get('/readyz', readyHandler)
 
   app.get('/openapi.json', (c) => c.json(openapi))
 
@@ -788,16 +790,27 @@ export function createApp(deps: AppDeps) {
   })
   // The console listens here, so a payment, a decision or a settlement shows the moment it is written. Events only
   // say what changed; the console re-reads the real thing through the normal routes. Owner and studio only.
+  let activeStreams = 0
+  const MAX_ACTIVE_STREAMS = 50
+
   app.get('/v1/stream', (c) => {
     const principal = c.get('principal')
     if (principal.role !== 'owner' && principal.role !== 'proposer') throw new Problem(403, 'auth.forbidden', 'Not for this key', 'The live stream is for the owner and the studio.')
+    if (activeStreams >= MAX_ACTIVE_STREAMS) {
+      throw new Problem(429, 'stream.capped', 'Stream cap reached', 'Too many live stream connections are open.')
+    }
     return streamSSE(c, async (stream) => {
-      const unsubscribe = live.subscribe((event) => { void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).catch(() => undefined) })
-      await stream.writeSSE({ event: 'hello', data: JSON.stringify({ type: 'hello', at: deps.now().toISOString() }) })
-      const beat = setInterval(() => { void stream.writeSSE({ event: 'ping', data: '{}' }).catch(() => undefined) }, 15_000)
-      await new Promise<void>((resolve) => stream.onAbort(resolve))
-      clearInterval(beat)
-      unsubscribe()
+      activeStreams++
+      try {
+        const unsubscribe = live.subscribe((event) => { void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).catch(() => undefined) })
+        await stream.writeSSE({ event: 'hello', data: JSON.stringify({ type: 'hello', at: deps.now().toISOString() }) })
+        const beat = setInterval(() => { void stream.writeSSE({ event: 'ping', data: '{}' }).catch(() => undefined) }, 15_000)
+        await new Promise<void>((resolve) => stream.onAbort(resolve))
+        clearInterval(beat)
+        unsubscribe()
+      } finally {
+        activeStreams--
+      }
     })
   })
   app.get('/v1/today', (c) => c.json({ ...services.today.build(), clientAgent: { mode: deps.config.clientAgent ?? 'manual', ready: agents.enabled } }))

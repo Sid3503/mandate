@@ -22,6 +22,7 @@
 - Q2.4 P5.T6 `7706128`: PWA unlock with Face ID on expired session, workbox denylist for authenticated paths. Proof: `web/e2e/passkey-repair-pwa-unlock.spec.ts` with axe. Screenshot `docs/evidence/q2/unlock-faceid.png`.
 - Q2.5 P5.T7 `434b93c`: first-run 3-mark coach tour (Waiting, Ask, Rules), mandate.coach.seen persistence, screen states (loading, empty, error). Proof: `web/e2e/passkey-repair-coach.spec.ts` with axe. Screenshot `docs/evidence/q2/coach-marks.png`.
 - Q2.6 P5.T8 P5.T9: mobile and desktop browser validation with axe, docs/PHONE_CHECKLIST.md runbook, Unlock and Studio WebAuthn fallback notice. Proof: `web/e2e/passkey-repair-pwa-unlock.spec.ts`, `web/e2e/onboarding-doors.spec.ts`, `docs/PHONE_CHECKLIST.md`.
+- Q3.1 P1.T1 P1.T7: Boot secrets wrapped in SecretString and redacted on inspect/JSON. Real /readyz endpoint with sqlite datastore check (no redirect). SSE stream connections capped to 50 with 429 refusal on cap overflow. Proof: `api/test/ops-readyz-secret.test.ts`.
 
 ## Test counts
 
@@ -30,6 +31,7 @@
 - Full `npm run gates` after Q1 on 13 October 2026: 48 files, 594 API tests, 10.00s, secret check 345 tracked files, Playwright 125 passed (8.1m), axe included, exit 0.
 - `gates:fast` after Q2.5: 49 files, 596 API tests, 9.97s, secret check 356 tracked files, exit 0.
 - Full `npm run gates` after Q2 on 13 October 2026: 49 files, 596 API tests, 10.40s, secret check 356 tracked files, Playwright 133 passed (8.5m), axe included, exit 0.
+- `gates:fast` after Q3.1: 50 files, 599 API tests, 9.83s, secret check 359 tracked files, exit 0.
 
 ## Open items
 
@@ -61,7 +63,10 @@
 - First-run coach marks: exactly 3 marks on initial onboarding (Today Waiting, Ask Mandate, Rules). Tracked in mandate.coach.seen and mandate.tour.welcome, dismissable and never repeated. Loading, empty, and error states provided across all screens.
 - WebAuthn fallback: when window.PublicKeyCredential is unavailable, Unlock displays a plain warning notice guiding user to unlock via API key or modern browser, matching Studio fallback.
 - Tour compatibility: classic console maintains full welcome walkthrough while demo onboarding delivers streamlined 3-mark coach tour.
+- Boot secrets: loadConfig wraps boot secrets in SecretString so secrets are never leaked in logs or JSON serializations.
+- Real /readyz: /readyz executes identical datastore readiness check directly, avoiding probe redirect loops.
+- SSE cap: /v1/stream caps active connections at 50, returning 429 when capacity is reached.
 
 ## Next
 
-Cut q3-ops branch and begin Q3.
+Q3.2 P1.T3 P1.T4 P2.T8: Tests for each rate-limit class, demo workspace model caps, and budget checks.
