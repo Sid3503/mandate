@@ -30,10 +30,10 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P1.T3 | done | RateLimiter classes (auth, key-unlock, ask, write, read), pruneBuckets, and route mappings. Proof: `api/test/ops-ratelimit-budget.test.ts` | `q3-ops` |
 | P1.T4 | done | Model budget 0 blocks model reservations while quick asks still work (case 28). Proof: `api/test/ops-ratelimit-budget.test.ts` | `q3-ops` |
 | P1.T5 | done | Headers on `/healthz`, `/app`, `/v1`, and `/auth`. `api/test/phases.test.ts` "sends the extra security headers and the health alias". `api/test/repair-pass.test.ts` "refuses paths that leave the web build and still serves a file inside it" | `9a2ea0b` |
-| P1.T6 | partial | `api/test/phases.test.ts` "refuses a migration whose checksum changed". No backup before migrate. No seeded-copy test | `9a2ea0b` |
+| P1.T6 | done | Pre-migration backup on file database, older seeded-copy upgrade test, checksum protection. Proof: `api/test/ops-backup-migration.test.ts` | `q3-ops` |
 | P1.T7 | done | Real /readyz endpoint with full datastore check and 50-connection SSE cap. Proof: `api/test/ops-readyz-secret.test.ts` | `q3-ops` |
 | P1.T8 | partial | `api/test/phases.test.ts` "serves metrics only to the admin key" | `9a2ea0b` |
-| P1.T9 | partial | `scripts/db-backup.mjs`, `scripts/db-restore.mjs`. No test | `9a2ea0b` |
+| P1.T9 | done | db:backup and db:restore script tests with safety backups and validation. Proof: `api/test/ops-backup-migration.test.ts` | `q3-ops` |
 | P2.T1 | partial | `api/src/control/store.ts` `ensureDefault`. `api/test/phases.test.ts` "stays a single studio when the flags are off" | `9a2ea0b` |
 | P2.T2 | partial | `api/src/tenancy/registry.ts` max 50, idle 10 minutes. Handlers were not moved onto the request | `9a2ea0b` |
 | P2.T3 | partial | `api/test/phases.test.ts` "isolates a demo, rejects a bad id, and will not delete a studio". MCP is not under `/w` | `9a2ea0b` |
