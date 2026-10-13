@@ -35,6 +35,7 @@ import { SharedStatus } from './screens/SharedStatus'
 import { Unlock } from './screens/Unlock'
 import { Connect } from './screens/Connect'
 import { LiveProof } from './screens/LiveProof'
+import { PayeePayments } from './screens/PayeePayments'
 import { Loading } from './components/ui'
 
 const ControlRoom = lazy(() => import('./screens/ControlRoom'))
@@ -126,6 +127,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="members" element={<Members />} />
             <Route path="connect" element={<Connect />} />
             <Route path="live-proof" element={<LiveProof />} />
+            <Route path="payments" element={<PayeePayments />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

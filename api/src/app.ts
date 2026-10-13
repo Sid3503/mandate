@@ -601,7 +601,7 @@ export function createApp(deps: AppDeps) {
     requireStep(c, deps, 'resume', stepBinding('resume', 'safety.resume'))
     return c.json(await services.safety.resume('owner'))
   })
-  app.get('/v1/session', (c) => c.json({ role: c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName }, demoReset: deps.config.demoReset === true }))
+  app.get('/v1/session', (c) => c.json({ role: c.get('memberRole') ?? c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName }, demoReset: deps.config.demoReset === true }))
   app.get('/v1/flags', (c) => c.json(deps.config.flags ?? defaultFlags()))
   app.post('/v1/workspace/passkey-rule', async (c) => {
     assertJson(c)

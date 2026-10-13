@@ -2,7 +2,8 @@ import type { components } from './openapi'
 
 export type Proposal = components['schemas']['Proposal']
 export type Warrant = components['schemas']['Warrant']
-export type Session = components['schemas']['Session']
+export type SessionRole = 'owner' | 'approver' | 'proposer' | 'viewer' | 'payee'
+export type Session = Omit<components['schemas']['Session'], 'role'> & { role: SessionRole }
 
 /** Planned switches from GET /v1/flags. Off means that feature is not active. */
 export type ServerFlags = {

@@ -16,6 +16,14 @@ export function Unlock() {
   const [busy, setBusy] = useState(false)
   const from = (where.state as { from?: string } | null)?.from ?? '/'
 
+  const roleLanding = (role?: string, side?: string | null) => {
+    if (role === 'proposer') return '/clerk'
+    if (role === 'viewer') return '/proof'
+    if (role === 'payee') return '/payments'
+    if (side === 'buyer') return '/deals'
+    return '/'
+  }
+
   const signIn = async () => {
     setBusy(true)
     setError(null)
@@ -24,7 +32,8 @@ export function Unlock() {
       session.setWorkspace(me.workspaceId)
       session.setMode('studio')
       client.clear()
-      navigate(from, { replace: true })
+      const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : roleLanding(me.role)
+      navigate(target, { replace: true })
     } catch (caught) {
       setError(caught)
     } finally {
@@ -41,7 +50,8 @@ export function Unlock() {
       session.set(key.trim())
       client.clear()
       client.setQueryData(['session'], me)
-      navigate(from, { replace: true })
+      const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : roleLanding(me.role, me.side)
+      navigate(target, { replace: true })
     } catch (caught) {
       setError(caught)
     } finally {

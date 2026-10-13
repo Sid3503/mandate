@@ -2,7 +2,7 @@ import { useMutation } from '@tanstack/react-query'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useToast } from '../components/Toast'
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAsk } from '../components/Ask'
 import { BalanceNote } from '../components/PayPalFeatures'
 import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, ProblemCard } from '../components/ui'
@@ -15,7 +15,7 @@ import { BreakIt } from '../components/BreakIt'
 import { EmailNotice } from '../components/EmailNotice'
 import { ToolTrail } from '../components/ToolTrail'
 import { dollars } from '../lib/money'
-import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useToday, useWarrant } from '../lib/hooks'
+import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useSession, useToday, useWarrant } from '../lib/hooks'
 import type { Delivery, Proposal, Today as TodayData, TodayAction, TodayItem } from '../lib/types'
 import { canonicalCart } from '../lib/verify'
 import { explain, isPayout, KIND, type Names } from '../lib/words'
@@ -42,6 +42,17 @@ const KIND_LABEL: Record<TodayItem['kind'], { label: string; tone: 'deny' | 'nee
 }
 
 export function Today() {
+  const me = useSession()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    const role = me.data?.role
+    if (role === 'proposer') navigate('/clerk', { replace: true })
+    else if (role === 'viewer') navigate('/proof', { replace: true })
+    else if (role === 'payee') navigate('/payments', { replace: true })
+    else if (me.data?.side === 'buyer') navigate('/deals', { replace: true })
+  }, [me.data?.role, me.data?.side, navigate])
+
   const proposals = useProposals()
   const today = useToday()
   const names = useNames()

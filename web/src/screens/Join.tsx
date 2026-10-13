@@ -42,7 +42,8 @@ export function Join() {
       const joined = await api.join(preview.workspaceId, decodeURIComponent(token), name.trim())
       session.setWorkspace(joined.workspaceId)
       session.setMode('studio')
-      navigate('/')
+      const landing = joined.role === 'proposer' ? '/clerk' : joined.role === 'viewer' ? '/proof' : joined.role === 'payee' ? '/payments' : '/'
+      navigate(landing)
     } catch (caught) {
       setError(caught)
     } finally {
