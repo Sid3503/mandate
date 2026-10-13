@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Studio wizard: a second passkey or recovery codes are required before Today. PayPal is described as simulated. Rules in words can be skipped. Progress is saved in this browser and does not include the codes.
 - Members: `POST /v1/members/{id}/role` and `POST /v1/members/{id}/revoke`. The last owner stays. Revoke ends sessions and passkeys and lists open requests. `npm run admin:reset-owner` writes an `admin_audit` event. The screen is `/app/members`.
 - Invites: `POST /v1/invites/revoke`. The join page names the inviter and the role. Creating an invite needs a passkey when the studio rule is on.
 - Unlock has "Sign in with a passkey" for a studio that already enrolled one.
