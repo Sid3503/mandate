@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { loadConfig } from '../src/config'
 import { SecretString } from '../src/ops/secret'
+import { redactText } from '../src/ops/redact'
 import { call, closeAll, harness, OWNER_KEY } from './support'
 
 afterEach(closeAll)
@@ -65,6 +66,47 @@ describe('SSE stream caps', () => {
       for (const r of readers) {
         await r.cancel()
       }
+    }
+  })
+})
+
+describe('Case 35: secret and canary log redaction sweep', () => {
+  it('redacts all secrets, canaries, and bearer tokens across request logs and json outputs', async () => {
+    const canary1 = 'CANARY_PAYPAL_SECRET_987654321'
+    const canary2 = 'CANARY_MASTER_ENVELOPE_KEY_123'
+    const bearer = 'Bearer bearer_canary_token_value_32'
+    const rawOutput = `{"event":"call","api_key":"${canary1}","auth":"${bearer}","token":"${canary2}","ok":true}`
+
+    const redacted = redactText(rawOutput, [canary1, canary2])
+    expect(redacted).not.toContain(canary1)
+    expect(redacted).not.toContain(canary2)
+    expect(redacted).not.toContain('bearer_canary_token_value_32')
+    expect(redacted).toContain('[redacted]')
+
+    const logs: string[] = []
+    const origLog = console.log
+    console.log = (msg: string) => {
+      logs.push(msg)
+    }
+    try {
+      const h = harness({
+        log: true,
+        redact: [canary1, canary2, OWNER_KEY],
+      })
+      await h.app.request('http://mandate.test/v1/today', {
+        headers: {
+          authorization: `Bearer ${OWNER_KEY}`,
+          'x-canary': canary1,
+        },
+      })
+      expect(logs.length).toBeGreaterThan(0)
+      for (const line of logs) {
+        expect(line).not.toContain(OWNER_KEY)
+        expect(line).not.toContain(canary1)
+        expect(line).not.toContain(canary2)
+      }
+    } finally {
+      console.log = origLog
     }
   })
 })
