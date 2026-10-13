@@ -67,9 +67,10 @@ function requireControl(ctx: ProductCtx): ControlStore {
 function memberFromCookie(c: { req: { header: (name: string) => string | undefined } }, ctx: ProductCtx) {
   const token = readSessionCookie(c.req.header('cookie'), ctx.cookieSecure)
   if (!token || !ctx.control) return null
-  const session = ctx.control.session(token, ctx.now().toISOString())
+  const now = ctx.now().toISOString()
+  const session = ctx.control.session(token, now)
   if (!session) return null
-  const member = ctx.control.member(session.member_id)
+  const member = ctx.control.member(session.member_id, now)
   if (!member || member.status !== 'active') return null
   return { token, session, member }
 }
@@ -554,7 +555,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
       throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
     }
-    const body = await c.req.json() as { role?: 'approver' | 'proposer' | 'viewer' | 'payee'; label?: string }
+    const body = await c.req.json() as { role?: 'approver' | 'proposer' | 'viewer' | 'payee'; label?: string; delegationExpiresAt?: string | null }
     if (!body.role) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name a role.')
     ctx.requireStep?.(c, 'invite', stepBinding('invite', JSON.stringify({ role: body.role, label: body.label ?? null })))
     const token = randomBytes(32).toString('base64url')
@@ -568,6 +569,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       createdBy: who.member.id,
       now: now.toISOString(),
       label: body.label ?? null,
+      delegationExpiresAt: body.delegationExpiresAt ?? null,
     })
     return c.json({ token, join: `/app/join#t=${token}` })
   })
@@ -610,7 +612,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     const invite = control.takeInvite(body.token, now)
     if (!invite) throw new Problem(400, 'invite/invalid', 'Invite is not valid', 'That invite is used, expired, or for another studio.')
     const memberId = randomUUID()
-    control.addMember({ id: memberId, workspaceId: invite.workspace_id, name: body.name, role: invite.role, now: ctx.now().toISOString(), createdBy: 'invite' })
+    control.addMember({ id: memberId, workspaceId: invite.workspace_id, name: body.name, role: invite.role, now: ctx.now().toISOString(), createdBy: 'invite', expiresAt: invite.delegation_expires_at })
     const sessionToken = randomBytes(32).toString('base64url')
     control.putSession({ token: sessionToken, memberId, workspaceId: invite.workspace_id, method: 'invite', now: ctx.now().toISOString(), idleHours: ctx.idleHours, absoluteDays: ctx.absoluteDays })
     c.header('set-cookie', writeSessionCookie(ctx.cookieSecure, sessionToken, ctx.absoluteDays * 86_400))
@@ -633,12 +635,13 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     const who = memberFromCookie(c, ctx)
     if (!who || !ctx.control) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
     if (who.member.role !== 'owner') throw new Problem(403, 'auth/forbidden', 'Owner required', 'Only an owner can list members.')
-    const members = ctx.control.members(who.member.workspace_id).map((row) => ({
+    const members = ctx.control.members(who.member.workspace_id, ctx.now().toISOString()).map((row) => ({
       id: row.id,
       name: row.display_name,
       role: row.role,
       status: row.status,
       approvalLimitCents: row.approval_limit_cents,
+      expiresAt: row.expires_at,
     }))
     return c.json({ members })
   })
@@ -646,18 +649,18 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
   app.post('/v1/members/:id/role', async (c) => {
     const { who, control } = ownerMember(c)
     const id = c.req.param('id')
-    const body = await c.req.json().catch(() => null) as { role?: string } | null
+    const body = await c.req.json().catch(() => null) as { role?: string; expiresAt?: string | null } | null
     if (!body?.role || !memberRoles.has(body.role as MemberRole)) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name a role.')
     const row = control.member(id)
-    if (!row || row.workspace_id !== who.member.workspace_id || row.status !== 'active') {
+    if (!row || row.workspace_id !== who.member.workspace_id || row.status === 'revoked') {
       throw new Problem(404, 'member/not-found', 'Not found', 'That member is not in this studio.')
     }
     const role = body.role as MemberRole
     ctx.requireStep?.(c, 'member-role', stepBinding('member-role', `${id}\n${role}`))
-    const result = control.setMemberRole(id, role, ctx.now().toISOString())
+    const result = control.setMemberRole(id, role, ctx.now().toISOString(), body.expiresAt)
     if (result === 'last-owner') throw new Problem(409, 'member/last-owner', 'The last owner stays', 'Add another owner before you change this one.')
     if (result !== 'ok') throw new Problem(404, 'member/not-found', 'Not found', 'That member is not in this studio.')
-    return c.json({ ok: true, role })
+    return c.json({ ok: true, role, expiresAt: body.expiresAt !== undefined ? body.expiresAt : row.expires_at })
   })
 
   app.post('/v1/members/:id/revoke', async (c) => {

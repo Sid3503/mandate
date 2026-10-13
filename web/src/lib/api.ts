@@ -273,12 +273,12 @@ export const api = {
     return request<{ token: string; join: string }>('/v1/invites', { method: 'POST', body: { role, label: null }, headers: { 'x-mandate-stepup': verified.grant } })
   },
   revokeInvite: (token: string) => request<{ ok: boolean }>('/v1/invites/revoke', { method: 'POST', body: { token } }),
-  members: () => request<{ members: Array<{ id: string; name: string; role: string; status: string }> }>('/v1/members'),
-  setMemberRole: async (id: string, role: string) => {
+  members: () => request<{ members: Array<{ id: string; name: string; role: string; status: string; expiresAt?: string | null }> }>('/v1/members'),
+  setMemberRole: async (id: string, role: string, expiresAt?: string | null) => {
     const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'member-role', memberId: id, role } })
     const signed = await startAuthentication({ optionsJSON: started.options as never })
     const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
-    return request<{ ok: boolean; role: string }>(`/v1/members/${encodeURIComponent(id)}/role`, { method: 'POST', body: { role }, headers: { 'x-mandate-stepup': verified.grant } })
+    return request<{ ok: boolean; role: string; expiresAt?: string | null }>(`/v1/members/${encodeURIComponent(id)}/role`, { method: 'POST', body: { role, expiresAt }, headers: { 'x-mandate-stepup': verified.grant } })
   },
   revokeMember: async (id: string) => {
     const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'member-revoke', memberId: id } })

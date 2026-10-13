@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS members (
   created_at TEXT NOT NULL,
   created_by TEXT,
   last_seen_at TEXT,
-  revoked_at TEXT
+  revoked_at TEXT,
+  expires_at TEXT
 );
 CREATE TABLE IF NOT EXISTS credentials (
   id TEXT PRIMARY KEY,
@@ -136,7 +137,8 @@ CREATE TABLE IF NOT EXISTS invites (
   used_at TEXT,
   revoked_at TEXT,
   created_by TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  delegation_expires_at TEXT
 );
 CREATE TABLE IF NOT EXISTS external_refs (
   kind TEXT NOT NULL,
@@ -187,6 +189,8 @@ export class ControlStore {
     this.ensureColumn('stepup_grants', 'assertion_json', 'ALTER TABLE stepup_grants ADD COLUMN assertion_json TEXT')
     this.ensureColumn('sessions', 'public_id', 'ALTER TABLE sessions ADD COLUMN public_id TEXT')
     this.ensureColumn('members', 'recovery_saved_at', 'ALTER TABLE members ADD COLUMN recovery_saved_at TEXT')
+    this.ensureColumn('members', 'expires_at', 'ALTER TABLE members ADD COLUMN expires_at TEXT')
+    this.ensureColumn('invites', 'delegation_expires_at', 'ALTER TABLE invites ADD COLUMN delegation_expires_at TEXT')
     this.db.exec(`UPDATE sessions SET public_id = lower(hex(randomblob(8))) WHERE public_id IS NULL`)
   }
 
@@ -258,17 +262,25 @@ export class ControlStore {
     return true
   }
 
-  addMember(input: { id: string; workspaceId: string; name: string; role: MemberRole; now: string; limit?: number | null; email?: string | null; createdBy?: string | null }): void {
-    this.db.prepare(`INSERT INTO members (id, workspace_id, display_name, email, role, approval_limit_cents, status, created_at, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)`).run(input.id, input.workspaceId, input.name, input.email ?? null, input.role, input.limit ?? null, input.now, input.createdBy ?? null)
+  addMember(input: { id: string; workspaceId: string; name: string; role: MemberRole; now: string; limit?: number | null; email?: string | null; createdBy?: string | null; expiresAt?: string | null }): void {
+    const status = input.expiresAt && input.expiresAt <= input.now ? 'expired' : 'active'
+    this.db.prepare(`INSERT INTO members (id, workspace_id, display_name, email, role, approval_limit_cents, status, created_at, created_by, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.id, input.workspaceId, input.name, input.email ?? null, input.role, input.limit ?? null, status, input.now, input.createdBy ?? null, input.expiresAt ?? null)
   }
 
-  member(id: string): { id: string; workspace_id: string; display_name: string; role: MemberRole; approval_limit_cents: number | null; status: string } | null {
-    return this.db.prepare('SELECT id, workspace_id, display_name, role, approval_limit_cents, status FROM members WHERE id = ?').get(id) as { id: string; workspace_id: string; display_name: string; role: MemberRole; approval_limit_cents: number | null; status: string } | undefined ?? null
+  member(id: string, now?: string): { id: string; workspace_id: string; display_name: string; role: MemberRole; approval_limit_cents: number | null; status: string; expires_at: string | null } | null {
+    const row = this.db.prepare('SELECT id, workspace_id, display_name, role, approval_limit_cents, status, expires_at FROM members WHERE id = ?').get(id) as { id: string; workspace_id: string; display_name: string; role: MemberRole; approval_limit_cents: number | null; status: string; expires_at: string | null } | undefined ?? null
+    if (!row) return null
+    if (now && row.expires_at && row.expires_at <= now && row.status === 'active') {
+      return { ...row, status: 'expired' }
+    }
+    return row
   }
 
-  members(workspaceId: string): Array<{ id: string; display_name: string; role: MemberRole; status: string; approval_limit_cents: number | null }> {
-    return this.db.prepare('SELECT id, display_name, role, status, approval_limit_cents FROM members WHERE workspace_id = ? ORDER BY created_at').all(workspaceId) as Array<{ id: string; display_name: string; role: MemberRole; status: string; approval_limit_cents: number | null }>
+  members(workspaceId: string, now?: string): Array<{ id: string; display_name: string; role: MemberRole; status: string; approval_limit_cents: number | null; expires_at: string | null }> {
+    const rows = this.db.prepare('SELECT id, display_name, role, status, approval_limit_cents, expires_at FROM members WHERE workspace_id = ? ORDER BY created_at').all(workspaceId) as Array<{ id: string; display_name: string; role: MemberRole; status: string; approval_limit_cents: number | null; expires_at: string | null }>
+    if (!now) return rows
+    return rows.map((row) => (row.expires_at && row.expires_at <= now && row.status === 'active' ? { ...row, status: 'expired' } : row))
   }
 
   ownerCount(workspaceId: string): number {
@@ -276,11 +288,13 @@ export class ControlStore {
     return row.n
   }
 
-  setMemberRole(id: string, role: MemberRole, now: string): 'ok' | 'last-owner' | 'missing' {
+  setMemberRole(id: string, role: MemberRole, now: string, expiresAt?: string | null): 'ok' | 'last-owner' | 'missing' {
     const member = this.member(id)
-    if (!member || member.status !== 'active') return 'missing'
+    if (!member || (member.status !== 'active' && member.status !== 'expired')) return 'missing'
     if (member.role === 'owner' && role !== 'owner' && this.ownerCount(member.workspace_id) <= 1) return 'last-owner'
-    this.db.prepare('UPDATE members SET role = ? WHERE id = ?').run(role, id)
+    const nextExpires = expiresAt === undefined ? member.expires_at : expiresAt
+    const nextStatus = nextExpires && nextExpires <= now ? 'expired' : 'active'
+    this.db.prepare('UPDATE members SET role = ?, expires_at = ?, status = ? WHERE id = ?').run(role, nextExpires, nextStatus, id)
     this.revokeSessions(id, now)
     return 'ok'
   }
@@ -472,9 +486,9 @@ export class ControlStore {
     return false
   }
 
-  createInvite(input: { id: string; workspaceId: string; role: MemberRole; token: string; expiresAt: string; createdBy: string; now: string; label?: string | null; limit?: number | null }): void {
-    this.db.prepare(`INSERT INTO invites (id, workspace_id, role, label, approval_limit_cents, token_hash, expires_at, created_by, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.id, input.workspaceId, input.role, input.label ?? null, input.limit ?? null, hashToken(input.token), input.expiresAt, input.createdBy, input.now)
+  createInvite(input: { id: string; workspaceId: string; role: MemberRole; token: string; expiresAt: string; createdBy: string; now: string; label?: string | null; limit?: number | null; delegationExpiresAt?: string | null }): void {
+    this.db.prepare(`INSERT INTO invites (id, workspace_id, role, label, approval_limit_cents, token_hash, expires_at, created_by, created_at, delegation_expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(input.id, input.workspaceId, input.role, input.label ?? null, input.limit ?? null, hashToken(input.token), input.expiresAt, input.createdBy, input.now, input.delegationExpiresAt ?? null)
   }
 
   /** Marks an unused invite revoked. Another studio's token is not found. */
@@ -484,8 +498,8 @@ export class ControlStore {
   }
 
   /** One invite, one use. Two callers: the first update wins. */
-  takeInvite(token: string, now: string): { id: string; workspace_id: string; role: MemberRole; label: string | null } | null {
-    const row = this.db.prepare('SELECT id, workspace_id, role, label, expires_at, used_at, revoked_at FROM invites WHERE token_hash = ?').get(hashToken(token)) as { id: string; workspace_id: string; role: MemberRole; label: string | null; expires_at: string; used_at: string | null; revoked_at: string | null } | undefined
+  takeInvite(token: string, now: string): { id: string; workspace_id: string; role: MemberRole; label: string | null; delegation_expires_at: string | null } | null {
+    const row = this.db.prepare('SELECT id, workspace_id, role, label, expires_at, used_at, revoked_at, delegation_expires_at FROM invites WHERE token_hash = ?').get(hashToken(token)) as { id: string; workspace_id: string; role: MemberRole; label: string | null; expires_at: string; used_at: string | null; revoked_at: string | null; delegation_expires_at: string | null } | undefined
     if (!row || row.used_at || row.revoked_at || row.expires_at <= now) return null
     const result = this.db.prepare('UPDATE invites SET used_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL').run(now, row.id)
     if (Number(result.changes) !== 1) return null
