@@ -64,9 +64,11 @@ export function useOnline(): boolean {
   return online
 }
 
-/** Everything a money action can change. Called after approve, reject, settle, propose, publish. */
 export function useToday() {
-  return useQuery({ queryKey: ['today'], queryFn: api.today, refetchInterval: 15_000 })
+  const session = useSession()
+  const role = session.data?.role
+  const isOwnerLike = !role || role === 'owner' || role === 'approver'
+  return useQuery({ queryKey: ['today'], queryFn: api.today, enabled: isOwnerLike, refetchInterval: 15_000 })
 }
 
 export function useRefreshMoney() {

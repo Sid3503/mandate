@@ -17,14 +17,15 @@
 - Q1.10 P6.T5: agent scorecard feeding the safety breaker. Proof: `api/test/agent-keys.test.ts` and `web/e2e/passkey-repair-agent-scorecard.spec.ts`. Screenshot `docs/evidence/q1/scorecard.png` shows no secret.
 - Q1.11 P6.T4 `cded03b`: button label alignment with e2e job suite. Full `npm run gates` complete for Q1.
 - Q2.1 P5.T1 `fda497e`: welcome headline, line of proof, three doors, trust strip with verify link. Proof: `web/e2e/onboarding-doors.spec.ts`. Screenshot `docs/evidence/q2/doors.png`.
-- Q2.2 P5.T2: demo banner, role switcher (owner, approver, proposer, viewer, payee), reset, and live proof page. Proof: `api/test/demo-onboarding.test.ts` and `web/e2e/passkey-repair-demo.spec.ts`. Screenshot `docs/evidence/q2/demo-banner.png`.
+- Q2.2 P5.T2 `fdd1ca4`: demo banner, role switcher (owner, approver, proposer, viewer, payee), reset, and live proof page. Proof: `api/test/demo-onboarding.test.ts` and `web/e2e/passkey-repair-demo.spec.ts`. Screenshot `docs/evidence/q2/demo-banner.png`.
+- Q2.3 P5.T5: role landings for owner/approver on Today, proposer on Ask Mandate, viewer on Proof, payee on Payments, client on Deals. Proof: `web/e2e/passkey-repair-role-landings.spec.ts` with axe. Screenshot `docs/evidence/q2/payee-landing.png`.
 
 ## Test counts
 
 - Baseline before Phase 4: 46 files, 543 API tests, 114 Playwright, axe pass. The 522 and 112 numbers are the earlier audit.
 - Full `npm run gates` on 12 October 2026, `q0-verify`: 47 files, 568 API tests, 7.71s, secret check 313, Playwright 116, axe included.
 - Full `npm run gates` after Q1 on 13 October 2026: 48 files, 594 API tests, 10.00s, secret check 345 tracked files, Playwright 125 passed (8.1m), axe included, exit 0.
-- `gates:fast` after Q2.2: 49 files, 596 API tests, 9.35s, secret check 347 tracked files, exit 0.
+- `gates:fast` after Q2.3: 49 files, 596 API tests, 9.75s, secret check 351 tracked files, exit 0.
 
 ## Open items
 
@@ -51,7 +52,8 @@
 - Machine key upgrade keeps the same id. New secrets still use `mnd_ag_` and `mnd_cl_`, because the browser suite matches those prefixes. A hash of the bare secret is accepted once and then stored as the hash of the whole key.
 - Demo role switch and demo reset are allowed for viewer, payee, and approver in demo workspace mode.
 - Live proof reads `docs/live-proof/*.json`. If empty, the page displays "not added yet".
+- Role landings: owner and approver land on Today, proposer on Ask Mandate (/app/clerk), viewer on Proof (/app/proof), payee on Payments (/app/payments), client on Deals (/app/deals). Direct navigation to /app/ redirects non-owner roles to their role landing. useToday query only runs for owner/approver.
 
 ## Next
 
-Q2.3 P5.T5: role landings for owner, proposer, viewer, client, payee.
+Q2.4 P5.T6: PWA unlock with Face ID on expired session.

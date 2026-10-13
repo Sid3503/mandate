@@ -167,7 +167,7 @@ function ShellFrame() {
       await api.switchDemoRole(role)
       await client.invalidateQueries()
       toast({ title: `Switched to ${role}`, body: `You are now browsing as ${role}.`, tone: 'info', key: 'demo-role' })
-      const landing = role === 'proposer' ? '/clerk' : role === 'viewer' ? '/proof' : role === 'payee' ? '/deals' : '/'
+      const landing = role === 'proposer' ? '/clerk' : role === 'viewer' ? '/proof' : role === 'payee' ? '/payments' : '/'
       navigate(landing)
     } catch {
       toast({ title: 'Could not switch role', body: 'The demo role switch failed.', tone: 'warn', key: 'demo-role-error' })
