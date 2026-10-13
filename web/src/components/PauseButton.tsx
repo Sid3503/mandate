@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api'
-import { useIsOwner, useOnline } from '../lib/hooks'
+import { useOnline, useSession } from '../lib/hooks'
 import { useToast } from './Toast'
 import { ProblemCard } from './ui'
 
@@ -10,7 +10,8 @@ import { ProblemCard } from './ui'
  * and what it cannot do (a payout PayPal has already accepted cannot be called back), so nobody has to guess in a hurry.
  */
 export function PauseButton({ paused }: { paused: boolean }) {
-  const owner = useIsOwner()
+  const session = useSession()
+  const canPause = session.data?.role === 'owner' || session.data?.role === 'approver'
   const online = useOnline()
   const client = useQueryClient()
   const toast = useToast()
@@ -29,7 +30,7 @@ export function PauseButton({ paused }: { paused: boolean }) {
   useEffect(() => {
     if (open) field.current?.focus()
   }, [open])
-  if (!owner || paused) return null
+  if (!canPause || paused) return null
   return (
     <div className="pause-wrap">
       <button type="button" className="btn btn-ghost btn-small pause-button" aria-expanded={open} onClick={() => setOpen(!open)}>Pause</button>

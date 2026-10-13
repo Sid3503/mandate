@@ -32,6 +32,7 @@
 - Q4.1 P7.T1: Gate receives plain `safety` input in `GateProposal` and `decide`, returning `DENY system.paused` on paused matching request while reads still work completely. Proof: `api/test/safety.test.ts`.
 - Q4.2 P7.T2: Pause controls for all, autopilot, and one agent key (`POST /v1/safety/pause`, `POST /v1/safety/pause/autopilot`, `POST /v1/agents/:id/pause`). Approver can pause without step-up; only owner can resume (`POST /v1/safety/resume`, `POST /v1/safety/resume/autopilot`, `POST /v1/agents/:id/resume`), with passkey step-up required when `passkey_for_money` is active. Proof: `api/test/safety.test.ts`.
 - Q4.3 P7.T3 (Case 30): Auto-trip breakers implemented with defaults: 3 suspicious refusals in 2m (global pause), 2 unknown payee attempts in 10m (global pause), 20 agent req/m (suspends agent key), 3 autopilot failures in a row (pauses autopilot). Owner edits settings via `PUT /v1/safety/config` with passkey step-up when `passkey_for_money` is active; proposer and approver are forbidden (403). Proof: `api/test/safety.test.ts`.
+- Q4.4 P7.T4: UI pause banner (`data-testid="paused-banner"`) with reason/relative time, header Pause button for owner and approver, and Today "Stopped" card (`data-testid="today-stopped-card"`) and "Stopped by the rules" section (`data-testid="today-stopped"`). Proof: `web/e2e/job.spec.ts`.
 
 ## Test counts
 

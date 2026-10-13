@@ -56,6 +56,7 @@ export function Today() {
 
   const proposals = useProposals()
   const today = useToday()
+  const status = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 15_000, retry: false })
   const names = useNames()
   const warrant = useWarrant()
   const captures = useCaptures(proposals.data?.data)
@@ -80,6 +81,12 @@ export function Today() {
       {proposals.isLoading || today.isLoading ? <Loading /> : null}
       <ProblemCard error={proposals.error ?? today.error} />
       <EmailNotice />
+      {status.data?.paused ? (
+        <div className="paused-card" data-testid="today-stopped-card" role="status">
+          <Chip tone="deny">Stopped</Chip>
+          <span><strong>Automation stopped.</strong> Mandate is paused{status.data.paused.reason ? ` (${status.data.paused.reason})` : ''}. Automatic billing and payouts are halted.</span>
+        </div>
+      ) : null}
       {data?.next ? <NextForJob next={data.next} /> : null}
 
       {data ? <MonthStrip data={data} /> : null}
@@ -123,7 +130,7 @@ export function Today() {
       {data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length >= 4 ? <Setup data={data} /> : null}
 
       {refused.length > 0 || (data?.stopped.count ?? 0) > 0 ? (
-        <section className="section" data-tour="refused" aria-labelledby="h-stopped">
+        <section className="section" data-tour="refused" aria-labelledby="h-stopped" data-testid="today-stopped">
           <h2 className="section-title" id="h-stopped">Stopped by the rules{data && data.stopped.count > 0 ? <span className="section-note"> · {data.stopped.count} in 30 days, {dollars(data.stopped.cents)} kept safe</span> : null}</h2>
           <div className="refusals">
             {refused.map((row) => (

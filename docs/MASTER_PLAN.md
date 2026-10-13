@@ -81,7 +81,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P7.T1 | done | `safety` is a plain gate input to decide, matching request returns `DENY system.paused`, and reads still work while paused. Proof: `api/test/safety.test.ts` | |
 | P7.T2 | done | Pause controls for all, autopilot, and one agent key. Approver can pause, only owner can resume, step-up required for resume when passkey rule active. Proof: `api/test/safety.test.ts` | |
 | P7.T3 | done | Auto-trip breakers (3 refusals/2m, 2 unknown payees/10m, 20 agent req/m, 3 autopilot failures) and owner edits settings with step-up. Proof: `api/test/safety.test.ts` | |
-| P7.T4 | partial | same e2e pause test. No "Stopped" proof on Today | `1ac59cd` |
+| P7.T4 | done | UI pause banner with reason/time, header Pause button for owner and approver, and "Stopped" card and refused section on Today. Proof: `web/e2e/job.spec.ts` | |
 | P7.T5 | partial | `api/test/phases.test.ts` "tries a payment without writing a row" sees Priya in `GET /v1/payees` | `9a2ea0b` |
 | P7.T6 | partial | `api/src/domain/payee-book.ts`. `api/test/phases.test.ts` "never turns a refusal into an approval". No test that a new payee needs approval | `9a2ea0b` |
 | P7.T7 | not started | no payee screen | |
