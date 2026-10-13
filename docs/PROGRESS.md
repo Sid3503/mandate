@@ -29,6 +29,7 @@
 - Full `npm run gates` on 12 October 2026, `q0-verify`: 47 files, 568 API tests, 7.71s, secret check 313, Playwright 116, axe included.
 - Full `npm run gates` after Q1 on 13 October 2026: 48 files, 594 API tests, 10.00s, secret check 345 tracked files, Playwright 125 passed (8.1m), axe included, exit 0.
 - `gates:fast` after Q2.5: 49 files, 596 API tests, 9.97s, secret check 356 tracked files, exit 0.
+- Full `npm run gates` after Q2 on 13 October 2026: 49 files, 596 API tests, 10.40s, secret check 356 tracked files, Playwright 133 passed (8.5m), axe included, exit 0.
 
 ## Open items
 
@@ -55,11 +56,12 @@
 - Machine key upgrade keeps the same id. New secrets still use `mnd_ag_` and `mnd_cl_`, because the browser suite matches those prefixes. A hash of the bare secret is accepted once and then stored as the hash of the whole key.
 - Demo role switch and demo reset are allowed for viewer, payee, and approver in demo workspace mode.
 - Live proof reads `docs/live-proof/*.json`. If empty, the page displays "not added yet".
-- Role landings: owner and approver land on Today, proposer on Ask Mandate (/app/clerk), viewer on Proof (/app/proof), payee on Payments (/app/payments), client on Deals (/app/deals). Direct navigation to /app/ redirects non-owner roles to their role landing. useToday query only runs for owner/approver.
+- Role landings: owner and approver land on Today, proposer on Ask Mandate (/app/clerk), viewer on Proof (/app/proof), payee on Payments (/app/payments), client on Deals (/app/deals). Direct navigation to /app/ redirects non-owner roles to their role landing in demo mode. useToday query only runs for owner/approver.
 - PWA unlock with Face ID: on expired session (401 or ?reason=expired or mandate.session.expired), /app/unlock presents an immediate biometric unlock button "Unlock with Face ID" alongside manual key unlock. Workbox denylists /v1/, /auth/, /w/, and /mcp/ paths from navigation fallback.
 - First-run coach marks: exactly 3 marks on initial onboarding (Today Waiting, Ask Mandate, Rules). Tracked in mandate.coach.seen and mandate.tour.welcome, dismissable and never repeated. Loading, empty, and error states provided across all screens.
 - WebAuthn fallback: when window.PublicKeyCredential is unavailable, Unlock displays a plain warning notice guiding user to unlock via API key or modern browser, matching Studio fallback.
+- Tour compatibility: classic console maintains full welcome walkthrough while demo onboarding delivers streamlined 3-mark coach tour.
 
 ## Next
 
-Full npm run gates for Q2, then cut q3-ops branch and begin Q3.
+Cut q3-ops branch and begin Q3.
