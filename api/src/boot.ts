@@ -116,8 +116,15 @@ export function openProduct(input: {
     migrate(db)
     const paypal = new FakePayPal()
     const signer = loadSigner({ pem: openSeal(masterKey, row.signing_key_sealed), production: false })
-    const wait = row.mode === 'demo' ? 0 : flags.newPayeeWaitHours
-    const services = buildServices({ db, paypal, now: input.now, signer, payeeBook: flags.payeeBook, newPayeeWaitHours: wait })
+    const services = buildServices({
+      db,
+      paypal,
+      now: input.now,
+      signer,
+      payeeBook: flags.payeeBook,
+      newPayeeWaitHours: flags.newPayeeWaitHours,
+      onExternalRef: (kind, externalId) => control.rememberRef(kind, externalId, id),
+    })
     const app = createApp({
       db,
       paypal,
