@@ -69,6 +69,7 @@ export function Unlock() {
     where.search.includes('expired') ||
     (typeof localStorage !== 'undefined' && localStorage.getItem('mandate.session.expired') === '1')
   )
+  const passkeys = typeof window !== 'undefined' && typeof window.PublicKeyCredential !== 'undefined'
 
   return (
     <div className="unlock">
@@ -91,7 +92,12 @@ export function Unlock() {
             {ready.data ? <Chip tone="muted">v{ready.data.version}</Chip> : null}
           </div>
         </div>
-        {isExpired ? (
+        {!passkeys ? (
+          <div className="panel" data-testid="unsupported-webauthn" style={{ marginBottom: 16 }}>
+            <p className="fine">This browser does not support WebAuthn passkeys. Unlock using an API key below, or try in a modern browser.</p>
+          </div>
+        ) : null}
+        {isExpired && passkeys ? (
           <div className="stack gap-s" style={{ marginBottom: 20 }} data-testid="expired-session-box">
             <div className="row between align-center">
               <span className="eyebrow" style={{ margin: 0 }}>Session expired</span>

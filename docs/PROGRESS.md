@@ -20,7 +20,8 @@
 - Q2.2 P5.T2 `fdd1ca4`: demo banner, role switcher (owner, approver, proposer, viewer, payee), reset, and live proof page. Proof: `api/test/demo-onboarding.test.ts` and `web/e2e/passkey-repair-demo.spec.ts`. Screenshot `docs/evidence/q2/demo-banner.png`.
 - Q2.3 P5.T5 `8dbab75`: role landings for owner/approver on Today, proposer on Ask Mandate, viewer on Proof, payee on Payments, client on Deals. Proof: `web/e2e/passkey-repair-role-landings.spec.ts` with axe. Screenshot `docs/evidence/q2/payee-landing.png`.
 - Q2.4 P5.T6 `7706128`: PWA unlock with Face ID on expired session, workbox denylist for authenticated paths. Proof: `web/e2e/passkey-repair-pwa-unlock.spec.ts` with axe. Screenshot `docs/evidence/q2/unlock-faceid.png`.
-- Q2.5 P5.T7: first-run 3-mark coach tour (Waiting, Ask, Rules), mandate.coach.seen persistence, screen states (loading, empty, error). Proof: `web/e2e/passkey-repair-coach.spec.ts` with axe. Screenshot `docs/evidence/q2/coach-marks.png`.
+- Q2.5 P5.T7 `434b93c`: first-run 3-mark coach tour (Waiting, Ask, Rules), mandate.coach.seen persistence, screen states (loading, empty, error). Proof: `web/e2e/passkey-repair-coach.spec.ts` with axe. Screenshot `docs/evidence/q2/coach-marks.png`.
+- Q2.6 P5.T8 P5.T9: mobile and desktop browser validation with axe, docs/PHONE_CHECKLIST.md runbook, Unlock and Studio WebAuthn fallback notice. Proof: `web/e2e/passkey-repair-pwa-unlock.spec.ts`, `web/e2e/onboarding-doors.spec.ts`, `docs/PHONE_CHECKLIST.md`.
 
 ## Test counts
 
@@ -57,7 +58,8 @@
 - Role landings: owner and approver land on Today, proposer on Ask Mandate (/app/clerk), viewer on Proof (/app/proof), payee on Payments (/app/payments), client on Deals (/app/deals). Direct navigation to /app/ redirects non-owner roles to their role landing. useToday query only runs for owner/approver.
 - PWA unlock with Face ID: on expired session (401 or ?reason=expired or mandate.session.expired), /app/unlock presents an immediate biometric unlock button "Unlock with Face ID" alongside manual key unlock. Workbox denylists /v1/, /auth/, /w/, and /mcp/ paths from navigation fallback.
 - First-run coach marks: exactly 3 marks on initial onboarding (Today Waiting, Ask Mandate, Rules). Tracked in mandate.coach.seen and mandate.tour.welcome, dismissable and never repeated. Loading, empty, and error states provided across all screens.
+- WebAuthn fallback: when window.PublicKeyCredential is unavailable, Unlock displays a plain warning notice guiding user to unlock via API key or modern browser, matching Studio fallback.
 
 ## Next
 
-Q2.6 P5.T8 P5.T9: mobile/desktop validation and write docs/PHONE_CHECKLIST.md.
+Full npm run gates for Q2, then cut q3-ops branch and begin Q3.

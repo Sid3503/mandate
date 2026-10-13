@@ -63,3 +63,17 @@ test('PWA unlock with Face ID on expired session', async ({ page }) => {
   await expect(page).toHaveURL(/\/app\/?$/)
   await expect(page.getByRole('heading', { name: /Today/i })).toBeVisible()
 })
+
+test('shows fallback message when WebAuthn is unavailable', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'PublicKeyCredential', {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    })
+  })
+  await page.goto('/app/unlock')
+  const fallback = page.getByTestId('unsupported-webauthn')
+  await expect(fallback).toBeVisible()
+  await expect(fallback).toContainText('This browser does not support WebAuthn passkeys')
+})
