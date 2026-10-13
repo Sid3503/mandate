@@ -80,7 +80,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P6.T6 | not started | no delegation end date | |
 | P7.T1 | done | `safety` is a plain gate input to decide, matching request returns `DENY system.paused`, and reads still work while paused. Proof: `api/test/safety.test.ts` | |
 | P7.T2 | done | Pause controls for all, autopilot, and one agent key. Approver can pause, only owner can resume, step-up required for resume when passkey rule active. Proof: `api/test/safety.test.ts` | |
-| P7.T3 | partial | `api/test/agent-keys.test.ts` "suspends only the misbehaving agent". Not the full trip list, and the owner cannot edit it with step-up | `1ac59cd` |
+| P7.T3 | done | Auto-trip breakers (3 refusals/2m, 2 unknown payees/10m, 20 agent req/m, 3 autopilot failures) and owner edits settings with step-up. Proof: `api/test/safety.test.ts` | |
 | P7.T4 | partial | same e2e pause test. No "Stopped" proof on Today | `1ac59cd` |
 | P7.T5 | partial | `api/test/phases.test.ts` "tries a payment without writing a row" sees Priya in `GET /v1/payees` | `9a2ea0b` |
 | P7.T6 | partial | `api/src/domain/payee-book.ts`. `api/test/phases.test.ts` "never turns a refusal into an approval". No test that a new payee needs approval | `9a2ea0b` |
@@ -145,14 +145,14 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 27 Cleanup never deletes default, studio, or live | `api/test/ops-cleanup-scheduler.test.ts` "never deletes default, studio, or live workspaces even if expires_at is set (Appendix B Case 27)" | |
 | 28 Budget 0 means zero model calls, quick asks still work | `api/test/ops-ratelimit-budget.test.ts` "budget 0 blocks reservations while quick asks still succeed" | |
 | 29 Kill switch stops all agents | `api/test/repair-pass.test.ts` "a kill stops the clerk path and a drafter that already has a model" | studio turn and a drafter that already has a model |
-| 30 Spam trips the breaker, resume needs step-up, proposer cannot pause | partial: `api/test/agent-keys.test.ts` "suspends only the misbehaving agent" and e2e pause | no step-up resume, no proposer pause test |
+| 30 Spam trips the breaker, resume needs step-up, proposer cannot pause | `api/test/safety.test.ts` "P7.T3 (Case 30): auto-trip breakers (unknown payees, agent spam, autopilot failures) and owner edits settings with step-up" | |
 | 31 First payment to a new payee needs approval | `api/test/repair-pass.test.ts` "holds a first payment and refuses one while a change is pending" | same test as case 32 |
 | 32 Pending payee change blocks payouts | `api/test/repair-pass.test.ts` "holds a first payment and refuses one while a change is pending" | same test as case 31 |
 | 33 Pasted policy with a hidden instruction is flagged and not published | `api/test/intent.test.ts` "does not treat a forwarded note"; e2e "a pasted policy is read sentence by sentence" | |
 | 34 Simulate writes zero rows | `api/test/phases.test.ts` "tries a payment without writing a row" | |
 | 35 No test output or log contains a canary | `api/test/ops-readyz-secret.test.ts` "Case 35: secret and canary log redaction sweep", `api/test/phases.test.ts` "redacts a canary and a bearer token", and `scripts/check-secrets.mjs` | |
 
-Cases 9 to 18 have the tests named in the table. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 32, and 35 gained tests in the repair pass and Q3 ops suites. The only case still partial from Appendix B is 30 (scheduled for Q4 Safety).
+Cases 9 to 18 have the tests named in the table. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, and 35 gained tests in the repair pass, Q3 ops suites, and Q4 safety suites. All cases in Appendix B that have implementations now have verified test proof.
 
 ## Confirmed facts, not changes
 

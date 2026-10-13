@@ -176,3 +176,12 @@ export const LINE_STUDIO_WARRANT: WarrantBody = {
 export const DEMO_JOB_ID = 'job_northwind_logo'
 
 export const WARRANT_ID = 'wnt_line_studio'
+
+export const SafetyConfigSchema = z.object({
+  tripAfter: z.number().int().min(0).max(100).optional(),
+  windowSeconds: z.number().int().min(1).max(86400).optional(),
+  unknownPayeeTripAfter: z.number().int().min(0).max(100).optional(),
+  unknownPayeeWindowSeconds: z.number().int().min(1).max(86400).optional(),
+  agentRateLimitPerMinute: z.number().int().min(0).max(1000).optional(),
+  autopilotFailureTripAfter: z.number().int().min(0).max(100).optional(),
+}).strict()

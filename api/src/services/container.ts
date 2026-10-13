@@ -32,7 +32,7 @@ export type Services = {
 export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | null; invoices?: InvoicePort | null; watch?: WatchPort | null; publicUrl?: string; now: () => Date; signer?: Signer; safety?: Partial<SafetyConfig>; payeeBook?: boolean; newPayeeWaitHours?: number; onExternalRef?: (kind: string, externalId: string) => void }): Services {
   const repo = new Repo(deps.db)
   const signer = deps.signer ?? ephemeralSigner()
-  const safety = new SafetyService(repo, signer, deps.now, { ...DEFAULT_SAFETY, ...(deps.safety ?? {}) })
+  const safety = new SafetyService(repo, signer, deps.now, deps.safety)
   const agents = new AgentService(repo, deps.now)
   const clientKeys = new ClientKeyService(repo, deps.now)
   const mandate = new MandateService(repo, deps.paypal, deps.now, signer, deps.invoices ?? null, { publicUrl: deps.publicUrl, watch: deps.watch ?? null, safety, agents, payeeBook: deps.payeeBook, newPayeeWaitHours: deps.newPayeeWaitHours, onExternalRef: deps.onExternalRef })

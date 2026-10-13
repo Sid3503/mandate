@@ -102,7 +102,7 @@ describe('pausing and resuming', () => {
   })
 
   it('trips by itself on three odd refusals in two minutes, says why, and stays paused until the owner resumes', async () => {
-    const h = harness({ breaker: { tripAfter: 3, windowSeconds: 120 } })
+    const h = harness({ breaker: { tripAfter: 3, windowSeconds: 120, unknownPayeeTripAfter: 0 } })
     await publish(h.app, { fundingRequired: false, standing: [] })
     await ask(h.app, { payee: 'Mallory' })
     await ask(h.app, { payee: 'Eve' })
@@ -378,6 +378,156 @@ describe('autopilot across a pause', () => {
     })
     expect(resumeAgent.status).toBe(200)
     expect(((await resumeAgent.json()) as { status: string }).status).toBe('active')
+
+    controlDb.close()
+  })
+
+  it('P7.T3 (Case 30): auto-trip breakers (unknown payees, agent spam, autopilot failures) and owner edits settings with step-up', async () => {
+    const controlDb = new DatabaseSync(':memory:')
+    const control = new ControlStore(controlDb, 'pepper-p7-t3')
+    const now = '2026-10-12T12:00:00.000Z'
+    control.insertWorkspace({ id: 'ws_default', slug: 'default', name: 'Default', mode: 'default', paypal_mode: 'fake', db_path: ':memory:', status: 'active', created_at: now, expires_at: null, last_active_at: now, signing_key_sealed: 'sealed' })
+    const ownerId = 'usr_owner_p7_t3'
+    const approverId = 'usr_approver_p7_t3'
+    const proposerId = 'usr_proposer_p7_t3'
+
+    control.addMember({ id: ownerId, workspaceId: 'ws_default', name: 'Owner', role: 'owner', now })
+    control.addMember({ id: approverId, workspaceId: 'ws_default', name: 'Approver', role: 'approver', now })
+    control.addMember({ id: proposerId, workspaceId: 'ws_default', name: 'Proposer', role: 'proposer', now })
+    const ownerToken = 'owner-session-token-32chars-t3'
+    const approverToken = 'approver-session-token-32ch-t3'
+    const proposerToken = 'proposer-session-token-32ch-t3'
+    for (const [token, memberId] of [[ownerToken, ownerId], [approverToken, approverId], [proposerToken, proposerId]] as const) {
+      control.putSession({ token, memberId, workspaceId: 'ws_default', method: 'passkey', now, idleHours: 12, absoluteDays: 7 })
+    }
+
+    const h = harness({
+      control,
+      flags: loadFlags({ FLAG_PASSKEYS: '1' }),
+      breaker: { tripAfter: 3, windowSeconds: 120, unknownPayeeTripAfter: 2, unknownPayeeWindowSeconds: 600, agentRateLimitPerMinute: 20, autopilotFailureTripAfter: 3 },
+    })
+    const ownerHeaders = { ...WEB, cookie: `mnd_session=${ownerToken}` }
+    const approverHeaders = { ...WEB, cookie: `mnd_session=${approverToken}` }
+    const proposerHeaders = { ...WEB, cookie: `mnd_session=${proposerToken}` }
+
+    // --- 1. Unknown payee breaker (2 attempts in 10m pauses Mandate) ---
+    expect(h.services.safety.paused()).toBe(false)
+    const badPayee1 = await call(h.app, 'POST', '/v1/proposals', {
+      key: STUDIO_KEY,
+      idem: idem(),
+      body: { kind: 'payment', payee: 'Unknown Hacker 1', amountCents: 500, currency: 'USD', category: 'design', description: 'test 1' },
+    })
+    expect(badPayee1.status).toBe(201)
+    expect(badPayee1.json.gate).toBe('DENY')
+    expect(badPayee1.json.clause).toBe('payee.unknown')
+    expect(h.services.safety.paused()).toBe(false)
+
+    const badPayee2 = await call(h.app, 'POST', '/v1/proposals', {
+      key: STUDIO_KEY,
+      idem: idem(),
+      body: { kind: 'payment', payee: 'Unknown Hacker 2', amountCents: 500, currency: 'USD', category: 'design', description: 'test 2' },
+    })
+    expect(badPayee2.status).toBe(201)
+    expect(badPayee2.json.gate).toBe('DENY')
+    expect(badPayee2.json.clause).toBe('payee.unknown')
+    // Tripped!
+    expect(h.services.safety.paused()).toBe(true)
+    expect(h.services.safety.state().reason).toContain('unknown payee')
+
+    // Resume for next checks
+    await h.services.safety.resume('owner')
+    expect(h.services.safety.paused()).toBe(false)
+
+    // --- 2. Agent spam trip (20 req/m from one agent key suspends that key) ---
+    const spamAgent = h.services.agents.create({ name: 'FastBot', scopes: ['read'] })
+    for (let i = 0; i < 20; i += 1) {
+      const res = await call(h.app, 'GET', '/v1/warrant', { key: spamAgent.apiKey })
+      expect(res.status).toBe(200)
+    }
+    // 21st request trips the breaker: 429 agent.rate_limit and agent suspended
+    const res21 = await call(h.app, 'GET', '/v1/warrant', { key: spamAgent.apiKey })
+    expect(res21.status).toBe(429)
+    expect(res21.json.code).toBe('agent.rate_limit')
+
+    // Subsequent request is 403 agent.suspended
+    const res22 = await call(h.app, 'GET', '/v1/warrant', { key: spamAgent.apiKey })
+    expect(res22.status).toBe(403)
+    expect(res22.json.code).toBe('agent.suspended')
+
+    // System-wide Mandate was NOT paused by one agent's spam
+    expect(h.services.safety.paused()).toBe(false)
+
+    // --- 3. Autopilot failures in a row (3 in a row pauses autopilot) ---
+    expect(h.services.safety.isAutopilotPaused()).toBe(false)
+    h.services.safety.noteAutopilotFailure('Simulated failure 1')
+    expect(h.services.safety.isAutopilotPaused()).toBe(false)
+    h.services.safety.noteAutopilotFailure('Simulated failure 2')
+    expect(h.services.safety.isAutopilotPaused()).toBe(false)
+    h.services.safety.noteAutopilotFailure('Simulated failure 3')
+    expect(h.services.safety.isAutopilotPaused()).toBe(true)
+    expect(h.services.safety.state().autopilotPaused).toBe(true)
+
+    // Resume autopilot
+    await h.services.safety.resumeAutopilot('owner')
+    expect(h.services.safety.isAutopilotPaused()).toBe(false)
+
+    // --- 4. Settings editing with passkey step-up ---
+    const newSettings = { tripAfter: 5, windowSeconds: 180, unknownPayeeTripAfter: 4 }
+
+    // Proposer cannot edit settings
+    const proposerEdit = await h.app.request('http://mandate.test/v1/safety/config', {
+      method: 'PUT',
+      headers: { ...proposerHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify(newSettings),
+    })
+    expect(proposerEdit.status).toBe(403)
+
+    // Approver cannot edit settings
+    const approverEdit = await h.app.request('http://mandate.test/v1/safety/config', {
+      method: 'PUT',
+      headers: { ...approverHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify(newSettings),
+    })
+    expect(approverEdit.status).toBe(403)
+
+    // Turn on workspace passkey_for_money
+    controlDb.prepare("UPDATE workspaces SET passkey_for_money = 1 WHERE id = 'ws_default'").run()
+
+    // Owner without step-up grant gets 401
+    const ownerEditNoStepup = await h.app.request('http://mandate.test/v1/safety/config', {
+      method: 'PUT',
+      headers: { ...ownerHeaders, 'content-type': 'application/json' },
+      body: JSON.stringify(newSettings),
+    })
+    expect(ownerEditNoStepup.status).toBe(401)
+
+    // Owner with step-up grant succeeds
+    const grant = 'grant-safety-config-token'
+    control.putGrant({
+      id: grant,
+      memberId: ownerId,
+      workspaceId: 'ws_default',
+      kind: 'safety.config',
+      binding: stepBinding('safety.config', JSON.stringify(newSettings)),
+      now,
+    })
+
+    const ownerEditWithGrant = await h.app.request('http://mandate.test/v1/safety/config', {
+      method: 'PUT',
+      headers: { ...ownerHeaders, 'content-type': 'application/json', 'x-mandate-stepup': grant },
+      body: JSON.stringify(newSettings),
+    })
+    expect(ownerEditWithGrant.status).toBe(200)
+    const updated = (await ownerEditWithGrant.json()) as { ok: boolean; config: { tripAfter: number; windowSeconds: number; unknownPayeeTripAfter: number } }
+    expect(updated.config.tripAfter).toBe(5)
+    expect(updated.config.windowSeconds).toBe(180)
+    expect(updated.config.unknownPayeeTripAfter).toBe(4)
+
+    // GET /v1/safety returns the updated breaker config
+    const safetyGet = await h.app.request('http://mandate.test/v1/safety', { headers: ownerHeaders })
+    expect(safetyGet.status).toBe(200)
+    const safetyData = (await safetyGet.json()) as { breaker: { tripAfter: number } }
+    expect(safetyData.breaker.tripAfter).toBe(5)
 
     controlDb.close()
   })
