@@ -15,24 +15,17 @@
 - Q1.8 P6.T3: an owner can replace an `mnd_ag_` or `mnd_cl_` secret and keep the same agent or client. A legacy hash of the bare secret is rewritten on first use. Proof: `api/test/agent-keys.test.ts` and `api/test/client-keys.test.ts`.
 - Q1.9 P6.T4: connect an agent screen with templates, preview, expiry, and key testing. Screen `/app/connect`. Proof: `api/test/agent-keys.test.ts` and `web/e2e/passkey-repair-agent-connect.spec.ts`. Screenshot `docs/evidence/q1/connect-agent.png` shows no secret.
 - Q1.10 P6.T5: agent scorecard feeding the safety breaker. Proof: `api/test/agent-keys.test.ts` and `web/e2e/passkey-repair-agent-scorecard.spec.ts`. Screenshot `docs/evidence/q1/scorecard.png` shows no secret.
+- Q1.11 P6.T4 `cded03b`: button label alignment with e2e job suite. Full `npm run gates` complete for Q1.
 
 ## Test counts
 
 - Baseline before Phase 4: 46 files, 543 API tests, 114 Playwright, axe pass. The 522 and 112 numbers are the earlier audit.
 - Full `npm run gates` on 12 October 2026, `q0-verify`: 47 files, 568 API tests, 7.71s, secret check 313, Playwright 116, axe included.
-- `gates:fast` after Q1.2: 48 files, 575 API tests, secret check 326 tracked files, exit 0. The recovery browser test passed alone. Full `npm run gates` for Q1 has not run yet.
-- `gates:fast` after Q1.3: 48 files, 577 API tests, 11.06s, secret check 327 tracked files, exit 0. The passkey browser test passed alone.
-- `gates:fast` after Q1.4: 48 files, 577 API tests, 10.50s, secret check 329 tracked files, exit 0. The re-login browser test passed alone.
-- `gates:fast` after Q1.5: 48 files, 580 API tests, 9.66s, secret check 331 tracked files, exit 0. The invite browser test passed alone. Full `npm run gates` for Q1 has not run yet.
-- `gates:fast` after Q1.6: 48 files, 584 API tests, 10.17s, secret check 333 tracked files, exit 0. The members browser test passed alone. Full `npm run gates` for Q1 has not run yet.
-- `gates:fast` after Q1.7: 48 files, 584 API tests, 8.66s, secret check 337 tracked files, exit 0. The wizard browser test passed alone. Full `npm run gates` for Q1 has not run yet.
-- `gates:fast` after Q1.8: 48 files, 589 API tests, 8.56s, secret check 339 tracked files, exit 0. No new screen. Full `npm run gates` for Q1 has not run yet.
-- `gates:fast` after Q1.9: 48 files, 591 API tests, 8.89s, secret check 340 tracked files, exit 0. Connect agent browser test passed alone. Full `npm run gates` for Q1 has not run yet.
-- `gates:fast` after Q1.10: 48 files, 594 API tests, 9.61s, secret check 343 tracked files, exit 0. Scorecard browser test passed alone. Full `npm run gates` for Q1 has not run yet.
+- Full `npm run gates` after Q1 on 13 October 2026: 48 files, 594 API tests, 10.00s, secret check 345 tracked files, Playwright 125 passed (8.1m), axe included, exit 0.
 
 ## Open items
 
-- Q1 queue complete. Next: full gates for Q1, cut q2-onboarding, and continue Q2 through Q8. No checkpoints.
+- Q1 queue complete with full gates green. Next: cut q2-onboarding and continue Q2 through Q8.
 - Appendix B cases still partial: 22, 27, 28, 30, and 35.
 
 ## False assumptions
