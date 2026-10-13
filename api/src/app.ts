@@ -146,7 +146,7 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/agents\/health$/ },
   { method: 'GET', pattern: /^\/v1\/agents(\/[^/]+\/scorecard)?$/ },
   { method: 'POST', pattern: /^\/v1\/agents$/ },
-  { method: 'POST', pattern: /^\/v1\/agents\/[^/]+\/(revoke|resume|upgrade)$/ },
+  { method: 'POST', pattern: /^\/v1\/agents\/[^/]+\/(revoke|resume|upgrade|pause|suspend)$/ },
   { method: 'GET', pattern: /^\/v1\/client-keys$/ },
   { method: 'POST', pattern: /^\/v1\/client-keys$/ },
   { method: 'POST', pattern: /^\/v1\/client-keys\/[^/]+\/(revoke|rotate|upgrade)$/ },
@@ -155,7 +155,7 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/shares\/[^/]+\/revoke$/ },
   { method: 'GET', pattern: /^\/v1\/client-errors$/ },
   { method: 'GET', pattern: /^\/v1\/suggestions$/ },
-  { method: 'POST', pattern: /^\/v1\/safety\/(pause|resume)$/ },
+  { method: 'POST', pattern: /^\/v1\/safety\/(pause|resume)(\/autopilot)?$/ },
   { method: 'POST', pattern: /^\/v1\/demo\/reset$/ },
   { method: 'GET', pattern: /^\/v1\/notify$/ },
   { method: 'POST', pattern: /^\/v1\/notify\/test$/ },
@@ -393,7 +393,7 @@ export function createApp(deps: AppDeps) {
       throw new Problem(403, 'auth.forbidden', 'Owner key required', 'A proposer key can propose and read. Only the owner can approve, reject, capture, or change the warrant.')
     }
     if (c.get('memberRole') === 'approver' && !isDemoReset && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
-      const pause = c.req.method === 'POST' && c.req.path === '/v1/safety/pause'
+      const pause = c.req.method === 'POST' && (/^\/v1\/safety\/pause(\/autopilot)?$/.test(c.req.path) || /^\/v1\/agents\/[^/]+\/(pause|suspend)$/.test(c.req.path))
       const approve = c.req.method === 'POST' && /^\/v1\/proposals\/[^/]+\/approve$/.test(c.req.path)
       if (!pause && !approve) throw new Problem(403, 'auth/forbidden', 'Outside this role', 'An approver can approve up to their limit, and pause. They cannot publish rules.')
     }
@@ -532,6 +532,8 @@ export function createApp(deps: AppDeps) {
     requireStep(c, deps, 'agent.upgrade', stepBinding('agent.upgrade', c.req.param('id')))
     return c.json(services.agents.upgrade(c.req.param('id')))
   })
+  app.post('/v1/agents/:id/pause', (c) => c.json(services.agents.suspend(c.req.param('id'))))
+  app.post('/v1/agents/:id/suspend', (c) => c.json(services.agents.suspend(c.req.param('id'))))
   app.post('/v1/agents/:id/resume', (c) => c.json(services.agents.resume(c.req.param('id'))))
   app.get('/v1/agents/:id/scorecard', (c) => c.json(services.agents.scorecard(c.req.param('id'))))
 
@@ -594,6 +596,29 @@ export function createApp(deps: AppDeps) {
   app.post('/v1/safety/pause', async (c) => {
     const text = await c.req.text()
     let reason: string | null = null
+    let target: 'all' | 'autopilot' = 'all'
+    if (text) {
+      try {
+        const parsed = z.object({
+          reason: z.string().max(200).optional(),
+          target: z.enum(['all', 'autopilot']).optional(),
+        }).safeParse(JSON.parse(text))
+        if (!parsed.success) throw invalidRequest(parsed.error)
+        reason = parsed.data.reason ?? null
+        target = parsed.data.target ?? 'all'
+      } catch (error) {
+        if (error instanceof Problem) throw error
+        throw new Problem(400, 'request.invalid', 'Request is invalid', 'Body is not JSON.')
+      }
+    }
+    if (target === 'autopilot') {
+      return c.json(services.safety.pauseAutopilot('owner', reason))
+    }
+    return c.json(services.safety.pause('owner', reason))
+  })
+  app.post('/v1/safety/pause/autopilot', async (c) => {
+    const text = await c.req.text()
+    let reason: string | null = null
     if (text) {
       try {
         const parsed = z.object({ reason: z.string().max(200).optional() }).safeParse(JSON.parse(text))
@@ -604,11 +629,26 @@ export function createApp(deps: AppDeps) {
         throw new Problem(400, 'request.invalid', 'Request is invalid', 'Body is not JSON.')
       }
     }
-    return c.json(services.safety.pause('owner', reason))
+    return c.json(services.safety.pauseAutopilot('owner', reason))
   })
   app.post('/v1/safety/resume', async (c) => {
     requireStep(c, deps, 'resume', stepBinding('resume', 'safety.resume'))
+    const text = await c.req.text()
+    let target: 'all' | 'autopilot' = 'all'
+    if (text) {
+      try {
+        const parsed = z.object({ target: z.enum(['all', 'autopilot']).optional() }).safeParse(JSON.parse(text))
+        if (parsed.success && parsed.data.target) target = parsed.data.target
+      } catch {}
+    }
+    if (target === 'autopilot') {
+      return c.json(await services.safety.resumeAutopilot('owner'))
+    }
     return c.json(await services.safety.resume('owner'))
+  })
+  app.post('/v1/safety/resume/autopilot', async (c) => {
+    requireStep(c, deps, 'resume', stepBinding('resume', 'safety.resume'))
+    return c.json(await services.safety.resumeAutopilot('owner'))
   })
   app.get('/v1/session', (c) => c.json({ role: c.get('memberRole') ?? c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName }, demoReset: deps.config.demoReset === true }))
   app.get('/v1/flags', (c) => c.json(deps.config.flags ?? defaultFlags()))

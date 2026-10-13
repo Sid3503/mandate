@@ -12,7 +12,7 @@ export type SafetyConfig = {
 
 export const DEFAULT_SAFETY: SafetyConfig = { tripAfter: 3, windowSeconds: 120 }
 
-export type SafetyEventView = { id: string; at: string; type: 'paused' | 'resumed' | 'agent_suspended'; by: 'owner' | 'breaker'; reason: string | null; detail: string | null; signed: boolean }
+export type SafetyEventView = { id: string; at: string; type: 'paused' | 'resumed' | 'agent_suspended' | 'autopilot_paused' | 'autopilot_resumed'; by: 'owner' | 'breaker'; reason: string | null; detail: string | null; signed: boolean }
 
 /** The message each safety event signs, so the history of pauses can be shown to be the server's own. */
 export const safetyMessage = (event: { id: string; at: string; type: string; by: string; reason: string | null }) => `safety:${event.id}:${event.type}:${event.by}:${event.at}:${event.reason ?? ''}`
@@ -34,15 +34,27 @@ export class SafetyService {
   state(): PauseState {
     const row = this.repo.safetyState()
     if (!row) return NOT_PAUSED
-    return { paused: row.paused === 1, reason: row.reason, since: row.since, by: row.by === 'owner' || row.by === 'breaker' ? row.by : null, epoch: row.epoch }
+    return {
+      paused: row.paused === 1,
+      reason: row.reason,
+      since: row.since,
+      by: row.by === 'owner' || row.by === 'breaker' ? row.by : null,
+      epoch: row.epoch,
+      autopilotPaused: row.autopilot_paused === 1,
+    }
   }
 
   paused(): boolean {
     return this.state().paused
   }
 
+  isAutopilotPaused(): boolean {
+    const s = this.state()
+    return s.paused || Boolean(s.autopilotPaused)
+  }
+
   events(limit = 20): SafetyEventView[] {
-    return this.repo.safetyEvents(limit).map((row) => ({ id: row.id, at: row.at, type: row.type as 'paused' | 'resumed' | 'agent_suspended', by: row.by as 'owner' | 'breaker', reason: row.reason, detail: row.detail, signed: this.signer.verify(safetyMessage(row), row.sig, row.key_id) }))
+    return this.repo.safetyEvents(limit).map((row) => ({ id: row.id, at: row.at, type: row.type as SafetyEventView['type'], by: row.by as 'owner' | 'breaker', reason: row.reason, detail: row.detail, signed: this.signer.verify(safetyMessage(row), row.sig, row.key_id) }))
   }
 
   /** Pauses everything automatic. Pausing a paused Mandate changes nothing and writes nothing. */
@@ -52,11 +64,39 @@ export class SafetyService {
     const at = this.now().toISOString()
     const text = reason?.trim().slice(0, 200) || (by === 'owner' ? 'Paused by the owner' : 'Paused by the breaker')
     this.repo.transaction(() => {
-      this.repo.setSafetyState({ paused: true, reason: text, since: at, by, epoch: before.epoch })
+      this.repo.setSafetyState({ paused: true, reason: text, since: at, by, epoch: before.epoch, autopilotPaused: before.autopilotPaused })
       this.record('paused', by, text, detail, at)
     })
     this.counter.reset()
     live.publish({ type: 'changed', scope: 'safety', what: 'safety.paused', at: stamp() })
+    return this.state()
+  }
+
+  /** Pauses only the autopilot. Pausing an already-paused autopilot changes nothing. */
+  pauseAutopilot(by: 'owner' | 'breaker', reason: string | null = null): PauseState {
+    const before = this.state()
+    if (before.autopilotPaused) return before
+    const at = this.now().toISOString()
+    const text = reason?.trim().slice(0, 200) || (by === 'owner' ? 'Autopilot paused by the owner' : 'Autopilot paused by the breaker')
+    this.repo.transaction(() => {
+      this.repo.setSafetyState({ ...before, autopilotPaused: true })
+      this.record('autopilot_paused', by, text, null, at)
+    })
+    live.publish({ type: 'changed', scope: 'safety', what: 'autopilot.paused', at: stamp() })
+    return this.state()
+  }
+
+  /** Resumes only the autopilot. */
+  async resumeAutopilot(by: 'owner' = 'owner'): Promise<PauseState> {
+    const before = this.state()
+    if (!before.autopilotPaused) return before
+    const at = this.now().toISOString()
+    this.repo.transaction(() => {
+      this.repo.setSafetyState({ ...before, autopilotPaused: false })
+      this.record('autopilot_resumed', by, null, null, at)
+    })
+    live.publish({ type: 'changed', scope: 'safety', what: 'autopilot.resumed', at: stamp() })
+    await this.onResume?.().catch(() => undefined)
     return this.state()
   }
 
@@ -66,7 +106,7 @@ export class SafetyService {
     if (!before.paused) return before
     const at = this.now().toISOString()
     this.repo.transaction(() => {
-      this.repo.setSafetyState({ paused: false, reason: null, since: null, by: null, epoch: before.epoch + 1 })
+      this.repo.setSafetyState({ paused: false, reason: null, since: null, by: null, epoch: before.epoch + 1, autopilotPaused: false })
       this.record('resumed', by, before.reason, `was paused since ${before.since}`, at)
     })
     this.counter.reset()
@@ -98,7 +138,7 @@ export class SafetyService {
     return true
   }
 
-  private record(type: 'paused' | 'resumed' | 'agent_suspended', by: 'owner' | 'breaker', reason: string | null, detail: string | null, at: string): void {
+  private record(type: SafetyEventView['type'], by: 'owner' | 'breaker', reason: string | null, detail: string | null, at: string): void {
     const id = randomUUID()
     const signed = this.signer.sign(safetyMessage({ id, at, type, by, reason }))
     this.repo.insertSafetyEvent({ id, at, type, by, reason, detail, sig: signed.signature, keyId: signed.keyId })

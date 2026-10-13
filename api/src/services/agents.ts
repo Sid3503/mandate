@@ -76,6 +76,15 @@ export class AgentService {
     return this.toSummary(this.repo.getAgent(id)!)
   }
 
+  suspend(id: string): AgentSummary {
+    const row = this.repo.getAgent(id)
+    if (!row) throw new Problem(404, 'agent.unknown', 'No agent with that id', 'Check the agents list for the id.')
+    if (row.status === 'revoked') throw new Problem(409, 'agent.revoked', 'That agent was revoked', 'Create a new key if you want the access back.')
+    this.repo.setAgentStatus(id, 'suspended', this.now().toISOString())
+    live.publish({ type: 'changed', scope: 'agents', what: 'agent.suspended', at: stamp() })
+    return this.toSummary(this.repo.getAgent(id)!)
+  }
+
   resume(id: string): AgentSummary {
     const row = this.repo.getAgent(id)
     if (!row) throw new Problem(404, 'agent.unknown', 'No agent with that id', 'Check the agents list for the id.')
