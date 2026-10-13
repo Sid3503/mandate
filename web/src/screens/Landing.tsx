@@ -80,14 +80,16 @@ export function Landing() {
               <Link className="btn btn-ink btn-big" to={cta}>Open the console</Link>
               <a className="btn btn-ghost btn-big" href="#how">See how it works</a>
             </div>
-            <div className="row gap-s wrap">
-              <button type="button" className="btn btn-lime btn-big" onClick={startDemo} disabled={busy}>{busy ? 'Starting the demo…' : 'Try the demo'}</button>
-              <Link className="btn btn-ink btn-big" to="/studio">Create your studio</Link>
-              <Link className="btn btn-ghost btn-big" to="/unlock">I have a key</Link>
+            <div className="row gap-s wrap align-center" data-testid="three-doors">
+              <button type="button" className="btn btn-lime btn-big" data-testid="door-demo" onClick={startDemo} disabled={busy}>{busy ? 'Starting the demo…' : 'Try the demo'}</button>
+              <Link className="btn btn-ink btn-big" data-testid="door-studio" to="/studio">Create your studio</Link>
+              <Link className="link small" data-testid="door-key" to="/unlock" style={{ alignSelf: 'center', marginLeft: 4 }}>I have a key</Link>
             </div>
             <ProblemCard error={error} />
+            <div className="trust-strip fine" data-testid="trust-strip">
+              <span>Sandbox only</span> · <span>AI cannot move money</span> · <Link to="/verify">Check any receipt yourself</Link>
+            </div>
             <p className="fine">AI can ask to spend your money. It can never spend it. Rules you sign decide. PayPal moves exactly what you approved.</p>
-            <p className="fine">Sandbox only. AI cannot move money. <Link to="/verify">Check any receipt yourself</Link>.</p>
           </div>
 
           <figure className="land-figure" aria-label="An example approval card">

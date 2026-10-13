@@ -16,6 +16,7 @@
 - Q1.9 P6.T4: connect an agent screen with templates, preview, expiry, and key testing. Screen `/app/connect`. Proof: `api/test/agent-keys.test.ts` and `web/e2e/passkey-repair-agent-connect.spec.ts`. Screenshot `docs/evidence/q1/connect-agent.png` shows no secret.
 - Q1.10 P6.T5: agent scorecard feeding the safety breaker. Proof: `api/test/agent-keys.test.ts` and `web/e2e/passkey-repair-agent-scorecard.spec.ts`. Screenshot `docs/evidence/q1/scorecard.png` shows no secret.
 - Q1.11 P6.T4 `cded03b`: button label alignment with e2e job suite. Full `npm run gates` complete for Q1.
+- Q2.1 P5.T1: welcome headline, line of proof, three doors, trust strip with verify link. Proof: `web/e2e/onboarding-doors.spec.ts`. Screenshot `docs/evidence/q2/doors.png`.
 
 ## Test counts
 

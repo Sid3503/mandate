@@ -63,7 +63,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P4.T6 | done | A passkey approval with no assertion is red and fails `approval.proof`. Owner-key and demo are amber and do not fail. Old rows are grey and marked legacy. A standing rule with no signature stays grey and says that version has no signature | `b6cb07f` |
 | P4.T7 | done | Demo tap sends `x-mandate-demo-tap` and stores method `demo`. The receipt proof is amber. The Today card shows Demo tap and Try with my passkey. The same header outside a demo stores owner-key. gates:fast 567 | `6968dcd` |
 | P4.T8 | done | The Today approval card shows amount, payee, category, evidence, a short cart hash, and the clause before the prompt. The success toast says Signed and sent. Approved · locked stays | `1cdbfef` |
-| P5.T1 | partial | `web/src/screens/Landing.tsx` has the three doors and the trust strip. The h1 is still "Agents can ask." No test of the new doors | `9a2ea0b` |
+| P5.T1 | done | Welcome headline, line of proof, three doors, trust strip with verify link. Proof: `web/e2e/onboarding-doors.spec.ts` | `q2-onboarding` |
 | P5.T2 | partial | `api.demoStart` and the demo banner in `web/src/components/Shell.tsx`. No role switcher, reset, or live-proof page. No test | `9a2ea0b` |
 | P5.T3 | done | Studio wizard: name, passkey, second passkey or recovery codes required, simulated PayPal text, rules in words can skip, progress in local storage. | `0a41958` |
 | P5.T4 | done | `web/src/screens/Unlock.tsx` has the authority sentence. Route `/app/unlock` | `9a2ea0b` |
