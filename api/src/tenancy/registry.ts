@@ -2,6 +2,7 @@ export type TenantHandle = {
   id: string
   fetch: (request: Request) => Promise<Response> | Response
   close: () => void
+  sweep?: () => Promise<void>
 }
 
 /**

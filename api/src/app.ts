@@ -836,7 +836,17 @@ export function createApp(deps: AppDeps) {
       }
     })
   })
-  app.get('/v1/today', (c) => c.json({ ...services.today.build(), clientAgent: { mode: deps.config.clientAgent ?? 'manual', ready: agents.enabled } }))
+  app.get('/v1/today', async (c) => {
+    if (deps.workspace?.mode === 'demo') {
+      try {
+        await service.sweepStanding()
+        await service.sweepPending()
+      } catch {
+        // demo sweep best-effort
+      }
+    }
+    return c.json({ ...services.today.build(), clientAgent: { mode: deps.config.clientAgent ?? 'manual', ready: agents.enabled } })
+  })
   app.get('/v1/audit', async (c) => c.json(await services.audit.run({ paypal: c.req.query('paypal') === '1' })))
   app.get('/v1/paypal/balance', async (c) => c.json(await service.balance()))
   app.get('/v1/paypal/tools', (c) => c.json(toolSummary()))
@@ -1129,6 +1139,10 @@ export function createApp(deps: AppDeps) {
     approvalHash: (proposalId) => service.approvalHash(proposalId),
     openRequests: () => (deps.db.prepare(`SELECT id FROM proposals WHERE phase = 'pending_approval' ORDER BY created_at`).all() as Array<{ id: string }>).map((row) => row.id),
     requireStep: (c, kind, binding) => requireStep(c, deps, kind, binding),
+    sweep: async () => {
+      await service.sweepStanding()
+      await service.sweepPending()
+    },
   }
   mountExtra(app, product, (request) => app.fetch(request))
 

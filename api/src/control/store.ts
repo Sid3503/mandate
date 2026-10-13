@@ -507,4 +507,13 @@ export class ControlStore {
     const row = this.db.prepare('SELECT workspace_id FROM external_refs WHERE kind = ? AND external_id = ?').get(kind, externalId) as { workspace_id: string } | undefined
     return row?.workspace_id ?? null
   }
+
+  activeRefWorkspaces(): string[] {
+    const rows = this.db.prepare(`SELECT DISTINCT workspace_id FROM external_refs WHERE kind IN ('invoice', 'payout')`).all() as Array<{ workspace_id: string }>
+    return rows.map((r) => r.workspace_id)
+  }
+
+  removeRef(kind: string, externalId: string): void {
+    this.db.prepare('DELETE FROM external_refs WHERE kind = ? AND external_id = ?').run(kind, externalId)
+  }
 }

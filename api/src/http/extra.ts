@@ -46,6 +46,7 @@ export type ProductCtx = {
   /** Proposal ids waiting on a person. The ledger has no member column, so this is the studio list. */
   openRequests?: () => string[]
   requireStep?: (c: { req: { header: (name: string) => string | undefined }; get: (key: 'memberId') => string | undefined }, kind: string, binding: string) => void
+  sweep?: () => Promise<void>
 }
 
 function sameSecret(presented: string, expected: string): boolean {
@@ -497,11 +498,13 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       const id = (body as { id?: string }).id
       if (!id) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the invoice.')
       ctx.paypal.pay(id)
+      try { await ctx.sweep?.() } catch { /* best-effort sweep */ }
       return c.json({ ok: true })
     }
     if (body.action === 'payout_success') ctx.paypal?.settlePayouts?.('SUCCESS')
     else if (body.action === 'payout_fail') ctx.paypal?.settlePayouts?.('FAILED')
     else throw new Problem(400, 'request.invalid', 'Request is invalid', 'Use pay, payout_success, or payout_fail.')
+    try { await ctx.sweep?.() } catch { /* best-effort sweep */ }
     return c.json({ ok: true })
   })
 
