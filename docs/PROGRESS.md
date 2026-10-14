@@ -45,6 +45,7 @@
 - Q6.4 P10.T4: `docs/guarantees.json`, `npm run guarantees` (verifying all 20 guarantees and test files), and `/v1/guarantees` serving it for the Proof page. Proof: `docs/guarantees.json`, `scripts/guarantees.mjs`, `web/src/screens/Proof.tsx`.
 - Q6.5 P10.T5: every Appendix B case 1 to 35 added to the red team test file under "Appendix B red team: cases 1 to 35", table of cases 1 to 35 verified with zero untested cases. Proof: `api/test/redteam.test.ts`.
 - Q6.6 P8.T6: second reader wired behind `FLAG_SECOND_READER` off by default, executes when on, emits 'second_reading' draft stage, records secondReader audit prompt. Proof: `api/test/drafter.test.ts`.
+- Q7.1 P9.T1: Ask Mandate palette verified across all screens with Control/Cmd+K, direct ledger quick answers without model, delivery action card, and search navigation. Proof: `web/e2e/job.spec.ts`.
 
 ## Test counts
 
@@ -77,6 +78,7 @@
 - `gates:fast` after Q6.5: 56 files, 691 API tests, 11.23s, secret check passed, exit 0.
 - `gates:fast` after Q6.6: 56 files, 693 API tests, 12.54s, secret check 374 tracked files, exit 0.
 - Full `npm run gates` after Q6 on 14 October 2026: 56 files, 693 API tests, 12.54s, secret check 374 tracked files, Playwright 134 passed (8.4m), axe included, exit 0.
+- `gates:fast` on `q7-ask` after Q7.1: 56 files, 693 API tests, 10.77s, secret check passed, exit 0.
 
 ## Open items
 
@@ -121,4 +123,4 @@
 
 ## Next
 
-Queue 6 complete. All tasks (Q6.1–Q6.6) implemented, tested, and verified under full gates.
+Q7.2 P9.T2: Include receipt and deal in clerk context.
