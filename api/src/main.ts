@@ -61,8 +61,7 @@ const product = openProduct({
   model,
   drafterModel,
 })
-// If the main model errors, the fallback is tried once before the person sees a failure.
-const agents = new AgentService(services, model, () => new Date(), drafterModel, fallbackModel, product.budget)
+const agents = new AgentService(services, model, () => new Date(), drafterModel, fallbackModel, product.budget, flags)
 
 installProcessGuards()
 let draining = false

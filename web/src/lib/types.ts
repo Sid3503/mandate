@@ -431,6 +431,7 @@ export type RulesDraft = {
   model: string
   ms: number
   runId: string
+  secondReader?: { model: string; agreed: boolean; verdict: string; critique?: string }
 }
 
 export type SentenceStatus = 'covered' | 'partly' | 'not_covered' | 'unenforceable' | 'context' | 'untrusted' | 'skipped' | 'unchecked'

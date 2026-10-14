@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { applyPatch, compareRules, RulesPatchSchema } from '../src/agents/drafter'
 import { LINE_STUDIO_WARRANT, WarrantBodySchema } from '../src/domain/schemas'
+import { loadFlags } from '../src/flags'
 import { scriptedModel, type ScriptedStep } from './mockModel'
-import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, STUDIO_KEY } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
 
@@ -205,3 +206,47 @@ describe('a second reading checks the draft against the words', () => {
     expect(made.json.ignored.map((flag: { phrase: string }) => flag.phrase).join(' ')).toContain('$9,999')
   })
 })
+
+describe('second reader behind FLAG_SECOND_READER (P8.T6)', () => {
+  it('FLAG_SECOND_READER is off by default and secondReader is not called', async () => {
+    const flags = loadFlags({})
+    expect(flags.secondReader).toBe(false)
+    const model = patchModel({ summary: 'The line drops to $15.', autoSettleUnderDollars: 15 })
+    const { app } = harness({ model, flags })
+    const made = await draft(app, 'Anything under $15 can go without approval')
+    expect(made.status).toBe(200)
+    expect(made.json.secondReader).toBeUndefined()
+  })
+
+  it('runs the second reader when FLAG_SECOND_READER is on', async () => {
+    const flags = loadFlags({ FLAG_SECOND_READER: '1' })
+    expect(flags.secondReader).toBe(true)
+    const model = scriptedModel(({ system }): ScriptedStep => {
+      if (system.includes('second reader for Mandate')) {
+        return { text: JSON.stringify({ agreed: true, verdict: 'Faithful draft of instruction' }) }
+      }
+      if (system.includes('You say a DRAFT')) return { tool: 'read_back', input: { lines: [], notes: [] } }
+      return { tool: 'propose_rules', input: { summary: 'The line drops to $15.', autoSettleUnderDollars: 15 } }
+    })
+    const { app } = harness({ model, flags })
+    const res = await app.request('http://mandate.test/v1/rules/draft/stream', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${OWNER_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ instruction: 'Anything under $15 can go without approval' }),
+    })
+    expect(res.status).toBe(200)
+    const body = await res.text()
+    expect(body).toContain('"stage":"second_reading"')
+    expect(body).toContain('"secondReader"')
+    expect(body).toContain('Faithful draft of instruction')
+
+    // Also direct /v1/rules/draft endpoint
+    const direct = await draft(app, 'Anything under $15 can go without approval')
+    expect(direct.status).toBe(200)
+    expect(direct.json.secondReader).toMatchObject({
+      agreed: true,
+      verdict: 'Faithful draft of instruction',
+    })
+  })
+})
+

@@ -44,6 +44,7 @@
 - Q6.3 P10.T3: proof lines for members (`members.valid`), assertions (`assertions.valid`), signed rules (`rules.signed`), safety events (`safety.events`), and key fingerprints (`keys.fingerprint`) in audit report. Proof: `api/test/audit.test.ts`, `api/src/services/audit.ts`.
 - Q6.4 P10.T4: `docs/guarantees.json`, `npm run guarantees` (verifying all 20 guarantees and test files), and `/v1/guarantees` serving it for the Proof page. Proof: `docs/guarantees.json`, `scripts/guarantees.mjs`, `web/src/screens/Proof.tsx`.
 - Q6.5 P10.T5: every Appendix B case 1 to 35 added to the red team test file under "Appendix B red team: cases 1 to 35", table of cases 1 to 35 verified with zero untested cases. Proof: `api/test/redteam.test.ts`.
+- Q6.6 P8.T6: second reader wired behind `FLAG_SECOND_READER` off by default, executes when on, emits 'second_reading' draft stage, records secondReader audit prompt. Proof: `api/test/drafter.test.ts`.
 
 ## Test counts
 
@@ -73,6 +74,8 @@
 - `gates:fast` after Q6.2: 56 files, 651 API tests, 11.76s, secret check 372 tracked files, exit 0.
 - `gates:fast` after Q6.3: 56 files, 656 API tests, 17.56s, secret check 372 tracked files, exit 0.
 - `gates:fast` after Q6.4: 56 files, 656 API tests, 10.45s, secret check passed, exit 0.
+- `gates:fast` after Q6.5: 56 files, 691 API tests, 11.23s, secret check passed, exit 0.
+- `gates:fast` after Q6.6: 56 files, 693 API tests, 12.54s, secret check 374 tracked files, exit 0.
 
 ## Open items
 
@@ -116,4 +119,4 @@
 
 ## Next
 
-Q5.4 P8.T7: 30-wording eval with scripted model in CI and token cap in drafter eval.
+Queue 6 complete. Run guarantees verification and full gates.

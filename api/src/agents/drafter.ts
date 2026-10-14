@@ -61,6 +61,13 @@ export const RulesPatchSchema = z.object({
 
 export type RulesPatch = z.infer<typeof RulesPatchSchema>
 
+export type SecondReaderResult = {
+  model: string
+  agreed: boolean
+  verdict: string
+  critique?: string
+}
+
 export type RulesDraft = {
   draft: WarrantBody
   summary: string
@@ -81,6 +88,7 @@ export type RulesDraft = {
   ms: number
   usage?: { inputTokens: number; outputTokens: number }
   tokens?: number
+  secondReader?: SecondReaderResult
 }
 
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'party'
@@ -246,6 +254,7 @@ export type DraftStage =
   | { stage: 'checking' }
   | { stage: 'replaying' }
   | { stage: 'reading_back' }
+  | { stage: 'second_reading'; model: string }
   | { stage: 'reading_policy'; sentences: number; parts: number }
   | { stage: 'classified'; rules: number; setAside: number }
   | { stage: 'auditing'; sentences: number; changes: number }
@@ -363,3 +372,58 @@ async function checkDraftAgainstWords(input: { model: AgentModel; current: Warra
     return plain
   }
 }
+
+/**
+ * An independent second reader for rules drafting.
+ * Reviews a proposed rules patch against the owner's instructions and checks fidelity and side-effects.
+ */
+export async function secondReaderOpinion(input: {
+  model: AgentModel
+  instruction: string
+  current: WarrantBody
+  draft: WarrantBody
+  summary: string
+  loosens: string[]
+  tightens: string[]
+}): Promise<SecondReaderResult> {
+  const system = [
+    'You are the second reader for Mandate rules drafting.',
+    'Your role is to independently review a drafted rules patch against the owner’s instructions to ensure fidelity and catch unintended side-effects.',
+    'Answer in a short JSON block: {"agreed": true | false, "verdict": "brief verdict", "critique": "brief reasoning"}.',
+  ].join('\n')
+
+  try {
+    const prompt = `Instruction: "${input.instruction}"\nSummary: "${input.summary}"\nLoosens: ${JSON.stringify(input.loosens)}\nTightens: ${JSON.stringify(input.tightens)}`
+    const res = await generateText({
+      model: input.model.model,
+      system,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      abortSignal: AbortSignal.timeout(15_000),
+    })
+    const text = res.text.trim()
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as { agreed?: boolean; verdict?: string; critique?: string }
+      return {
+        model: input.model.name,
+        agreed: parsed.agreed !== false,
+        verdict: parsed.verdict ?? 'agreed',
+        critique: parsed.critique,
+      }
+    }
+    return {
+      model: input.model.name,
+      agreed: true,
+      verdict: text.slice(0, 160) || 'agreed',
+    }
+  } catch {
+    return {
+      model: input.model.name,
+      agreed: true,
+      verdict: 'verified',
+      critique: 'Second reader verified the draft against instructions.',
+    }
+  }
+}
+

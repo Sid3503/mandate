@@ -96,6 +96,7 @@ export type DraftStage =
   | { stage: 'checking' }
   | { stage: 'replaying' }
   | { stage: 'reading_back' }
+  | { stage: 'second_reading'; model: string }
   | { stage: 'reading_policy'; sentences: number; parts: number }
   | { stage: 'classified'; rules: number; setAside: number }
   | { stage: 'auditing'; sentences: number; changes: number }
