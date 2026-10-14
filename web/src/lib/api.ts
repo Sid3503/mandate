@@ -205,7 +205,7 @@ async function postStream<E>(path: string, body: unknown, onEvent: (event: E) =>
 }
 
 /** The clerk, told as it works: each tool call as it starts and ends, the words as they are written, then the whole reply. */
-const streamClerk = (body: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string } }, onEvent: (event: ClerkStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/clerk/stream', body, onEvent, signal)
+const streamClerk = (body: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } }, onEvent: (event: ClerkStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/clerk/stream', body, onEvent, signal)
 
 /** A draft of new rules, told as it is made: each stage is a real step the server took. */
 const streamDraft = (instruction: string, onEvent: (event: DraftStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/rules/draft/stream', { instruction }, onEvent, signal)
@@ -293,7 +293,7 @@ export const api = {
   pause: (reason: string) => request<Safety>('/v1/safety/pause', { method: 'POST', body: { reason } }),
   resume: () => request<Safety>('/v1/safety/resume', { method: 'POST' }),
   clientErrors: () => request<{ data: ClientErrorRow[] }>('/v1/client-errors'),
-  ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
+  ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
   replayRules: (rules: unknown) => request<Replay>('/v1/rules/replay', { method: 'POST', body: rules }),
   replayHistory: (rules?: unknown) => request<Replay>('/v1/replay', { method: 'POST', body: rules ?? {} }),
   agents: () => request<AgentRow[]>('/v1/agents'),
@@ -402,7 +402,7 @@ export const api = {
   // Write one company's sheet. Only the price fields are sent; everything else about the company is kept.
   putPartyRules: (partyId: string, body: Record<string, unknown>) => request<PartyRulesView>(`/v1/party-rules/${encodeURIComponent(partyId)}`, { method: 'PUT', body }),
   negotiate: (body: { buyerBrief?: string; sellerBrief?: string } = {}) => request<Negotiation>('/v1/negotiations', { method: 'POST', body }),
-  clerk: (message: string, conversationId?: string) => request<ClerkReply>('/v1/clerk/messages', { method: 'POST', body: { message, conversationId } }),
+  clerk: (message: string, conversationId?: string, context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string }) => request<ClerkReply>('/v1/clerk/messages', { method: 'POST', body: { message, conversationId, context } }),
   agentRuns: () => request<{ data: Array<{ id: string; agent: string; status: string; model: string; input: string; ms: number; createdAt: string }> }>('/v1/agent-runs'),
   agentRun: (id: string) => request<AgentRun>(`/v1/agent-runs/${id}`),
   ledger: (cursor?: string | null) => request<Page<LedgerEvent>>(`/v1/ledger?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),

@@ -93,7 +93,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P8.T6 | done | Second reader wired behind FLAG_SECOND_READER off by default, executes when on. Proof: `api/test/drafter.test.ts` | `q6-proof` |
 | P8.T7 | done | Eval of 30 wordings across 5 groups with scripted model in CI (0 hidden loosenings), and token cap with named model beside each number in drafter eval. Proof: `api/test/eval-wordings.test.ts`, `api/scripts/eval-drafter.ts` | |
 | P9.T1 | done | Ask Mandate opens from any screen, answers from ledger with no model, prepares button, navigates. Proof: `web/e2e/job.spec.ts` | `q7-ask` |
-| P9.T2 | partial | clerk context is `jobId` and `proposalId` in `web/src/lib/api.ts`. Not `receiptId` or `dealId` | `1ac59cd` |
+| P9.T2 | done | Clerk context includes receiptId and dealId across api schemas, agents service screenFor, AskService, Ask UI and web api. Proof: `api/test/ask.test.ts` | `q7-ask` |
 | P9.T3 | partial | `api/test/shares.test.ts`. No payee-role payments page | `1ac59cd` |
 | P9.T4 | not started | `PAYPAL_LOGIN_ENABLED` stays off. No fake IdP | `9a2ea0b` |
 | P10.T1 | done | fast-check sequences for all invariants (pure gate, integer cents, idempotency, append-only) and multi-tenancy isolation over tenant A and B. Proof: `api/test/property.test.ts` | |

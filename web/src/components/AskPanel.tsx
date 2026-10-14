@@ -65,7 +65,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
   initial?: string
   /** Text to put in the box without sending it. */
   prefill?: string
-  context?: { jobId?: string; proposalId?: string }
+  context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string }
   /** Called when a road leaves the panel (the drafter hand-off, a link), so a dialog can close itself. */
   onLeave?: () => void
 }) {
@@ -93,7 +93,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
     const id = crypto.randomUUID()
     setTurns((current) => [...current, { id, user: message, pending: true, stream: emptyStream, cards: [] }])
     try {
-      const route = await api.ask(quick ? { quick } : { message, context: context?.jobId ? { jobId: context.jobId } : undefined })
+      const route = await api.ask(quick ? { quick } : { message, context })
       if (route.kind === 'answer' || route.kind === 'action') return patch(id, { pending: false, route })
       if (route.kind === 'handoff') {
         patch(id, { pending: false, route, handoff: true })

@@ -80,7 +80,17 @@ function AskDialog({ initial, fillOnly, onClose }: { initial: string | undefined
 
   const job = /^\/jobs\/([^/]+)/.exec(location.pathname)?.[1]
   const proposal = /^\/p\/([^/]+)/.exec(location.pathname)?.[1]
-  const context = proposal ? { proposalId: proposal } : job ? { jobId: decodeURIComponent(job) } : undefined
+  const receipt = /^\/receipts?\/([^/]+)/.exec(location.pathname)?.[1]
+  const deal = /^\/deals\/([^/]+)/.exec(location.pathname)?.[1] || new URLSearchParams(location.search).get('deal')
+  const context = proposal
+    ? { proposalId: proposal, receiptId: proposal }
+    : receipt
+    ? { receiptId: receipt, proposalId: receipt }
+    : deal
+    ? { dealId: deal }
+    : job
+    ? { jobId: decodeURIComponent(job) }
+    : undefined
   const examples = [
     ...(today.data?.readyToBill ?? []).slice(0, 1).map((item) => `${item.title} for ${item.buyerName} is delivered, bill it ${LINK}`),
     ...((today.data?.automation?.standingRules ?? 0) > 0 ? [`pay Priya her share for the latest Northwind payment ${LINK}`] : []),
