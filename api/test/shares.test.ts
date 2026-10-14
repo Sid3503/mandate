@@ -1,5 +1,9 @@
+import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { agree, call, closeAll, collect, EVIDENCE, harness, idem, JOB, NOW, OWNER_KEY, STUDIO_KEY } from './support'
+import { ControlStore } from '../src/control/store'
+import { openDatabase } from '../src/db/database'
+import { loadFlags } from '../src/flags'
 
 afterEach(closeAll)
 
@@ -102,5 +106,31 @@ describe('status links: a read-only page about one job, for one person', () => {
     expect((await issue(h.app, 'payee_nobody')).status).toBe(422)
     expect((await call(h.app, 'POST', '/v1/jobs/job_missing/shares', { body: { partyId: 'payee_priya' } })).status).toBe(404)
     expect((await issue(h.app, 'payee_priya', { ttlDays: 400 })).status).toBe(400)
+  })
+
+  it('allows payee role to read proposals and rejects mutating requests (403)', async () => {
+    const controlDb = openDatabase(':memory:')
+    const control = new ControlStore(controlDb, 'pepper-q1')
+    control.ensureDefault(':memory:', NOW.toISOString())
+    const payeeId = randomUUID()
+    const token = 'payee-session-token-32chars-test'
+    control.addMember({ id: payeeId, workspaceId: 'ws_default', name: 'Contractor Payee', role: 'payee', now: NOW.toISOString() })
+    control.putSession({ token, memberId: payeeId, workspaceId: 'ws_default', method: 'passkey', now: NOW.toISOString(), idleHours: 12, absoluteDays: 7 })
+
+    const h = harness({ flags: loadFlags({ FLAG_PASSKEYS: '1' }), control })
+    const getRes = await h.app.request('http://mandate.test/v1/proposals', {
+      headers: { cookie: `mnd_session=${token}`, 'x-mandate-client': 'web' },
+    })
+    expect(getRes.status).toBe(200)
+    const data = await getRes.json()
+    expect(Array.isArray(data.data)).toBe(true)
+
+    const postRes = await h.app.request('http://mandate.test/v1/proposals', {
+      method: 'POST',
+      headers: { cookie: `mnd_session=${token}`, 'x-mandate-client': 'web', 'content-type': 'application/json' },
+      body: JSON.stringify({ payee: 'Priya', amountCents: 1000, currency: 'USD', category: 'design', description: 'Unauthorized', evidenceUrl: EVIDENCE, jobId: JOB }),
+    })
+    expect(postRes.status).toBe(403)
+    controlDb.close()
   })
 })
