@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+// @ts-ignore
 import { runGuarantees } from '../../scripts/guarantees.mjs'
 
 describe('Guarantees Verification Runner', () => {
@@ -21,7 +22,7 @@ describe('Guarantees Verification Runner', () => {
   it('marks guarantees as pass when all named tests pass', () => {
     // Generate overrides where every unique test passes
     const base = runGuarantees({ write: false, runTests: false })
-    const allTests = [...new Set(base.guarantees.flatMap((g: any) => g.tests ?? []))]
+    const allTests: string[] = [...new Set<string>(base.guarantees.flatMap((g: any) => g.tests ?? []))]
     const passOverrides: Record<string, boolean> = {}
     for (const t of allTests) {
       passOverrides[t] = true
