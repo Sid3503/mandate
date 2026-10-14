@@ -50,6 +50,7 @@
 - Q7.3 P9.T3: Payee-role payments screen with settled shares and read-only access verified against mutations. Proof: `web/src/screens/PayeePayments.tsx`, `api/test/shares.test.ts`, `web/e2e/passkey-repair-role-landings.spec.ts`.
 - Q7.4 P9.T4: Log in with PayPal behind `PAYPAL_LOGIN_ENABLED` off by default with fake provider, start/callback endpoints, session creation, and Unlock button. Proof: `api/test/paypal-login.test.ts`.
 - Q7.5 P11.T1: Forward propose to `POST /v1/proposals` through injected client in toolkit guard `withMandate`, read tier passes through, unknown tool throws, `exposeRead: false` drops read tier. Proof: `api/test/phases.test.ts`.
+- Q7.6 P11.T3: Wire `MCP_EXPOSE_READ_TOOLS` behind flag in `createMandateMcpServer`, `handleMcp`, and `api/src/app.ts`, with Proof and System text reflecting read tool exposure when on, and `exposeReadTools: false` dropping read tools. Proof: `api/test/mcp.test.ts`.
 
 ## Test counts
 
@@ -87,6 +88,7 @@
 - `gates:fast` on `q7-ask` after Q7.3: 56 files, 694 API tests, 13.24s, secret check passed, exit 0.
 - `gates:fast` on `q7-ask` after Q7.4: 57 files, 696 API tests, 14.45s, secret check 374 tracked files, exit 0.
 - `gates:fast` on `q7-ask` after Q7.5: 57 files, 696 API tests, 10.68s, secret check 375 tracked files, exit 0.
+- `gates:fast` on `q7-ask` after Q7.6: 57 files, 698 API tests, 11.18s, secret check 375 tracked files, exit 0.
 
 ## Open items
 
