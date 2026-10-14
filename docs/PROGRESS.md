@@ -63,6 +63,7 @@
 - `gates:fast` after Q5.2: 55 files, 642 API tests, 18.14s, secret check 371 tracked files, exit 0.
 - `gates:fast` after Q5.3: 55 files, 643 API tests, 19.61s, secret check 371 tracked files, exit 0.
 - `gates:fast` after Q5.4: 56 files, 645 API tests, 11.79s, secret check 371 tracked files, exit 0.
+- Full `npm run gates` after Q5 on 14 October 2026: 56 files, 645 API tests, 11.79s, secret check 371 tracked files, Playwright 134 passed (8.7m), axe included, exit 0.
 
 ## Open items
 
