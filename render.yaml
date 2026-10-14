@@ -8,10 +8,14 @@ services:
     buildCommand: npm run setup && npm run build
     startCommand: npm start
     healthCheckPath: /ready
+    disk:
+      name: mandate-data
+      mountPath: /var/data
+      sizeGB: 1
     # Deploy a commit only after its GitHub checks (the CI workflow) have passed. For the judging window set this to
     # `off` and deploy by hand, so the ledger is never wiped under a judge.
     autoDeployTrigger: checksPass
-    # A redeploy restarts the free instance and wipes its ledger, so a push that touches only these does not deploy.
+    # A redeploy restarts the instance, so a push that touches only these does not deploy.
     # scripts/ci/deploy-needed.mjs reads this list too, so the post-deploy check agrees with Render about what counts.
     buildFilter:
       ignoredPaths:
@@ -34,7 +38,7 @@ services:
       - key: HOST
         value: 0.0.0.0
       - key: DATABASE_PATH
-        value: /tmp/mandate.sqlite
+        value: /var/data/mandate.sqlite
       - key: API_KEY
         generateValue: true
       - key: PROPOSER_KEY
