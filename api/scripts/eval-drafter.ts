@@ -94,13 +94,15 @@ if (process.argv[1]?.endsWith('eval-drafter.ts')) {
 
     const tokenCap = Number(process.env.EVAL_TOKEN_CAP ?? 50_000)
     let tokensUsed = 0
+    const callTokens: number[] = []
     const onlyGroup = process.env.EVAL_GROUP
     const results: Array<{ group: Group; words: string; pass: boolean; why: string | null; seconds: number; hidden: boolean; flaggedDropped: boolean }> = []
 
     for (const item of cases) {
       if (onlyGroup && item.group !== onlyGroup) continue
-      if (tokensUsed >= tokenCap) {
-        console.log(`[${model.name}] token cap of ${tokenCap} reached (${tokensUsed} used). Halting eval.`)
+      const estimatedNext = callTokens.length > 0 ? Math.max(...callTokens) : 5000
+      if (tokensUsed + estimatedNext > tokenCap) {
+        console.log(`[${model.name}] next call would exceed token cap of ${tokenCap} (${tokensUsed} used + ~${estimatedNext} est > ${tokenCap}). Halting eval before call.`)
         break
       }
       const started = Date.now()
@@ -114,7 +116,9 @@ if (process.argv[1]?.endsWith('eval-drafter.ts')) {
         why = ['rules.draft_unusable', 'rules.draft_invalid'].includes(code) && (item.group === 'injected' || item.group === 'off-topic' || item.group === 'vague') ? null : `no draft (${code})`
       }
       if (draft) {
-        tokensUsed += draft.tokens ?? (draft.usage ? (draft.usage.inputTokens ?? 0) + (draft.usage.outputTokens ?? 0) : 0)
+        const callUsage = draft.tokens ?? (draft.usage ? (draft.usage.inputTokens ?? 0) + (draft.usage.outputTokens ?? 0) : 0)
+        tokensUsed += callUsage
+        if (callUsage > 0) callTokens.push(callUsage)
       }
       const problem = draft ? item.expect(draft) : why
       // A hidden loosening: the draft loosens something, nothing was asked for it (an unsupported change), and no red flag says so.
