@@ -448,6 +448,11 @@ export class ControlStore {
     return this.db.prepare('SELECT at, event, result, member_id FROM auth_events WHERE workspace_id = ? ORDER BY at DESC LIMIT ?').all(workspaceId, limit) as Array<{ at: string; event: string; result: string; member_id: string | null }>
   }
 
+  trimAuthEvents(olderThanIso: string): number {
+    const result = this.db.prepare('DELETE FROM auth_events WHERE at < ?').run(olderThanIso)
+    return Number(result.changes)
+  }
+
   markRecoverySaved(memberId: string, now: string): void {
     this.db.prepare('UPDATE members SET recovery_saved_at = ? WHERE id = ?').run(now, memberId)
   }

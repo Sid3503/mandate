@@ -838,6 +838,11 @@ export class Repo {
     return this.db.prepare('SELECT * FROM client_errors ORDER BY at DESC, rowid DESC LIMIT ?').all(limit) as never
   }
 
+  trimClientErrors(olderThanIso: string): number {
+    const result = this.db.prepare('DELETE FROM client_errors WHERE at < ?').run(olderThanIso)
+    return Number(result.changes)
+  }
+
   createAgent(row: AgentRow): void {
     this.db.prepare(`INSERT INTO agents (id, name, scopes_json, limits_json, status, key_hash, created_at, last_seen_at, expires_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.scopes_json, row.limits_json, row.status, row.key_hash, row.created_at, row.last_seen_at, row.expires_at ?? null)

@@ -140,6 +140,8 @@
 
 - Passkey keyboard walk: complete keyboard accessibility navigation test for passkey flows with axe scan verification (`web/e2e/passkey-repair-keyboard.spec.ts`).
 
+- Retention trimming: trimmed auth events at 90 days and logs/client errors at 14 days in cleanup job and store; updated `docs/DATA.md` (`api/src/ops/scheduler.ts`, `api/test/ops-cleanup-scheduler.test.ts`).
+
 ## Next
 
-Q8.5 P12.T5: Trim logs at 14 days and auth events at 90 days in cleanup job / store; update `docs/DATA.md`.
+Q8.6 P12.T6: Docs hardening: `docs/ONBOARDING.md`, `docs/SECURITY.md` (known limits), `docs/REFERENCE.md`, `README.md`, `CHANGELOG.md`, OpenAPI, Postman.
