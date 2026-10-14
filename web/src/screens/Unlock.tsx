@@ -15,6 +15,7 @@ export function Unlock() {
   const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
   const from = (where.state as { from?: string } | null)?.from ?? '/'
+  const flags = useQuery({ queryKey: ['flags'], queryFn: api.flags, staleTime: 60_000 })
 
   const roleLanding = (role?: string, side?: string | null) => {
     if (role === 'proposer') return '/clerk'
@@ -22,6 +23,24 @@ export function Unlock() {
     if (role === 'payee') return '/payments'
     if (side === 'buyer') return '/deals'
     return '/'
+  }
+
+  const handlePayPalLogin = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const start = await api.paypalLoginStart()
+      const result = await api.paypalLoginCallback('mock_auth_code', start.state)
+      session.setWorkspace(result.workspaceId)
+      session.setMode('studio')
+      client.clear()
+      const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : roleLanding(result.role)
+      navigate(target, { replace: true })
+    } catch (caught) {
+      setError(caught)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const signIn = async () => {
@@ -139,6 +158,11 @@ export function Unlock() {
         <button type="button" className="btn btn-ghost btn-block" onClick={() => void signIn()} disabled={busy}>
           {busy ? 'Waiting for the passkey…' : 'Sign in with a passkey'}
         </button>
+        {flags.data?.paypalLogin ? (
+          <button type="button" className="btn btn-outline btn-block" data-testid="paypal-login-btn" onClick={() => void handlePayPalLogin()} disabled={busy}>
+            Log in with PayPal
+          </button>
+        ) : null}
         <p className="fine"><Link to="/welcome" className="link">← What is Mandate?</Link></p>
         <p className="fine">A key is authority. Owner, staff, client, and agent keys each see only their side.</p>
         <p className="fine">The owner key can approve, settle and change the rules. A proposer key, the kind an agent gets, can only ask and read.</p>

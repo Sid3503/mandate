@@ -277,6 +277,53 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     }
   })
 
+  // ---------- fake PayPal login provider (behind FLAG_PAYPAL_LOGIN) ----------
+  app.get('/auth/paypal/start', (c) => {
+    if (!flags.paypalLogin) throw new Problem(404, 'flag/disabled', 'Not available', 'PayPal login is off on this server.')
+    const state = randomUUID()
+    return c.json({
+      url: `https://www.sandbox.paypal.com/signin/authorize?client_id=fake_client&response_type=code&scope=openid%20profile%20email&state=${state}`,
+      state,
+    })
+  })
+
+  app.post('/auth/paypal/callback', async (c) => {
+    if (!flags.paypalLogin) throw new Problem(404, 'flag/disabled', 'Not available', 'PayPal login is off on this server.')
+    const control = requireControl(ctx)
+    const body = await c.req.json().catch(() => ({})) as { code?: string; state?: string }
+    if (!body.code || typeof body.code !== 'string') {
+      throw new Problem(400, 'request.invalid', 'Request is invalid', 'Send the authorization code.')
+    }
+    if (body.code === 'invalid_code' || body.code === 'bad') {
+      throw new Problem(401, 'auth/paypal-failed', 'PayPal authorization failed', 'The code is invalid or expired.')
+    }
+    const workspaceId = ctx.workspaceId ?? 'ws_default'
+    const memberList = control.members(workspaceId).filter((m) => m.status === 'active')
+    const activeMember = memberList.find((m) => m.role === 'owner') ?? memberList[0]
+    let member = activeMember ? control.member(activeMember.id) : null
+    if (!member) {
+      const id = randomUUID()
+      control.addMember({ id, workspaceId, name: 'PayPal User', role: 'owner', now: ctx.now().toISOString() })
+      member = control.member(id)!
+    }
+    const token = randomBytes(32).toString('base64url')
+    const now = ctx.now().toISOString()
+    control.putSession({
+      token,
+      memberId: member.id,
+      workspaceId: member.workspace_id,
+      method: 'paypal',
+      now,
+      idleHours: ctx.idleHours,
+      absoluteDays: ctx.absoluteDays,
+      ip: c.req.header('x-forwarded-for') ?? c.req.header('cf-connecting-ip'),
+      ua: c.req.header('user-agent'),
+    })
+    c.header('set-cookie', writeSessionCookie(ctx.cookieSecure, token, ctx.absoluteDays * 86_400))
+    control.event({ id: randomUUID(), at: now, workspaceId: member.workspace_id, memberId: member.id, event: 'login', result: 'ok' })
+    return c.json({ workspaceId: member.workspace_id, role: member.role, displayName: member.display_name })
+  })
+
   app.post('/auth/logout', (c) => {
     const who = memberFromCookie(c, ctx)
     if (who && ctx.control) ctx.control.revokeSession(who.token, ctx.now().toISOString())
