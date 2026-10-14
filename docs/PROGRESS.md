@@ -76,6 +76,7 @@
 - `gates:fast` after Q6.4: 56 files, 656 API tests, 10.45s, secret check passed, exit 0.
 - `gates:fast` after Q6.5: 56 files, 691 API tests, 11.23s, secret check passed, exit 0.
 - `gates:fast` after Q6.6: 56 files, 693 API tests, 12.54s, secret check 374 tracked files, exit 0.
+- Full `npm run gates` after Q6 on 14 October 2026: 56 files, 693 API tests, 12.54s, secret check 374 tracked files, Playwright 134 passed (8.4m), axe included, exit 0.
 
 ## Open items
 
@@ -116,7 +117,8 @@
 - 15-minute cleanup job: cleanupExpiredDemos sweeps every 15 minutes, deleting only expired demo workspaces (mode='demo' and expires_at < now) and their SQLite files from disk, while unconditionally preserving default, studio, and live workspaces.
 - Tenant scheduler: runTenantSchedulerSweep sweeps only workspaces with active external_refs without per-tenant timers. Demo workspaces tick sweeps on demand on simulate actions and when Today is opened.
 - Isolation suite: verified Appendix B cases 22 (session cookie, key, or id from A on B is 404/401), 23 (path traversal ../ is 400), 24 (operations in A leave B database checksum identical), and 27 (cleanup never deletes default, studio, or live).
+- Queue 6 Proof & Guarantees: Property sequences verify Invariants I1-I15 and isolation (`test/property.test.ts`). History replay exposed as Proof control (`test/replay.test.ts`, `/v1/replay`, `/app/proof`). 5 audit proof lines verified (`test/audit.test.ts`, `api/src/services/audit.ts`). 20/20 guarantees verified via `docs/guarantees.json` and `npm run guarantees`. All 35 Appendix B cases tested and verified with zero untested cases (`test/redteam.test.ts`). Second reader wired behind `FLAG_SECOND_READER` off by default, executing when enabled (`test/drafter.test.ts`).
 
 ## Next
 
-Queue 6 complete. Run guarantees verification and full gates.
+Queue 6 complete. All tasks (Q6.1–Q6.6) implemented, tested, and verified under full gates.
