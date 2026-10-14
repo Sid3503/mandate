@@ -148,3 +148,108 @@
 ## Queue 8 Complete
 
 All Phase 12 tasks (P12.T1 to P12.T7) are complete and verified across fast and full gates. Runbook execution complete. Status: DONE.
+
+## Verification Pass (verify/final)
+
+Verification pass completed across all 8 deliverables on branch `verify/final`.
+
+### 1. Fresh Worktree and Initial Gates
+- Worktree created at `backups/worktree-gates` from `verify/final`.
+- Node & npm setup: `npm run setup` executed (`npm --prefix api ci --include=dev && npm --prefix web ci --include=dev`). Note: root `package.json` delegates installs to sub-packages via `npm run setup` as root has no package-lock.json.
+- `npm run gates` initial summary:
+  - Hygiene: 23 checks passed.
+  - Typecheck: clean for both api and web.
+  - API Test Suite: 59 test files passed, 706 tests passed (14.28s).
+  - Secret Check: passed (383 tracked files).
+  - Web Build: built in 1.10s, precache 40 entries.
+  - Playwright E2E: 135 passed (9.2m).
+
+### 2. Plan and Final Report Harmonization
+- Harmonized `docs/MASTER_PLAN.md` and `docs/FINAL_REPORT.md`:
+  - P1.T2, P1.T8, P2.T1, P2.T2, and P3.T1 to P3.T6 marked as `partial` in both files.
+  - P5.T4 and P6.T3 marked as `partial` in both files.
+  - Only ticked tasks where an existing test proves the whole task; unticked the rest.
+  - Replaced all blank or branch-name commit cells with real 7-character commit hashes.
+  - Fixed test citation for P6.T3 in `docs/FINAL_REPORT.md` to cite `api/test/agent-keys.test.ts` and `api/test/client-keys.test.ts` (verified existing files; `api/test/mcp-agent-keys.test.ts` tests MCP protocol and client reconnection, not key upgrade).
+
+### 3. P6.T3 Machine Key Status and Missing Features
+- P6.T3 marked `partial` in `docs/MASTER_PLAN.md`, `docs/FINAL_REPORT.md`, and `docs/PROGRESS.md`.
+- Implemented:
+  - Replacement of `mnd_ag_` and `mnd_cl_` secrets while preserving agent or client identity.
+  - Automatic migration of legacy bare secret hashes to full-key SHA-256 hashes on first use.
+  - Key expiry enforcement (`expires_at`), agent key suspension, and last-used timestamp updates.
+- Missing (deferred for browser test compatibility and minimal footprint):
+  - Structured key format `mnd_<type>_<workspace_id>_<secret>` (retained legacy prefixes `mnd_ag_` and `mnd_cl_`).
+  - HMAC pepper hashing (uses standard SHA-256 hash).
+  - Configurable daily spend or invocation limits per machine key.
+  - Masked prefix display formatting on the connect screen.
+
+### 4. Mobile Lighthouse Audit (Default Mobile Throttling)
+- Ran mobile Lighthouse with default mobile throttling (Slow 4G network simulation, 4x CPU slowdown) on production preview build (`npm run preview` on port 4173):
+  - Welcome (`/app/welcome`): Performance 56, Accessibility 100, Best Practices 100, SEO 100.
+  - Unlock (`/app/unlock`): Performance 56, Accessibility 98, Best Practices 96, SEO 100.
+  - Today in demo mode (`/app/?key=...&mode=demo`): Performance 56, Accessibility 100, Best Practices 100, SEO 100.
+- All scores and artifacts recorded in `docs/evidence/q8/lighthouse-mobile-welcome.json`, `docs/evidence/q8/lighthouse-mobile-unlock-default.json`, and `docs/evidence/q8/lighthouse-mobile-today-demo.json`.
+- Largest build chunks and 1,000 kB check:
+  - `dist/assets/vendor-ag-studio-DCeSRYLB.js`: 1,792.46 kB (gzip: 490.50 kB) [Exceeds 1,000 kB]
+  - `dist/assets/vendor-ag-charts-comm-Dz-g1hLt.js`: 1,391.81 kB (gzip: 415.09 kB) [Exceeds 1,000 kB]
+  - `dist/assets/vendor-ag-grid-comm-3YKM4G1p.js`: 1,130.46 kB (gzip: 314.75 kB) [Exceeds 1,000 kB]
+  - `dist/assets/vendor-ag-charts-ent-BRmj9EVu.js`: 1,028.70 kB (gzip: 267.93 kB) [Exceeds 1,000 kB]
+  - `dist/assets/index-DM_0S7Ss.js`: 808.85 kB (gzip: 238.45 kB)
+  - `dist/assets/vendor-ag-grid-ent-CVTYH8R9.js`: 356.20 kB (gzip: 99.57 kB)
+  - `dist/assets/vendor-ag-studio-react-Bbq5bmCg.js`: 85.61 kB (gzip: 25.04 kB)
+  - `dist/assets/ControlRoom-B4-zpEXq.js`: 15.85 kB (gzip: 6.48 kB)
+  - `dist/assets/Ledger-Cw0IyvuT.js`: 11.03 kB (gzip: 3.82 kB)
+- Four vendor chunks exceed 1,000 kB uncompressed due to AG Grid Enterprise and AG Charts Enterprise vendor bundles.
+
+### 5. Guarantees Runner and Failure Test
+- Implemented `scripts/guarantees.mjs`:
+  - Parses each guarantee from `docs/guarantees.json`.
+  - Runs named test files using vitest programmatically.
+  - Records pass/fail status and failure details, writing back to `docs/guarantees.json`.
+- Added unit test in `api/test/guarantees.test.ts`:
+  - Asserts that a guarantee status is marked `fail` when any named test fails.
+  - Asserts that all guarantees are marked `pass` when named tests succeed.
+  - Passed 2/2 tests.
+- Executed `node scripts/guarantees.mjs`:
+  - All 20 guarantees verified passed against 14 unique test files.
+
+### 6. Drafter Evaluation on Real Model
+- Scripted-model eval in `api/test/eval-wordings.test.ts` labeled: "checker only (CI baseline)".
+- Executed `npm run eval:drafter` against live Ollama model with token cap (`EVAL_TOKEN_CAP=50000`):
+  - Model Name: `gemma4:31b`
+  - Plain requests with nothing added: 11/11 (100.0%)
+  - Hidden loosenings: 0 (0.0%, target 0)
+  - Prompt injections resisted: 0/1 (flagged for review)
+  - Format compliance: 11/11 (100.0%)
+  - Hallucinated rules: 0
+  - Tokens used: 52,697 (halted at token cap 50,000)
+
+### 7. Branch Merge Order and Candidate Verification
+- Clean worktree created at `backups/worktree-rc` checking out branch `release/candidate`.
+- Branches merged sequentially into `release/candidate`, running `npm run gates:fast` after each merge:
+  1. `main` (commit `6968dcd`): Base branch.
+  2. `q0-verify` (commit `8624506`): Merged. `gates:fast` passed (47 test files, 568 tests, 320 tracked files).
+  3. `q1-identity` (commit `cded03b`): Merged. `gates:fast` passed (48 test files, 594 tests, 345 tracked files).
+  4. `q2-onboarding` (commit `7ecfc4e`): Merged. `gates:fast` passed (49 test files, 596 tests, 359 tracked files).
+  5. `q3-ops` (commit `d6a0b12`): Merged. `gates:fast` passed (55 test files, 635 tests, 368 tracked files).
+  6. `q4-safety` (commit `3b3b646`): Merged. `gates:fast` passed (55 test files, 639 tests, 371 tracked files).
+  7. `q5-rules` (commit `a601e3b`): Merged. `gates:fast` passed (56 test files, 645 tests, 372 tracked files).
+  8. `q6-proof` (commit `d934bb6`): Merged. `gates:fast` passed (56 test files, 693 tests, 374 tracked files).
+  9. `q7-ask` (commit `2efca1a`): Merged. `gates:fast` passed (57 test files, 698 tests, 375 tracked files).
+  10. `q8-hardening` (commit `4d52185`): Merged. `gates:fast` passed (59 test files, 706 tests, 383 tracked files).
+  11. `verify/final` (commit `2e9a2f8`): Merged. `gates:fast` passed (60 test files, 708 tests, 388 tracked files).
+- Final `npm run gates` summary on `release/candidate`:
+  - Hygiene: 23 checks passed.
+  - Typecheck: clean across api and web.
+  - API Test Suite: 60 test files passed, 708 tests passed (16.99s).
+  - Secret Check: passed (388 tracked files).
+  - Web Build: built in 973ms, precache 40 entries (1,322.98 KiB).
+  - Playwright E2E: 135 passed (9.8m).
+- Temporary worktree `backups/worktree-rc` removed cleanly.
+
+### 8. Try-It Runbook
+- Written and committed `docs/TRY_IT.md`:
+  - Documents exact environment variables (`FLAG_MULTI_TENANCY=true`, `DEMO_ENABLED=true`, `PASSKEY_REQUIRED=true`, etc.).
+  - Documents startup commands (`npm run setup`, `npm run dev:all`).
+  - Defines an exact 10-step click path from Welcome to proof verification with zero steps skipped.
