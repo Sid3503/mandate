@@ -30,7 +30,7 @@ import { PayPalError, type PayPalPort } from './paypal/port'
 import { handleMcp } from './mcp/http'
 import { AgentService, logReviewFailure } from './agents/service'
 import { live } from './services/live'
-import { acceptLegacyMachineKey } from './services/machine-key'
+import { acceptLegacyMachineKey, machineKeyHash } from './services/machine-key'
 import type { Notifier } from './services/notify'
 import { StudioTurnSchema } from './agents/studio'
 import { DEEP_RUN, EVERY_CHANGE_RUN, GUARANTEES } from './domain/guarantees'
@@ -219,13 +219,19 @@ function isAnonymous(path: string): boolean {
 const AgentCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   scopes: z.array(z.enum(['read', 'propose', 'stream', 'mcp', 'deals'])).min(1),
-  limits: z.object({ proposalsPerHour: z.number().int().min(1).max(10_000).optional(), centsPerHour: z.number().int().min(1).optional() }).strict().optional(),
+  limits: z.object({
+    proposalsPerHour: z.number().int().min(1).max(10_000).optional(),
+    centsPerHour: z.number().int().min(1).optional(),
+    proposalsPerDay: z.number().int().min(1).max(100_000).optional(),
+    centsPerDay: z.number().int().min(1).optional(),
+  }).strict().optional(),
   expiryDays: z.number().int().min(1).max(365).optional().nullable(),
 }).strict()
 
 const ClientKeyCreateSchema = z.object({
   name: z.string().trim().min(1).max(120),
   partyId: z.string().trim().min(1).max(120),
+  expiryDays: z.number().int().min(1).max(365).optional().nullable(),
 }).strict()
 
 const ShareCreateSchema = z.object({
@@ -301,7 +307,7 @@ export function createApp(deps: AppDeps) {
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
     if (token === '') return `anon:${ip}`
     acceptLegacyMachineKey(services.repo, token)
-    const digest = createHash('sha256').update(token).digest('hex')
+    const digest = machineKeyHash(token)
     const known = sameSecret(token, deps.config.apiKey)
       || (deps.config.proposerKey ? sameSecret(token, deps.config.proposerKey) : false)
       || (deps.config.buyerAgentKey ? sameSecret(token, deps.config.buyerAgentKey) : false)
@@ -380,10 +386,13 @@ export function createApp(deps: AppDeps) {
       // A client's own key, issued from the System page and bound to one client on the warrant. It is the same
       // kind of caller as the environment's buyer key, except the owner can issue one per client and revoke it.
       acceptLegacyMachineKey(services.repo, token)
-      const keyHash = createHash('sha256').update(token).digest('hex')
+      const keyHash = machineKeyHash(token)
       const clientKey = services.repo.getClientKeyByKeyHash(keyHash)
       if (clientKey) {
         if (clientKey.status === 'revoked') throw new Problem(403, 'client-key.revoked', 'This client key is revoked', 'Ask the studio for a new key.')
+        if (clientKey.expires_at && clientKey.expires_at <= deps.now().toISOString()) {
+          throw new Problem(403, 'client-key.expired', 'This client key has expired', 'Ask the studio for a new client key.')
+        }
         services.repo.setClientKeySeen(clientKey.id, new Date().toISOString())
         principal = buyerPrincipal(clientKey.party_id)
       } else {

@@ -13,6 +13,7 @@ worktree*/
 **/.vitest/
 web/dist/
 web/test-results/
+test-results/
 web/playwright-report/
 web/e2e/shots/
 web/openapi.json

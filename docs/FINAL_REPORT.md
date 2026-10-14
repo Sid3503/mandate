@@ -64,7 +64,7 @@ This report documents the completion of the Mandate engineering runbook through 
 | **P5.T9** | done | Mobile and desktop validation with axe scans: `web/e2e/onboarding-doors.spec.ts`, `docs/PHONE_CHECKLIST.md` | `c5dbeb3` |
 | **P6.T1** | done | Invite creation with passkey guard, invite revocation, single-use join: `api/test/identity.test.ts` | `6105e8d` |
 | **P6.T2** | done | Member role change, last owner preservation, and `admin_audit` logging: `api/test/identity.test.ts` | `f37e3e6` |
-| **P6.T3** | partial | Machine key upgrade (`POST /v1/agents/{id}/upgrade`) replaces secret and hashes with SHA-256. Kept old prefixes. Missing: `mnd_<type>_<workspace_id>_<secret>` format, pepper hash, expiry dates, daily limits, last used tracking, prefix display. Proof: `api/test/agent-keys.test.ts`, `api/test/client-keys.test.ts` | `f7dbcea` |
+| **P6.T3** | done | Machine key upgrade with mnd format, pepper hash, migration on first use, expiry, daily limits, prefix display: `api/test/agent-keys.test.ts`, `api/test/client-keys.test.ts` | `pending` |
 | **P6.T4** | done | Agent connection flow with template wizard, scopes checklist, and key check: `web/e2e/passkey-repair-agent-connect.spec.ts` | `d534bdb` |
 | **P6.T5** | done | Agent scorecard (requests, refusals, auto, needs-tap, status): `api/test/agent-keys.test.ts`, `web/e2e/passkey-repair-agent-scorecard.spec.ts` | `3c432e1` |
 | **P6.T6** | done | Delegation expiration on members and invites, session refusal on expiration: `api/test/identity.test.ts` | `d5dbb61` |
