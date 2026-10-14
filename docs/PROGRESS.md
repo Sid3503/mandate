@@ -138,6 +138,8 @@
 - Isolation suite: verified Appendix B cases 22 (session cookie, key, or id from A on B is 404/401), 23 (path traversal ../ is 400), 24 (operations in A leave B database checksum identical), and 27 (cleanup never deletes default, studio, or live).
 - Queue 6 Proof & Guarantees: Property sequences verify Invariants I1-I15 and isolation (`test/property.test.ts`). History replay exposed as Proof control (`test/replay.test.ts`, `/v1/replay`, `/app/proof`). 5 audit proof lines verified (`test/audit.test.ts`, `api/src/services/audit.ts`). 20/20 guarantees verified via `docs/guarantees.json` and `npm run guarantees`. All 35 Appendix B cases tested and verified with zero untested cases (`test/redteam.test.ts`). Second reader wired behind `FLAG_SECOND_READER` off by default, executing when enabled (`test/drafter.test.ts`).
 
+- Passkey keyboard walk: complete keyboard accessibility navigation test for passkey flows with axe scan verification (`web/e2e/passkey-repair-keyboard.spec.ts`).
+
 ## Next
 
-Q8.4 P12.T4: Passkey keyboard walk: complete keyboard accessibility navigation test for passkey flows.
+Q8.5 P12.T5: Trim logs at 14 days and auth events at 90 days in cleanup job / store; update `docs/DATA.md`.
