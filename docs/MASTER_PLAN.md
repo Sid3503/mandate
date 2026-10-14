@@ -100,7 +100,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P10.T2 | done | History replay as a Proof control under `POST /v1/replay` and on the Proof screen (`/app/proof`). Proof: `api/test/replay.test.ts`, `web/src/screens/Proof.tsx` | |
 | P10.T3 | done | Proof lines for members, assertions, signed rules, safety events, and key fingerprints. Proof: `api/test/audit.test.ts`, `api/src/services/audit.ts` | |
 | P10.T4 | done | `docs/guarantees.json`, `npm run guarantees`, and the Proof page reads it (`/app/proof`). Proof: `docs/guarantees.json`, `scripts/guarantees.mjs`, `web/src/screens/Proof.tsx`, `web/e2e/job.spec.ts` | |
-| P10.T5 | not started | Appendix B cases are not in the red team file | |
+| P10.T5 | done | Appendix B cases 1 to 35 in the red team file. Proof: `api/test/redteam.test.ts` | `q6-proof` |
 | P11.T1 | partial | `api/test/phases.test.ts` "removes an unknown tool and forwards propose". Propose calls the callback, not `POST /v1/proposals` | `9a2ea0b` |
 | P11.T2 | done | `packages/guard/README.md` and that same test | `9a2ea0b` |
 | P11.T3 | not started | `MCP_EXPOSE_READ_TOOLS` is parsed in `api/src/flags.ts` and never read by the MCP server | `9a2ea0b` |
@@ -152,7 +152,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | 34 Simulate writes zero rows | `api/test/phases.test.ts` "tries a payment without writing a row" | |
 | 35 No test output or log contains a canary | `api/test/ops-readyz-secret.test.ts` "Case 35: secret and canary log redaction sweep", `api/test/phases.test.ts` "redacts a canary and a bearer token", and `scripts/check-secrets.mjs` | |
 
-Cases 9 to 18 have the tests named in the table. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, and 35 gained tests in the repair pass, Q3 ops suites, and Q4 safety suites. All cases in Appendix B that have implementations now have verified test proof.
+Cases 9 to 18 have the tests named in the table. Cases 1, 2, 3, 4, 5, 6, 7, 8, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, and 35 gained tests in the repair pass, Q3 ops suites, and Q4 safety suites. Under Q6.5 (P10.T5), every single Appendix B case (cases 1 to 35) was added to `api/test/redteam.test.ts` under the suite "Appendix B red team: cases 1 to 35". Cases with no test: none. Every case in Appendix B has verified test proof.
 
 ## Confirmed facts, not changes
 

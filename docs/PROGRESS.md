@@ -43,6 +43,7 @@
 - Q6.2 P10.T2: history replay as a Proof control under `POST /v1/replay` and on the Proof screen (`/app/proof`). Proof: `api/test/replay.test.ts`, `web/src/screens/Proof.tsx`.
 - Q6.3 P10.T3: proof lines for members (`members.valid`), assertions (`assertions.valid`), signed rules (`rules.signed`), safety events (`safety.events`), and key fingerprints (`keys.fingerprint`) in audit report. Proof: `api/test/audit.test.ts`, `api/src/services/audit.ts`.
 - Q6.4 P10.T4: `docs/guarantees.json`, `npm run guarantees` (verifying all 20 guarantees and test files), and `/v1/guarantees` serving it for the Proof page. Proof: `docs/guarantees.json`, `scripts/guarantees.mjs`, `web/src/screens/Proof.tsx`.
+- Q6.5 P10.T5: every Appendix B case 1 to 35 added to the red team test file under "Appendix B red team: cases 1 to 35", table of cases 1 to 35 verified with zero untested cases. Proof: `api/test/redteam.test.ts`.
 
 ## Test counts
 
