@@ -253,3 +253,22 @@ Verification pass completed across all 8 deliverables on branch `verify/final`.
   - Documents exact environment variables (`FLAG_MULTI_TENANCY=true`, `DEMO_ENABLED=true`, `PASSKEY_REQUIRED=true`, etc.).
   - Documents startup commands (`npm run setup`, `npm run dev:all`).
   - Defines an exact 10-step click path from Welcome to proof verification with zero steps skipped.
+
+## Final run
+
+| step | status | proof | commit |
+|---|---|---|---|
+| STEP 0 | done | Branch final/submission created, docs/FINAL_RUN.md written, table initialized | pending |
+| F1 | not started | Security and privacy cleanup | pending |
+| F2 | not started | Performance optimization and Lighthouse | pending |
+| F3 | not started | Drafter evaluation and prompt injection test | pending |
+| F4 | not started | Machine keys P6.T3 completion | pending |
+| F5 | not started | Live sandbox proof | pending |
+| F6 | not started | Submission documents | pending |
+| F7 | not started | Public repo readiness | pending |
+| F8 | not started | Final gates in fresh worktree | pending |
+| F9 | not started | Ship: PR creation and final summary | pending |
+
+### Blocked
+None.
+
