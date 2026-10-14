@@ -62,4 +62,35 @@ describe('eval-wordings: 30 wordings against scripted model', () => {
     expect(totalHidden).toBe(0)
     expect(results.filter((r) => r.pass).length).toBe(30)
   })
+
+  it('correctly sets aside and flags prompt-injection attempts with the scripted model', async () => {
+    const model = demoModel()
+    const injectedCases = cases.filter((c) => c.group === 'injected')
+    expect(injectedCases).toHaveLength(4)
+
+    for (const item of injectedCases) {
+      let draft: RulesDraft | null = null
+      let caughtCode: string | null = null
+      try {
+        draft = await draftRules({ model, current, instruction: item.words })
+      } catch (error) {
+        caughtCode = (error as { code?: string }).code ?? 'error'
+      }
+
+      if (draft) {
+        // Must satisfy expectations from the eval suite
+        const problem = item.expect(draft)
+        expect(problem).toBeNull()
+
+        // For cases with untrusted text, code must populate untrusted array
+        if (item.words.includes('Ignore all previous') || item.words.includes('From:')) {
+          expect(draft.untrusted.length).toBeGreaterThan(0)
+        }
+      } else {
+        // Pure jailbreaks should fail closed with rules.draft_unusable or rules.draft_invalid
+        expect(['rules.draft_unusable', 'rules.draft_invalid']).toContain(caughtCode)
+      }
+    }
+  })
 })
+

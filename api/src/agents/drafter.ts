@@ -364,7 +364,7 @@ async function checkDraftAgainstWords(input: { model: AgentModel; current: Warra
     const added = applyAudit(rows, sent, audit)
     return {
       ignored: rows.filter((row) => row.status === 'not_covered' || row.status === 'partly').map((row) => ({ phrase: row.text.slice(0, 160), why: row.reasons.join(' ') || 'Nothing in the draft carries this out.' })),
-      untrusted: rows.filter((row) => row.status === 'untrusted').map((row) => row.text),
+      untrusted: [...new Set([...plain.untrusted, ...rows.filter((row) => row.status === 'untrusted').map((row) => row.text)])],
       added,
       usage: auditUsage,
     }

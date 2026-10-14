@@ -20,6 +20,7 @@
     "db:backup": "node scripts/db-backup.mjs",
     "db:restore": "node scripts/db-restore.mjs",
     "guarantees": "node scripts/guarantees.mjs",
+    "eval:drafter": "npm --prefix api run eval:drafter",
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "license": "MIT"
