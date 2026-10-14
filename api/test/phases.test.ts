@@ -212,15 +212,35 @@ describe('payee book and the toolkit wrapper', () => {
   })
 
   it('removes an unknown tool and forwards propose', async () => {
-    const seen: string[] = []
+    const posted: Array<{ path: string; body: unknown }> = []
+    const client = {
+      post: async (path: string, body: unknown) => {
+        posted.push({ path, body })
+        return { status: 200, id: 'prop_123' }
+      },
+    }
     const wrapped = withMandate({
       get_rules: async () => 'rules',
       propose: async () => 'local',
-    }, { propose: async (name) => { seen.push(name); return 'asked' } })
+    }, { client })
     expect(await wrapped.get_rules!({})).toBe('rules')
-    expect(await wrapped.propose!({})).toBe('asked')
+    const res = await wrapped.propose!({ amountCents: 500, payee: 'alice' })
+    expect(res).toEqual({ status: 200, id: 'prop_123' })
+    expect(posted).toEqual([
+      { path: '/v1/proposals', body: { amountCents: 500, payee: 'alice' } },
+    ])
+    expect(() => withMandate({ pay: async () => 'no' }, { client })).toThrow(/unknown tool: pay/)
+
+    // Read tier drops when exposeRead is false
+    const dropped = withMandate({ get_rules: async () => 'rules', propose: async () => 'p' }, { client, exposeRead: false })
+    expect(dropped.get_rules).toBeUndefined()
+    expect(dropped.propose).toBeDefined()
+
+    // Also supports custom propose callback
+    const seen: string[] = []
+    const legacy = withMandate({ propose: async () => 'local' }, { propose: async (name) => { seen.push(name); return 'asked' } })
+    expect(await legacy.propose!({})).toBe('asked')
     expect(seen).toEqual(['propose'])
-    expect(() => withMandate({ pay: async () => 'no' }, { propose: async () => 'x' })).toThrow(/unknown tool: pay/)
   })
 })
 

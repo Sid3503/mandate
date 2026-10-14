@@ -101,7 +101,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P10.T3 | done | Proof lines for members, assertions, signed rules, safety events, and key fingerprints. Proof: `api/test/audit.test.ts`, `api/src/services/audit.ts` | |
 | P10.T4 | done | `docs/guarantees.json`, `npm run guarantees`, and the Proof page reads it (`/app/proof`). Proof: `docs/guarantees.json`, `scripts/guarantees.mjs`, `web/src/screens/Proof.tsx`, `web/e2e/job.spec.ts` | |
 | P10.T5 | done | Appendix B cases 1 to 35 in the red team file. Proof: `api/test/redteam.test.ts` | `q6-proof` |
-| P11.T1 | partial | `api/test/phases.test.ts` "removes an unknown tool and forwards propose". Propose calls the callback, not `POST /v1/proposals` | `9a2ea0b` |
+| P11.T1 | done | Propose calls POST /v1/proposals through injected client in withMandate, read tier passes through, unknown tool throws. Proof: `api/test/phases.test.ts` | `q7-ask` |
 | P11.T2 | done | `packages/guard/README.md` and that same test | `9a2ea0b` |
 | P11.T3 | not started | `MCP_EXPOSE_READ_TOOLS` is parsed in `api/src/flags.ts` and never read by the MCP server | `9a2ea0b` |
 | P12.T1 | not started | no recorded checklist pass | |
