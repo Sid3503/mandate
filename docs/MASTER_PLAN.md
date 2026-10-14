@@ -96,7 +96,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P9.T2 | partial | clerk context is `jobId` and `proposalId` in `web/src/lib/api.ts`. Not `receiptId` or `dealId` | `1ac59cd` |
 | P9.T3 | partial | `api/test/shares.test.ts`. No payee-role payments page | `1ac59cd` |
 | P9.T4 | not started | `PAYPAL_LOGIN_ENABLED` stays off. No fake IdP | `9a2ea0b` |
-| P10.T1 | partial | `api/test/property.test.ts` "keep every promise, in 40 runs of 36 random steps". Not fast-check over tenant A and B | `1ac59cd` |
+| P10.T1 | done | fast-check sequences for all invariants (pure gate, integer cents, idempotency, append-only) and multi-tenancy isolation over tenant A and B. Proof: `api/test/property.test.ts` | |
 | P10.T2 | partial | `api/test/replay.test.ts`. Not added as a Proof control in this work | `1ac59cd` |
 | P10.T3 | partial | `api/test/audit.test.ts`. No member, assertion, or safety-event lines from this plan | `1ac59cd` |
 | P10.T4 | partial | `web/e2e/job.spec.ts` "the Proof page lists what Mandate promises". No `docs/guarantees.json` or `npm run guarantees` | `1ac59cd` |
