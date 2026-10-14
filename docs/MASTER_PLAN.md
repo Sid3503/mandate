@@ -95,7 +95,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P9.T1 | done | Ask Mandate opens from any screen, answers from ledger with no model, prepares button, navigates. Proof: `web/e2e/job.spec.ts` | `q7-ask` |
 | P9.T2 | done | Clerk context includes receiptId and dealId across api schemas, agents service screenFor, AskService, Ask UI and web api. Proof: `api/test/ask.test.ts` | `q7-ask` |
 | P9.T3 | done | Payee-role payments screen with settled shares and read-only access. Proof: `web/src/screens/PayeePayments.tsx`, `api/test/shares.test.ts`, `web/e2e/passkey-repair-role-landings.spec.ts` | `q7-ask` |
-| P9.T4 | not started | `PAYPAL_LOGIN_ENABLED` stays off. No fake IdP | `9a2ea0b` |
+| P9.T4 | done | Build log in with PayPal behind PAYPAL_LOGIN_ENABLED with fake provider, login button on Unlock screen, verified off by default. Proof: `api/test/paypal-login.test.ts` | `q7-ask` |
 | P10.T1 | done | fast-check sequences for all invariants (pure gate, integer cents, idempotency, append-only) and multi-tenancy isolation over tenant A and B. Proof: `api/test/property.test.ts` | |
 | P10.T2 | done | History replay as a Proof control under `POST /v1/replay` and on the Proof screen (`/app/proof`). Proof: `api/test/replay.test.ts`, `web/src/screens/Proof.tsx` | |
 | P10.T3 | done | Proof lines for members, assertions, signed rules, safety events, and key fingerprints. Proof: `api/test/audit.test.ts`, `api/src/services/audit.ts` | |
