@@ -7,7 +7,8 @@ import { WARRANT_ID } from '../domain/schemas'
 import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from '../services/principal'
-import { draftRules, type DraftStage } from './drafter'
+import { draftRules, secondReaderOpinion, type DraftStage, type SecondReaderResult } from './drafter'
+import type { ServerFlags } from '../flags'
 import { auditPolicy, readAll, type Audit, type Read } from './policyAgents'
 import { applyAudit, countStatuses, firstPass, instructionFor, listChanges, POLICY_MAX_SENTENCES, READ_CHUNK, segmentPolicy, sendable } from './policy'
 import { ModelHealth } from './health'
@@ -80,6 +81,7 @@ export class AgentService {
     private readonly fallbackModel: AgentModel | null = null,
     /** When set, a call past the cap or after the kill switch never reaches the model. */
     private readonly budget: ModelBudget | null = null,
+    private readonly flags: ServerFlags | null = null,
   ) {}
 
   get enabled(): boolean {
@@ -305,7 +307,35 @@ export class AgentService {
       } catch {
         this.record({ id: randomUUID(), agent: 'rules_explainer', who, conversationId: runId, model: used.name, input: instruction.slice(0, 500), output: null, steps: [], status: 'error', error: 'fallback', ms: 0, prompt: 'rulesExplainer' })
       }
-      return { ...draft, runId, readBack: readBackLines, readBackBy, replay }
+      let secondReader: SecondReaderResult | undefined
+      if (this.flags?.secondReader) {
+        const secondModel = this.fallbackModel ?? used
+        stage({ stage: 'second_reading', model: secondModel.name })
+        secondReader = await secondReaderOpinion({
+          model: secondModel,
+          instruction,
+          current: warrant.body,
+          draft: draft.draft,
+          summary: draft.summary,
+          loosens: draft.loosens,
+          tightens: draft.tightens,
+        })
+        this.record({
+          id: randomUUID(),
+          agent: 'second_reader',
+          who,
+          conversationId: runId,
+          model: secondModel.name,
+          input: instruction.slice(0, 500),
+          output: JSON.stringify(secondReader),
+          steps: [],
+          status: 'ok',
+          error: null,
+          ms: 0,
+          prompt: 'secondReader',
+        })
+      }
+      return { ...draft, runId, readBack: readBackLines, readBackBy, replay, ...(secondReader ? { secondReader } : {}) }
     } catch (error) {
       this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: model.name, input: instruction, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0, prompt: 'drafter' })
       throw error

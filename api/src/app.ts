@@ -248,7 +248,7 @@ export function createApp(deps: AppDeps) {
     services.mandate.setOnExternalRef((kind, externalId) => deps.control?.rememberRef(kind, externalId, deps.workspace?.id ?? 'ws_default'))
   }
   const { mandate: service, deals } = services
-  const agents = deps.agents ?? new AgentService(services, deps.model ?? null, deps.now, deps.drafterModel ?? null, null, deps.budget ?? null)
+  const agents = deps.agents ?? new AgentService(services, deps.model ?? null, deps.now, deps.drafterModel ?? null, null, deps.budget ?? null, deps.config.flags)
   const buckets = new Map<string, { count: number; reset: number }>()
   const classes = new RateLimiter(() => deps.now().getTime())
   const metrics = deps.metrics ?? new Metrics()

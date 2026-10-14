@@ -11,7 +11,7 @@ import type { WarrantBody } from '../domain/schemas'
  * Every prompt has an id and a version. The version is written on each agent run, so "which wording produced this
  * answer?" always has an answer, and a change to a prompt is a visible, reviewable bump with a snapshot test behind it.
  */
-export const PROMPT_VERSIONS = { clerk: 1, reviewer: 2, negotiator: 2, drafter: 1, policyReader: 1, policyAuditor: 1, rulesExplainer: 1 } as const
+export const PROMPT_VERSIONS = { clerk: 1, reviewer: 2, negotiator: 2, drafter: 1, policyReader: 1, policyAuditor: 1, rulesExplainer: 1, secondReader: 1 } as const
 export type PromptId = keyof typeof PROMPT_VERSIONS
 export const promptVersion = (id: PromptId): string => `${id}@v${PROMPT_VERSIONS[id]}`
 
