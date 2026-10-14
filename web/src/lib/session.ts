@@ -6,11 +6,6 @@ const MODE = 'mandate.workspaceMode'
 export const session = {
   get(): string | null {
     try {
-      const q = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('key') : null
-      if (q) {
-        sessionStorage.setItem(KEY, q)
-        return q
-      }
       return sessionStorage.getItem(KEY)
     } catch {
       return null
@@ -41,11 +36,6 @@ export const session = {
   },
   mode(): string | null {
     try {
-      const q = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('mode') : null
-      if (q) {
-        sessionStorage.setItem(MODE, q)
-        return q
-      }
       return sessionStorage.getItem(MODE)
     } catch {
       return null

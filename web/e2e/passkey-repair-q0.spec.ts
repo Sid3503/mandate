@@ -1,7 +1,8 @@
+import { fileURLToPath } from 'node:url'
 import { mkdirSync, readFileSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 
-const shots = '/Users/siddharth.mishra/Desktop/paypal-ai-hack/docs/evidence/q0'
+const shots = fileURLToPath(new URL('../../docs/evidence/q0', import.meta.url))
 const ownerKey = 'passkey-repair-owner-key-32'
 
 test('demo tap, the approval card, the receipt line, and three verify results', async ({ page }) => {
