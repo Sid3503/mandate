@@ -12,10 +12,22 @@ export function Unlock() {
   const client = useQueryClient()
   const ready = useQuery({ queryKey: ['ready'], queryFn: api.ready, retry: false })
   const [key, setKey] = useState('')
-  const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
   const from = (where.state as { from?: string } | null)?.from ?? '/'
-  const flags = useQuery({ queryKey: ['flags'], queryFn: api.flags, staleTime: 60_000 })
+  const paypalLogin = useQuery({
+    queryKey: ['paypal-login-check'],
+    queryFn: async () => {
+      try {
+        await api.paypalLoginStart()
+        return true
+      } catch {
+        return false
+      }
+    },
+    staleTime: 60_000,
+    retry: false,
+  })
 
   const roleLanding = (role?: string, side?: string | null) => {
     if (role === 'proposer') return '/clerk'
@@ -158,7 +170,7 @@ export function Unlock() {
         <button type="button" className="btn btn-ghost btn-block" onClick={() => void signIn()} disabled={busy}>
           {busy ? 'Waiting for the passkey…' : 'Sign in with a passkey'}
         </button>
-        {flags.data?.paypalLogin ? (
+        {paypalLogin.data ? (
           <button type="button" className="btn btn-outline btn-block" data-testid="paypal-login-btn" onClick={() => void handlePayPalLogin()} disabled={busy}>
             Log in with PayPal
           </button>
