@@ -126,3 +126,49 @@ describe('after a refusal: what would pass', () => {
     expect(texts.length).toBeGreaterThan(0)
   })
 })
+
+describe('history replay as a Proof control', () => {
+  it('replays ledger history against active rules as a Proof control without writing rows', async () => {
+    const h = harness()
+    const deal = await agree(h.app)
+    const paid = await collect(h.app, deal.id, 0)
+    const asked = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: payout(paid.captureId) })
+    expect(asked.json.gate).toBe('NEEDS_APPROVAL')
+
+    const beforeEvents = h.services.repo.allEvents().length
+    const beforeProposals = h.services.repo.allProposals().length
+
+    // Replay history under active rules as a Proof control
+    const res = await call(h.app, 'POST', '/v1/replay')
+    expect(res.status).toBe(200)
+    expect(res.json.checked).toBeGreaterThanOrEqual(1)
+    expect(res.json.changed).toEqual([])
+
+    // Replaying history writes zero rows to events or proposals and calls PayPal zero times
+    expect(h.services.repo.allEvents().length).toBe(beforeEvents)
+    expect(h.services.repo.allProposals().length).toBe(beforeProposals)
+    expect(h.paypal!.payoutCalls).toBe(0)
+
+    // A proposer or unauthenticated caller cannot run the replay proof control
+    const forbidden = await call(h.app, 'POST', '/v1/replay', { key: STUDIO_KEY })
+    expect(forbidden.status).toBe(403)
+  })
+
+  it('runs replay with proposed rules body as a Proof control and highlights tightened/loosened decisions', async () => {
+    const h = harness()
+    const deal = await agree(h.app)
+    const paid = await collect(h.app, deal.id, 0)
+    const ok = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: payout(paid.captureId, { amountCents: 6_000, description: 'part' }) })
+    expect(ok.json.gate).toBe('NEEDS_APPROVAL')
+
+    const body = await bodyOf(h.app)
+    // Tighter rules: perPaymentCeilingCents is 5000 -> turns ok into DENY
+    const res = await call(h.app, 'POST', '/v1/replay', { body: { ...body, perPaymentCeilingCents: 5_000 } })
+    expect(res.status).toBe(200)
+    expect(res.json.checked).toBeGreaterThanOrEqual(1)
+    expect(res.json.changed.find((item: { proposalId: string }) => item.proposalId === ok.json.id)).toMatchObject({
+      after: expect.objectContaining({ gate: 'DENY', clause: 'amount.ceiling' }),
+    })
+    expect(res.json.nowRefused).toBeGreaterThanOrEqual(1)
+  })
+})

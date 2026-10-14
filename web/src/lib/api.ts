@@ -294,6 +294,7 @@ export const api = {
   clientErrors: () => request<{ data: ClientErrorRow[] }>('/v1/client-errors'),
   ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
   replayRules: (rules: unknown) => request<Replay>('/v1/rules/replay', { method: 'POST', body: rules }),
+  replayHistory: (rules?: unknown) => request<Replay>('/v1/replay', { method: 'POST', body: rules ?? {} }),
   agents: () => request<AgentRow[]>('/v1/agents'),
   createAgent: async (input: { name: string; scopes: AgentScope[]; limits?: { proposalsPerHour?: number; centsPerHour?: number }; expiryDays?: number | null }) => {
     try {
