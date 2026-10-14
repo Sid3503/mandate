@@ -260,7 +260,7 @@ Verification pass completed across all 8 deliverables on branch `verify/final`.
 |---|---|---|---|
 | STEP 0 | done | Branch final/submission created, docs/FINAL_RUN.md written, table initialized | `31e4609` |
 | F1 | done | URL keys removed, tests added, SECRET_SCAN.md HISTORY_CLEAN=true | `5fd379e` |
-| F2 | done | AG Grid/Studio lazy-loaded, precache clean, mobile Lighthouse Welcome 90 Unlock 88 Today 80 in docs/evidence/q9/ and docs/PERF.md | pending |
+| F2 | done | AG Grid/Studio lazy-loaded, precache clean, mobile Lighthouse Welcome 90 Unlock 88 Today 80 in docs/evidence/q9/ and docs/PERF.md | `4679d2b` |
 | F3 | not started | Drafter evaluation and prompt injection test | pending |
 | F4 | not started | Machine keys P6.T3 completion | pending |
 | F5 | not started | Live sandbox proof | pending |
