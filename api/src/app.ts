@@ -1095,7 +1095,7 @@ export function createApp(deps: AppDeps) {
   app.get('/v1/jobs/:jobId', (c) => c.json({ ...service.job(c.req.param('jobId')), deal: deals.summaryForJob(c.req.param('jobId')) }))
 
   // ---------- the agent door ----------
-  app.all('/mcp', (c) => handleMcp(c.req.raw, services, c.get('principal')))
+  app.all('/mcp', (c) => handleMcp(c.req.raw, services, c.get('principal'), deps.config.flags ?? defaultFlags()))
 
   // ---------- the agents: a clerk for staff, and two negotiators ----------
   app.post('/v1/clerk/messages', async (c) => {
