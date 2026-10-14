@@ -183,17 +183,35 @@ export async function runAgent(input: RunInput): Promise<RunOutput> {
       throw new Problem(422, 'agent.no_tool_call', 'The agent did not act', 'The model answered in words instead of making the one call it was asked to make. Nothing was sent to PayPal.')
     }
     if (input.signal?.aborted) throw new Problem(499, 'agent.stopped', 'Stopped', 'The run was stopped before it finished. Nothing was sent to PayPal.')
-    if (name === 'TimeoutError' || name === 'AbortError') {
+    if (isTimeout(error)) {
       throw new Problem(504, 'agent.timeout', 'The agent took too long', 'The model did not finish in time. Nothing was sent to PayPal.')
     }
-    if ((error as { statusCode?: number })?.statusCode === 429) {
-      throw new Problem(429, 'agent.rate_limited', 'The model is busy', 'The language model is rate limiting us. Nothing was sent to PayPal. Try again in a moment.')
+    if (isRateLimitedOrRefused(error)) {
+      throw new Problem(429, 'agent.rate_limited', 'The model is busy', 'The language model provider refused usage or reached its rate limit. Nothing was sent to PayPal. Try again in a moment.')
     }
     throw new Problem(502, 'agent.model_error', 'The model could not be reached', 'The language model failed. Nothing was sent to PayPal. Try again.')
   } finally {
     await mcp.close().catch(() => undefined)
     await server.close().catch(() => undefined)
   }
+}
+
+function isTimeout(error: unknown): boolean {
+  if (!error) return false
+  const e = error as any
+  if (e.name === 'TimeoutError' || e.name === 'AbortError') return true
+  if (/timeout|aborted/i.test(e.message ?? '')) return true
+  if (e.cause && isTimeout(e.cause)) return true
+  return false
+}
+
+function isRateLimitedOrRefused(error: unknown): boolean {
+  if (!error) return false
+  const e = error as any
+  if (e.statusCode === 429 || e.statusCode === 402 || e.status === 429 || e.status === 402) return true
+  if (/quota|usage refusal|insufficient_quota|model usage refused|rate limit/i.test(e.message ?? '')) return true
+  if (e.cause && isRateLimitedOrRefused(e.cause)) return true
+  return false
 }
 
 /** An MCP tool result, as the AI SDK hands it back, reduced to "did it work" and the structured answer. */
@@ -216,6 +234,7 @@ function unpack(output: unknown): { ok: boolean; data: Record<string, unknown> }
 function isTransient(error: unknown): boolean {
   const e = error as { name?: string; statusCode?: number; isRetryable?: boolean; message?: string } | null
   if (!e) return false
+  if (/quota|refusal|credit|balance/i.test(e.message ?? '')) return false
   if (e.name === 'AI_StreamProviderError' || /server had an error|overloaded|temporarily unavailable|ECONNRESET|socket hang up/i.test(e.message ?? '')) return true
   if (typeof e.statusCode === 'number') return e.statusCode >= 500 || e.statusCode === 429
   return e.isRetryable === true
