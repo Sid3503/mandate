@@ -6,7 +6,7 @@ import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
 import { when } from '../lib/format'
 import { useIsOwner } from '../lib/hooks'
-import type { AuditCheck } from '../lib/types'
+import type { AuditCheck, Replay } from '../lib/types'
 
 /**
  * The proof. One button re-verifies the whole ledger from scratch, in the server, and lists what it looked at. If the
@@ -18,6 +18,17 @@ export function Proof() {
   const audit = useQuery({ queryKey: ['audit', withPayPal], queryFn: () => api.audit(withPayPal), enabled: owner, staleTime: 0 })
   const report = audit.data
   const promises = useQuery({ queryKey: ['guarantees'], queryFn: api.guarantees, staleTime: 5 * 60_000 })
+  const [replaying, setReplaying] = useState(false)
+  const [replayResult, setReplayResult] = useState<Replay | null>(null)
+  const handleReplay = async () => {
+    setReplaying(true)
+    try {
+      const res = await api.replayHistory()
+      setReplayResult(res)
+    } finally {
+      setReplaying(false)
+    }
+  }
 
   return (
     <div className="page proof">
@@ -70,6 +81,37 @@ export function Proof() {
               </ul>
             </section>
           ) : null}
+
+          <section className="panel" data-tour="proof-replay" data-testid="proof-replay">
+            <div className="row between wrap gap-s">
+              <div>
+                <h2 className="panel-title">History replay</h2>
+                <p className="fine">Replay past requests against the rules on record to verify consistency, or test what would change.</p>
+              </div>
+              <button type="button" className="btn btn-outline" disabled={!owner || replaying} onClick={() => void handleReplay()} data-testid="btn-replay">
+                {replaying ? 'Replaying…' : 'Replay history'}
+              </button>
+            </div>
+            {replayResult ? (
+              <div className="draft-replay" style={{ marginTop: '12px' }} data-testid="replay-results">
+                <strong>Replay on your history</strong>
+                <p className="fine">
+                  {replayResult.checked === 0
+                    ? 'There are no requests yet to replay.'
+                    : replayResult.changed.length === 0
+                      ? `Of your last ${replayResult.checked} request${replayResult.checked === 1 ? '' : 's'}, all decisions match the rules on record.`
+                      : `Of your last ${replayResult.checked} request${replayResult.checked === 1 ? '' : 's'}, ${replayResult.changed.length} would differ.`}
+                </p>
+                {replayResult.changed.length > 0 ? (
+                  <ul>
+                    {replayResult.changed.slice(0, 8).map((item) => (
+                      <li key={item.proposalId}><b>{item.title}</b>: {item.before.words} → <b>{item.after.words}</b></li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
 
           <section className="panel" data-tour="proof-reach">
             <h2 className="panel-title">How Mandate uses PayPal’s Agent Toolkit</h2>

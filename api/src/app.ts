@@ -138,6 +138,7 @@ const OWNER_ONLY = [
   // A PUT to /v1/party-rules/:partyId is not owner-only: each company may write its own sheet. The route decides
   // whose sheet that is; the other side's sheet stays out of reach, so both limits stay private.
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
+  { method: 'POST', pattern: /^\/v1\/replay$/ },
   { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay|try|cases|simulate|policy|policy\/stream)$/ },
   { method: 'GET', pattern: /^\/v1\/payees(\/[^/]+)?$/ },
   { method: 'POST', pattern: /^\/v1\/payees\/[^/]+\/(change|confirm-change|cancel-change|attest)$/ },
@@ -1128,6 +1129,13 @@ export function createApp(deps: AppDeps) {
     const parsed = WarrantBodySchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
     return c.json(service.replay(parsed.data))
+  })
+  app.post('/v1/replay', async (c) => {
+    const raw = await readJson(c).catch(() => ({}))
+    const parsed = WarrantBodySchema.safeParse(raw)
+    const { id: _id, version: _version, createdAt: _createdAt, ...liveBody } = service.currentWarrant()
+    const body = parsed.success ? parsed.data : WarrantBodySchema.parse(liveBody)
+    return c.json(service.replay(body))
   })
   app.post('/v1/rules/draft', async (c) => {
     assertJson(c)
