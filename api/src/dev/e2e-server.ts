@@ -46,7 +46,7 @@ const app = createApp({
     commit: process.env.GIT_COMMIT?.trim() || null,
     // The tests run against a fake PayPal, so the reset a hosted demo uses is safe to offer here.
     demoReset: true,
-    flags: loadFlags({ FLAG_POLICY_PASTE: '1' }),
+    flags: loadFlags({ FLAG_POLICY_PASTE: '1', ...process.env }),
   },
 })
 
