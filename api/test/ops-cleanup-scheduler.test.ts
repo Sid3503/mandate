@@ -1,11 +1,12 @@
 import { createHash, generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createApp } from '../src/app'
 import { ControlStore } from '../src/control/store'
 import { migrate, openDatabase, seed } from '../src/db/database'
+import { Repo } from '../src/db/repo'
 import { ephemeralSigner, loadSigner } from '../src/domain/signing'
 import { loadFlags } from '../src/flags'
 import { FakeInvoices, FakePayPal } from '../src/paypal/fake'
@@ -424,5 +425,126 @@ describe('Q3.6 P2.T11: Isolation tests (Appendix B cases 22, 23, 24)', () => {
 
     // B's database data is 100% identical and unchanged
     expect(checksumAfter).toBe(checksumBefore)
+  })
+
+  it('trims auth events older than 90 days and retains newer ones (P12.T5)', () => {
+    const { control, registry } = setupTestEnvironment()
+
+    // 100 days ago (should be trimmed)
+    const oldDate = new Date(NOW.getTime() - 100 * 86_400_000).toISOString()
+    control.event({
+      id: 'event-old-100d',
+      at: oldDate,
+      workspaceId: 'ws_default',
+      event: 'login',
+      result: 'ok',
+      ip: '127.0.0.1',
+    })
+
+    // 80 days ago (should be kept)
+    const recentDate = new Date(NOW.getTime() - 80 * 86_400_000).toISOString()
+    control.event({
+      id: 'event-recent-80d',
+      at: recentDate,
+      workspaceId: 'ws_default',
+      event: 'login',
+      result: 'ok',
+      ip: '127.0.0.1',
+    })
+
+    // Today (should be kept)
+    control.event({
+      id: 'event-today',
+      at: NOW.toISOString(),
+      workspaceId: 'ws_default',
+      event: 'login',
+      result: 'ok',
+      ip: '127.0.0.1',
+    })
+
+    const beforeEvents = control.events('ws_default', 10)
+    expect(beforeEvents).toHaveLength(3)
+
+    // Run cleanup with now = NOW
+    const result = cleanupExpiredDemos({ control, registry, now: NOW })
+    expect(result.authEventsTrimmed).toBe(1)
+
+    const afterEvents = control.events('ws_default', 10)
+    expect(afterEvents).toHaveLength(2)
+    expect(afterEvents.map((e) => e.at)).toEqual([NOW.toISOString(), recentDate])
+  })
+
+  it('trims client error logs and log files older than 14 days and retains newer ones (P12.T5)', () => {
+    const { control, registry, createTenant } = setupTestEnvironment()
+    const logDir = mkdtempSync(join(tmpdir(), 'mandate-logs-test-'))
+
+    // Create an old log file (20 days old)
+    const oldLog = join(logDir, 'access-old.log')
+    writeFileSync(oldLog, 'old log content\n')
+    const oldMtime = (NOW.getTime() - 20 * 86_400_000) / 1000
+    utimesSync(oldLog, oldMtime, oldMtime)
+
+    // Create a recent log file (5 days old)
+    const recentLog = join(logDir, 'access-recent.log')
+    writeFileSync(recentLog, 'recent log content\n')
+    const recentMtime = (NOW.getTime() - 5 * 86_400_000) / 1000
+    utimesSync(recentLog, recentMtime, recentMtime)
+
+    // Setup tenant repo with client_errors
+    const tenant = createTenant({ name: 'Log Studio', mode: 'studio' })
+    const db = openDatabase(tenant.dbPath)
+    const repo = new Repo(db)
+
+    // 20 days old client error
+    repo.insertClientError({
+      id: 'err-old-20d',
+      at: new Date(NOW.getTime() - 20 * 86_400_000).toISOString(),
+      role: 'owner',
+      scope: 'ui',
+      message: 'old test error',
+      stack: null,
+      url: '/app',
+      agent: null,
+      releaseId: null,
+    })
+
+    // 5 days old client error
+    repo.insertClientError({
+      id: 'err-recent-5d',
+      at: new Date(NOW.getTime() - 5 * 86_400_000).toISOString(),
+      role: 'owner',
+      scope: 'ui',
+      message: 'recent test error',
+      stack: null,
+      url: '/app',
+      agent: null,
+      releaseId: null,
+    })
+
+    expect(repo.recentClientErrors(10)).toHaveLength(2)
+    expect(existsSync(oldLog)).toBe(true)
+    expect(existsSync(recentLog)).toBe(true)
+
+    // Run cleanup
+    const result = cleanupExpiredDemos({
+      control,
+      registry,
+      repo,
+      logDir,
+      now: NOW,
+    })
+
+    expect(result.logsTrimmed).toBe(2) // 1 file + 1 client_error record
+
+    // Old log file deleted, recent remains
+    expect(existsSync(oldLog)).toBe(false)
+    expect(existsSync(recentLog)).toBe(true)
+
+    // Old client error deleted, recent remains
+    const remainingErrors = repo.recentClientErrors(10)
+    expect(remainingErrors).toHaveLength(1)
+    expect(remainingErrors[0]?.message).toBe('recent test error')
+
+    db.close()
   })
 })
