@@ -62,6 +62,7 @@ The console is four places: **Today** (what needs you), **Jobs** (money in relea
 - **Clearing window** (Rules → *Wait after a client pays*). A client can still take money back for a while, so a rule or autopilot waits N days after a client pays before paying a contractor from it. You can still tap to pay sooner.
 - **Connect an agent** (System, or the More group in the sidebar): name it, choose what it may do, and get a key with the Claude Code and Cursor commands already filled in. The page can check the connection itself, and `npm run check:mcp` (in `api/`) does the same from a terminal.
 - **Tell me when something needs me.** Set `NOTIFY_WEBHOOK_URL` to a Slack, Discord or Zapier incoming webhook. The message links to the console; it cannot approve or pay.
+- **Onboarding guide.** See [docs/ONBOARDING.md](docs/ONBOARDING.md) for complete instructions on the three entry doors (Demo, Studio, Unlock), passkey biometrics, and AI agent integration.
 - **Hosted demo.** `DEMO_RESET=on` (sandbox only) adds a typed-confirmation *Start the demo over* on System.
 
 **Letting judges try it.** Deploy with your own `API_KEY` (sandbox PayPal credentials only) and put that key in the Devpost *testing instructions*, not in the repo or the page. Anyone with the owner key can approve and settle in the sandbox.

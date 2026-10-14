@@ -1124,6 +1124,7 @@ Screenshots are written to `web/e2e/shots/`.
 - **Status links.** The owner shares a job with one person (`POST /v1/jobs/:jobId/shares`, `{partyId, ttlDays}`; `GET` lists them; `POST /v1/shares/:id/revoke` withdraws one). The link looks like `/app/s/<id>~<secret>`. It is read-only: a contractor sees their own payouts and whether the client's money has arrived (and is clearing), a client sees their own invoices with a PayPal pay link. No totals, margin, rules, emails or anyone else. Only a hash of the secret is stored, links expire (default 30 days, at most 90), and every kind of bad link (unknown, wrong, expired, withdrawn) answers the same `404 share.unknown`. The one public route is `GET /v1/share/:token`; every other route still needs a key. Anonymous callers are rate-limited by address.
 - **Risk-aware release.** `clearingDays` in the rules (0 to 60, default 0): a payout that a standing rule, autopilot or the automatic line would send with no tap waits until the client payment has been settled that long, because a client can still take money back for a while. The owner can approve earlier. Shown on the job as "Clearing until ...".
 - **Connect an agent.** One flow on System: name the agent, choose what it may do (read and ask, read only, read ask and negotiate, or custom scopes and limits), and get a key with the Claude Code, Cursor and generic commands already carrying it. The key is shown once, lives only in the page's memory, and the page can check the connection itself (it lists what the key can do and confirms none of it can approve or pay). The list below it shows each agent's scopes, status and last seen, with Resume for a suspended agent and Revoke.
+- **Onboarding Guide.** For step-by-step setup instructions for operators, studio creation, passkeys, and connecting AI models, see [docs/ONBOARDING.md](ONBOARDING.md).
 - **Notifications.** `NOTIFY_WEBHOOK_URL` above. `GET /v1/notify` shows whether it is on and when it last sent; `POST /v1/notify/test` sends one test message.
 - **Demo reset.** `DEMO_RESET=on` above. `POST /v1/demo/reset` with `{"confirm":"reset the demo"}`. Without the variable the route is a 404.
 
@@ -1138,6 +1139,7 @@ Screenshots are written to `web/e2e/shots/`.
 - **Idempotency** at every money step: proposal keys, and stable PayPal request ids for create, capture, refund and payout (the payout batch id comes from the lock hash).
 - **A payout is paid only when PayPal says so.** Pending, unclaimed and failed payouts are shown as such and never counted as paid. Webhooks only trigger a re-read from PayPal.
 - **Refusals are stored** with their reason, so the ledger shows what was attempted, not only what moved.
+- **Data retention:** Auth events older than 90 days and client error/process logs older than 14 days are automatically trimmed by the periodic cleanup job (see [docs/DATA.md](DATA.md)).
 - **Console:**
   - a strict CSP (`script-src 'self'`, `connect-src 'self'`, `frame-ancestors 'none'`)
   - the key kept only in `sessionStorage`

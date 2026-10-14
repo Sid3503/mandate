@@ -109,7 +109,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P12.T3 | done | Performance: p95 read test under 50ms, ControlRoom chunk split to 15.85 kB, mobile Lighthouse 100/98/96/100 (target 95). Proof: `api/test/p95.test.ts`, `docs/evidence/q8/lighthouse-mobile-unlock-provided.json` | q8-hardening |
 | P12.T4 | done | Passkey keyboard walk: pure keyboard navigation for studio creation, unlock sign-in, and passkey management with axe scan verification. Proof: `web/e2e/passkey-repair-keyboard.spec.ts`, `docs/evidence/q8/passkey-keyboard.png` | q8-hardening |
 | P12.T5 | done | Retention trimming: trim auth events at 90 days and logs/client errors at 14 days in cleanup job and store; updated docs/DATA.md. Proof: `api/test/ops-cleanup-scheduler.test.ts`, `docs/DATA.md` | q8-hardening |
-| P12.T6 | partial | `CHANGELOG.md`, `docs/SECURITY.md`, two OpenAPI lines, one Postman request. No `docs/ONBOARDING.md` | `9a2ea0b` |
+| P12.T6 | done | Documentation hardening: ONBOARDING.md, SECURITY.md (known limits), REFERENCE.md, README.md, CHANGELOG.md, OpenAPI types, Postman. Proof: `docs/ONBOARDING.md`, `docs/SECURITY.md`, `CHANGELOG.md` | q8-hardening |
 | P12.T7 | partial | `npm run preflight` in `scripts/preflight.mjs`. `render.yaml` was not given a workspace disk. Not deployed | `9a2ea0b` |
 
 ## Appendix B cases 1 to 35

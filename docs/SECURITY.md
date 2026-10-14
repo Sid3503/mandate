@@ -33,7 +33,7 @@ A studio's rules decide whether money may move. PayPal moves only the locked cen
   - `@paypal/agent-toolkit`, high because it depends on the four packages above. Reachable. `paypal/invoices.ts` and `paypal/watch.ts` construct `PayPalAgentToolkit` when invoices or the activity watch are built. That call does not pass through the four vulnerable functions above.
 - `uuid` (`<11.1.1`) is a moderate bounds check when a caller passes a buffer. `api/src` does not import `uuid`.
 - `npm audit` in `web/` on 12 October 2026 reported 0 vulnerabilities. No `npm audit fix --force`.
-- Demo data is a file under the database directory with an expiry on the workspace row (24 hours unless `DEMO_TTL_HOURS` says otherwise). Logs are the process logs. Auth events sit in the control database until that file is removed. Nothing here is a long-term archive.
+- Demo data is a file under the database directory with an expiry on the workspace row (24 hours unless `DEMO_TTL_HOURS` says otherwise). Logs and client diagnostic error entries are retained for 14 days. Auth events sit in the control database and are trimmed at 90 days by the 15-minute cleanup job. Nothing here is an indefinite archive.
 
 ## What the flags add
 

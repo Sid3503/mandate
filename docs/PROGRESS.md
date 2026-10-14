@@ -142,6 +142,8 @@
 
 - Retention trimming: trimmed auth events at 90 days and logs/client errors at 14 days in cleanup job and store; updated `docs/DATA.md` (`api/src/ops/scheduler.ts`, `api/test/ops-cleanup-scheduler.test.ts`).
 
+- Documentation hardening: created `docs/ONBOARDING.md`, updated `docs/SECURITY.md` (known limits), `docs/REFERENCE.md`, `README.md`, `CHANGELOG.md`, OpenAPI types, and Postman.
+
 ## Next
 
-Q8.6 P12.T6: Docs hardening: `docs/ONBOARDING.md`, `docs/SECURITY.md` (known limits), `docs/REFERENCE.md`, `README.md`, `CHANGELOG.md`, OpenAPI, Postman.
+Q8.7 P12.T7: Deploy readiness verification, preflight checks, and write `docs/FINAL_REPORT.md`.

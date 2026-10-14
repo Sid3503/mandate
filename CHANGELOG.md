@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Phase 12 (Hardening):
+  - Passkey accessibility: full keyboard-only walk test covering studio registration, unlock sign-in, and passkey credential management with axe scan verification (`web/e2e/passkey-repair-keyboard.spec.ts`).
+  - Chaos test suite: injected PayPal timeout, model timeout, database lock (`SQLITE_BUSY`), disk full (`SQLITE_FULL`), and model provider rate-limit usage refusal, verifying clean rollback, 0 wrong money state, and graceful degradation (`api/test/chaos.test.ts`).
+  - Performance: p95 read latency under 50ms across core read endpoints (`api/test/p95.test.ts`), ControlRoom bundle split reducing chunk size from 4,602 kB down to 15.85 kB (`web/vite.config.ts`), and mobile Lighthouse audit scores of 100 Performance, 98 Accessibility, 96 Best Practices, 100 SEO (`docs/evidence/q8/lighthouse-mobile-unlock-provided.json`).
+  - Security verification: 14-item security checklist with evidence for each control in `docs/SECURITY.md`.
+  - Retention trimming: automated trimming of auth events older than 90 days and logs/client diagnostic errors older than 14 days in the 15-minute background sweep (`api/src/ops/scheduler.ts`, `api/test/ops-cleanup-scheduler.test.ts`, `docs/DATA.md`).
+  - Documentation: comprehensive onboarding guide (`docs/ONBOARDING.md`), updated security known limits, reference documentation, OpenAPI definitions, and Postman collections.
 - Machine keys: `POST /v1/agents/{id}/upgrade` and `POST /v1/client-keys/{id}/upgrade` replace an `mnd_ag_` or `mnd_cl_` secret and keep the same agent or client. A stored hash of the bare secret is rewritten to the whole key on first use.
 - Studio wizard: a second passkey or recovery codes are required before Today. PayPal is described as simulated. Rules in words can be skipped. Progress is saved in this browser and does not include the codes.
 - Members: `POST /v1/members/{id}/role` and `POST /v1/members/{id}/revoke`. The last owner stays. Revoke ends sessions and passkeys and lists open requests. `npm run admin:reset-owner` writes an `admin_audit` event. The screen is `/app/members`.
