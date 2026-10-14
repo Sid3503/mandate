@@ -143,7 +143,8 @@
 - Retention trimming: trimmed auth events at 90 days and logs/client errors at 14 days in cleanup job and store; updated `docs/DATA.md` (`api/src/ops/scheduler.ts`, `api/test/ops-cleanup-scheduler.test.ts`).
 
 - Documentation hardening: created `docs/ONBOARDING.md`, updated `docs/SECURITY.md` (known limits), `docs/REFERENCE.md`, `README.md`, `CHANGELOG.md`, OpenAPI types, and Postman.
+- Deploy readiness: `render.yaml` configured with persistent disk mount (`/var/data`), `/ready` healthcheck verified, preflight verified (`npm run preflight`), and `docs/FINAL_REPORT.md` written.
 
-## Next
+## Queue 8 Complete
 
-Q8.7 P12.T7: Deploy readiness verification, preflight checks, and write `docs/FINAL_REPORT.md`.
+All Phase 12 tasks (P12.T1 to P12.T7) are complete and verified across fast and full gates. Runbook execution complete. Status: DONE.

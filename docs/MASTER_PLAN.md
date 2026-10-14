@@ -110,7 +110,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P12.T4 | done | Passkey keyboard walk: pure keyboard navigation for studio creation, unlock sign-in, and passkey management with axe scan verification. Proof: `web/e2e/passkey-repair-keyboard.spec.ts`, `docs/evidence/q8/passkey-keyboard.png` | q8-hardening |
 | P12.T5 | done | Retention trimming: trim auth events at 90 days and logs/client errors at 14 days in cleanup job and store; updated docs/DATA.md. Proof: `api/test/ops-cleanup-scheduler.test.ts`, `docs/DATA.md` | q8-hardening |
 | P12.T6 | done | Documentation hardening: ONBOARDING.md, SECURITY.md (known limits), REFERENCE.md, README.md, CHANGELOG.md, OpenAPI types, Postman. Proof: `docs/ONBOARDING.md`, `docs/SECURITY.md`, `CHANGELOG.md` | q8-hardening |
-| P12.T7 | partial | `npm run preflight` in `scripts/preflight.mjs`. `render.yaml` was not given a workspace disk. Not deployed | `9a2ea0b` |
+| P12.T7 | done | Deploy readiness: render.yaml configured with persistent disk mount /var/data and /var/data/mandate.sqlite, healthcheck /ready verified, preflight verified, docs/FINAL_REPORT.md produced. Proof: `render.yaml`, `scripts/preflight.mjs`, `docs/FINAL_REPORT.md` | q8-hardening |
 
 ## Appendix B cases 1 to 35
 
