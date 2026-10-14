@@ -52,6 +52,7 @@
 - Q7.5 P11.T1: Forward propose to `POST /v1/proposals` through injected client in toolkit guard `withMandate`, read tier passes through, unknown tool throws, `exposeRead: false` drops read tier. Proof: `api/test/phases.test.ts`.
 - Q7.6 P11.T3: Wire `MCP_EXPOSE_READ_TOOLS` behind flag in `createMandateMcpServer`, `handleMcp`, and `api/src/app.ts`, with Proof and System text reflecting read tool exposure when on, and `exposeReadTools: false` dropping read tools. Proof: `api/test/mcp.test.ts`.
 - Q7: Complete Queue 7 Ask palette, extra pages, PayPal login, and toolkit runbook and pass full gates.
+- Q8.1 P12.T1: Complete 14-item security checklist with code and test proof evidence across spend authority, deterministic gate, cart immutability, idempotency, ledger, multi-tenancy, passkeys, step-up, rollback, timing-safe auth, model kill switch, toolkit tiering, receipt verification, and zero secret leakage. Proof: `docs/SECURITY.md`.
 
 ## Test counts
 

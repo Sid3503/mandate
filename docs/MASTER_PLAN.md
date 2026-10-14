@@ -104,7 +104,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P11.T1 | done | Propose calls POST /v1/proposals through injected client in withMandate, read tier passes through, unknown tool throws. Proof: `api/test/phases.test.ts` | `q7-ask` |
 | P11.T2 | done | `packages/guard/README.md` and that same test | `9a2ea0b` |
 | P11.T3 | done | MCP_EXPOSE_READ_TOOLS wired behind flag in McpContext, http and app, Proof and System text reflects state when on, exposeReadTools disables read tools when false. Proof: `api/test/mcp.test.ts` | `q7-ask` |
-| P12.T1 | not started | no recorded checklist pass | |
+| P12.T1 | done | 14-item security checklist with evidence for each control. Proof: docs/SECURITY.md | q8-hardening |
 | P12.T2 | not started | no chaos tests | |
 | P12.T3 | not started | no p95 test, no Lighthouse number from this run | |
 | P12.T4 | partial | `web/e2e/job.spec.ts` "every signed-in screen passes axe". Passkey keyboard walk was not done | `1ac59cd` |
