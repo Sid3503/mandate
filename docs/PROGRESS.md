@@ -42,6 +42,7 @@
 - Q6.1 P10.T1: fast-check property sequences for all invariants (pure gate I2, integer cents I4, idempotency I5, append-only ledger I6) and multi-tenancy isolation over tenant A and B (Invariant 15). Proof: `api/test/property.test.ts`.
 - Q6.2 P10.T2: history replay as a Proof control under `POST /v1/replay` and on the Proof screen (`/app/proof`). Proof: `api/test/replay.test.ts`, `web/src/screens/Proof.tsx`.
 - Q6.3 P10.T3: proof lines for members (`members.valid`), assertions (`assertions.valid`), signed rules (`rules.signed`), safety events (`safety.events`), and key fingerprints (`keys.fingerprint`) in audit report. Proof: `api/test/audit.test.ts`, `api/src/services/audit.ts`.
+- Q6.4 P10.T4: `docs/guarantees.json`, `npm run guarantees` (verifying all 20 guarantees and test files), and `/v1/guarantees` serving it for the Proof page. Proof: `docs/guarantees.json`, `scripts/guarantees.mjs`, `web/src/screens/Proof.tsx`.
 
 ## Test counts
 
@@ -70,6 +71,7 @@
 - `gates:fast` after Q6.1: 56 files, 649 API tests, 10.67s, secret check 372 tracked files, exit 0.
 - `gates:fast` after Q6.2: 56 files, 651 API tests, 11.76s, secret check 372 tracked files, exit 0.
 - `gates:fast` after Q6.3: 56 files, 656 API tests, 17.56s, secret check 372 tracked files, exit 0.
+- `gates:fast` after Q6.4: 56 files, 656 API tests, 10.45s, secret check passed, exit 0.
 
 ## Open items
 

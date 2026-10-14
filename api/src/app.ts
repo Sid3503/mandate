@@ -1,4 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { cookieWriteAllowed, readSessionCookie } from './auth/cookies'
 import { es256PublicJwk, passkeyRuleBinding, stepBinding } from './auth/passkeys'
 import type { ControlStore } from './control/store'
@@ -599,7 +601,20 @@ export function createApp(deps: AppDeps) {
   })
 
   // What Mandate promises and where each promise is checked. Static, so it answers when everything else does not.
-  app.get('/v1/guarantees', (c) => c.json({ guarantees: GUARANTEES, deepRun: DEEP_RUN, everyChange: EVERY_CHANGE_RUN }))
+  app.get('/v1/guarantees', (c) => {
+    try {
+      const candidates = [
+        resolve(process.cwd(), 'docs/guarantees.json'),
+        resolve(process.cwd(), '../docs/guarantees.json'),
+      ]
+      for (const p of candidates) {
+        if (existsSync(p)) return c.json(JSON.parse(readFileSync(p, 'utf-8')))
+      }
+    } catch {
+      // Fallback to built-in constants
+    }
+    return c.json({ guarantees: GUARANTEES, deepRun: DEEP_RUN, everyChange: EVERY_CHANGE_RUN })
+  })
   // The emergency stop. Anyone with a key can see whether Mandate is paused; only the owner can pause or resume it.
   app.get('/v1/safety', (c) => c.json({ ...services.safety.state(), breaker: services.safety.config, events: services.safety.events(20) }))
   const handleSafetyConfig = async (c: Context) => {
