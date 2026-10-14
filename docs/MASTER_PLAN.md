@@ -91,7 +91,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P8.T4 | done | Passkey publish ceremony cryptographically bound to warrant body and grant reuse rejection. Proof: `api/test/stepup.test.ts`, `web/src/lib/api.ts` | |
 | P8.T5 | done | Policy paste with 20,000 character cap, FLAG_POLICY_PASTE gating, at most 3 passes, segment table, and fenced untrusted prompt. Proof: `api/test/policy.test.ts`, `web/e2e/job.spec.ts` | |
 | P8.T6 | not started | `FLAG_SECOND_READER` is parsed and unused | `9a2ea0b` |
-| P8.T7 | not started | no 30-wording eval | |
+| P8.T7 | done | Eval of 30 wordings across 5 groups with scripted model in CI (0 hidden loosenings), and token cap with named model beside each number in drafter eval. Proof: `api/test/eval-wordings.test.ts`, `api/scripts/eval-drafter.ts` | |
 | P9.T1 | partial | `web/e2e/job.spec.ts` "Ask Mandate opens from any screen" | `1ac59cd` |
 | P9.T2 | partial | clerk context is `jobId` and `proposalId` in `web/src/lib/api.ts`. Not `receiptId` or `dealId` | `1ac59cd` |
 | P9.T3 | partial | `api/test/shares.test.ts`. No payee-role payments page | `1ac59cd` |

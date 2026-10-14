@@ -38,6 +38,7 @@
 - Q5.1 P6.T6: Delegation end date: `expires_at` on members and invites, session refusal on expiration, owner renewal and role setting with `expiresAt`, and members UI display. Proof: `api/test/identity.test.ts`.
 - Q5.2 P8.T2 P8.T3 P8.T4: Try-it box and boundary cases verified with side-by-side draft comparison (`api/test/try.test.ts`), tap to rule with drafter navigation and monthly tap counts on Today (`Today.tsx`, `job.spec.ts`), and passkey warrant publish ceremony with cryptographic binding to rules body and grant reuse rejection (`extra.ts`, `web/src/lib/api.ts`, `api/test/stepup.test.ts`).
 - Q5.3 P8.T5: Policy paste with 20,000 character cap (`POLICY_MAX_CHARS`, `POLICY_LIMIT`, `openapi.ts`), FLAG_POLICY_PASTE gating on `/v1/rules/policy` routes and UI PolicyBox, at most 3 passes, segment table display, and fenced untrusted text prompt. Proof: `api/test/policy.test.ts`.
+- Q5.4 P8.T7: Eval of 30 wordings across 5 groups with scripted model in CI (0 hidden loosenings), and token cap (`EVAL_TOKEN_CAP`) with named model beside each number in drafter eval. Proof: `api/test/eval-wordings.test.ts`, `api/scripts/eval-drafter.ts`.
 
 ## Test counts
 
@@ -61,6 +62,7 @@
 - `gates:fast` after Q5.1: 55 files, 641 API tests, 11.47s, secret check 371 tracked files, exit 0.
 - `gates:fast` after Q5.2: 55 files, 642 API tests, 18.14s, secret check 371 tracked files, exit 0.
 - `gates:fast` after Q5.3: 55 files, 643 API tests, 19.61s, secret check 371 tracked files, exit 0.
+- `gates:fast` after Q5.4: 56 files, 645 API tests, 11.79s, secret check 371 tracked files, exit 0.
 
 ## Open items
 

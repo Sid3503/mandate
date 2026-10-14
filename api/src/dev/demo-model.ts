@@ -93,11 +93,14 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
           const money = /\$[\d,]+/.exec(line)?.[0]
           const lookFirst = /only after I have|approve each one|ask me first|seen the work|look at it first/i.test(line)
           const tellMe = /email me|text me|notify me|message me/i.test(line)
-          const schedule = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(line)
-          if (lookFirst || tellMe || schedule) {
+          const schedule = /\b(mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?)\b/i.test(line)
+          const limit = /unless\b.*?\babove\s*\$?\s*([\d,]+)|\babove\s*\$\s*([\d,]+)/i.exec(line)
+          if (lookFirst || tellMe || schedule || limit) {
             const gap = lookFirst
               ? 'Wanting to look first cannot be kept beside a payout that goes with no tap: a covered payout goes without asking you.'
-              : tellMe ? 'Mandate sends no messages. The Today page shows what needs you.' : 'The rules have no day-of-week clock. Reminders go out after a number of days.'
+              : tellMe ? 'Mandate sends no messages. The Today page shows what needs you.'
+              : schedule ? 'The rules have no day-of-week clock. Reminders go out after a number of days.'
+              : `The $${limit![1] ?? limit![2]} limit was not kept in the rules.`
             const keep = money && /month/i.test(line) && !tellMe ? [{ fact: has('monthlyCapCents'), quote: money }] : []
             return { id, verdict: keep.length ? 'partly' : 'not_enforced', suspicious: false, evidence: keep.filter((item) => item.fact && item.quote), gap }
           }
@@ -120,17 +123,55 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
         const patch: Record<string, unknown> = { summary: 'That request is not about the rules, so nothing changes.' }
         const share = /(\d+(?:\.\d+)?)\s?%/.exec(message)
         const cap = /(?:never more than|at most|cap[^$]*|up to)\s*\$\s?([\d,]+)/i.exec(message)
+        const under = /(?:under|below)\s*\$\s?([\d,]+)/i.exec(message)
         const days = /(\d+)\s*days?/i.exec(message)
-        const autopay = /automatic|no tap|without a tap|pays? (?:priya|her|him)|paid when|60%|\d+%/.test(lower) && /priya/.test(lower)
+        const autopay = !/\bnow\b/i.test(lower) && /automatic|no tap|without a tap|paid when|60%|\d+%/.test(lower) && /priya/.test(lower)
         const notes: string[] = []
         if (autopay) {
-          patch.standingRules = [{ payee: 'Priya Shah', clients: ['Northwind'], ...(share ? { sharePercent: Number(share[1]) } : {}) }]
-          patch.autopilot = { payOnSettle: true, ...(/accept/.test(lower) ? { billSignedDeals: true, requireAcceptance: true } : {}), ...(days ? { remindUnpaidAfterDays: Number(days[1]), maxReminders: 2 } : {}) }
-          notes.push('Priya will be paid from Northwind\'s signed-deal payments with no tap, as soon as the client pays.')
+          if (/sam/i.test(message)) {
+            patch.addContractors = [{ name: 'Sam Rao', email: 'sam.rao@example.com' }]
+            patch.standingRules = [
+              { payee: 'Priya Shah', clients: ['Northwind'], sharePercent: 40 },
+              { payee: 'Sam Rao', clients: ['Northwind'], sharePercent: 20 },
+            ]
+            patch.autopilot = { payOnSettle: true }
+            notes.push('Priya and Sam will be paid automatically from Northwind.')
+          } else {
+            patch.standingRules = [{ payee: 'Priya Shah', clients: ['Northwind'], ...(share ? { sharePercent: Number(share[1]) } : {}) }]
+            patch.autopilot = { payOnSettle: true, ...(/accept/.test(lower) ? { billSignedDeals: true, requireAcceptance: true } : {}), ...(days ? { remindUnpaidAfterDays: Number(days[1]), maxReminders: 2 } : {}) }
+            notes.push('Priya will be paid from Northwind\'s signed-deal payments with no tap, as soon as the client pays.')
+          }
+        } else if (/sam/i.test(message) && /contractor/i.test(message)) {
+          patch.addContractors = [{ name: 'Sam Rao', email: 'sam.rao@example.com' }]
+          notes.push('Sam Rao added as a contractor.')
         }
         if (cap) {
           patch.monthlyCapDollars = Number(cap[1]!.replaceAll(',', ''))
           notes.push(`The monthly cap becomes $${cap[1]}.`)
+        }
+        if (under && !autopay) {
+          patch.autoSettleUnderDollars = Number(under[1]!.replaceAll(',', ''))
+          notes.push(`The automatic line becomes $${under[1]}.`)
+        }
+        if (/remind/i.test(lower) && days && !autopay) {
+          patch.autopilot = { ...(patch.autopilot as object ?? {}), remindUnpaidAfterDays: Number(days[1]), maxReminders: 3 }
+          notes.push(`Remind unpaid invoices after ${days[1]} days.`)
+        }
+        if (/bill signed-deal|bill milestones/i.test(lower)) {
+          patch.autopilot = { ...(patch.autopilot as object ?? {}), billSignedDeals: true, ...(/accept/i.test(lower) ? { requireAcceptance: true } : {}) }
+          notes.push('Bill signed-deal milestones automatically.')
+        }
+        if (/no longer need proof|proof links/i.test(lower)) {
+          patch.proofRequired = false
+          notes.push('Proof links no longer required.')
+        }
+        if (/contractor share/i.test(lower) && share) {
+          patch.contractorSharePercent = Number(share[1])
+          notes.push(`Contractor share becomes ${share[1]}%.`)
+        }
+        if (/no longer need client money/i.test(lower)) {
+          patch.payoutsNeedClientMoney = false
+          notes.push('Payouts no longer need settled client money first.')
         }
         if (notes.length > 0) patch.summary = notes.join(' ')
         return call('propose_rules', patch)
