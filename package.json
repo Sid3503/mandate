@@ -19,6 +19,7 @@
     "preflight": "node scripts/preflight.mjs",
     "db:backup": "node scripts/db-backup.mjs",
     "db:restore": "node scripts/db-restore.mjs",
+    "guarantees": "node scripts/guarantees.mjs",
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "license": "MIT"
