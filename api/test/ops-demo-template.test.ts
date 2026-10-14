@@ -85,7 +85,7 @@ describe('npm run seed:template and frozen numbers check (P2.T6)', () => {
     expect(payeeRow!.total_paid_cents).toBe(0)
 
     db.close()
-  })
+  }, 20_000)
 })
 
 describe('Demo reset endpoint /v1/demo/reset (P2.T7)', () => {

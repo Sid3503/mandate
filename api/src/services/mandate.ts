@@ -499,10 +499,8 @@ export class MandateService {
       return await this.settlePayment(current)
     } catch (error) {
       if (this.require(id).phase === 'capture_inflight') this.repo.setPhase(id, resume, this.iso())
-      if (error instanceof PayPalError) {
-        throw paypalProblem(error, 'to settle this request', { proposalId: id })
-      }
-      throw error
+      if (error instanceof Problem) throw error
+      throw paypalProblem(error, 'to settle this request', { proposalId: id })
     }
   }
 
