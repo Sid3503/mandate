@@ -79,6 +79,8 @@ export type RulesDraft = {
   changed: boolean
   model: string
   ms: number
+  usage?: { inputTokens: number; outputTokens: number }
+  tokens?: number
 }
 
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'party'
@@ -257,6 +259,8 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
   let said = ''
   let complaint = ''
   let lastProblem: Problem | null = null
+  let totalInputTokens = 0
+  let totalOutputTokens = 0
   // A small model sometimes gets a field name or a sum wrong. Up to two retries, each told exactly what was wrong.
   for (let attempt = 0; attempt < 3 && !merged; attempt += 1) {
     patch = null
@@ -273,6 +277,10 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
         stopWhen: [hasToolCall('propose_rules'), stepCountIs(3)],
         abortSignal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
       })
+      if (result.usage) {
+        totalInputTokens += result.usage.inputTokens ?? 0
+        totalOutputTokens += result.usage.outputTokens ?? 0
+      }
       said = result.text.trim() || said
       const call = result.steps.flatMap((step) => step.toolCalls).find((item) => item.toolName === 'propose_rules')
       if (!call) break
@@ -316,7 +324,12 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
   stage({ stage: 'checking' })
   const { loosens, tightens, notes } = compareRules(input.current, merged)
   const intent = await checkDraftAgainstWords({ model: input.model, current: input.current, merged, instruction: input.instruction, audit: input.intent !== false, signal: input.signal, onStage: stage })
-  return { draft: merged, summary: patch.summary, loosens, tightens, notes, ignored: intent.ignored, untrusted: intent.untrusted, added: intent.added, changed: loosens.length + tightens.length + notes.length > 0, model: input.model.name, ms: Date.now() - started }
+  if (intent.usage) {
+    totalInputTokens += intent.usage.inputTokens
+    totalOutputTokens += intent.usage.outputTokens
+  }
+  const totalTokens = totalInputTokens + totalOutputTokens
+  return { draft: merged, summary: patch.summary, loosens, tightens, notes, ignored: intent.ignored, untrusted: intent.untrusted, added: intent.added, changed: loosens.length + tightens.length + notes.length > 0, model: input.model.name, ms: Date.now() - started, usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens }, tokens: totalTokens }
 }
 
 /**
@@ -325,7 +338,7 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
  * real. When the auditor cannot answer for every sentence, or fails, the built-in word check stands in, so the owner
  * always gets an answer. Callers that audit the draft themselves (the policy flow) pass audit: false.
  */
-async function checkDraftAgainstWords(input: { model: AgentModel; current: WarrantBody; merged: WarrantBody; instruction: string; audit: boolean; signal?: AbortSignal; onStage?: (stage: DraftStage) => void }): Promise<{ ignored: IntentFlag[]; untrusted: string[]; added: IntentFlag[] }> {
+async function checkDraftAgainstWords(input: { model: AgentModel; current: WarrantBody; merged: WarrantBody; instruction: string; audit: boolean; signal?: AbortSignal; onStage?: (stage: DraftStage) => void }): Promise<{ ignored: IntentFlag[]; untrusted: string[]; added: IntentFlag[]; usage?: { inputTokens: number; outputTokens: number } }> {
   const plain = checkIntent(input.instruction, input.current, input.merged)
   if (!input.audit) return { ignored: [], untrusted: [], added: [] }
   const sent = segmentPolicy(input.instruction)
@@ -335,14 +348,16 @@ async function checkDraftAgainstWords(input: { model: AgentModel; current: Warra
   try {
     const audit = await auditPolicy({ model: input.model, current: input.current, draft: input.merged, sent, signal: input.signal, onRetry: (reason) => stage({ stage: 'retry', attempt: 1, reason }) })
     const answered = new Set(audit.sentences.map((item) => item.id))
+    const auditUsage = audit.usage ? { inputTokens: audit.usage.inputTokens ?? 0, outputTokens: audit.usage.outputTokens ?? 0 } : undefined
     // Partial coverage is not coverage: an unanswered sentence must never read as fine.
-    if (!sent.every((segment) => answered.has(segment.id))) return plain
+    if (!sent.every((segment) => answered.has(segment.id))) return { ...plain, usage: auditUsage }
     const rows: PolicySentence[] = sent.map((segment) => ({ id: segment.id, text: segment.text, start: segment.start, end: segment.end, line: segment.line, status: 'unchecked', reasons: [], carriedBy: [], already: false }))
     const added = applyAudit(rows, sent, audit)
     return {
       ignored: rows.filter((row) => row.status === 'not_covered' || row.status === 'partly').map((row) => ({ phrase: row.text.slice(0, 160), why: row.reasons.join(' ') || 'Nothing in the draft carries this out.' })),
       untrusted: rows.filter((row) => row.status === 'untrusted').map((row) => row.text),
       added,
+      usage: auditUsage,
     }
   } catch {
     return plain
