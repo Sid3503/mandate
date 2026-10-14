@@ -54,6 +54,7 @@
 - Q7: Complete Queue 7 Ask palette, extra pages, PayPal login, and toolkit runbook and pass full gates.
 - Q8.1 P12.T1: Complete 14-item security checklist with code and test proof evidence across spend authority, deterministic gate, cart immutability, idempotency, ledger, multi-tenancy, passkeys, step-up, rollback, timing-safe auth, model kill switch, toolkit tiering, receipt verification, and zero secret leakage. Proof: `docs/SECURITY.md`.
 - Q8.2 P12.T2: Add chaos test suite covering PayPal timeout (leaves money state untouched and returns 503 paypal.unavailable), model timeout (moves zero money and returns 504 agent.timeout), database locked (SQLITE_BUSY returns 503 db.locked and rolls back cleanly), disk full (SQLITE_FULL returns 507 db.disk_full and rolls back cleanly), and model provider usage refusal (clerk goes quiet with 429 agent.rate_limited and quick asks work directly from ledger). Proof: `api/test/chaos.test.ts`.
+- Q8.3 P12.T3: Performance hardening: p95 read test implemented in `api/test/p95.test.ts` asserting < 50ms read latency; ControlRoom chunk split from 4,602 kB down to 15.85 kB via manualChunks in `web/vite.config.ts` with workbox globIgnores; mobile Lighthouse audit on `/app/unlock` scored 100 Performance / 98 Accessibility / 96 Best Practices / 100 SEO (target: 95). Proof: `api/test/p95.test.ts`, `docs/evidence/q8/lighthouse-mobile-unlock-provided.json`, `web/vite.config.ts`.
 
 ## Test counts
 
@@ -94,6 +95,7 @@
 - `gates:fast` on `q7-ask` after Q7.6: 57 files, 698 API tests, 11.18s, secret check 375 tracked files, exit 0.
 - Full `npm run gates` after Q7 on 14 October 2026: 57 files, 698 API tests, 11.30s, secret check 375 tracked files, Playwright 134 passed (9.0m), axe included, exit 0.
 - `gates:fast` on `q8-hardening` after Q8.2: 58 files, 703 API tests, 18.16s, secret check 375 tracked files, exit 0.
+- `gates:fast` on `q8-hardening` after Q8.3: 59 files, 704 API tests, 15.76s, secret check 376 tracked files, exit 0.
 
 ## Open items
 
@@ -138,4 +140,4 @@
 
 ## Next
 
-Q8.3 P12.T3: Performance: p95 read test, split ControlRoom chunk < 1,000 kB (lazy-load AG Grid), Lighthouse audit on mobile.
+Q8.4 P12.T4: Passkey keyboard walk: complete keyboard accessibility navigation test for passkey flows.
