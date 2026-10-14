@@ -189,8 +189,8 @@ export type AgentScorecard = {
   lastSeenAt: string | null
   breakerTripped: boolean
 }
-export type AgentRow = { id: string; name: string; scopes: AgentScope[]; limits: { proposalsPerHour: number; centsPerHour: number }; status: 'active' | 'suspended' | 'revoked'; createdAt: string; lastSeenAt: string | null; expiresAt?: string | null; scorecard?: AgentScorecard }
-export type ClientKeyRow = { id: string; name: string; partyId: string; status: 'active' | 'revoked'; createdAt: string; lastSeenAt: string | null }
+export type AgentRow = { id: string; name: string; scopes: AgentScope[]; limits: { proposalsPerHour: number; centsPerHour: number; proposalsPerDay?: number; centsPerDay?: number }; status: 'active' | 'suspended' | 'revoked'; keyPrefix?: string; createdAt: string; lastSeenAt: string | null; lastUsedAt?: string | null; expiresAt?: string | null; scorecard?: AgentScorecard }
+export type ClientKeyRow = { id: string; name: string; partyId: string; status: 'active' | 'revoked'; keyPrefix?: string; createdAt: string; lastSeenAt: string | null; lastUsedAt?: string | null; expiresAt?: string | null }
 
 export type Suggestion = { id: string; payeeId: string; payeeName: string; clientId: string; clientName: string; approved: number; totalCents: number; largestCents: number; firstAt: string; draft: string }
 export type Suggestions = { suggestions: Suggestion[]; taps: { thisMonth: number; lastMonth: number; byRule: number } }

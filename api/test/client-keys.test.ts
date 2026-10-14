@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
+import { machineKeyHash } from '../src/services/machine-key'
 import { call, closeAll, harness, NOW, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
@@ -85,7 +86,7 @@ describe('client keys', () => {
       last_seen_at: null,
     })
     expect((await call(app, 'GET', '/v1/party-rules/mine', { key: apiKey })).status).toBe(200)
-    expect(repo.getClientKey(id)?.key_hash).toBe(createHash('sha256').update(apiKey).digest('hex'))
+    expect(repo.getClientKey(id)?.key_hash).toBe(machineKeyHash(apiKey))
     const upgraded = await call(app, 'POST', `/v1/client-keys/${id}/upgrade`)
     expect(upgraded.status).toBe(200)
     expect(upgraded.json.apiKey).toMatch(/^mnd_cl_[A-Za-z0-9_-]+$/)
@@ -95,5 +96,34 @@ describe('client keys', () => {
     expect((await call(app, 'GET', '/v1/party-rules/mine', { key: upgraded.json.apiKey })).status).toBe(200)
     expect((await call(app, 'POST', `/v1/client-keys/${id}/upgrade`, { key: STUDIO_KEY })).status).toBe(403)
     expect(JSON.stringify((await call(app, 'GET', '/v1/client-keys')).json)).not.toContain(upgraded.json.apiKey)
+  })
+
+  it('issues client keys in mnd_cl_<workspace_id>_<secret> format with HMAC-SHA256, prefix, and expiry', async () => {
+    const { app, repo, setNow } = harness()
+    const created = await issue(app, { name: 'Northwind Buyer New', partyId: 'client_northwind', expiryDays: 14 })
+    expect(created.status).toBe(201)
+    expect(created.json.apiKey).toMatch(/^mnd_cl_ws_default_[A-Za-z0-9_-]+$/)
+    expect(created.json.key.keyPrefix).toMatch(/^mnd_cl_ws_default_/)
+    expect(created.json.key.expiresAt).toBeTruthy()
+
+    // Key hash in database is HMAC-SHA256 with pepper
+    const row = repo.getClientKey(created.json.key.id)
+    expect(row).toBeDefined()
+    expect(row?.key_hash).toBe(machineKeyHash(created.json.apiKey))
+
+    // Valid before expiry
+    expect((await call(app, 'GET', '/v1/party-rules/mine', { key: created.json.apiKey })).status).toBe(200)
+
+    // Last used / seen updated
+    const list = await call(app, 'GET', '/v1/client-keys')
+    const found = list.json.find((k: { id: string }) => k.id === created.json.key.id)
+    expect(found.lastUsedAt).toBeTruthy()
+    expect(found.keyPrefix).toMatch(/^mnd_cl_ws_default_/)
+
+    // Expired key returns 403 client-key.expired
+    setNow(new Date(Date.now() + 15 * 86_400_000))
+    const expired = await call(app, 'GET', '/v1/party-rules/mine', { key: created.json.apiKey })
+    expect(expired.status).toBe(403)
+    expect(expired.json.code).toBe('client-key.expired')
   })
 })

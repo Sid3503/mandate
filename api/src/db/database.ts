@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS agents (
   limits_json TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
   key_hash TEXT NOT NULL UNIQUE,
+  key_prefix TEXT,
   created_at TEXT NOT NULL,
   last_seen_at TEXT,
   expires_at TEXT
@@ -210,8 +211,10 @@ CREATE TABLE IF NOT EXISTS client_keys (
   party_id TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
   key_hash TEXT NOT NULL UNIQUE,
+  key_prefix TEXT,
   created_at TEXT NOT NULL,
-  last_seen_at TEXT
+  last_seen_at TEXT,
+  expires_at TEXT
 );
 CREATE INDEX IF NOT EXISTS client_keys_status ON client_keys(status);
 
@@ -293,6 +296,10 @@ export function migrate(db: DatabaseSync): void {
   if (!eventColumns.has('actor_json')) db.exec('ALTER TABLE events ADD COLUMN actor_json TEXT')
   const agentColumns = new Set((db.prepare('PRAGMA table_info(agents)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!agentColumns.has('expires_at')) db.exec('ALTER TABLE agents ADD COLUMN expires_at TEXT')
+  if (!agentColumns.has('key_prefix')) db.exec('ALTER TABLE agents ADD COLUMN key_prefix TEXT')
+  const clientKeyColumns = new Set((db.prepare('PRAGMA table_info(client_keys)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!clientKeyColumns.has('key_prefix')) db.exec('ALTER TABLE client_keys ADD COLUMN key_prefix TEXT')
+  if (!clientKeyColumns.has('expires_at')) db.exec('ALTER TABLE client_keys ADD COLUMN expires_at TEXT')
   const safetyColumns = new Set((db.prepare('PRAGMA table_info(safety_state)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!safetyColumns.has('autopilot_paused')) db.exec('ALTER TABLE safety_state ADD COLUMN autopilot_paused INTEGER NOT NULL DEFAULT 0')
   if (!safetyColumns.has('config_json')) db.exec('ALTER TABLE safety_state ADD COLUMN config_json TEXT')

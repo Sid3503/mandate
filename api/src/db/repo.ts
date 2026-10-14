@@ -82,6 +82,7 @@ export type AgentRow = {
   limits_json: string
   status: string
   key_hash: string
+  key_prefix?: string | null
   created_at: string
   last_seen_at: string | null
   expires_at?: string | null
@@ -94,8 +95,10 @@ export type ClientKeyRow = {
   party_id: string
   status: string
   key_hash: string
+  key_prefix?: string | null
   created_at: string
   last_seen_at: string | null
+  expires_at?: string | null
 }
 
 /** A read-only link to one job's status for one person. Only a hash of the secret is stored. */
@@ -844,8 +847,8 @@ export class Repo {
   }
 
   createAgent(row: AgentRow): void {
-    this.db.prepare(`INSERT INTO agents (id, name, scopes_json, limits_json, status, key_hash, created_at, last_seen_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.scopes_json, row.limits_json, row.status, row.key_hash, row.created_at, row.last_seen_at, row.expires_at ?? null)
+    this.db.prepare(`INSERT INTO agents (id, name, scopes_json, limits_json, status, key_hash, key_prefix, created_at, last_seen_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.scopes_json, row.limits_json, row.status, row.key_hash, row.key_prefix ?? null, row.created_at, row.last_seen_at, row.expires_at ?? null)
   }
 
   listAgents(): AgentRow[] {
@@ -868,8 +871,12 @@ export class Repo {
     this.db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(at, id)
   }
 
-  setAgentKeyHash(id: string, keyHash: string): void {
-    this.db.prepare('UPDATE agents SET key_hash = ? WHERE id = ?').run(keyHash, id)
+  setAgentKeyHash(id: string, keyHash: string, keyPrefix?: string | null): void {
+    if (keyPrefix !== undefined) {
+      this.db.prepare('UPDATE agents SET key_hash = ?, key_prefix = ? WHERE id = ?').run(keyHash, keyPrefix, id)
+    } else {
+      this.db.prepare('UPDATE agents SET key_hash = ? WHERE id = ?').run(keyHash, id)
+    }
   }
 
   agentProposalStats(agentId: string): { total: number; auto: number; needsTap: number; refusals: number } {
@@ -917,8 +924,8 @@ export class Repo {
   }
 
   createClientKey(row: ClientKeyRow): void {
-    this.db.prepare(`INSERT INTO client_keys (id, name, party_id, status, key_hash, created_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.party_id, row.status, row.key_hash, row.created_at, row.last_seen_at)
+    this.db.prepare(`INSERT INTO client_keys (id, name, party_id, status, key_hash, key_prefix, created_at, last_seen_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.party_id, row.status, row.key_hash, row.key_prefix ?? null, row.created_at, row.last_seen_at, row.expires_at ?? null)
   }
 
   listClientKeys(): ClientKeyRow[] {
@@ -937,8 +944,12 @@ export class Repo {
     this.db.prepare('UPDATE client_keys SET status = ?, last_seen_at = ? WHERE id = ?').run(status, at, id)
   }
 
-  setClientKeyHash(id: string, keyHash: string): void {
-    this.db.prepare('UPDATE client_keys SET key_hash = ? WHERE id = ?').run(keyHash, id)
+  setClientKeyHash(id: string, keyHash: string, keyPrefix?: string | null): void {
+    if (keyPrefix !== undefined) {
+      this.db.prepare('UPDATE client_keys SET key_hash = ?, key_prefix = ? WHERE id = ?').run(keyHash, keyPrefix, id)
+    } else {
+      this.db.prepare('UPDATE client_keys SET key_hash = ? WHERE id = ?').run(keyHash, id)
+    }
   }
 
   setClientKeySeen(id: string, at: string): void {

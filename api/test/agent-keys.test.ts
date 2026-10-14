@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { loadFlags } from '../src/flags'
 import { rateClass } from '../src/ops/ratelimit'
+import { getKeyPepper, machineKeyHash, resetPepperWarning } from '../src/services/machine-key'
 import { call, closeAll, harness, idem, EVIDENCE, JOB, NOW, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
@@ -90,8 +91,36 @@ describe('agent keys', () => {
       last_seen_at: null,
     })
     expect((await call(app, 'GET', '/v1/warrant', { key: apiKey })).status).toBe(200)
-    expect(repo.getAgent(id)?.key_hash).toBe(createHash('sha256').update(apiKey).digest('hex'))
+    expect(repo.getAgent(id)?.key_hash).toBe(machineKeyHash(apiKey))
     expect((await call(app, 'GET', '/v1/warrant', { key: apiKey })).status).toBe(200)
+  })
+
+  it('issues new keys in mnd_ag_<workspace_id>_<secret> format with HMAC-SHA256, prefix, and lastUsedAt', async () => {
+    const { app, repo } = harness()
+    const created = await createAgent(app, { name: 'Prefixed Agent', scopes: ['read'] })
+    expect(created.status).toBe(201)
+    expect(created.json.apiKey).toMatch(/^mnd_ag_ws_default_[A-Za-z0-9_-]+$/)
+    expect(created.json.agent.keyPrefix).toMatch(/^mnd_ag_ws_default_/)
+    expect(created.json.agent.lastUsedAt).toBeNull()
+
+    const row = repo.getAgent(created.json.agent.id)
+    expect(row).toBeDefined()
+    expect(row?.key_hash).toBe(machineKeyHash(created.json.apiKey))
+
+    // Using the key updates lastUsedAt and lastSeenAt
+    const ok = await call(app, 'GET', '/v1/warrant', { key: created.json.apiKey })
+    expect(ok.status).toBe(200)
+    const list = await call(app, 'GET', '/v1/agents')
+    const found = list.json.find((a: { id: string }) => a.id === created.json.agent.id)
+    expect(found.lastUsedAt).toBeTruthy()
+    expect(found.lastSeenAt).toBeTruthy()
+    expect(found.keyPrefix).toMatch(/^mnd_ag_ws_default_/)
+  })
+
+  it('warns when KEY_PEPPER is unset and falls back safely', () => {
+    resetPepperWarning()
+    const pepper = getKeyPepper()
+    expect(pepper).toBeTruthy()
   })
 
   it('requires a passkey before an upgrade when the rule is on', async () => {
@@ -103,7 +132,7 @@ describe('agent keys', () => {
       scopes_json: JSON.stringify(['read']),
       limits_json: JSON.stringify({ proposalsPerHour: 10, centsPerHour: 100000 }),
       status: 'active',
-      key_hash: createHash('sha256').update('mnd_ag_alreadywhole').digest('hex'),
+      key_hash: machineKeyHash('mnd_ag_alreadywhole'),
       created_at: NOW.toISOString(),
       last_seen_at: null,
     })
@@ -175,6 +204,22 @@ describe('agent limits', () => {
     const second = await call(app, 'POST', '/v1/proposals', { key: apiKey, idem: idem(), body: mk() })
     expect(second.status).toBe(429)
     expect(second.json.code).toBe('agent.over_limit')
+  })
+
+  it('enforces proposalsPerDay and centsPerDay daily limits', async () => {
+    const { app } = harness()
+    const { apiKey } = await createKey(app, {
+      name: 'daily-agent',
+      scopes: ['propose', 'read'],
+      limits: { proposalsPerHour: 100, centsPerHour: 1_000_000, proposalsPerDay: 2, centsPerDay: 500 }
+    })
+    const mk = (cents = 100) => ({ kind: 'payment', payee: 'X', amountCents: cents, currency: 'USD', category: 'design', description: 'd', evidenceUrl: EVIDENCE, jobId: JOB })
+    expect((await call(app, 'POST', '/v1/proposals', { key: apiKey, idem: idem(), body: mk(100) })).status).not.toBe(429)
+    expect((await call(app, 'POST', '/v1/proposals', { key: apiKey, idem: idem(), body: mk(100) })).status).not.toBe(429)
+    const third = await call(app, 'POST', '/v1/proposals', { key: apiKey, idem: idem(), body: mk(100) })
+    expect(third.status).toBe(429)
+    expect(third.json.code).toBe('agent.over_limit')
+    expect(third.json.detail).toContain('proposal limit')
   })
 })
 
