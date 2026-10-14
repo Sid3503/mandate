@@ -10,8 +10,13 @@ export function classifyTool(name: string): ToolTier | null {
   return null
 }
 
+export type MandateClient = {
+  post: (path: string, body: unknown) => Promise<unknown>
+}
+
 export type GuardOptions = {
-  propose: (name: string, input: unknown) => Promise<unknown>
+  propose?: (name: string, input: unknown) => Promise<unknown>
+  client?: MandateClient
   exposeRead?: boolean
 }
 
@@ -31,7 +36,15 @@ export function withMandate(tools: Record<string, ToolFn>, options: GuardOptions
       const tool = tools[name]
       if (tool) out[name] = tool
     } else {
-      out[name] = (input: unknown) => options.propose(name, input)
+      out[name] = (input: unknown) => {
+        if (options.client) {
+          return options.client.post('/v1/proposals', input)
+        }
+        if (options.propose) {
+          return options.propose(name, input)
+        }
+        throw new Error('propose handler or client is required')
+      }
     }
   }
   return out
