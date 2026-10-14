@@ -143,4 +143,58 @@ describe('the audit', () => {
     watch.transactions = [{ id: paid.captureId, date: NOW.toISOString(), cents: 15_000, currency: 'USD', status: 'S', eventCode: 'T0006', subject: null, counterparty: null, referenceId: null, invoiceId: null, customId: paid.proposalId }]
     expect((await audit(h.app, '?paypal=1')).checks.find((check: { id: string }) => check.id === 'paypal.agrees')).toMatchObject({ status: 'pass', checked: 1 })
   })
+
+  it('verifies proof lines for members, assertions, signed rules, safety events, and key fingerprints', async () => {
+    const h = await worked()
+    const report = await audit(h.app)
+    const checkIds = report.checks.map((c: { id: string }) => c.id)
+    expect(checkIds).toEqual(expect.arrayContaining([
+      'members.valid',
+      'assertions.valid',
+      'rules.signed',
+      'safety.events',
+      'keys.fingerprint',
+    ]))
+    expect(report.checks.find((c: { id: string }) => c.id === 'members.valid')).toMatchObject({ status: 'pass' })
+    expect(report.checks.find((c: { id: string }) => c.id === 'assertions.valid')).toMatchObject({ status: 'pass' })
+    expect(report.checks.find((c: { id: string }) => c.id === 'rules.signed')).toMatchObject({ status: 'pass' })
+    expect(report.checks.find((c: { id: string }) => c.id === 'safety.events')).toMatchObject({ status: 'pass' })
+    expect(report.checks.find((c: { id: string }) => c.id === 'keys.fingerprint')).toMatchObject({ status: 'pass' })
+  })
+
+  it('fails rules.signed when a warrant body is corrupt or signature is malformed', async () => {
+    const h = await worked()
+    h.db.prepare('UPDATE warrants SET body_json = ? WHERE version = 1').run('{"corrupted": true}')
+    const report = await audit(h.app)
+    expect(failing(report)).toContain('rules.signed')
+  })
+
+  it('fails safety.events when a safety event signature is invalid', async () => {
+    const h = await worked()
+    h.services.safety.pause('owner', 'Maintenance test')
+    const okReport = await audit(h.app)
+    expect(okReport.checks.find((c: { id: string }) => c.id === 'safety.events')).toMatchObject({ status: 'pass', checked: 1 })
+
+    h.db.prepare("UPDATE safety_events SET sig = 'tampered-signature'").run()
+    const badReport = await audit(h.app)
+    expect(failing(badReport)).toContain('safety.events')
+  })
+
+  it('fails assertions.valid when a passkey assertion has user verification off or missing signature', async () => {
+    const h = await worked()
+    h.db.prepare("UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'").run(
+      JSON.stringify({ actor: 'owner', method: 'passkey', assertion: { userVerified: false } }),
+      h.tapped,
+    )
+    const report = await audit(h.app)
+    expect(failing(report)).toContain('assertions.valid')
+  })
+
+  it('fails keys.fingerprint when a signing key PEM is corrupt', async () => {
+    const h = await worked()
+    h.db.prepare("UPDATE signing_keys SET public_pem = 'invalid-pem-data'").run()
+    const report = await audit(h.app)
+    expect(failing(report)).toContain('keys.fingerprint')
+  })
 })
+

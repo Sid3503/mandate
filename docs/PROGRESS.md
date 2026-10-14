@@ -41,6 +41,7 @@
 - Q5.4 P8.T7: Eval of 30 wordings across 5 groups with scripted model in CI (0 hidden loosenings), and token cap (`EVAL_TOKEN_CAP`) with named model beside each number in drafter eval. Proof: `api/test/eval-wordings.test.ts`, `api/scripts/eval-drafter.ts`.
 - Q6.1 P10.T1: fast-check property sequences for all invariants (pure gate I2, integer cents I4, idempotency I5, append-only ledger I6) and multi-tenancy isolation over tenant A and B (Invariant 15). Proof: `api/test/property.test.ts`.
 - Q6.2 P10.T2: history replay as a Proof control under `POST /v1/replay` and on the Proof screen (`/app/proof`). Proof: `api/test/replay.test.ts`, `web/src/screens/Proof.tsx`.
+- Q6.3 P10.T3: proof lines for members (`members.valid`), assertions (`assertions.valid`), signed rules (`rules.signed`), safety events (`safety.events`), and key fingerprints (`keys.fingerprint`) in audit report. Proof: `api/test/audit.test.ts`, `api/src/services/audit.ts`.
 
 ## Test counts
 
@@ -68,6 +69,7 @@
 - Full `npm run gates` after Q5 on 14 October 2026: 56 files, 645 API tests, 11.79s, secret check 371 tracked files, Playwright 134 passed (8.7m), axe included, exit 0.
 - `gates:fast` after Q6.1: 56 files, 649 API tests, 10.67s, secret check 372 tracked files, exit 0.
 - `gates:fast` after Q6.2: 56 files, 651 API tests, 11.76s, secret check 372 tracked files, exit 0.
+- `gates:fast` after Q6.3: 56 files, 656 API tests, 17.56s, secret check 372 tracked files, exit 0.
 
 ## Open items
 

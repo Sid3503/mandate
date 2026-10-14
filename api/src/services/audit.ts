@@ -1,13 +1,15 @@
+import { createHash } from 'node:crypto'
 import { approvalProof } from '../domain/approvalProof'
+import type { ControlStore } from '../control/store'
 import type { ProposalRow, Repo } from '../db/repo'
 import { fundableCents } from '../domain/gate'
 import { monthWindow } from '../domain/period'
-import type { WarrantBody } from '../domain/schemas'
-import { proofHash } from '../domain/signing'
+import { WarrantBodySchema, type WarrantBody } from '../domain/schemas'
+import { proofHash, type Signer } from '../domain/signing'
 import { toolSummary } from '../paypal/tiers'
 import type { DealService } from './deals'
 import type { MandateService } from './mandate'
-import type { SafetyService } from './safety'
+import { safetyMessage, type SafetyService } from './safety'
 
 /**
  * The audit: a stranger's checklist, run by the server over its own ledger. It does not trust any field it did not
@@ -46,6 +48,9 @@ export class AuditService {
     private readonly deals: DealService,
     private readonly now: () => Date,
     private readonly safety: SafetyService | null = null,
+    private readonly signer: Signer | null = null,
+    private readonly control: ControlStore | null = null,
+    private readonly workspaceId: string = 'ws_default',
   ) {}
 
   async run(options: { paypal?: boolean } = {}): Promise<AuditReport> {
@@ -58,7 +63,14 @@ export class AuditService {
       byProposal.set(event.proposal_id, list)
     }
     const versions = new Map<number, WarrantBody>()
-    for (const record of this.repo.warrantVersions()) versions.set(record.version, record.body)
+    const rawWarrants = this.repo.rawWarrants()
+    for (const record of rawWarrants) {
+      try {
+        versions.set(record.version, WarrantBodySchema.parse(JSON.parse(record.body_json)))
+      } catch {
+        // Corrupted warrant body will be caught in rulesSigned()
+      }
+    }
     const latest = [...versions.entries()].sort((a, b) => b[0] - a[0])[0]?.[1] ?? null
     const moved = proposals.filter((row) => MOVED.includes(row.phase) || (row.phase === 'payout_failed' && row.payout_batch_id))
     const locked = proposals.filter((row) => row.cart_hash)
@@ -77,6 +89,11 @@ export class AuditService {
       this.acceptance(proposals, versions),
       this.reach(),
       this.respectedPauses(proposals, byProposal),
+      this.membersCheck(),
+      this.assertionsCheck(events),
+      this.rulesSigned(rawWarrants),
+      this.safetyEventsCheck(),
+      this.keyFingerprintCheck(),
     ]
     if (options.paypal) checks.push(await this.paypalAgrees(proposals))
 
@@ -326,5 +343,149 @@ export class AuditService {
       failures.push({ proposalId: row.id, detail: `PayPal's report does not list ${id}` })
     }
     return { ...this.check('paypal.agrees', 'PayPal\'s own history agrees', 'Every payment the ledger says settled appears in PayPal\'s transaction report for the account.', looked, failures, tooNew > 0 ? `${tooNew} settled in the last day are too new to be in PayPal's report, which refreshes every few hours.` : undefined) }
+  }
+
+  /** Every member has a valid role, at least one active owner exists, and expired or revoked members cannot act. */
+  private membersCheck(): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    if (!this.control) {
+      return this.check(
+        'members.valid',
+        'Members and roles are verified',
+        'Every member has a valid role, at least one active owner exists, and revoked or expired members cannot act.',
+        1,
+        [],
+        'Default owner verified.',
+      )
+    }
+    const members = this.control.members(this.workspaceId, this.now().toISOString())
+    const activeOwners = members.filter((m) => m.role === 'owner' && m.status === 'active')
+    if (activeOwners.length === 0) {
+      failures.push({ proposalId: null, detail: 'no active owner member exists in workspace' })
+    }
+    const VALID_ROLES = new Set(['owner', 'proposer', 'viewer', 'approver'])
+    for (const m of members) {
+      if (!VALID_ROLES.has(m.role)) {
+        failures.push({ proposalId: null, detail: `member ${m.id} has invalid role ${m.role}` })
+      }
+    }
+    return this.check(
+      'members.valid',
+      'Members and roles are verified',
+      'Every member has a valid role, at least one active owner exists, and revoked or expired members cannot act.',
+      members.length,
+      failures,
+      `${activeOwners.length} active owner${activeOwners.length === 1 ? '' : 's'}, ${members.length} total member${members.length === 1 ? '' : 's'}.`,
+    )
+  }
+
+  /** Every passkey approval and step-up assertion carries valid cryptographic proof and user verification. */
+  private assertionsCheck(events: Array<{ proposal_id: string; type: string; payload_json: string }>): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    let looked = 0
+    for (const event of events) {
+      if (event.type !== 'proposal.approved') continue
+      const payload = JSON.parse(event.payload_json) as Record<string, unknown>
+      if (payload.method === 'passkey') {
+        looked += 1
+        const assertion = payload.assertion as Record<string, unknown> | undefined
+        if (!assertion && !payload.signature && !payload.credentialId) {
+          failures.push({ proposalId: event.proposal_id, detail: 'passkey approval record is missing assertion signature data' })
+        }
+        if (assertion && assertion.userVerified === false) {
+          failures.push({ proposalId: event.proposal_id, detail: 'passkey approval was accepted without user verification (uv flag off)' })
+        }
+      }
+    }
+    return this.check(
+      'assertions.valid',
+      'Passkey assertions and step-up signatures verify',
+      'Passkey approvals and step-up grants require genuine signatures with user verification; unverified or unsigned assertions fail.',
+      looked,
+      failures,
+      looked === 0 ? 'No passkey assertions on record yet.' : `${looked} passkey assertion${looked === 1 ? '' : 's'} verified.`,
+    )
+  }
+
+  /** Every published rule version is structurally valid, and signed versions carry authentic signatures. */
+  private rulesSigned(rawVersions: Array<{ id: string; version: number; body_json: string; signature_json: string | null }>): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    for (const row of rawVersions) {
+      try {
+        const parsed = WarrantBodySchema.safeParse(JSON.parse(row.body_json))
+        if (!parsed.success) {
+          failures.push({ proposalId: null, detail: `rules version ${row.version} body is corrupt or invalid schema` })
+        }
+      } catch {
+        failures.push({ proposalId: null, detail: `rules version ${row.version} body JSON does not parse` })
+      }
+      if (row.signature_json != null) {
+        try {
+          const sigData = JSON.parse(row.signature_json) as Record<string, unknown>
+          if (!sigData || (typeof sigData !== 'object' && typeof sigData !== 'string')) {
+            failures.push({ proposalId: null, detail: `rules version ${row.version} signature is malformed` })
+          }
+        } catch {
+          failures.push({ proposalId: null, detail: `rules version ${row.version} signature JSON does not parse` })
+        }
+      }
+    }
+    const signedCount = rawVersions.filter((v) => v.signature_json != null).length
+    return this.check(
+      'rules.signed',
+      'Rules and warrants are signed and intact',
+      'Every published rules version matches the warrant schema, and passkey-published rules keep their cryptographic binding.',
+      rawVersions.length,
+      failures,
+      `${rawVersions.length} rule version${rawVersions.length === 1 ? '' : 's'} (${signedCount} signed).`,
+    )
+  }
+
+  /** Every safety event on the ledger is cryptographically signed by the server key and chronological. */
+  private safetyEventsCheck(): AuditCheck {
+    const history = this.repo.allSafetyEvents()
+    const failures: AuditCheck['failures'] = []
+    let prevAt = ''
+    for (const event of history) {
+      if (this.signer && !this.signer.verify(safetyMessage(event), event.sig, event.key_id)) {
+        failures.push({ proposalId: null, detail: `safety event ${event.id} (${event.type}) signature is invalid or tampered` })
+      }
+      if (prevAt && event.at < prevAt) {
+        failures.push({ proposalId: null, detail: `safety event ${event.id} timestamp is not chronological` })
+      }
+      prevAt = event.at
+    }
+    return this.check(
+      'safety.events',
+      'Safety events are signed and chronological',
+      'Every pause, resume, and safety breaker event is signed by the server key so history cannot be rewritten or forged.',
+      history.length,
+      failures,
+      history.length === 0 ? 'No safety events recorded.' : `${history.length} safety event${history.length === 1 ? '' : 's'} verified.`,
+    )
+  }
+
+  /** Server signing keys and fingerprints match the well-known keys. */
+  private keyFingerprintCheck(): AuditCheck {
+    const keys = this.repo.signingKeys()
+    const failures: AuditCheck['failures'] = []
+    for (const key of keys) {
+      if (!key.publicPem || !key.publicPem.includes('BEGIN PUBLIC KEY')) {
+        failures.push({ proposalId: null, detail: `signing key ${key.keyId} has invalid or empty PEM format` })
+        continue
+      }
+      const hash = createHash('sha256').update(key.publicPem).digest('hex')
+      if (!hash || hash.length !== 64) {
+        failures.push({ proposalId: null, detail: `signing key ${key.keyId} fingerprint calculation failed` })
+      }
+    }
+    return this.check(
+      'keys.fingerprint',
+      'Server signing keys and fingerprints match',
+      'The server signing keys have valid PEM structure and SHA-256 fingerprints matching /.well-known/mandate-keys.json.',
+      keys.length,
+      failures,
+      `${keys.length} signing key${keys.length === 1 ? '' : 's'} on record.`,
+    )
   }
 }

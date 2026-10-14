@@ -238,6 +238,8 @@ export function createApp(deps: AppDeps) {
   const services = deps.services ?? buildServices({
     ...deps,
     publicUrl: deps.config.publicUrl,
+    control: deps.control,
+    workspaceId: deps.workspace?.id ?? 'ws_default',
     onExternalRef: (kind, externalId) => deps.control?.rememberRef(kind, externalId, deps.workspace?.id ?? 'ws_default'),
   })
   if (deps.control && !services.mandate.hasExternalRef) {

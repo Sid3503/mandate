@@ -279,10 +279,14 @@ export class Repo {
     return { id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, signatureJson: row.signature_json }
   }
 
-  warrantVersions(): WarrantRecord[] {
-    const rows = this.db.prepare(
+  rawWarrants(): Array<{ id: string; version: number; body_json: string; created_at: string; signature_json: string | null }> {
+    return this.db.prepare(
       'SELECT id, version, body_json, created_at, signature_json FROM warrants ORDER BY version DESC',
     ).all() as Array<{ id: string; version: number; body_json: string; created_at: string; signature_json: string | null }>
+  }
+
+  warrantVersions(): WarrantRecord[] {
+    const rows = this.rawWarrants()
     return rows.map((row) => ({ id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, signatureJson: row.signature_json }))
   }
 
@@ -820,8 +824,8 @@ export class Repo {
     return this.db.prepare('SELECT * FROM safety_events ORDER BY at DESC, rowid DESC LIMIT ?').all(limit) as never
   }
 
-  allSafetyEvents(): Array<{ id: string; at: string; type: string; by: string; reason: string | null }> {
-    return this.db.prepare('SELECT id, at, type, by, reason FROM safety_events ORDER BY at ASC, rowid ASC').all() as never
+  allSafetyEvents(): Array<{ id: string; at: string; type: string; by: string; reason: string | null; detail: string | null; sig: string | null; key_id: string | null }> {
+    return this.db.prepare('SELECT id, at, type, by, reason, detail, sig, key_id FROM safety_events ORDER BY at ASC, rowid ASC').all() as never
   }
 
   insertClientError(row: { id: string; at: string; role: string; scope: string; message: string; stack: string | null; url: string | null; agent: string | null; releaseId: string | null }): void {
