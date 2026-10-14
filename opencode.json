@@ -4,7 +4,7 @@
     "notebooklm": {
       "type": "local",
       "command": [
-        "/Users/siddharth.mishra/.local/bin/notebooklm-mcp"
+        "notebooklm-mcp"
       ],
       "enabled": true
     },

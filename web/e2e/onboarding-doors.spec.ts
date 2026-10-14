@@ -1,7 +1,8 @@
+import { fileURLToPath } from 'node:url'
 import { mkdirSync } from 'node:fs'
 import { expect, test } from '@playwright/test'
 
-const shots = '/Users/siddharth.mishra/Desktop/paypal-ai-hack/docs/evidence/q2'
+const shots = fileURLToPath(new URL('../../docs/evidence/q2', import.meta.url))
 
 test('welcome headline, one line of proof, three doors, and trust strip', async ({ page }) => {
   mkdirSync(shots, { recursive: true })

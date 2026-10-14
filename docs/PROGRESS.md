@@ -258,7 +258,7 @@ Verification pass completed across all 8 deliverables on branch `verify/final`.
 
 | step | status | proof | commit |
 |---|---|---|---|
-| STEP 0 | done | Branch final/submission created, docs/FINAL_RUN.md written, table initialized | pending |
+| STEP 0 | done | Branch final/submission created, docs/FINAL_RUN.md written, table initialized | `31e4609` |
 | F1 | not started | Security and privacy cleanup | pending |
 | F2 | not started | Performance optimization and Lighthouse | pending |
 | F3 | not started | Drafter evaluation and prompt injection test | pending |

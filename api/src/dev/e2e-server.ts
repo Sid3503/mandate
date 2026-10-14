@@ -77,6 +77,13 @@ app.post('/__fake/payouts/:outcome', async (c) => {
   return c.json({ ok: true, outcome })
 })
 
+// A dev server may set a cookie instead of reading ?key= from the URL
+app.get('/__fake/session', (c) => {
+  const token = c.req.query('key') ?? 'owner-e2e-key-0123456789'
+  c.header('set-cookie', `mandate_session=${token}; Path=/; SameSite=Lax`)
+  return c.json({ ok: true, session: 'cookie_set' })
+})
+
 serve({ fetch: app.fetch, hostname: '127.0.0.1', port }, () => {
   console.log(JSON.stringify({ message: 'e2e server', port, paypal: 'fake', buyer: paypal.autoApprove ? 'auto' : 'manual' }))
 })

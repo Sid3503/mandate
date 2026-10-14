@@ -7,6 +7,10 @@ api/data/
 *.sqlite-wal
 *.sqlite-shm
 backups/
+worktree*/
+*worktree*
+.vitest/
+**/.vitest/
 web/dist/
 web/test-results/
 web/playwright-report/

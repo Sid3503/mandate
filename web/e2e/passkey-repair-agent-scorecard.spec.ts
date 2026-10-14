@@ -1,8 +1,9 @@
+import { fileURLToPath } from 'node:url'
 import { mkdirSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 
-const shots = '/Users/siddharth.mishra/Desktop/paypal-ai-hack/docs/evidence/q1'
+const shots = fileURLToPath(new URL('../../docs/evidence/q1', import.meta.url))
 
 async function arm(page: Page) {
   const client = await page.context().newCDPSession(page)
