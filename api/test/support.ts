@@ -63,6 +63,8 @@ export function harness(options: { commit?: string | null; demoReset?: boolean; 
       safety: options.breaker ?? { tripAfter: 0 },
       payeeBook: options.flags?.payeeBook,
       newPayeeWaitHours: options.flags?.newPayeeWaitHours,
+      control: options.control,
+      workspaceId: options.workspace?.id ?? 'ws_default',
       onExternalRef: (kind, externalId) => options.control?.rememberRef(kind, externalId, options.workspace?.id ?? 'ws_default'),
     })),
     now: () => clock,

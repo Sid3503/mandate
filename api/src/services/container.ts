@@ -28,8 +28,10 @@ export type Services = {
   shares: ShareService
 }
 
+import type { ControlStore } from '../control/store'
+
 /** The one place the services are wired together. The HTTP app, the MCP server and the agents all start here. */
-export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | null; invoices?: InvoicePort | null; watch?: WatchPort | null; publicUrl?: string; now: () => Date; signer?: Signer; safety?: Partial<SafetyConfig>; payeeBook?: boolean; newPayeeWaitHours?: number; onExternalRef?: (kind: string, externalId: string) => void }): Services {
+export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | null; invoices?: InvoicePort | null; watch?: WatchPort | null; publicUrl?: string; now: () => Date; signer?: Signer; safety?: Partial<SafetyConfig>; payeeBook?: boolean; newPayeeWaitHours?: number; onExternalRef?: (kind: string, externalId: string) => void; control?: ControlStore | null; workspaceId?: string }): Services {
   const repo = new Repo(deps.db)
   const signer = deps.signer ?? ephemeralSigner()
   const safety = new SafetyService(repo, signer, deps.now, deps.safety)
@@ -44,7 +46,7 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   }
   mandate.prepareSigning()
   const today = new TodayService(repo, deals, mandate, deps.now, () => deps.paypal !== null)
-  const audit = new AuditService(repo, mandate, deals, deps.now, safety)
+  const audit = new AuditService(repo, mandate, deals, deps.now, safety, signer, deps.control, deps.workspaceId)
   const ask = new AskService(today)
   const shares = new ShareService(repo, mandate, deps.now)
   return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares }
