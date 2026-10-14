@@ -141,7 +141,7 @@ const NegotiationSchema = z.object({
   maxOffers: z.number().int().min(2).max(8).optional(),
 }).strict()
 
-const PUBLIC = new Set(['/', '/health', '/ready', '/healthz', '/readyz', '/openapi.json', '/v1/webhooks/paypal', '/.well-known/mandate-keys.json', '/demo/start', '/workspaces', '/join', '/join/preview', '/ops/metrics', '/ops/model/kill', '/ops/model/resume'])
+const PUBLIC = new Set(['/', '/health', '/ready', '/healthz', '/readyz', '/openapi.json', '/v1/webhooks/paypal', '/.well-known/mandate-keys.json', '/demo/start', '/workspaces', '/join', '/join/preview', '/ops/metrics', '/ops/model/kill', '/ops/model/resume', '/__fake/session'])
 
 /** Routes only the owner key may call. A proposer, such as an agent, can ask but never decide or move money. */
 const OWNER_ONLY = [

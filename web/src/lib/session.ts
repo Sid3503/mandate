@@ -6,7 +6,13 @@ const MODE = 'mandate.workspaceMode'
 export const session = {
   get(): string | null {
     try {
-      return sessionStorage.getItem(KEY)
+      const stored = sessionStorage.getItem(KEY)
+      if (stored) return stored
+      if (typeof document !== 'undefined') {
+        const match = document.cookie.match(/(?:^|;\s*)(?:mandate_session|mnd_session)=([^;]+)/)
+        if (match && match[1]) return decodeURIComponent(match[1])
+      }
+      return null
     } catch {
       return null
     }
@@ -26,7 +32,13 @@ export const session = {
         sessionStorage.setItem(WORKSPACE, q)
         return q
       }
-      return sessionStorage.getItem(WORKSPACE)
+      const stored = sessionStorage.getItem(WORKSPACE)
+      if (stored) return stored
+      if (typeof document !== 'undefined') {
+        const match = document.cookie.match(/(?:^|;\s*)(?:mandate_workspace|mnd_workspace)=([^;]+)/)
+        if (match && match[1]) return decodeURIComponent(match[1])
+      }
+      return null
     } catch {
       return null
     }
