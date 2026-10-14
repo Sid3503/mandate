@@ -106,7 +106,7 @@ A box is ticked only when the task is done and a test or file proves the whole t
 | P11.T3 | done | MCP_EXPOSE_READ_TOOLS wired behind flag in McpContext, http and app, Proof and System text reflects state when on, exposeReadTools disables read tools when false. Proof: `api/test/mcp.test.ts` | `q7-ask` |
 | P12.T1 | done | 14-item security checklist with evidence for each control. Proof: docs/SECURITY.md | q8-hardening |
 | P12.T2 | done | Chaos test suite covering PayPal timeout, model timeout, db lock, disk full, and model refusal. Proof: `api/test/chaos.test.ts` | q8-hardening |
-| P12.T3 | not started | no p95 test, no Lighthouse number from this run | |
+| P12.T3 | done | Performance: p95 read test under 50ms, ControlRoom chunk split to 15.85 kB, mobile Lighthouse 100/98/96/100 (target 95). Proof: `api/test/p95.test.ts`, `docs/evidence/q8/lighthouse-mobile-unlock-provided.json` | q8-hardening |
 | P12.T4 | partial | `web/e2e/job.spec.ts` "every signed-in screen passes axe". Passkey keyboard walk was not done | `1ac59cd` |
 | P12.T5 | partial | `docs/DATA.md` says what is actually kept. It does not trim logs at 14 days or auth events at 90 | `9a2ea0b` |
 | P12.T6 | partial | `CHANGELOG.md`, `docs/SECURITY.md`, two OpenAPI lines, one Postman request. No `docs/ONBOARDING.md` | `9a2ea0b` |
@@ -180,4 +180,4 @@ Web build: vite 8.3.2, 2452 modules, built in 875ms. Warning: some chunks are la
 
 Playwright (`npm --prefix web run e2e`): 112 passed (7.4m), 1 worker. Desktop tests 1 to 56 and phone tests 57 to 112, all in `web/e2e/job.spec.ts`. Axe runs inside that suite. "a receipt has a guide, and the open tour passes axe" is desktop 10 and phone 66. "every signed-in screen passes axe (WCAG 2.1 AA)" is desktop 30 and phone 86. No failures.
 
-P12.T3 stays not started. There is no p95 number and no Lighthouse number.
+P12.T3 complete: p95 read test passes in api/test/p95.test.ts, ControlRoom chunk split to 15.85 kB, mobile Lighthouse scored 100 perf / 98 a11y / 96 best practices / 100 SEO.

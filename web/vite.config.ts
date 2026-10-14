@@ -42,8 +42,8 @@ export default defineConfig({
         // Only the app shell is cached. Money calls (/v1/*) are never cached and never queued.
         globPatterns: ['**/*.{js,css,html,svg,png,woff2,webmanifest}'],
         // The landing page's screenshots are for first-time visitors, not for working offline.
-        // The control room (AG Studio) is 4.6 MB: it is fetched when opened, not cached with the shell.
-        globIgnores: ['landing/**', '**/ControlRoom-*.js'],
+        // The control room (AG Studio) is split: it is fetched when opened, not cached with the shell.
+        globIgnores: ['landing/**', '**/ControlRoom-*.js', '**/vendor-ag-*.js'],
         navigateFallback: '/app/index.html',
         navigateFallbackAllowlist: [/^\/app\//],
         navigateFallbackDenylist: [/^\/v1\//, /^\/auth\//, /^\/w\//, /^\/mcp\//],
@@ -63,5 +63,23 @@ export default defineConfig({
     },
   },
   // assetsInlineLimit 0: fonts stay files, so the strict CSP (font-src 'self') holds.
-  build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1600, assetsInlineLimit: 0 },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 1000,
+    assetsInlineLimit: 0,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('ag-charts-enterprise')) return 'vendor-ag-charts-ent'
+          if (id.includes('ag-charts-community')) return 'vendor-ag-charts-comm'
+          if (id.includes('ag-grid-enterprise')) return 'vendor-ag-grid-ent'
+          if (id.includes('ag-grid-community')) return 'vendor-ag-grid-comm'
+          if (id.includes('ag-studio-react')) return 'vendor-ag-studio-react'
+          if (id.includes('ag-studio')) return 'vendor-ag-studio'
+          if (id.includes('ag-stack')) return 'vendor-ag-stack'
+        },
+      },
+    },
+  },
 })
