@@ -46,6 +46,7 @@
 - Q6.5 P10.T5: every Appendix B case 1 to 35 added to the red team test file under "Appendix B red team: cases 1 to 35", table of cases 1 to 35 verified with zero untested cases. Proof: `api/test/redteam.test.ts`.
 - Q6.6 P8.T6: second reader wired behind `FLAG_SECOND_READER` off by default, executes when on, emits 'second_reading' draft stage, records secondReader audit prompt. Proof: `api/test/drafter.test.ts`.
 - Q7.1 P9.T1: Ask Mandate palette verified across all screens with Control/Cmd+K, direct ledger quick answers without model, delivery action card, and search navigation. Proof: `web/e2e/job.spec.ts`.
+- Q7.2 P9.T2: Clerk context includes `receiptId` and `dealId` across api schemas, agents service `screenFor`, `AskService`, Ask UI and web api. Proof: `api/test/ask.test.ts`.
 
 ## Test counts
 
@@ -79,6 +80,7 @@
 - `gates:fast` after Q6.6: 56 files, 693 API tests, 12.54s, secret check 374 tracked files, exit 0.
 - Full `npm run gates` after Q6 on 14 October 2026: 56 files, 693 API tests, 12.54s, secret check 374 tracked files, Playwright 134 passed (8.4m), axe included, exit 0.
 - `gates:fast` on `q7-ask` after Q7.1: 56 files, 693 API tests, 10.77s, secret check passed, exit 0.
+- `gates:fast` on `q7-ask` after Q7.2: 56 files, 693 API tests, 10.96s, secret check passed, exit 0.
 
 ## Open items
 
@@ -123,4 +125,4 @@
 
 ## Next
 
-Q7.2 P9.T2: Include receipt and deal in clerk context.
+Q7.3 P9.T3: Payee payments page verification and tests.

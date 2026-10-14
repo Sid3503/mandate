@@ -142,7 +142,7 @@ export class AgentService {
 
   // ---------- the clerk ----------
 
-  async clerk(input: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string } }, who: Principal, hooks: { onStep?: (step: TraceStep) => void; onEvent?: (event: ClerkStreamEvent) => void } = {}): Promise<ClerkReply> {
+  async clerk(input: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } }, who: Principal, hooks: { onStep?: (step: TraceStep) => void; onEvent?: (event: ClerkStreamEvent) => void } = {}): Promise<ClerkReply> {
     const model = this.need()
     if (who.side === 'buyer') throw new Problem(403, 'auth.forbidden', 'Not available to a client agent', 'The clerk works for the studio.')
     this.limit(who, 'clerk', 12)
@@ -189,13 +189,18 @@ export class AgentService {
   }
 
   /** What the person is looking at, in words, checked against the ledger. The app says it; the model does not. */
-  private screenFor(context: { jobId?: string; proposalId?: string } | undefined): string | null {
+  private screenFor(context: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } | undefined): string | null {
     if (!context) return null
     const warrant = this.services.repo.latestWarrant()
     const name = (id: string | null) => [...(warrant?.body.payees ?? []), ...(warrant?.body.clients ?? [])].find((party) => party.id === id)?.displayName ?? id ?? 'unknown'
-    if (context.proposalId) {
-      const row = this.services.repo.proposal(context.proposalId)
+    const proposalId = context.receiptId ?? context.proposalId
+    if (proposalId) {
+      const row = this.services.repo.proposal(proposalId)
       if (row) return `the receipt for a ${row.kind === 'charge' ? 'client charge' : row.kind === 'refund' ? 'refund' : 'contractor payout'} of $${(row.amount_cents / 100).toFixed(2)} ${row.kind === 'charge' ? 'to bill' : 'for'} ${name(row.payee_id)}${row.job_id ? `, job ${row.job_id}` : ''}, which is ${row.phase.replaceAll('_', ' ')}`
+    }
+    if (context.dealId) {
+      const deal = this.services.repo.deal(context.dealId)
+      if (deal) return `the page for deal ${context.dealId} with ${name(deal.buyer_id)}${deal.job_id ? `, job ${deal.job_id}` : ''}, status ${deal.status}`
     }
     if (context.jobId && this.services.repo.proposalsForJob(context.jobId).length > 0) {
       const charge = this.services.repo.proposalsForJob(context.jobId).find((row) => row.kind === 'charge')

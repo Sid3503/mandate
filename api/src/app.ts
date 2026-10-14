@@ -114,12 +114,22 @@ const ClerkMessageSchema = z.object({
   message: z.string().trim().min(1).max(4000),
   conversationId: z.uuid().optional(),
   /** What screen the person is on, from the app. The server checks it against the ledger. */
-  context: z.object({ jobId: z.string().max(80).optional(), proposalId: z.string().max(80).optional() }).strict().optional(),
+  context: z.object({
+    jobId: z.string().max(80).optional(),
+    proposalId: z.string().max(80).optional(),
+    receiptId: z.string().max(80).optional(),
+    dealId: z.string().max(80).optional(),
+  }).strict().optional(),
 }).strict()
 const AskSchema = z.object({
   message: z.string().trim().max(4000).optional(),
   quick: z.enum(QUICK_IDS).optional(),
-  context: z.object({ jobId: z.string().max(80).optional() }).strict().optional(),
+  context: z.object({
+    jobId: z.string().max(80).optional(),
+    proposalId: z.string().max(80).optional(),
+    receiptId: z.string().max(80).optional(),
+    dealId: z.string().max(80).optional(),
+  }).strict().optional(),
 }).strict()
 const DraftRulesSchema = z.object({ instruction: z.string().trim().min(3).max(1000) }).strict()
 const PolicySchema = z.object({ text: z.string().trim().min(POLICY_MIN_CHARS).max(POLICY_MAX_CHARS) }).strict()
