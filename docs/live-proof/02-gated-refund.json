@@ -1,0 +1,10 @@
+{
+  "step": "gated_refund_completed",
+  "description": "Real refund processed through Mandate gated route against PayPal sandbox capture",
+  "proposalId": "fc92460a-3913-426c-9a9f-086f2ac0d86e",
+  "parentCaptureId": "6GX18294LL7579630",
+  "refundId": "12C310409G863064M",
+  "amount": "$1.00 USD",
+  "phase": "refunded",
+  "clause": "amount.auto"
+}

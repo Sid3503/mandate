@@ -981,7 +981,7 @@ What that means: that first-stage case is a buyer-and-seller message thread. Pay
 | Job | PayPal product | Status |
 | --- | --- | --- |
 | Client pays the studio (money in) | **Orders v2**: create, get, capture | **live in sandbox** |
-| Refund a settled payment | **Payments v2** capture refund | **live** (tested with the fake; same gated route) |
+| Refund a settled payment | **Payments v2** capture refund | **live in sandbox** (refund `12C310409G863064M` on capture `6GX18294LL7579630`, gated route) |
 | Studio pays Priya (money out) | **Payouts v1**: create batch, get batch, webhook refresh. `sender_batch_id` comes from the lock. | **live in sandbox** |
 | Bill a client, remind, void | **Invoicing** through `@paypal/agent-toolkit`, server-side only | **live in sandbox** (create, send, pay, settle, remind, cancel) |
 | Return an unpaid payout | **Payouts v1** payout-item cancel | **live in sandbox** |
@@ -998,7 +998,7 @@ Auth is OAuth client credentials. The token is cached and never sent to the brow
 | Payment | Buyer | Receiver | Result |
 | --- | --- | --- | --- |
 | Order `0NP39845W0132493F`, capture `9CU63483HP273314T` | `sb-jxwz553178202@personal.example.com` (IN) | US business `sb-hvfur53113943@business.example.com` | Completed |
-| Order `6C811134271727847`, capture `64R136545B749934W` | same India account | same US business | Completed through this API. Proposal `e2430dc6-…`, $25, cents match. |
+| Order `6C811134271727847`, capture `64R136545B749934W` | same India account | same US business | Completed through this API. Proposal `e2430dc6-...`, $25, cents match. |
 | Order `4XJ37793MB337931H`, capture `8SC68460EW2924617` | US personal account | same US business | Completed |
 | Order `93C08793GB3750533` | India account | `priya.shah@example.com` | Never captured. A non-PayPal email was used as the receiver and the buyer's card was refused. Marked `capture_refused`. **This is why money out moves to Payouts.** |
 | Payout batch `4AR5DRK9RGFK4` | US business | US personal `sb-rgmi053183971@personal.example.com` | Payouts spike, $1.00. `SUCCESS` in about 20 seconds, fee $0.25. |
@@ -1009,6 +1009,9 @@ Auth is OAuth client credentials. The token is cached and never sent to the brow
 | Payout batch `SJ5B3GGM7UBAU`, transaction `1BX3537504214244W` | US business | `sb-rgmi053183971@personal.example.com` | Priya's $90 under rules v2. `PENDING`, then `SUCCESS`, fee $0.25. The frozen job: $150 in, $90 out, $60 kept. |
 | Two payouts to `priya.shah@example.com` | US business | no account | Both `UNCLAIMED`, then cancelled and `RETURNED` from the receipt. |
 | Payout batch `EASAF4W2C3PDE` | US business | `priya.shah@example.com` | Sent by the server under a standing rule with no tap, `UNCLAIMED`, then cancelled and `RETURNED`. It also showed that PayPal refuses the cancel until the whole batch is `Processed` (`BATCH_NOT_COMPLETED`), which the console now explains. |
+| Order `51H50117X4794793P` | waiting on sandbox buyer | US business | Northwind $150 charge order created via gated route; capture skipped awaiting interactive browser buyer login. |
+| Refund `12C310409G863064M` | US business | Northwind | Real refund of $1.00 on capture `6GX18294LL7579630` via Mandate gated route. COMPLETED in real PayPal sandbox. |
+| Payout batch `D9RZNWUWD2F3A` | US business | Priya | Contractor payout of $85.00 funded by capture `6GX18294LL7579630` via real PayPal Payouts v1 API. PENDING. |
 
 Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in the PayPal dashboard and `.env`.
 
