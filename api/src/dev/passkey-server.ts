@@ -31,7 +31,7 @@ const product = openProduct({
     MASTER_KEY: randomBytes(24).toString('base64url'),
     KEY_PEPPER: randomBytes(24).toString('base64url'),
     WEBAUTHN_RP_ID: 'localhost',
-    WEBAUTHN_ORIGINS: publicUrl,
+    WEBAUTHN_ORIGINS: `${publicUrl},http://127.0.0.1:${port}`,
     COOKIE_SECURE: '0',
     TRUST_PROXY: '0',
   },
