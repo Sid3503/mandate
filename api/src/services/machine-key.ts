@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto'
+import { createHash, pbkdf2Sync } from 'node:crypto'
 import type { Repo } from '../db/repo'
 
 let warnedPepper = false
@@ -19,7 +19,7 @@ export function resetPepperWarning(): void {
 }
 
 export function machineKeyHmac(token: string, pepper = getKeyPepper()): string {
-  return createHmac('sha256', pepper).update(token).digest('hex')
+  return pbkdf2Sync(token, pepper, 10_000, 32, 'sha256').toString('hex')
 }
 
 export function machineKeyHash(token: string): string {
