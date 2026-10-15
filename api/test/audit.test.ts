@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { FakeWatch } from '../src/paypal/fake'
+import { FakeInvoices, FakeWatch } from '../src/paypal/fake'
 import { agree, call, closeAll, collect, EVIDENCE, harness, idem, JOB, NOW, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
@@ -24,6 +24,20 @@ async function worked() {
   const auto = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: { payee: 'Priya', amountCents: 9_000, currency: 'USD', category: 'design', description: 'M2 share', evidenceUrl: EVIDENCE, jobId: JOB, fundingCaptureId: two.captureId } })
   expect(auto.json).toMatchObject({ clause: 'standing.matched', phase: 'captured' })
   return { ...h, deal, one, two, tapped: payout.json.id as string, auto: auto.json.id as string }
+}
+
+/** The frozen job's first milestone, billed as a PayPal invoice and paid 750 short by an early-payment discount. */
+async function shortSettled() {
+  const invoices = new FakeInvoices()
+  const h = harness({ invoices })
+  const deal = await agree(h.app)
+  const bill = await call(h.app, 'POST', `/v1/deals/${deal.id}/milestones/0/bill`, { body: { evidenceUrl: EVIDENCE } })
+  await call(h.app, 'POST', `/v1/proposals/${bill.json.id}/approve`)
+  const id = bill.json.id as string
+  const sent = await call(h.app, 'POST', `/v1/proposals/${id}/capture`)
+  invoices.payPartial(sent.json.invoiceId, 14_250, { earlyDiscountCents: 750 })
+  await call(h.app, 'POST', `/v1/proposals/${id}/capture`)
+  return { ...h, id, invoices }
 }
 
 describe('the audit', () => {
@@ -91,6 +105,24 @@ describe('the audit', () => {
     const h = await worked()
     h.db.prepare('UPDATE proposals SET captured_amount_cents = 9100 WHERE id = ?').run(h.auto)
     expect(failing(await audit(h.app))).toEqual(['amounts.match', 'jobs.in_covers_out'].filter((id) => id === 'amounts.match'))
+  })
+
+  it('catches a short settlement whose reason no PayPal field stands behind', async () => {
+    const h = await shortSettled()
+    // Green as it was settled: the reason names the field PayPal reported, and the row records which one.
+    expect(failing(await audit(h.app))).not.toContain('amounts.explained')
+    const green = await audit(h.app)
+    expect(green.checks.find((check: { id: string }) => check.id === 'amounts.explained')).toMatchObject({ status: 'pass', checked: 1 })
+    // A reason nothing arrived for is exactly what this check exists to refuse.
+    h.db.prepare(`UPDATE proposals SET delta_reason = 'unexplained' WHERE id = ?`).run(h.id)
+    const unexplained = await audit(h.app)
+    expect(failing(unexplained)).toContain('amounts.explained')
+    expect(unexplained.checks.find((check: { id: string }) => check.id === 'amounts.explained').failures[0]).toMatchObject({ proposalId: h.id })
+    // A reason with no field beside it is a number with no source, which is the same failure.
+    h.db.prepare(`UPDATE proposals SET delta_reason = 'early_discount', delta_source = NULL WHERE id = ?`).run(h.id)
+    const unsourced = await audit(h.app)
+    expect(failing(unsourced)).toContain('amounts.explained')
+    expect(unsourced.checks.find((check: { id: string }) => check.id === 'amounts.explained').failures[0].detail).toContain('records no field')
   })
 
   it('catches money that moved with no yes: a deleted approval, or a signature removed', async () => {

@@ -34,6 +34,16 @@ export const MilestoneSchema = z.object({
   amountCents: z.number().int().positive().max(100_000_000),
 }).strict()
 
+/**
+ * A discount for paying early, carried by the deal. It is a payment term inside the agreed total, not a change
+ * to it: the client still owes the full milestone, and PayPal takes the discount off only if the client pays
+ * before the date the deal allows. `percentBps` is basis points of the milestone, so 200 is 2%.
+ */
+export const EarlyPaymentDiscountSchema = z.object({
+  percentBps: z.number().int().min(1).max(10_000),
+  days: z.number().int().min(1).max(365),
+}).strict()
+
 export const DealTermsSchema = z.object({
   jobId: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
   scope: z.string().trim().min(1).max(300),
@@ -43,6 +53,8 @@ export const DealTermsSchema = z.object({
   milestones: z.array(MilestoneSchema).min(1).max(12),
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   proofRequired: z.boolean().default(true),
+  /** Off the invoice entirely unless the deal carries one, so a deal written before this existed is unchanged. */
+  earlyPaymentDiscount: EarlyPaymentDiscountSchema.optional(),
 }).strict()
 
 export type DealTerms = z.infer<typeof DealTermsSchema>

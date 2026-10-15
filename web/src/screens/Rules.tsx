@@ -39,6 +39,7 @@ const LABELS: Array<{ key: keyof Body; label: string; show: (body: Body) => stri
   { key: 'clearingDays', label: 'Wait after a client pays', show: (b) => ((b.clearingDays ?? 0) === 0 ? 'no wait' : `${b.clearingDays} day${b.clearingDays === 1 ? '' : 's'} before a rule pays from it`) },
   { key: 'fundingRequired', label: 'Payouts need client money', show: (b) => (b.fundingRequired ? 'yes' : 'no') },
   { key: 'evidenceRequired', label: 'Proof link required', show: (b) => (b.evidenceRequired ? 'yes' : 'no') },
+  { key: 'allowPartialPayment', label: 'Clients may pay an invoice in part', show: (b) => (b.allowPartialPayment ? 'yes' : 'no') },
   { key: 'currency', label: 'Currency', show: (b) => b.currency },
   { key: 'timezone', label: 'Month boundary', show: (b) => b.timezone },
   { key: 'categories', label: 'Allowed work', show: (b) => b.categories.join(', ') },
@@ -207,6 +208,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
   const [share, setShare] = useState(String((from.contractorShareBps ?? 10000) / 100))
   const [clearing, setClearing] = useState(String(from.clearingDays ?? 0))
   const [funding, setFunding] = useState(Boolean(from.fundingRequired))
+  const [partial, setPartial] = useState(Boolean(from.allowPartialPayment))
   const [evidence, setEvidence] = useState(from.evidenceRequired)
   const [categories, setCategories] = useState(from.categories.join(', '))
   const [payees, setPayees] = useState<Party[]>(from.payees)
@@ -234,6 +236,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
       clearingDays: Math.max(0, Math.min(60, Math.round(Number(clearing)) || 0)),
       fundingRequired: funding,
       evidenceRequired: evidence,
+      allowPartialPayment: partial,
       categories: categories.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean),
       payees,
       clients,
@@ -283,6 +286,8 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
             <label className="field"><span>Contractor share of client money</span><span className="dollar-input"><input inputMode="decimal" value={share} onChange={(e) => setShare(e.target.value)} /><span>%</span></span></label>
             <label className="check"><input type="checkbox" checked={funding} onChange={(e) => setFunding(e.target.checked)} /> Payouts need client money first</label>
             <label className="check"><input type="checkbox" checked={evidence} onChange={(e) => setEvidence(e.target.checked)} /> Proof link required</label>
+            <label className="check"><input type="checkbox" checked={partial} onChange={(e) => setPartial(e.target.checked)} /> Clients may pay an invoice in part</label>
+            <p className="fine">A part payment settles the request for what actually arrived, and contractors can only be funded up to their share of that. PayPal offers part payment to sellers in some countries only, so this is a request to PayPal, not a guarantee.</p>
           </div>
           <label className="field"><span>Wait after a client pays, before a rule pays a contractor from it</span><span className="dollar-input"><input inputMode="numeric" aria-label="Days to wait after a client pays" value={clearing} onChange={(e) => setClearing(e.target.value)} /><span>days</span></span><small>0 means no wait. A client can still take money back for a while, so a rule or autopilot waits this long. You can still tap to pay earlier.</small></label>
           <label className="field"><span>Allowed work, comma separated</span><input value={categories} onChange={(e) => setCategories(e.target.value)} /></label>

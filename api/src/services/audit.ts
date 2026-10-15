@@ -3,9 +3,10 @@ import { approvalProof } from '../domain/approvalProof'
 import type { ControlStore } from '../control/store'
 import type { ProposalRow, Repo } from '../db/repo'
 import { fundableCents } from '../domain/gate'
-import { arrivedCents, fundedPhase, fullPhase, RESERVED_PHASES } from '../domain/phases'
+import { arrivedCents, fundedPhase, fullPhase, RESERVED_PHASES, shortPhase } from '../domain/phases'
 import { monthWindow } from '../domain/period'
 import { WarrantBodySchema, type WarrantBody } from '../domain/schemas'
+import { ATTRIBUTED_REASONS, SOURCE_OF, type DeltaReason } from '../domain/settlement'
 import { proofHash, type Signer } from '../domain/signing'
 import { toolSummary } from '../paypal/tiers'
 import type { DealService } from './deals'
@@ -82,6 +83,7 @@ export class AuditService {
       this.authorised(moved, byProposal),
       this.proofColors(events),
       this.amounts(proposals),
+      this.explained(proposals),
       this.funded(proposals, versions),
       this.cap(proposals, versions, latest),
       this.jobs(proposals),
@@ -173,6 +175,31 @@ export class AuditService {
       if (row.captured_amount_cents !== row.amount_cents) failures.push({ proposalId: row.id, detail: `locked ${row.amount_cents} cents but settled ${row.captured_amount_cents ?? 'nothing'}` })
     }
     return this.check('amounts.match', 'Settled to the cent', 'The amount PayPal confirmed equals the amount that was locked. A difference is refused at settlement; this proves none got through.', looked, failures)
+  }
+
+  /**
+   * Every short settlement keeps the PayPal field its reason was read from. `amounts.match` is untouched beside
+   * it: a full settlement still has to be the locked cents exactly, and this check covers the rows that are not
+   * full at all. A payment that arrived for less with nothing beside it is `partial`, and the field behind that is
+   * the one that reported how much arrived. A gap nothing arrived for is never a settled phase at all, so a failure
+   * here means a row claims a settlement with a reason no field stands behind.
+   */
+  private explained(proposals: ProposalRow[]): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    let looked = 0
+    for (const row of proposals) {
+      if (!shortPhase(row.phase)) continue
+      looked += 1
+      const reason = row.delta_reason as DeltaReason | null
+      if (reason === null || !ATTRIBUTED_REASONS.includes(reason)) {
+        failures.push({ proposalId: row.id, detail: `settled short with reason ${reason ?? 'none'}, which is not a reason a PayPal field stands behind` })
+        continue
+      }
+      if (row.delta_source !== SOURCE_OF[reason]) {
+        failures.push({ proposalId: row.id, detail: `settled short as ${reason}, which is read from ${SOURCE_OF[reason] ?? 'nothing'}, but the row records ${row.delta_source ?? 'no field'}` })
+      }
+    }
+    return this.check('amounts.explained', 'Every shortfall is attributed', 'A settlement short of the lock carries the PayPal field its reason was read from: a discount PayPal applied early, a credit on the bill, a fee PayPal reported, or, when PayPal reported no adjustment at all, the field that reported how much actually arrived. Nothing is a guess. A gap nothing arrived for is never a settlement: it stays on the invoice until a payment is there to store.', looked, failures)
   }
 
   /** A contractor is paid only from client money that settled on the same job, and never more than their share. */

@@ -95,17 +95,17 @@ describe('the settlement delta: what arrived, and why', () => {
     expect(bare).toMatchObject({ phase: 'settled_short', settled_cents: 5_000, delta_cents: -10_000, delta_reason: 'partial' })
     // The short path writes through settleShort. Same guard, and the same flag is what stops a part-paid
     // invoice from appending an invoice.partial event on every sweep.
-    expect(h.repo.settleShort(h.id, 'CAP-INV-1', 5_000, 'partial', '2026-10-15T01:00:00.000Z')).toBe(false)
+    expect(h.repo.settleShort(h.id, 'CAP-INV-1', 5_000, 'partial', 'payments.paid_amount', '2026-10-15T01:00:00.000Z')).toBe(false)
     const same = h.repo.proposal(h.id)!
     expect(same.updated_at).toBe(bare.updated_at)
     // A real change does write, so the guard is not a no-op.
-    expect(h.repo.settleShort(h.id, 'CAP-INV-1', 9_000, 'partial', '2026-10-15T02:00:00.000Z')).toBe(true)
+    expect(h.repo.settleShort(h.id, 'CAP-INV-1', 9_000, 'partial', 'payments.paid_amount', '2026-10-15T02:00:00.000Z')).toBe(true)
     const changed = h.repo.proposal(h.id)!
     expect(changed).toMatchObject({ phase: 'settled_short', settled_cents: 9_000, delta_cents: -6_000, delta_reason: 'partial' })
     expect(changed.updated_at).toBe('2026-10-15T02:00:00.000Z')
     // The reason alone is news too. S3 makes that reachable without the cents moving, and the event
     // that stops a part-paid invoice appending on every sweep is this same flag.
-    expect(h.repo.recordSettlement(h.id, 9_000, 'unexplained', '2026-10-15T03:00:00.000Z')).toBe(true)
+    expect(h.repo.recordSettlement(h.id, 9_000, 'unexplained', null, '2026-10-15T03:00:00.000Z')).toBe(true)
     expect(h.repo.proposal(h.id)!.delta_reason).toBe('unexplained')
   })
 })

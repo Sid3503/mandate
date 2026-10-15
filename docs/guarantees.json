@@ -11,7 +11,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "funded",
@@ -23,7 +23,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "cap",
@@ -35,7 +35,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "unknown",
@@ -46,7 +46,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "refused",
@@ -57,7 +57,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "once",
@@ -69,7 +69,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "lock",
@@ -80,7 +80,18 @@
         "test/redteam.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+    },
+    {
+      "id": "attributed",
+      "promise": "A settlement short of the lock carries the PayPal field its reason was read from, and one whose reason no field stands behind fails the audit.",
+      "audit": "amounts.explained",
+      "tests": [
+        "test/settlement-explain.test.ts",
+        "test/audit.test.ts"
+      ],
+      "status": "pass",
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "yes",
@@ -91,7 +102,7 @@
         "test/standing.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "proof",
@@ -102,7 +113,7 @@
         "test/stepup.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "members",
@@ -113,7 +124,7 @@
         "test/identity.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "assertions",
@@ -124,7 +135,7 @@
         "test/stepup.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "rules",
@@ -135,7 +146,7 @@
         "test/stepup.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "safety_events",
@@ -146,7 +157,7 @@
         "test/safety.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "keys",
@@ -157,7 +168,7 @@
         "test/verify.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "agents",
@@ -169,7 +180,7 @@
         "test/redteam.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "words",
@@ -179,7 +190,7 @@
         "test/agents.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "paused",
@@ -191,7 +202,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "verify",
@@ -200,7 +211,7 @@
         "test/verify.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "studio",
@@ -210,7 +221,7 @@
         "test/control-room.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     },
     {
       "id": "down",
@@ -220,7 +231,7 @@
         "test/robust.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T17:29:08.385Z"
+      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
     }
   ],
   "deepRun": {

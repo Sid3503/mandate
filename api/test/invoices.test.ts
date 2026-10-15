@@ -125,7 +125,7 @@ describe('billing a client with a PayPal invoice', () => {
     const invoices = new FakeInvoices()
     const { app, id, db } = await billed(invoices)
     // The server made the draft, then died before it could save the invoice id.
-    await invoices.createDraft({ proposalId: id, invoiceNumber: invoiceNumberFor(id), amountCents: 15_000, currency: 'USD', title: 't', description: 'd', note: 'n', recipientEmail: 'ap@northwind.example', recipientName: 'Northwind' })
+    await invoices.createDraft({ proposalId: id, invoiceNumber: invoiceNumberFor(id), amountCents: 15_000, currency: 'USD', title: 't', description: 'd', note: 'n', recipientEmail: 'ap@northwind.example', recipientName: 'Northwind', allowPartialPayment: false, earlyPaymentDiscount: null })
     expect(db.prepare('SELECT invoice_id FROM proposals WHERE id = ?').get(id)).toEqual({ invoice_id: null })
     const sent = await call(app, 'POST', `/v1/proposals/${id}/capture`)
     expect(sent.json.phase).toBe('invoice_sent')
