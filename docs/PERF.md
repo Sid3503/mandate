@@ -37,10 +37,10 @@ Artifacts saved to `docs/evidence/q9/`:
 | Welcome | `http://127.0.0.1:8799/app/welcome` | `http://127.0.0.1:8799/app/welcome` | 90 | 2.9 s | 2.9 s | 10 ms | 0.000 |
 | Unlock (Attempt 1) | `http://127.0.0.1:8799/app/unlock` | `http://127.0.0.1:8799/app/unlock` | 88 | 2.9 s | 3.2 s | 0 ms | 0.000 |
 | Unlock (Attempt 2) | `http://127.0.0.1:8799/app/unlock` | `http://127.0.0.1:8799/app/unlock` | 88 | 2.9 s | 3.2 s | 0 ms | 0.000 |
-| Today (Demo session) | `http://127.0.0.1:8799/__fake/session?redirect=/app/` | `http://127.0.0.1:8799/app/` | 80 | 3.1 s | 3.6 s | 80 ms | 0.124 |
+| Today (Demo session) | `http://127.0.0.1:8799/__fake/session?redirect=/app/` | `http://127.0.0.1:8799/app/` | 83 | 3.1 s | 3.7 s | 80 ms | 0.008 |
 
 Verification:
-- Welcome achieved performance score 90 (>= 90).
-- Unlock achieved performance score 88 within two attempts.
-- Today loaded inside demo session via cookie redirect without key in URL, and final displayed URL stayed on `/app/` (verified not Unlock).
+- Welcome achieved performance score 90 (>= 90) with `finalDisplayedUrl: http://127.0.0.1:8799/app/welcome`.
+- Unlock achieved performance score 88 within two attempts with `finalDisplayedUrl: http://127.0.0.1:8799/app/unlock`.
+- Today redone run loaded the real demo Today screen with all dashboard endpoints returning 200, achieving performance score 83 with `finalDisplayedUrl: http://127.0.0.1:8799/app/`.
 - Zero AG Grid, Charts, or Studio chunks transferred on Welcome, Unlock, or Today.
