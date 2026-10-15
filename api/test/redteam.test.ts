@@ -378,7 +378,7 @@ async function rtEnroll(app: ReturnType<typeof harness>['app'], headers: Record<
   return { auth, credentialId: body.credentialId }
 }
 
-async function rtProposeCharge(app: ReturnType<typeof harness>['app']) {
+async function rtProposeCharge(app: ReturnType<typeof harness>['app'], overrides: Record<string, unknown> = {}) {
   const charge = {
     kind: 'charge',
     payee: 'Northwind',
@@ -389,6 +389,7 @@ async function rtProposeCharge(app: ReturnType<typeof harness>['app']) {
     evidenceUrl: EVIDENCE,
     prompt: 'Bill Northwind $150',
     jobId: JOB,
+    ...overrides,
   }
   const created = await call(app, 'POST', '/v1/proposals', { body: charge, idem: `rt-${randomUUID()}` })
   expect(created.status).toBe(201)
@@ -609,7 +610,8 @@ describe('Appendix B red team: cases 1 to 35', () => {
     const { h, controlDb, headers } = rtRuledOwner()
     const { auth } = await rtEnroll(h.app, headers)
     const first = await rtProposeCharge(h.app)
-    const second = await rtProposeCharge(h.app)
+    // A different amount, so the second proposal is a new ask rather than the same one twice.
+    const second = await rtProposeCharge(h.app, { amountCents: 14_000 })
     const signed = await rtSignApprove(h.app, headers, auth, first)
     expect(signed.status).toBe(200)
     const approved = await h.app.request(`http://mandate.test/v1/proposals/${second}/approve`, { method: 'POST', headers: { ...headers, 'x-mandate-stepup': signed.grant } })

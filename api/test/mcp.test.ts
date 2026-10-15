@@ -222,8 +222,9 @@ describe('finding the client payment that can still fund a payout', () => {
     const b = await agree(app, { jobId: 'job_b_open' })
     const paidB = await collect(app, b.id, 0)
     // The newest thing to happen is a refused attempt on job A, which is what used to mislead the clerk.
+    // A different amount, so it is a new ask rather than a repeat of the one already locked.
     const { use } = await connect(app, STUDIO_KEY)
-    const refused = await use('propose', { ...payout, jobId: 'job_a_exhausted', fundingCaptureId: paidA.captureId })
+    const refused = await use('propose', { ...payout, amountCents: 1_000, jobId: 'job_a_exhausted', fundingCaptureId: paidA.captureId })
     expect(refused.data).toMatchObject({ decision: 'DENY', ruleCode: 'funding.exceeds' })
 
     const jobs = await use('get_jobs', {})

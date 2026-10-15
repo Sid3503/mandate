@@ -90,16 +90,17 @@ describe('pausing and resuming', () => {
   it('refuses the studio\'s key with the reason written on the receipt, and makes the owner\'s own small payment wait for a tap', async () => {
     const h = harness()
     // With payouts no longer needing client money, a $10 payout to Priya goes through with no tap: the thing a pause must stop.
+    // Each ask is a different amount, so the checks below test the pause and not the duplicate guard.
     await publish(h.app, { fundingRequired: false, standing: [] })
-    expect((await ask(h.app)).json).toMatchObject({ gate: 'AUTO' })
+    expect((await ask(h.app, { amountCents: 1_000 })).json).toMatchObject({ gate: 'AUTO' })
     await call(h.app, 'POST', '/v1/safety/pause', { body: { reason: 'Odd requests' } })
-    const refused = await ask(h.app)
+    const refused = await ask(h.app, { amountCents: 1_100 })
     expect(refused.json).toMatchObject({ gate: 'DENY', clause: 'system.paused', phase: 'denied' })
     expect(refused.json.detail).toContain('Odd requests')
     // The owner can still ask, but a payment that would have gone with no tap now waits for one.
-    expect((await ask(h.app, {}, OWNER_KEY)).json).toMatchObject({ gate: 'NEEDS_APPROVAL', clause: 'system.paused', phase: 'pending_approval' })
+    expect((await ask(h.app, { amountCents: 1_200 }, OWNER_KEY)).json).toMatchObject({ gate: 'NEEDS_APPROVAL', clause: 'system.paused', phase: 'pending_approval' })
     await call(h.app, 'POST', '/v1/safety/resume')
-    expect((await ask(h.app)).json).toMatchObject({ gate: 'AUTO' })
+    expect((await ask(h.app, { amountCents: 1_300 })).json).toMatchObject({ gate: 'AUTO' })
   })
 
   it('trips by itself on three odd refusals in two minutes, says why, and stays paused until the owner resumes', async () => {

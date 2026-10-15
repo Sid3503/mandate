@@ -28,6 +28,7 @@ export const Clause = {
   dealMilestoneUnknown: 'deal.milestone_unknown',
   dealMilestoneMismatch: 'deal.milestone_mismatch',
   dealMilestoneBilled: 'deal.milestone_billed',
+  duplicateOpen: 'duplicate.open',
   systemPaused: 'system.paused',
 } as const
 
@@ -104,6 +105,8 @@ export type GateProposal = {
   dealId?: string | null
   milestone?: number | null
   deal?: DealContext | null
+  /** An open request that already asks for this same money, resolved by the service from the database. */
+  openDuplicate?: { id: string } | null
   safety?: GateSafety | null
   actor?: string
 }
@@ -193,6 +196,12 @@ function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context:
     } else if (context?.jobHasDeal) {
       return deny(Clause.dealRequired, 'this job has an agreed deal, so charges on it must bill one of its milestones')
     }
+  }
+  // Deliberately after the validity and identity checks, and before the money rules. An open ask has already
+  // reserved its share (`funding.exceeds`) and its month (`cap.monthly`), so checked any later this would
+  // surface as an arithmetic refusal instead of "you already asked for this".
+  if (proposal.openDuplicate) {
+    return deny(Clause.duplicateOpen, `a ${proposal.kind} of ${proposal.amountCents} ${proposal.currency} cents was already asked for by proposal ${proposal.openDuplicate.id}, which is still open`)
   }
   if (proposal.kind === 'payment' && warrant.fundingRequired) {
     const funding = proposal.funding ?? null

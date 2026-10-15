@@ -1181,6 +1181,17 @@ export class MandateService {
     const dealId = input.kind === 'charge' ? input.dealId ?? null : null
     const milestone = dealId ? input.milestone ?? null : null
     const deal = input.kind === 'charge' ? this.dealContext(dealId, milestone, jobId, evidenceUrl) : null
+    const openDuplicate = this.repo.openDuplicate({
+      kind: input.kind,
+      payeeId: payee?.id ?? null,
+      amountCents: input.amountCents,
+      currency: input.currency,
+      jobId,
+      fundingCaptureId,
+      dealId,
+      milestone,
+      parentCaptureId: input.parentCaptureId ?? null,
+    })
     const safety = this.options.safety?.state() ?? NOT_PAUSED
     const decision = decide(warrant.body, {
       kind: input.kind,
@@ -1204,6 +1215,7 @@ export class MandateService {
       dealId,
       milestone,
       deal,
+      openDuplicate: openDuplicate ? { id: openDuplicate.id } : null,
       safety,
       actor,
     }, { ...cap, nowMs: Date.parse(now) })
@@ -1247,6 +1259,9 @@ export class MandateService {
     if (!warrant) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
     const { decision, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap } = this.judge(input, warrant, now, actor)
     const id = randomUUID()
+    // The gate judged this ask before the row had an id. Its refusal names the ask that is already open;
+    // adding this one's own id lets the stored refusal be read on its own, from the ledger.
+    const detail = decision.clause === Clause.duplicateOpen ? `${decision.detail}; this ask is ${id}` : decision.detail
     const lockNow = decision.gate === 'AUTO'
     const fields: CartFields | null = lockNow && payee && category && evidenceUrl ? {
       proposalId: id,
@@ -1286,7 +1301,7 @@ export class MandateService {
       prompt: input.prompt ?? null,
       gate: decision.gate,
       clause: decision.clause,
-      detail: decision.detail,
+      detail: detail,
       phase,
       cartHash: lockHash,
       lockSig: lockSig?.signature ?? null,

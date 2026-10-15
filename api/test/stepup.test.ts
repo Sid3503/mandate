@@ -259,8 +259,8 @@ async function enroll(app: Requester, headers: Record<string, string>) {
   return { auth, credentialId: body.credentialId }
 }
 
-async function proposeCharge(app: Requester) {
-  const created = await call(app, 'POST', '/v1/proposals', { body: CHARGE, idem: `p4-${randomUUID()}` })
+async function proposeCharge(app: Requester, overrides: Record<string, unknown> = {}) {
+  const created = await call(app, 'POST', '/v1/proposals', { body: { ...CHARGE, ...overrides }, idem: `p4-${randomUUID()}` })
   expect(created.status).toBe(201)
   return (created.json as { id: string }).id
 }
@@ -369,7 +369,8 @@ describe('step-up grants', () => {
     const { h, controlDb, headers } = ruledOwner()
     const { auth } = await enroll(h.app, headers)
     const first = await proposeCharge(h.app)
-    const second = await proposeCharge(h.app)
+    // A different amount, so the second proposal is a new ask rather than the same one twice.
+    const second = await proposeCharge(h.app, { amountCents: 14_000 })
     const signed = await signApprove(h.app, headers, auth, first)
     expect(signed.status).toBe(200)
     const approved = await h.app.request(`http://mandate.test/v1/proposals/${second}/approve`, { method: 'POST', headers: { ...headers, 'x-mandate-stepup': signed.grant } })
