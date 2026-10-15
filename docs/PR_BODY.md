@@ -59,7 +59,7 @@ This pull request completes the final submission run for the PayPal AI Hackathon
 - Lazy loading for AG Grid Enterprise, AG Charts Enterprise, and Line Studio reducing initial bundle payloads.
 - ControlRoom chunk split from 4,602 kB down to 15.85 kB.
 - Service worker precache optimized at 38 clean entries.
-- Mobile Lighthouse audit scores under default mobile throttling: Welcome 90, Unlock 88, Today in demo 80.
+- Mobile Lighthouse audit scores under default mobile throttling: Welcome 90, Unlock 88, Today in demo 83.
 - Database read latency p95 verified under 50ms across core endpoints.
 
 ## How to try it
@@ -129,6 +129,6 @@ The authoritative checklist is in [docs/HUMAN_TODO.md](file:///Users/siddharth.m
 - [x] All 35 Appendix B security cases pass.
 - [x] SECRET_SCAN.md confirms HISTORY_CLEAN=true.
 - [x] Real PayPal sandbox charge order created, refund executed via gated route, and payout sent (receipts in docs/live-proof/).
-- [x] Mobile Lighthouse performance verified: Welcome 90, Unlock 88 (target was 90), Today in demo 80.
+- [x] Mobile Lighthouse performance verified: Welcome 90, Unlock 88 (target was 90), Today in demo 83.
 - [x] Submission docs complete (DEVPOST.md, VIDEO_SCRIPT.md, DECK.md, HUMAN_TODO.md, TRY_IT.md).
 - [x] Zero secrets or personal paths in code or history.
