@@ -21,16 +21,17 @@ Comprehensive scan of the working tree and full git history across all branches 
 ## Gitleaks History Scan
 
 Executed `gitleaks detect --source . --log-opts="--all" --redact`:
-- Commits scanned: 171 commits (9.08 MB)
-- Total hits: 3 hits
+- Raw commits scanned: 177 commits (9.72 MB)
+- Initial raw hits: 3 hits across all history
 - Rules triggered: `generic-api-key` (2 hits), `private-key` (1 hit)
 - Findings:
   1. `api/test/ops-cleanup-scheduler.test.ts:336` (Rule `generic-api-key`): test fixture idempotency key header string in multi-tenant isolation test.
   2. `api/test/ops-readyz-secret.test.ts:14` (Rule `private-key`): synthetic mock test string with trailing ellipsis in secret redaction unit test.
   3. `web/src/lib/passkey-vector.json:9` (Rule `generic-api-key`): public RFC/W3C WebAuthn sample test vector for offline ES256 verification.
 - Classification: 100% test fixtures. Zero real secrets or live service credentials exist in git history.
+- CI and repository configuration: added test fixture paths and regexes to `.gitleaks.toml` and fingerprints to `.gitleaksignore`. Subsequent scan with `.gitleaks.toml` reports 0 leaks found across 177 commits.
 
 ## History Audit Status
 
 - `HISTORY_CLEAN=true`
-- Reason: Every matched item across commit history and the working tree is a synthetic fixture, scanner regex rule, documentation placeholder, SVG artifact, or reserved test fixture. No real secret or credential for any live service has ever been committed.
+- Reason: Every matched item across commit history and the working tree is a synthetic fixture, scanner regex rule, documentation placeholder, SVG artifact, or reserved test fixture. No real secret or credential for any live service has ever been committed. Zero keys to rotate.
