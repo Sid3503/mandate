@@ -17,10 +17,10 @@ This pull request completes the final submission run for the PayPal AI Hackathon
 ### Demo workspaces
 - Isolated multi-tenant demo workspaces with automated cleanup sweeping expired demos every 15 minutes while preserving default, studio, and live workspaces.
 - Pre-seeded Line Studio workspace with frozen test fixtures (warrants, buyer rules, seller rules, payees).
-- Role switcher supporting owner, approver, proposer, viewer, and payee roles with tailored role landings.
-- Live Proof screen demonstrating real receipt files and sandbox payment states.
-
-### Approvals and receipts
+- Live Proof screen demonstrating real receipt files and sandbox payment states:
+  - Northwind $150 charge: order `51H50117X4794793P` created in PayPal sandbox; capture skipped awaiting interactive browser buyer login (not paid).
+  - Real $1.00 refund (`12C310409G863064M`) executed through Mandate gated route against an older real capture (`6GX18294LL7579630`) after the test script seeded the parent proposal row in SQLite.
+  - Contractor payout to Priya ($85.00) sent via real PayPal Payouts v1 API (`D9RZNWUWD2F3A`).
 - Single-use 120-second step-up grants cryptographically bound to cart hash and member public key.
 - Append-only verifiable cryptographic receipts signed with WebAuthn ES256 credentials with offline browser-side verification.
 - Tamper detection turning missing or modified passkey signatures red on the Proof screen.
@@ -33,7 +33,9 @@ This pull request completes the final submission run for the PayPal AI Hackathon
 - Payee book with cooling period for newly registered payees, owner attestation with passkey step-up, payout account change lock, and payability diagnostics.
 
 ### Rule tools
-- Natural language rule drafter evaluating wordings against deterministic safety rules with prompt injection defense and lookahead token budget caps.
+- Natural language rule drafter evaluating wordings against deterministic safety rules with prompt injection defense and lookahead token budget caps:
+  - Real model eval (`gemma4:31b`, Oct 14 2026): 11/11 plain requests (100%), 0 hidden loosenings, 52,713 tokens used (halted before injection test group due to token cap).
+  - Prompt injection handling: fixed policy audit untrusted instruction preservation in `api/src/agents/drafter.ts`, verified 4/4 passing with scripted model in CI.
 - Try-it box with side-by-side spend proposal dry runs without writing rows to the database.
 - Tap-to-rule suggestions turning frequent manual approvals into safe automated rules with tap counts displayed on the Today dashboard.
 - Passkey publish ceremony cryptographically binding rule changes to warrant bodies.
@@ -124,7 +126,7 @@ A checklist for production deployment is in [docs/HUMAN_TODO.md](file:///Users/s
 - [x] All 20 formal guarantees verified.
 - [x] All 35 Appendix B security cases pass.
 - [x] SECRET_SCAN.md confirms HISTORY_CLEAN=true.
-- [x] Real PayPal sandbox charge, refund, and payout verified with receipts in docs/live-proof/.
-- [x] Mobile Lighthouse performance verified (90 Welcome, 88 Unlock, 80 Today).
+- [x] Real PayPal sandbox charge order created, refund executed via gated route, and payout sent (receipts in docs/live-proof/).
+- [x] Mobile Lighthouse performance verified: Welcome 90, Unlock 88 (target was 90), Today in demo 80.
 - [x] Submission docs complete (DEVPOST.md, VIDEO_SCRIPT.md, DECK.md, HUMAN_TODO.md, TRY_IT.md).
 - [x] Zero secrets or personal paths in code or history.
