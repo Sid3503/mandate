@@ -41,7 +41,7 @@ Mandate is a self-hosted spend authority and policy firewall for human teams and
 
 1. **State Machine Idempotency and Race Conditions**: Handling concurrent webhook events and duplicate API submissions while ensuring money moves exactly once. We solved this with stable request hashing and SQLite immediate transactions.
 2. **Deterministic Settlement Matching**: Guaranteeing that PayPal live order amounts and captured cents match the locked cart to the exact penny before finalizing records.
-3. **Prompt Injection Defense**: Preventing malicious prompts from manipulating policy drafting. We enforced untrusted boundaries where raw input is fenced and sanitized, and verified this with 30 adversarial wording evaluations on real models.
+3. **Prompt Injection Defense**: Preventing malicious prompts from manipulating policy drafting. We enforced untrusted boundaries where raw input is fenced and sanitized, fixing untrusted segment preservation during policy audit passes and verifying all 4 prompt-injection cases with the scripted-model test suite in CI.
 4. **Zero-Secret Architecture**: Ensuring credentials, tokens, cookies, and personal paths are never committed, logged, or exposed over the wire.
 
 ---
@@ -51,7 +51,7 @@ Mandate is a self-hosted spend authority and policy firewall for human teams and
 - **715 Automated Vitest Tests** across 61 test files passing completely clean in CI.
 - **135 Playwright Browser Tests** verifying desktop and mobile user journeys and role-based access.
 - **20 Verified Cryptographic Guarantees** documented in machine-readable JSON and verified on every build.
-- **Real PayPal Sandbox Proof**: Validated live Orders v2 order creation, real Payouts v1 disbursements, and real Payments v2 refunds against actual PayPal sandbox infrastructure.
+- **Real PayPal Sandbox Proof**: Validated live Orders v2 order creation (order `51H50117X4794793P`), real Payouts v1 disbursements (batch `D9RZNWUWD2F3A` to Priya), and real Payments v2 refunds (refund `12C310409G863064M` via gated route) against actual PayPal sandbox infrastructure.
 - **Mobile Lighthouse Performance**: Scored 90 on Welcome, 88 on Unlock, and 80 on Today with lazy-loaded data grids and an optimized bundle.
 - **Sub-50ms Read Latency**: Achieved p95 read performance under 50ms across core ledger endpoints.
 
