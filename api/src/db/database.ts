@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS safety_state (
   autopilot_paused INTEGER NOT NULL DEFAULT 0,
   config_json TEXT
 );
-INSERT OR IGNORE INTO safety_state (id, paused, epoch, autopilot_paused) VALUES (1, 0, 0, 0);
+INSERT OR IGNORE INTO safety_state (id, paused, epoch) VALUES (1, 0, 0);
 
 CREATE TABLE IF NOT EXISTS safety_events (
   id TEXT PRIMARY KEY,
