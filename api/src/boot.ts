@@ -162,6 +162,7 @@ export function openProduct(input: {
         idleHours,
         absoluteDays,
         redact,
+        demoReset: row.mode === 'demo' || input.env.DEMO_RESET === 'on',
       },
     })
     return {
