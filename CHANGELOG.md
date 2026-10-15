@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Settlement delta (task S1 in `docs/ZORD_PASS.md`): a proposal now records what PayPal says actually arrived, in `settledCents`, `deltaCents` and `deltaReason` (`full`, `partial`, `unexplained`), on both a full settle and a short one. `amounts.match` is untouched and no phase changes, so a short invoice still reads `invoice_sent`. `recordSettlement` writes only when a value changes, which keeps a stuck invoice in its place in the once-a-minute sweep queue, and the reason is re-derived on every sweep so a later full payment overwrites it. The `invoice.partial` event carries the reason. Proof: `api/test/settlement.test.ts`.
+
 - Phase 12 (Hardening):
   - Passkey accessibility: full keyboard-only walk test covering studio registration, unlock sign-in, and passkey credential management with axe scan verification (`web/e2e/passkey-repair-keyboard.spec.ts`).
   - Chaos test suite: injected PayPal timeout, model timeout, database lock (`SQLITE_BUSY`), disk full (`SQLITE_FULL`), and model provider rate-limit usage refusal, verifying clean rollback, 0 wrong money state, and graceful degradation (`api/test/chaos.test.ts`).

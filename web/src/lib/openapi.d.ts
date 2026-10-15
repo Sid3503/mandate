@@ -5811,6 +5811,12 @@ export interface components {
             refundId: string | null;
             approveUrl: string | null;
             capturedAmountCents: number | null;
+            /** @description What PayPal reported actually arrived. Null until a settlement is seen. */
+            settledCents: number | null;
+            /** @description settledCents minus the locked amount. Negative means the client paid less. */
+            deltaCents: number | null;
+            /** @description Why the settled amount was not the locked amount: full, partial, unexplained. Closed list. */
+            deltaReason: string | null;
             payoutBatchId: string | null;
             payoutItemId: string | null;
             payoutStatus: string | null;
