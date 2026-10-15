@@ -263,7 +263,7 @@ Verification pass completed across all 8 deliverables on branch `verify/final`.
 | F2 | done | AG Grid/Studio lazy-loaded, precache clean, mobile Lighthouse Welcome 90 Unlock 88 Today 80 in docs/evidence/q9/ and docs/PERF.md | `4679d2b` |
 | F3 | done | Drafter eval: prompt injection fix, token cap lookahead, eval on gemma4:31b (11/11, 0 hidden) in docs/EVAL.md and api/test/eval-wordings.test.ts | `d16b216` |
 | F4 | done | Machine keys P6.T3 complete: mnd format, pepper HMAC, limits, expiry, last used, prefix display in api/test/agent-keys.test.ts, api/test/client-keys.test.ts | `d7e13cf` |
-| F5 | done | Real PayPal sandbox runs: order 51H50117X4794793P created, real refund 12C310409G863064M completed, payout batch D9RZNWUWD2F3A sent | pending |
+| F5 | done | Real PayPal sandbox runs: order 51H50117X4794793P created, real refund 12C310409G863064M completed, payout batch D9RZNWUWD2F3A sent | `c585599` |
 | F6 | not started | Submission documents | pending |
 | F7 | not started | Public repo readiness | pending |
 | F8 | not started | Final gates in fresh worktree | pending |
