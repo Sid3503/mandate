@@ -18,7 +18,7 @@ import { dollars } from '../lib/money'
 import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useSession, useToday, useWarrant } from '../lib/hooks'
 import type { Delivery, Proposal, Today as TodayData, TodayAction, TodayItem } from '../lib/types'
 import { canonicalCart } from '../lib/verify'
-import { explain, isPayout, KIND, type Names } from '../lib/words'
+import { explain, isPayout, KIND, paidPhase, type Names } from '../lib/words'
 
 const HOW: Record<NonNullable<TodayItem['how']>, { label: string; tone: 'auto' | 'ink' }> = {
   tap: { label: 'Your tap', tone: 'ink' },
@@ -294,7 +294,7 @@ function BillRow({ item, auto, accept, hosted = false }: { item: TodayData['read
       const charge = made.charge
       toast(charge.gate === 'DENY'
         ? { title: 'Refused', body: `${charge.clause}. Nothing was billed.`, tone: 'bad' }
-        : charge.phase === 'invoice_sent' || charge.phase === 'captured'
+        : charge.phase === 'invoice_sent' || paidPhase(charge.phase)
           ? { title: `Invoice sent to ${item.buyerName}`, body: `${dollars(item.amountCents)} for ${item.title}. It settles only when PayPal says it was paid.` }
           : { title: 'Billed', body: 'It is waiting for your tap.', tone: 'info' })
     },
@@ -415,6 +415,7 @@ function ItemRow({ item }: { item: TodayItem }) {
     onSuccess: (result, action) => {
       if (action === 'remind') toast({ title: 'Reminder sent', body: 'PayPal emailed the client about the invoice.', tone: 'info' })
       else if (action === 'cancel_payout') toast({ title: 'Payout cancelled', body: 'PayPal returned the money.', tone: 'info' })
+      else if (result && 'phase' in result && result.phase === 'settled_short') toast({ title: `Part paid ${dollars(result.settledCents ?? 0)} of ${dollars(result.amountCents)}`, body: 'PayPal confirmed what arrived. The rest is still owed.', tone: 'info' })
       else if (result && 'phase' in result && result.phase === 'captured') toast({ title: `Settled ${dollars(result.amountCents)}`, body: 'PayPal confirmed it.' })
       else if (action === 'settle' || action === 'check') toast({ title: 'Checked with PayPal', body: 'Not settled yet. Nothing is counted as paid until PayPal says so.', tone: 'info' })
     },

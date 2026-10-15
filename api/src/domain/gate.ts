@@ -1,3 +1,4 @@
+import { fundedPhase } from './phases'
 import type { WarrantBody } from './schemas'
 
 export const Clause = {
@@ -50,7 +51,7 @@ export type ParentPayment = {
   phase: string
 }
 
-/** A captured client charge that a contractor payout cites as its source of money. */
+/** A settled client charge that a contractor payout cites as its source of money. */
 export type FundingCharge = {
   kind: string
   phase: string
@@ -111,7 +112,7 @@ export type GateProposal = {
   actor?: string
 }
 
-/** Cents a captured client charge can still fund for contractors under the share rule. */
+/** Cents a settled client charge can still fund for contractors under the share rule. */
 export function fundableCents(warrant: WarrantBody, funding: FundingCharge): number {
   const net = Math.max(0, funding.capturedCents - funding.refundHeldCents)
   return Math.max(0, Math.floor((net * warrant.contractorShareBps) / 10_000) - funding.payoutHeldCents)
@@ -168,8 +169,8 @@ function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context:
   }
   if (proposal.kind === 'refund') {
     const parent = proposal.parent
-    if (!parent || parent.phase !== 'captured' || parent.payeeId !== proposal.payeeId || parent.currency !== proposal.currency) {
-      return deny(Clause.refundUnlinked, 'refund must cite a captured payment for the same payee')
+    if (!parent || !fundedPhase(parent.phase) || parent.payeeId !== proposal.payeeId || parent.currency !== proposal.currency) {
+      return deny(Clause.refundUnlinked, 'refund must cite a client payment that has settled, for the same payee')
     }
     if (parent.category !== proposal.category) {
       return deny(Clause.categoryMissing, 'refund category must match the captured payment')
@@ -205,8 +206,8 @@ function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context:
   }
   if (proposal.kind === 'payment' && warrant.fundingRequired) {
     const funding = proposal.funding ?? null
-    if (!proposal.fundingCaptureId || !funding || funding.kind !== 'charge' || funding.phase !== 'captured') {
-      return deny(Clause.fundingMissing, 'a contractor payout must cite a captured client payment')
+    if (!proposal.fundingCaptureId || !funding || funding.kind !== 'charge' || !fundedPhase(funding.phase)) {
+      return deny(Clause.fundingMissing, 'a contractor payout must cite a client payment that has settled')
     }
     if (!proposal.jobId || funding.jobId !== proposal.jobId) {
       return deny(Clause.fundingJobMismatch, `the cited client payment belongs to job ${funding.jobId ?? 'none'}`)

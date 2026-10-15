@@ -1248,7 +1248,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Propose a client charge (money in), a contractor payment (money out), or a refund. A payment must cite a captured client charge on the same job. The gate decides. This never captures. */
+        /** Propose a client charge (money in), a contractor payment (money out), or a refund. A payment must cite a settled client charge on the same job. The gate decides. This never captures. */
         post: {
             parameters: {
                 query?: never;

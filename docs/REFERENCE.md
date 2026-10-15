@@ -452,8 +452,21 @@ More detail is in [web/README.md](../web/README.md).
                                      │              └──► capture_refused (live order ≠ lock)
                                      ▼                                   │
                                   captured ◄─────────────────────────────┘
-                                  refunded (for kind: refund)
+                                  settled_short (an invoice paid for less than the lock; the rest is still owed)
+                                   refunded (for kind: refund)
 ```
+
+`settled_short` is the one phase that means money arrived for less than the lock. PayPal confirmed it and the
+payment's id is stored as the capture id, so a payout can be funded from it and a refund can cite it, but only
+for what actually arrived. The row is not finished: the invoice stays watched, and a later payment that completes
+the lock moves it to `captured`. A gap that nothing arrived for is never `settled_short`, because there is no
+payment to store an id from, so the row keeps refusing to settle and only the recorded delta changes.
+
+Every "has this settled?" question in the server reads one of the predicates in `api/src/domain/phases.ts`
+(`fullPhase`, `fundedPhase`, `paidPhase`) rather than comparing the phase to a literal, and one test fails if a raw
+`'captured'` comparison appears outside that file without a marked reason (`api/test/settlement-delta.test.ts`). The
+one deliberate exception is `amounts.match` (`api/src/services/audit.ts`), which asks whether the cents equal the
+lock: that is false of `settled_short` by construction, so it stays a literal comparison and is marked as such.
 
 Money reserved against the monthly cap counts contractor payouts in `locked`, `order_created`, `capture_inflight`, `payout_sent`, `payout_unclaimed` or `captured` within the month in the warrant timezone (`Asia/Kolkata`), minus refunded cents. Client charges never count against the contractor cap.
 
@@ -768,7 +781,7 @@ An Ollama Cloud open-weights model, through the Vercel AI SDK, as an MCP client 
 With `INVOICES=auto` (the default when PayPal is configured) a client charge is billed as a **PayPal invoice**, created server-side with the toolkit's `create_invoice`, `send_invoice` and `get_invoice`. No model ever sees those tools.
 
 - The invoice is built from the locked cart: the client, the cents, the proof link, and the proposal id as its reference. The invoice number is derived from the proposal id, so a crash between *create* and *save* is recovered by finding the draft instead of making another.
-- The charge settles only when PayPal reports the invoice `PAID` for exactly the locked cents under that reference. A part-paid invoice, a different total, a cancelled invoice, or a payment made outside PayPal is never counted as settled. The invoice payment's id becomes the capture id, so contractor funding and refunds work unchanged. A payment that arrives short is recorded on the row as `settledCents`, `deltaCents` (settled minus locked) and `deltaReason` (`full`, `partial`, `unexplained`), so the amount that actually arrived is a fact on the proposal and not only an event nobody reads. The reason is re-derived from PayPal on every sweep, so a later full payment overwrites `partial`, and a reason code added later can explain a row an earlier code could only call `unexplained`. The phase still reads `invoice_sent` while the amount is short: the short-settled phase is task S8 in `docs/ZORD_PASS.md`. A part-paid invoice appends `invoice.partial` once per change, not once per re-read, so the ledger says how many times the amount moved rather than how many times the server looked.
+- The charge settles in full only when PayPal reports the invoice `PAID` for exactly the locked cents under that reference. A part-paid invoice, a different total, a cancelled invoice, or a payment made outside PayPal is never `captured`. A different total, a cancelled invoice, or a payment made outside PayPal changes nothing at all. A payment that really arrived, for less than the lock, moves the row to `settled_short` and is recorded on the row as `settledCents`, `deltaCents` (settled minus locked) and `deltaReason` (`full`, `partial`, `unexplained`), so the amount that actually arrived is a fact on the proposal and not only an event nobody reads. The invoice payment's id becomes the capture id on both paths, so contractor funding and refunds work from a short settlement too, capped by what arrived. A gap nothing arrived for (`unexplained`) keeps the row refusing to settle, because there is no payment to store an id from. The reason is re-derived from PayPal on every sweep, so a later full payment overwrites it, and a reason code added later can explain a row an earlier code could only call `unexplained`. A part-paid invoice appends `invoice.partial` once per change, not once per re-read, so the ledger says how many times the amount moved rather than how many times the server looked.
 - A PayPal webhook for an invoice only names it. The server re-reads the invoice and settles on what PayPal says.
 - **Graceful fallback.** If the PayPal app has no Invoicing permission (the current sandbox app returns 403), the server records `invoice.unavailable` and bills by checkout instead. To use invoices for real, enable **Invoicing** on the app in the PayPal developer dashboard. Nothing in the code changes.
 

@@ -3,6 +3,7 @@ import { approvalProof } from '../domain/approvalProof'
 import type { ControlStore } from '../control/store'
 import type { ProposalRow, Repo } from '../db/repo'
 import { fundableCents } from '../domain/gate'
+import { arrivedCents, fundedPhase, fullPhase, RESERVED_PHASES } from '../domain/phases'
 import { monthWindow } from '../domain/period'
 import { WarrantBodySchema, type WarrantBody } from '../domain/schemas'
 import { proofHash, type Signer } from '../domain/signing'
@@ -38,7 +39,7 @@ export type AuditReport = {
 }
 
 /** Phases in which PayPal has, or may have, moved the money. */
-const MOVED = ['captured', 'refunded', 'payout_sent', 'payout_unclaimed', 'invoice_sent']
+const MOVED = ['captured', 'refunded', 'settled_short', 'payout_sent', 'payout_unclaimed', 'invoice_sent']
 const APPROVING_CLAUSES = ['amount.auto', 'standing.matched', 'standing.billing']
 
 export class AuditService {
@@ -165,6 +166,8 @@ export class AuditService {
     const failures: AuditCheck['failures'] = []
     let looked = 0
     for (const row of proposals) {
+      // phase-compare-ok: this check asks whether the cents equal the lock, not what the phase means. A
+      // `settled_short` row is by definition not the locked cents, so it must stay out of this count.
       if (row.phase !== 'captured' && row.phase !== 'refunded') continue
       looked += 1
       if (row.captured_amount_cents !== row.amount_cents) failures.push({ proposalId: row.id, detail: `locked ${row.amount_cents} cents but settled ${row.captured_amount_cents ?? 'nothing'}` })
@@ -175,13 +178,13 @@ export class AuditService {
   /** A contractor is paid only from client money that settled on the same job, and never more than their share. */
   private funded(proposals: ProposalRow[], versions: Map<number, WarrantBody>): AuditCheck {
     const failures: AuditCheck['failures'] = []
-    const reserved = proposals.filter((row) => row.kind === 'payment' && ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured'].includes(row.phase))
+    const reserved = proposals.filter((row) => row.kind === 'payment' && (RESERVED_PHASES as readonly string[]).includes(row.phase))
     const perCapture = new Map<string, { cents: number; share: number }>()
     for (const row of reserved) {
       const rules = versions.get(row.warrant_version)
       if (!rules?.fundingRequired) continue
       const funding = row.funding_capture_id ? proposals.find((item) => item.capture_id === row.funding_capture_id && item.kind === 'charge') : undefined
-      if (!funding || funding.phase !== 'captured') { failures.push({ proposalId: row.id, detail: 'paid out with no settled client payment behind it' }); continue }
+      if (!funding || !fundedPhase(funding.phase)) { failures.push({ proposalId: row.id, detail: 'paid out with no settled client payment behind it' }); continue }
       if (funding.job_id !== row.job_id) failures.push({ proposalId: row.id, detail: 'paid out of a client payment that belongs to a different job' })
       if (funding.currency !== row.currency) failures.push({ proposalId: row.id, detail: 'paid out in a different currency than the client payment' })
       const seen = perCapture.get(funding.capture_id!) ?? { cents: 0, share: 0 }
@@ -192,7 +195,7 @@ export class AuditService {
     for (const [captureId, seen] of perCapture) {
       const funding = proposals.find((item) => item.capture_id === captureId)!
       const refunded = proposals.filter((item) => item.kind === 'refund' && item.parent_capture_id === captureId && item.phase === 'refunded').reduce((sum, item) => sum + item.amount_cents, 0)
-      const allowed = fundableCents({ contractorShareBps: seen.share } as WarrantBody, { kind: 'charge', phase: 'captured', jobId: funding.job_id, currency: funding.currency, capturedCents: funding.captured_amount_cents ?? 0, refundHeldCents: refunded, payoutHeldCents: 0 })
+      const allowed = fundableCents({ contractorShareBps: seen.share } as WarrantBody, { kind: 'charge', phase: funding.phase, jobId: funding.job_id, currency: funding.currency, capturedCents: arrivedCents(funding), refundHeldCents: refunded, payoutHeldCents: 0 })
       if (seen.cents > allowed) failures.push({ proposalId: funding.id, detail: `${seen.cents} cents are promised out of a payment that can fund ${allowed}` })
     }
     return this.check('payouts.funded', 'Contractors were paid from money that had arrived', 'A payout must cite a settled client payment on the same job, in the same currency, and the total promised out of it never passes the contractor share.', reserved.length, failures)
@@ -202,7 +205,7 @@ export class AuditService {
   private cap(proposals: ProposalRow[], versions: Map<number, WarrantBody>, latest: WarrantBody | null): AuditCheck {
     const failures: AuditCheck['failures'] = []
     const groups = new Map<string, { cents: number; cap: number; ids: string[] }>()
-    const standing = proposals.filter((row) => row.kind === 'payment' && row.reserved_at && ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured'].includes(row.phase))
+    const standing = proposals.filter((row) => row.kind === 'payment' && row.reserved_at && (RESERVED_PHASES as readonly string[]).includes(row.phase))
     for (const row of standing) {
       const rules = versions.get(row.warrant_version) ?? latest
       if (!rules) continue
@@ -225,8 +228,8 @@ export class AuditService {
     for (const row of proposals) {
       if (!row.job_id) continue
       const job = jobs.get(row.job_id) ?? { in: 0, out: 0, refunded: 0 }
-      if (row.kind === 'charge' && row.phase === 'captured') job.in += row.captured_amount_cents ?? 0
-      if (row.kind === 'payment' && row.phase === 'captured') job.out += row.captured_amount_cents ?? 0
+      if (row.kind === 'charge' && fundedPhase(row.phase)) job.in += arrivedCents(row)
+      if (row.kind === 'payment' && fundedPhase(row.phase)) job.out += arrivedCents(row)
       if (row.kind === 'refund' && row.phase === 'refunded') job.refunded += row.amount_cents
       jobs.set(row.job_id, job)
     }
@@ -240,7 +243,10 @@ export class AuditService {
     for (const row of proposals) {
       const list = (events.get(row.id) ?? []).map((event) => event.type)
       if (!list.includes('proposal.created')) failures.push({ proposalId: row.id, detail: 'there is no record of how this was asked' })
-      const needs = row.phase === 'refunded' ? ['refund.completed'] : row.phase === 'captured' ? (row.kind === 'payment' && row.payout_batch_id ? ['payout.completed'] : ['capture.completed']) : []
+      const needs = row.phase === 'refunded' ? ['refund.completed']
+        : row.phase === 'settled_short' ? ['invoice.partial']
+        : fullPhase(row.phase) ? (row.kind === 'payment' && row.payout_batch_id ? ['payout.completed'] : ['capture.completed'])
+        : []
       for (const type of needs) if (!list.includes(type)) failures.push({ proposalId: row.id, detail: `settled, but the ledger has no ${type} event` })
     }
     return this.check('history.complete', 'The ledger explains everything', 'Every request has an event for how it was asked, and every settlement has the event that recorded PayPal confirming it.', proposals.length, failures)

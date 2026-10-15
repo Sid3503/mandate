@@ -21,14 +21,16 @@ describe('the settlement delta: what arrived, and why', () => {
     h.invoices.pay(h.invoiceId, 5_000)
     const partial = await call(h.app, 'POST', `/v1/proposals/${h.id}/capture`)
     expect(partial.json).toMatchObject({
-      phase: 'invoice_sent',
+      phase: 'settled_short',
       capturedAmountCents: null,
       settledCents: 5_000,
       deltaCents: -10_000,
       deltaReason: 'partial',
     })
-    // The job totals still read nothing: this pass records the delta, S2 feeds it to the totals.
-    expect((await call(h.app, 'GET', `/v1/jobs/${JOB}`)).json.totals.inCents).toBe(0)
+    // The money is really in, so the job totals count what arrived, and the contractor's share is fundable from it.
+    const job = (await call(h.app, 'GET', `/v1/jobs/${JOB}`)).json
+    expect(job.totals.inCents).toBe(5_000)
+    expect(job.charges[0].fundableCents).toBe(3_000)
   })
 
   it('records a full settlement as full, with no delta', async () => {
@@ -87,17 +89,19 @@ describe('the settlement delta: what arrived, and why', () => {
     h.invoices.pay(h.invoiceId, 5_000)
     await call(h.app, 'POST', `/v1/proposals/${h.id}/capture`)
     // The guard is what keeps a stuck invoice from rotating to the back of openInvoices, which orders by
-    // updated_at. Called at the row level, because the capture path writes its own phase every time and
-    // would mask an unguarded write here.
+    // updated_at. Called at the row level, so the check is about the guard and not the phase the settlement
+    // path writes alongside it.
     const bare = h.repo.proposal(h.id)!
-    expect(bare).toMatchObject({ settled_cents: 5_000, delta_cents: -10_000, delta_reason: 'partial' })
-    expect(h.repo.recordSettlement(h.id, 5_000, 'partial', '2026-10-15T01:00:00.000Z')).toBe(false)
+    expect(bare).toMatchObject({ phase: 'settled_short', settled_cents: 5_000, delta_cents: -10_000, delta_reason: 'partial' })
+    // The short path writes through settleShort. Same guard, and the same flag is what stops a part-paid
+    // invoice from appending an invoice.partial event on every sweep.
+    expect(h.repo.settleShort(h.id, 'CAP-INV-1', 5_000, 'partial', '2026-10-15T01:00:00.000Z')).toBe(false)
     const same = h.repo.proposal(h.id)!
     expect(same.updated_at).toBe(bare.updated_at)
     // A real change does write, so the guard is not a no-op.
-    expect(h.repo.recordSettlement(h.id, 9_000, 'partial', '2026-10-15T02:00:00.000Z')).toBe(true)
+    expect(h.repo.settleShort(h.id, 'CAP-INV-1', 9_000, 'partial', '2026-10-15T02:00:00.000Z')).toBe(true)
     const changed = h.repo.proposal(h.id)!
-    expect(changed).toMatchObject({ settled_cents: 9_000, delta_cents: -6_000, delta_reason: 'partial' })
+    expect(changed).toMatchObject({ phase: 'settled_short', settled_cents: 9_000, delta_cents: -6_000, delta_reason: 'partial' })
     expect(changed.updated_at).toBe('2026-10-15T02:00:00.000Z')
     // The reason alone is news too. S3 makes that reachable without the cents moving, and the event
     // that stops a part-paid invoice appending on every sweep is this same flag.

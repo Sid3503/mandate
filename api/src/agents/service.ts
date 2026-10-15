@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { ModelMessage } from 'ai'
 import { verdictFor, type Side } from '../domain/deal'
 import { resolveClient } from '../domain/gate'
+import { paidPhase } from '../domain/phases'
 import { WARRANT_ID } from '../domain/schemas'
 import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
@@ -610,7 +611,7 @@ export function guardedStream(userText: string, emit: (event: ClerkStreamEvent) 
     if (event.type === 'tool_end') {
       evidence.push(JSON.stringify(event.output ?? {}))
       const data = (event.output ?? {}) as Record<string, unknown>
-      if (event.ok && (data.phase === 'captured' || data.phase === 'refunded')) moved = true
+      if (event.ok && paidPhase(data.phase as string)) moved = true
     }
     if (event.type !== 'text') return emit(event)
     if (retracted) return

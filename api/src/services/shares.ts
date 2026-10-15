@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { Repo, ShareRow } from '../db/repo'
 import { Problem } from '../http/problem'
+import { paidPhase } from '../domain/phases'
 import type { MandateService } from './mandate'
 
 /**
@@ -97,11 +98,16 @@ export class ShareService {
       const mine = job.charges.filter((charge) => charge.payeeId === row.party_id)
       const invoices: NonNullable<ShareView['client']>['invoices'] = []
       for (const charge of mine) {
+        // phase-compare-ok: the client's own invoice reads "paid" only when the lock was paid in full. A part
+        // payment is shown as still due, which is what the client still owes on it.
         if (charge.phase === 'captured') invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'paid', payUrl: null, at: charge.updatedAt })
+        else if (paidPhase(charge.phase)) invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'due', payUrl: charge.invoiceUrl ?? charge.approveUrl ?? null, at: charge.updatedAt })
         else if (['invoice_sent', 'order_created'].includes(charge.phase)) invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'due', payUrl: charge.invoiceUrl ?? charge.approveUrl ?? null, at: charge.updatedAt })
       }
       return { ...base, role: 'client', with: null, client: { invoices } }
     }
+    // phase-compare-ok: the contractor's "has the client's money arrived" line reports only a full settlement.
+    // A part payment leaves it waiting, rather than telling a contractor they are about to be paid.
     const captured = job.charges.filter((charge) => charge.phase === 'captured')
     const clearing = captured.find((charge) => charge.clearing?.pending)
     const payouts: NonNullable<ShareView['contractor']>['payouts'] = []

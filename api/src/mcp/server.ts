@@ -5,6 +5,7 @@ import { DealTermsSchema } from '../domain/deal'
 import { explainClause, nextStep } from '../domain/explain'
 import { stableHash } from '../domain/hash'
 import { ProposalCreateSchema } from '../domain/schemas'
+import { arrivedCents, fundedPhase, paidPhase } from '../domain/phases'
 import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
 import type { ProposalView } from '../services/mandate'
@@ -112,7 +113,7 @@ function outcome(view: ProposalView, names: (id: string | null) => string, warra
     nextStep: nextStep({ gate: view.gate, phase: view.phase, kind: view.kind, clause: view.clause }),
     amount: dollars(view.amountCents),
     // Only what PayPal has confirmed. An agent that can only ask must not say more than this.
-    moneyMoved: view.phase === 'captured' ? dollars(view.capturedAmountCents ?? 0) : '$0.00',
+    moneyMoved: fundedPhase(view.phase) ? dollars(arrivedCents({ settled_cents: view.settledCents, captured_amount_cents: view.capturedAmountCents })) : '$0.00',
     ...(view.gate === 'DENY' && options.length > 0 ? { whatWouldPass: options } : {}),
   }
 }
@@ -297,7 +298,7 @@ export function createMandateMcpServer(context: McpContext): McpServer {
           refused: (row) => row.gate === 'DENY' || row.phase === 'capture_refused' || row.phase === 'payout_failed',
           waiting: (row) => row.phase === 'pending_approval',
           approved: (row) => ['locked', 'order_created', 'invoice_sent', 'payout_sent', 'payout_unclaimed'].includes(row.phase),
-          paid: (row) => row.phase === 'captured' || row.phase === 'refunded',
+          paid: (row) => paidPhase(row.phase),
         }
         const rows = services.mandate.listProposals(100, null).data.filter((row) => test[status]!(row) && (!jobId || row.jobId === jobId)).slice(0, limit)
         return json({

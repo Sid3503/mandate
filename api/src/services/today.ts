@@ -3,6 +3,7 @@ import type { ProposalRow, Repo } from '../db/repo'
 import type { DealTerms } from '../domain/deal'
 import { explainClause } from '../domain/explain'
 import { monthWindow } from '../domain/period'
+import { arrivedCents, fullPhase } from '../domain/phases'
 import { DEMO_JOB_ID, WARRANT_ID, type WarrantBody } from '../domain/schemas'
 import type { DealService } from './deals'
 import type { MandateService } from './mandate'
@@ -212,10 +213,10 @@ export class TodayService {
     return { complete: steps.every((step) => step.done), steps }
   }
 
-  /** Milestone 0 of the frozen job has a captured client charge. */
+  /** Milestone 0 of the frozen job has a client charge that settled in full. */
   private milestoneCaptured(): boolean {
     const deal = this.repo.agreedDealByJob(DEMO_JOB_ID)
-    return Boolean(deal && this.repo.chargeForMilestone(deal.id, 0)?.phase === 'captured')
+    return Boolean(deal && fullPhase(this.repo.chargeForMilestone(deal.id, 0)?.phase ?? ''))
   }
 
   /**
@@ -253,7 +254,7 @@ export class TodayService {
       return { step: client ? `${client.name} must pay ${client.email} in PayPal, not in this console.` : 'The client must pay in PayPal, not in this console.', rules: null }
     }
     if (charge.phase === 'capture_inflight') return { step: `PayPal is settling the ${money} charge for milestone 0.`, rules: null }
-    if (charge.phase !== 'captured') return { step: `The ${money} charge for milestone 0 is not finished.`, rules: null }
+    if (!fullPhase(charge.phase)) return { step: `The ${money} charge for milestone 0 is not finished.`, rules: null }
     return { step: this.payoutStep(charge, body), rules: this.rulesHint(body, terms) }
   }
 
@@ -281,10 +282,10 @@ export class TodayService {
     const payee = body?.payees.find((item) => item.id === FROZEN_PAYEE) ?? body?.payees[0]
     const payeeId = payee?.id ?? FROZEN_PAYEE
     const payouts = (charge.capture_id ? this.repo.proposalsForJob(DEMO_JOB_ID) : []).filter((row) => row.kind === 'payment' && row.funding_capture_id === charge.capture_id && row.payee_id === payeeId && !DEAD_PAYOUT.has(row.phase))
-    if (payouts.some((row) => row.phase === 'captured')) return null
-    const payout = [...payouts].reverse().find((row) => row.phase !== 'captured')
+    if (payouts.some((row) => fullPhase(row.phase))) return null
+    const payout = [...payouts].reverse().find((row) => !fullPhase(row.phase))
     if (!payout) {
-      const net = Math.max(0, (charge.captured_amount_cents ?? charge.amount_cents) - (charge.capture_id ? this.repo.refundedCents(charge.capture_id) : 0))
+      const net = Math.max(0, (arrivedCents(charge) || charge.amount_cents) - (charge.capture_id ? this.repo.refundedCents(charge.capture_id) : 0))
       const share = Math.floor((net * (body?.contractorShareBps ?? 0)) / 10_000)
       return `Ask to pay ${payee?.displayName ?? 'the contractor'} ${dollars(share)} from the capture for milestone 0.`
     }

@@ -58,15 +58,15 @@ describe('billing a client with a PayPal invoice', () => {
     expect(refund.json.clause).not.toBe('refund.unlinked')
   })
 
-  it('does not call an invoice settled when PayPal says it was paid a different amount', async () => {
+  it('settles an invoice short when PayPal says it was paid a different amount, and counts what arrived', async () => {
     const { app, id, invoices } = await billed(new FakeInvoices())
     const sent = (await call(app, 'POST', `/v1/proposals/${id}/capture`)).json
     invoices.pay(sent.invoiceId, 5_000)
     const partial = await call(app, 'POST', `/v1/proposals/${id}/capture`)
-    expect(partial.json).toMatchObject({ phase: 'invoice_sent', capturedAmountCents: null })
+    expect(partial.json).toMatchObject({ phase: 'settled_short', capturedAmountCents: null })
     const events = (await call(app, 'GET', `/v1/proposals/${id}/packet`)).json.events.map((e: { type: string }) => e.type)
     expect(events).toContain('invoice.partial')
-    expect((await call(app, 'GET', `/v1/jobs/${JOB}`)).json.totals.inCents).toBe(0)
+    expect((await call(app, 'GET', `/v1/jobs/${JOB}`)).json.totals.inCents).toBe(5_000)
   })
 
   it('appends one invoice.partial however many times the sweep runs, and one more when the cents move', async () => {

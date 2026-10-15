@@ -12,7 +12,7 @@ import { shortId, when } from '../lib/format'
 import { useNames, useNarrow, useProposals, useWarrant } from '../lib/hooks'
 import { dollars } from '../lib/money'
 import type { ActivityRow, LedgerEvent, Proposal } from '../lib/types'
-import { EVENT, explain, GATE, KIND, phaseInfo } from '../lib/words'
+import { EVENT, explain, GATE, KIND, paidPhase, phaseInfo } from '../lib/words'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -41,7 +41,7 @@ const PRESETS: Array<{ id: Preset; label: string; test: (row: Proposal) => boole
   { id: 'all', label: 'Everything', test: () => true },
   { id: 'refused', label: 'Refused', test: (row) => row.gate === 'DENY' || row.phase === 'capture_refused' || row.phase === 'payout_failed' },
   { id: 'waiting', label: 'Waiting for you', test: (row) => row.phase === 'pending_approval' },
-  { id: 'settled', label: 'Settled', test: (row) => row.phase === 'captured' || row.phase === 'refunded' },
+  { id: 'settled', label: 'Settled', test: (row) => paidPhase(row.phase) },
   { id: 'in', label: 'Money in', test: (row) => row.kind === 'charge' },
   { id: 'out', label: 'Money out', test: (row) => row.kind === 'payment' },
 ]
