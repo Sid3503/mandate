@@ -80,9 +80,11 @@ app.post('/__fake/payouts/:outcome', async (c) => {
 // A dev server may set a cookie instead of reading ?key= from the URL
 app.get('/__fake/session', (c) => {
   const token = c.req.query('key') ?? 'owner-e2e-key-0123456789'
-  const workspace = c.req.query('workspace') ?? 'demo'
+  const workspace = c.req.query('workspace')
   c.header('set-cookie', `mandate_session=${token}; Path=/; SameSite=Lax`)
-  c.header('set-cookie', `mandate_workspace=${workspace}; Path=/; SameSite=Lax`, { append: true })
+  if (workspace) {
+    c.header('set-cookie', `mandate_workspace=${workspace}; Path=/; SameSite=Lax`, { append: true })
+  }
   const redirect = c.req.query('redirect')
   if (redirect) return c.redirect(redirect, 302)
   return c.json({ ok: true, session: 'cookie_set' })
