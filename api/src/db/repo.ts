@@ -172,6 +172,9 @@ export const RESERVED_PHASES = ['locked', 'order_created', 'capture_inflight', '
 /** A billed milestone stays billed unless its charge was refused or thrown away. */
 const DEAD_PHASES = ['denied', 'rejected', 'capture_refused', 'invoice_cancelled'] as const
 const RESERVED_SQL = RESERVED_PHASES.map((phase) => `'${phase}'`).join(', ')
+/** Everything that is not finished: waiting, locked, sent, out, or unclaimed. */
+export const OPEN_PHASES = ['pending_approval', 'locked', 'order_created', 'capture_inflight', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'] as const
+const OPEN_SQL = OPEN_PHASES.map((phase) => `'${phase}'`).join(', ')
 
 export type PayoutUpdate = {
   phase: string
@@ -236,6 +239,19 @@ export type NewProposal = {
   lockKeyId: string | null
   reservedAt: string | null
   now: string
+}
+
+/** The fields that decide what money a request asks for, and where it comes from. Two asks that agree on all of them are the same ask. */
+export type DuplicateKey = {
+  kind: string
+  payeeId: string | null
+  amountCents: number
+  currency: string
+  jobId: string | null
+  fundingCaptureId: string | null
+  dealId: string | null
+  milestone: number | null
+  parentCaptureId: string | null
 }
 
 const PROPOSAL_COLUMNS = `id, warrant_id, warrant_version, kind, parent_capture_id, payee_id, amount_cents, currency,
@@ -646,9 +662,27 @@ export class Repo {
   openProposals(limit: number): ProposalRow[] {
     return this.db.prepare(
       `SELECT ${PROPOSAL_COLUMNS} FROM proposals
-       WHERE phase IN ('pending_approval', 'locked', 'order_created', 'capture_inflight', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed')
+       WHERE phase IN (${OPEN_SQL})
        ORDER BY updated_at DESC, id DESC LIMIT ?`,
     ).all(limit) as ProposalRow[]
+  }
+
+  /**
+   * An open request that asks for exactly the same money, on the same job, in the same currency, from the same
+   * source. Used to refuse a second ask while the first is still live. Every field is part of "the same ask",
+   * and every one is null safe, so two asks with no deal, or no funding, still match each other. The description
+   * is deliberately not part of it: rewording the note does not make it a different ask.
+   */
+  openDuplicate(key: DuplicateKey): ProposalRow | null {
+    const found = this.db.prepare(
+      `SELECT ${PROPOSAL_COLUMNS} FROM proposals
+       WHERE phase IN (${OPEN_SQL})
+         AND kind = ? AND amount_cents = ? AND currency = ?
+         AND payee_id IS ? AND job_id IS ? AND funding_capture_id IS ?
+         AND deal_id IS ? AND milestone IS ? AND parent_capture_id IS ?
+       ORDER BY created_at ASC, id ASC LIMIT 1`,
+    ).get(key.kind, key.amountCents, key.currency, key.payeeId, key.jobId, key.fundingCaptureId, key.dealId, key.milestone, key.parentCaptureId)
+    return (found as ProposalRow | undefined) ?? null
   }
 
   /** Settled and refunded requests, newest activity first. */
