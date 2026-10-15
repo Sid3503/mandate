@@ -18,6 +18,18 @@ Comprehensive scan of the working tree and full git history across all branches 
 | `/Users/` | 18 | 18 | 1109 | fixture | Local filesystem paths in earlier e2e screenshot fixtures, replaced with portable relative `fileURLToPath` in current working tree. |
 | `C:\Users\` | 0 | 0 | 0 | fixture | Zero occurrences found across git history and working tree. |
 
+## Gitleaks History Scan
+
+Executed `gitleaks detect --source . --log-opts="--all" --redact`:
+- Commits scanned: 171 commits (9.08 MB)
+- Total hits: 3 hits
+- Rules triggered: `generic-api-key` (2 hits), `private-key` (1 hit)
+- Findings:
+  1. `api/test/ops-cleanup-scheduler.test.ts:336` (Rule `generic-api-key`): test fixture idempotency key header string in multi-tenant isolation test.
+  2. `api/test/ops-readyz-secret.test.ts:14` (Rule `private-key`): synthetic mock test string with trailing ellipsis in secret redaction unit test.
+  3. `web/src/lib/passkey-vector.json:9` (Rule `generic-api-key`): public RFC/W3C WebAuthn sample test vector for offline ES256 verification.
+- Classification: 100% test fixtures. Zero real secrets or live service credentials exist in git history.
+
 ## History Audit Status
 
 - `HISTORY_CLEAN=true`
