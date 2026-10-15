@@ -208,6 +208,11 @@ export function compareRules(before: WarrantBody, after: WarrantBody): { loosens
   if (after.automation.remindUnpaidAfterDays !== before.automation.remindUnpaidAfterDays || after.automation.maxReminders !== before.automation.maxReminders) {
     notes.push(after.automation.remindUnpaidAfterDays === null ? 'Unpaid invoices would no longer get automatic reminders.' : `Unpaid invoices would get PayPal's reminder after ${after.automation.remindUnpaidAfterDays} days, up to ${after.automation.maxReminders} times. This only nudges the client; it moves no money.`)
   }
+  // Part payment is the client's side of the invoice, not a widening of who may be paid: a client who pays less
+  // settles for less, so it can only reduce what contractors are funded from. Reported, never called a loosening.
+  if (after.allowPartialPayment !== before.allowPartialPayment) {
+    notes.push(after.allowPartialPayment ? 'Invoices this studio sends could be paid in part. A part payment settles the request for what actually arrived, so contractors can only be funded up to their share of that. PayPal offers part payment to sellers in some countries only.' : 'Invoices this studio sends would have to be paid in full.')
+  }
   return { loosens, tightens, notes }
 }
 
@@ -216,6 +221,7 @@ function rulesInWords(body: WarrantBody): string {
   return [
     `Automatic (no tap) under ${money(body.autoSettleUnderCents)}. Monthly contractor cap ${money(body.monthlyCapCents)}. Per-payment ceiling ${money(body.perPaymentCeilingCents)}. Contractor share of a client payment ${body.contractorShareBps / 100}%.`,
     `Proof link required: ${body.evidenceRequired ? 'yes' : 'no'}. Payouts need client money first: ${body.fundingRequired ? 'yes' : 'no'}. Allowed work: ${body.categories.join(', ')}.`,
+    `Invoices may be paid in part: ${body.allowPartialPayment ? 'yes' : 'no'}.`,
     `Contractors: ${body.payees.map((p) => p.displayName).join(', ') || 'none'}. Clients: ${body.clients.map((p) => p.displayName).join(', ') || 'none'}.`,
     `Standing rules: ${body.standing.length === 0 ? 'none' : body.standing.map((r) => `${name(r.payeeId)} from ${r.clientIds.map(name).join(' or ')}${r.requireDeal ? ' (signed deals only)' : ''}${r.shareBps ? `, share ${r.shareBps / 100}%` : ''}`).join('; ')}.`,
     `Autopilot: bill signed deals ${body.automation.billSignedDeals ? (body.automation.requireAcceptance ? 'on, only after the client accepts' : 'on') : 'off'}; pay when the client pays ${body.automation.payOnSettle ? 'on' : 'off'}; remind unpaid invoices ${body.automation.remindUnpaidAfterDays ? `after ${body.automation.remindUnpaidAfterDays} days, up to ${body.automation.maxReminders}` : 'off'}.`,

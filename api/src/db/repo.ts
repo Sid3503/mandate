@@ -57,6 +57,8 @@ export type ProposalRow = {
   delta_cents: number | null
   /** Why the settled amount was not the locked amount. A closed code, never a model's word. */
   delta_reason: string | null
+  /** The PayPal field that reason was read from, when it was read from one. */
+  delta_source: string | null
   created_at: string
   updated_at: string
 }
@@ -258,7 +260,7 @@ const PROPOSAL_COLUMNS = `id, warrant_id, warrant_version, kind, parent_capture_
   category, description, evidence_url, prompt, gate, clause, detail, phase, cart_hash, order_id, capture_id,
   refund_id, approve_url, captured_amount_cents, reserved_at, job_id, funding_capture_id, payout_batch_id, payout_item_id,
   payout_status, payout_txn_id, payout_fee_cents, deal_id, milestone, lock_sig, lock_key_id, invoice_id, invoice_url,
-  invoice_status, settled_cents, delta_cents, delta_reason, created_at, updated_at`
+  invoice_status, settled_cents, delta_cents, delta_reason, delta_source, created_at, updated_at`
 
 /** How many transactions are open on each database, however many Repo objects look at it. */
 const DEPTH = new WeakMap<DatabaseSync, number>()
@@ -1013,11 +1015,17 @@ export class Repo {
   }
 
   /** A client paid an invoice. Same end state as a captured order, so funding and refunds work unchanged. */
-  markCaptured(id: string, captureId: string, amountCents: number, now: string): void {
+  /**
+   * A client paid in full. `capturedCents` is the lock, which is what the guarantee and the contractor share are
+   * measured against; `settledCents` is what PayPal reported arrived, which can be more than the lock when the
+   * payer adds a tip. Keeping the two apart is what lets `amounts.match` stay exact without hiding the money.
+   */
+  markCaptured(id: string, captureId: string, capturedCents: number, settledCents: number, now: string): void {
     this.db.prepare(
       `UPDATE proposals SET phase = 'captured', capture_id = ?, captured_amount_cents = ?, settled_cents = ?,
-         delta_cents = ? - amount_cents, delta_reason = 'full', updated_at = ? WHERE id = ? AND kind IN ('payment', 'charge')`,
-    ).run(captureId, amountCents, amountCents, amountCents, now, id)
+         delta_cents = ? - amount_cents, delta_reason = 'full', delta_source = NULL, updated_at = ?
+       WHERE id = ? AND kind IN ('payment', 'charge')`,
+    ).run(captureId, capturedCents, settledCents, settledCents, now, id)
   }
 
   /**
@@ -1027,11 +1035,11 @@ export class Repo {
    * orders by updated_at: bumping a stuck invoice every sweep would rotate it to the back of that queue.
    * Returns true when this was news, which is what stops a part-paid invoice appending an event a minute.
    */
-  recordSettlement(id: string, settledCents: number, reason: string, now: string): boolean {
+  recordSettlement(id: string, settledCents: number, reason: string, source: string | null, now: string): boolean {
     const written = this.db.prepare(
-      `UPDATE proposals SET settled_cents = ?, delta_cents = ? - amount_cents, delta_reason = ?, updated_at = ?
+      `UPDATE proposals SET settled_cents = ?, delta_cents = ? - amount_cents, delta_reason = ?, delta_source = ?, updated_at = ?
        WHERE id = ? AND (settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
-    ).run(settledCents, settledCents, reason, now, id, settledCents, reason)
+    ).run(settledCents, settledCents, reason, source, now, id, settledCents, reason)
     return Number(written.changes) > 0
   }
 
@@ -1049,13 +1057,13 @@ export class Repo {
    * unexplained. Writes only on change, because `openInvoices` orders by updated_at. Returns true when the
    * settlement was news.
    */
-  settleShort(id: string, captureId: string | null, settledCents: number, reason: string, now: string): boolean {
+  settleShort(id: string, captureId: string | null, settledCents: number, reason: string, source: string | null, now: string): boolean {
     const written = this.db.prepare(
       `UPDATE proposals SET phase = 'settled_short', capture_id = COALESCE(capture_id, ?), settled_cents = ?,
-         delta_cents = ? - amount_cents, delta_reason = ?, updated_at = ?
+         delta_cents = ? - amount_cents, delta_reason = ?, delta_source = ?, updated_at = ?
        WHERE id = ? AND kind = 'charge'
          AND (phase IS NOT 'settled_short' OR settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
-    ).run(captureId, settledCents, settledCents, reason, now, id, settledCents, reason)
+    ).run(captureId, settledCents, settledCents, reason, source, now, id, settledCents, reason)
     return Number(written.changes) > 0
   }
 

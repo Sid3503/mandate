@@ -1039,6 +1039,8 @@ export interface paths {
                         contractorShareBps?: number;
                         /** @default 0 */
                         clearingDays?: number;
+                        /** @default false */
+                        allowPartialPayment?: boolean;
                         /** @default [] */
                         standing?: {
                             id: string;
@@ -4871,6 +4873,10 @@ export interface paths {
                             dueDate?: string;
                             /** @default true */
                             proofRequired?: boolean;
+                            earlyPaymentDiscount?: {
+                                percentBps: number;
+                                days: number;
+                            };
                         };
                         /** @enum {string} */
                         as?: "buyer" | "seller";
@@ -5736,6 +5742,8 @@ export interface components {
             contractorShareBps: number;
             /** @default 0 */
             clearingDays: number;
+            /** @default false */
+            allowPartialPayment: boolean;
             /** @default [] */
             standing: {
                 id: string;
@@ -5815,8 +5823,10 @@ export interface components {
             settledCents: number | null;
             /** @description settledCents minus the locked amount. Negative means the client paid less. */
             deltaCents: number | null;
-            /** @description Why the settled amount was not the locked amount: full, partial, unexplained. Closed list. */
+            /** @description Why the settled amount was not the locked amount: full, early_discount, credit_note, paypal_fee, partial or unexplained. Closed list, and a code is only used when the PayPal field behind it was present. */
             deltaReason: string | null;
+            /** @description The PayPal field deltaReason was read from, for example early_payment_discount. Null when PayPal reported nothing that could explain the gap. */
+            deltaSource: string | null;
             payoutBatchId: string | null;
             payoutItemId: string | null;
             payoutStatus: string | null;

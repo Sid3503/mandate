@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { RESERVED_PHASES, type Repo, type ProposalRow, type ProposalKind, type PayoutUpdate } from '../db/repo'
-import { clearingState, Clause, decide, fundableCents, type Decision, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
+import { clearingState, Clause, decide, fundableCents, fundingArithmetic, type Decision, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
 import { approvalProof, type ApprovalProof } from '../domain/approvalProof'
 import { cartHash, stableHash, type CartFields } from '../domain/hash'
 import { acceptanceMessage, lockMessage, proofHash, type Signer } from '../domain/signing'
 import { monthWindow } from '../domain/period'
 import { arrivedCents, fullPhase, fundedPhase, PAID_PHASES, paidPhase, watchedInvoicePhase } from '../domain/phases'
+import { ATTRIBUTED_REASONS, explainDelta, explainTotal, SOURCE_OF, type InvoiceMoney } from '../domain/settlement'
+import { DealTermsSchema, type DealTerms } from '../domain/deal'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
 import { NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
@@ -64,6 +66,7 @@ export type ProposalView = {
   settledCents: number | null
   deltaCents: number | null
   deltaReason: string | null
+  deltaSource: string | null
   payoutBatchId: string | null
   payoutItemId: string | null
   payoutStatus: string | null
@@ -110,6 +113,7 @@ export function toView(row: ProposalRow): ProposalView {
     settledCents: row.settled_cents,
     deltaCents: row.delta_cents,
     deltaReason: row.delta_reason,
+    deltaSource: row.delta_source,
     payoutBatchId: row.payout_batch_id,
     payoutItemId: row.payout_item_id,
     payoutStatus: row.payout_status,
@@ -131,15 +135,36 @@ export function toView(row: ProposalRow): ProposalView {
 /** PayPal's reporting API wants 2026-10-05T10:00:00+0000, not the usual ISO with milliseconds and Z. */
 const payPalTime = (date: Date) => date.toISOString().replace(/\.\d+Z$/, '+0000')
 
+/** What PayPal reported about one invoice, in the shape the settlement rules read. */
+function moneyOf(live: LiveInvoice): InvoiceMoney {
+  return {
+    totalCents: live.totalCents,
+    paidCents: live.paidCents,
+    discountCents: live.discountCents,
+    earlyDiscountCents: live.earlyDiscountCents,
+    feeCents: live.feeCents,
+  }
+}
+
 /**
- * Why a payment that is not the locked amount fell short. A closed code read from PayPal's own numbers,
- * never from a model. S1 ships the three codes it can compute today. S3 adds early_discount, credit_note
- * and paypal_fee when it reads the breakdown fields. Until then a gap no field explains is unexplained,
- * which is the honest answer, not a guess.
+ * The deal's early-payment discount as PayPal wants it, when the deal carries one. The due date is this server's
+ * clock, not PayPal's: the deal said `days` from when the invoice goes out, and that is what PayPal is told.
  */
-function settlementReason(settledCents: number, lockedCents: number): 'full' | 'partial' | 'unexplained' {
-  if (settledCents >= lockedCents) return 'full'
-  return settledCents > 0 ? 'partial' : 'unexplained'
+function earlyPaymentDiscountOf(terms: DealTerms | null, now: Date): { percentBps: number; dueDate: string } | null {
+  const discount = terms?.earlyPaymentDiscount
+  if (!discount) return null
+  return { percentBps: discount.percentBps, dueDate: new Date(now.getTime() + discount.days * 86_400_000).toISOString().slice(0, 10) }
+}
+
+/** The terms of a deal that was already agreed, or null when the row cannot be read. Never throws on a stale row. */
+function dealTermsOf(json: string | undefined): DealTerms | null {
+  if (!json) return null
+  try {
+    const parsed = DealTermsSchema.safeParse(JSON.parse(json))
+    return parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
 }
 
 export class MandateService {
@@ -566,7 +591,7 @@ export class MandateService {
     }
     const now = this.iso()
     this.repo.transaction(() => {
-      this.repo.markCaptured(saved.id, captured.captureId, captured.amountCents, now)
+      this.repo.markCaptured(saved.id, captured.captureId, captured.amountCents, captured.amountCents, now)
       this.repo.insertEvent(randomUUID(), saved.id, 'capture.completed', saved.clause, {
         orderId: saved.order_id,
         captureId: captured.captureId,
@@ -840,8 +865,9 @@ export class MandateService {
     if (!row.invoice_id) {
       const warrant = this.repo.warrant(row.warrant_id, row.warrant_version)
       const client = warrant?.body.clients.find((item) => item.id === row.payee_id)
-      if (!client) throw new Problem(409, Clause.payeeUnknown, 'Client is not on the rules', 'The client for this charge is not on the rules it was approved under. Nothing was sent.')
+      if (!warrant || !client) throw new Problem(409, Clause.payeeUnknown, 'Client is not on the rules', 'The client for this charge is not on the rules it was approved under. Nothing was sent.')
       const number = invoiceNumberFor(row.id)
+      const terms = dealTermsOf(row.deal_id ? this.repo.deal(row.deal_id)?.terms_json : undefined)
       let invoiceId: string | null = null
       try {
         invoiceId = (await invoices.findByNumber(number))?.invoiceId ?? null
@@ -856,6 +882,10 @@ export class MandateService {
             note: row.prompt ?? row.description,
             recipientEmail: client.email,
             recipientName: client.displayName,
+            // Both come from something the owner signed, not from a constant here: whether this client may pay
+            // in part is a rule, and the discount is a term of the deal this charge bills.
+            allowPartialPayment: warrant.body.allowPartialPayment,
+            earlyPaymentDiscount: earlyPaymentDiscountOf(terms, this.now()),
           })).invoiceId
         }
       } catch (error) {
@@ -890,17 +920,24 @@ export class MandateService {
 
   private applyLiveInvoice(row: ProposalRow, live: LiveInvoice, by: 'server' | null = null): HttpResult {
     const paid = live.status === 'PAID' || live.status === 'PARTIALLY_PAID' || live.paidCents > 0
-    const mismatch = live.totalCents !== row.amount_cents || live.currency !== row.currency || (live.reference !== null && live.reference !== row.id)
-    if (mismatch) {
+    const money = moneyOf(live)
+    const ours = live.currency === row.currency && (live.reference === null || live.reference === row.id)
+    // A total that is not the locked amount is a different bill, unless a discount PayPal carries accounts for
+    // exactly the difference. The lock is still the authority; a discount the studio applied is not an edit to it.
+    const explainedTotal = live.totalCents === row.amount_cents ? null : explainTotal(row.amount_cents, money)
+    if (!ours || (live.totalCents !== row.amount_cents && !explainedTotal)) {
       // The invoice is not the one we locked. Whatever it says, we do not call it paid.
       return this.refuseLive(row, live.totalCents, live.currency)
     }
-    if (live.status === 'PAID' && live.paidCents === row.amount_cents && live.transactionId) {
+    const settlement = explainDelta(row.amount_cents, money)
+    if (settlement.reason === 'full' && live.status === 'PAID' && live.transactionId) {
       const now = this.iso()
       this.repo.transaction(() => {
-        this.repo.markCaptured(row.id, live.transactionId!, live.paidCents, now)
+        // The lock was paid, so this is a full settlement whatever the payer added: the guarantee is that the
+        // locked cents were paid, and what arrived sits beside it in settled_cents.
+        this.repo.markCaptured(row.id, live.transactionId!, row.amount_cents, settlement.settledCents, now)
         this.repo.setInvoiceStatus(row.id, live.status, now)
-        this.repo.insertEvent(randomUUID(), row.id, 'capture.completed', row.clause, { invoiceId: live.invoiceId, captureId: live.transactionId, amountCents: live.paidCents, via: 'invoice', ...(by ? { by } : {}) }, now)
+        this.repo.insertEvent(randomUUID(), row.id, 'capture.completed', row.clause, { invoiceId: live.invoiceId, captureId: live.transactionId, amountCents: settlement.settledCents, via: 'invoice', ...(by ? { by } : {}) }, now)
       })
       return { status: 200, body: toView(this.require(row.id)) }
     }
@@ -917,18 +954,24 @@ export class MandateService {
       this.repo.setPhase(row.id, 'invoice_cancelled', now)
       this.repo.insertEvent(randomUUID(), row.id, 'invoice.cancelled', row.clause, { invoiceId: live.invoiceId, reason: 'cancelled at PayPal' }, now)
     } else if (paid) {
-      // Paid, but not in full or not through PayPal: the money is not the locked cents, so it is not called captured.
-      // Money that really arrived settles the row short, and the payment id it came with is stored as the capture id,
-      // so a payout can be funded from it and a refund can cite it. A gap nothing arrived for cannot be settled,
-      // because there is no payment to store an id from: it is recorded, and it keeps refusing to settle.
-      const reason = settlementReason(live.paidCents, row.amount_cents)
+      // Paid, but not the locked cents: the money is not called captured. Money that really arrived settles the
+      // row short, and the payment id it came with is stored as the capture id, so a payout can be funded from it
+      // and a refund can cite it. A gap nothing arrived for cannot be settled, because there is no payment to
+      // store an id from: it is recorded, and it keeps refusing to settle.
+      const reason = settlement.reason
+      const source = SOURCE_OF[reason]
       this.repo.transaction(() => {
         // One divergence, one event. A sweep that learns nothing new writes no second row, and the same
         // flag that guards the stored delta guards the append, so the two can never disagree.
-        const news = reason === 'unexplained'
-          ? this.repo.recordSettlement(row.id, live.paidCents, reason, now)
-          : this.repo.settleShort(row.id, live.transactionId, live.paidCents, reason, now)
-        if (news) this.repo.insertEvent(randomUUID(), row.id, 'invoice.partial', row.clause, { invoiceId: live.invoiceId, paidCents: live.paidCents, lockedCents: row.amount_cents, reason }, now)
+        //
+        // Only a reason a PayPal field stands behind moves the row to a settled phase. `unexplained` means nothing
+        // arrived, and a `full` that PayPal has not marked the invoice PAID for yet is money in flight: both are
+        // recorded and left on the invoice, so a row never claims a settlement PayPal has not confirmed, and
+        // `amounts.explained` can rely on every short phase carrying a reason with a field behind it.
+        const news = ATTRIBUTED_REASONS.includes(reason)
+          ? this.repo.settleShort(row.id, live.transactionId, settlement.settledCents, reason, source, now)
+          : this.repo.recordSettlement(row.id, settlement.settledCents, reason, source, now)
+        if (news) this.repo.insertEvent(randomUUID(), row.id, 'invoice.partial', row.clause, { invoiceId: live.invoiceId, paidCents: live.paidCents, lockedCents: row.amount_cents, reason, source }, now)
       })
     }
     return { status: 200, body: toView(this.require(row.id)) }
@@ -1547,7 +1590,7 @@ export class MandateService {
     if (state.disputed) return { clause: Clause.fundingDisputed, detail: `the client has an open PayPal dispute on ${row.funding_capture_id}` }
     const available = fundableCents(warrant, state)
     if (row.amount_cents > available) {
-      return { clause: Clause.fundingExceeds, detail: `client payment ${row.funding_capture_id} can fund ${available} more cents` }
+      return { clause: Clause.fundingExceeds, detail: fundingArithmetic(warrant, state, row.funding_capture_id, row.amount_cents) }
     }
     return null
   }
@@ -1804,5 +1847,6 @@ function emptyWarrant(): WarrantBody {
     fundingRequired: false,
     contractorShareBps: 10_000,
     clearingDays: 0,
+    allowPartialPayment: false,
   }
 }

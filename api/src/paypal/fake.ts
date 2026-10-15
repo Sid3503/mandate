@@ -199,7 +199,24 @@ export class FakePayPal implements PayPalPort {
 }
 
 export class FakeInvoices implements InvoicePort {
-  readonly invoices = new Map<string, { number: string; proposalId: string; totalCents: number; currency: string; status: string; reference: string; transactionId: string | null; paidCents: number; email: string }>()
+  readonly invoices = new Map<string, {
+    number: string
+    proposalId: string
+    totalCents: number
+    currency: string
+    status: string
+    reference: string
+    transactionId: string | null
+    paidCents: number
+    email: string
+    discountCents: number | null
+    earlyDiscountCents: number | null
+    feeCents: number | null
+    allowPartialPayment: boolean
+    earlyPaymentDiscount: { percentBps: number; dueDate: string } | null
+  }>()
+  /** The last draft this server asked for, so a test can read exactly what was sent to PayPal. */
+  lastCreate: InvoiceRequest | null = null
   createCalls = 0
   sendCalls = 0
   /** When set, creating fails the way an app without Invoicing permission does. */
@@ -210,10 +227,26 @@ export class FakeInvoices implements InvoicePort {
   async createDraft(input: InvoiceRequest) {
     if (this.unauthorised) throw new PayPalError(403, 'PAYPAL_API_HTTP_ERROR', null, 'Authorization failed due to insufficient permissions.')
     this.createCalls += 1
+    this.lastCreate = input
     const existing = [...this.invoices.entries()].find(([, item]) => item.number === input.invoiceNumber)
     if (existing) throw new PayPalError(422, 'DUPLICATE_INVOICE_NUMBER', null, 'invoice number')
     const invoiceId = `INV2-${input.proposalId.replaceAll('-', '').slice(0, 12).toUpperCase()}`
-    this.invoices.set(invoiceId, { number: input.invoiceNumber, proposalId: input.proposalId, totalCents: input.amountCents, currency: input.currency, status: 'DRAFT', reference: input.proposalId, transactionId: null, paidCents: 0, email: input.recipientEmail })
+    this.invoices.set(invoiceId, {
+      number: input.invoiceNumber,
+      proposalId: input.proposalId,
+      totalCents: input.amountCents,
+      currency: input.currency,
+      status: 'DRAFT',
+      reference: input.proposalId,
+      transactionId: null,
+      paidCents: 0,
+      email: input.recipientEmail,
+      discountCents: null,
+      earlyDiscountCents: null,
+      feeCents: null,
+      allowPartialPayment: input.allowPartialPayment,
+      earlyPaymentDiscount: input.earlyPaymentDiscount,
+    })
     return { invoiceId }
   }
 
@@ -239,6 +272,9 @@ export class FakeInvoices implements InvoicePort {
       transactionId: invoice.transactionId,
       reference: invoice.reference,
       payerUrl: `https://www.sandbox.paypal.com/invoice/p/#${invoiceId}`,
+      discountCents: invoice.discountCents,
+      earlyDiscountCents: invoice.earlyDiscountCents,
+      feeCents: invoice.feeCents,
     }
   }
 
@@ -273,6 +309,20 @@ export class FakeInvoices implements InvoicePort {
 
   setStatus(invoiceId: string, status: string) {
     this.invoices.get(invoiceId)!.status = status
+  }
+
+  /**
+   * The client pays part of the invoice. The amount PayPal reports accumulates, and any adjustment field PayPal
+   * would carry is set here, so a test decides exactly what the reason can be read from rather than inferring it.
+   */
+  payPartial(invoiceId: string, cents: number, adjustments: { discountCents?: number; earlyDiscountCents?: number; feeCents?: number } = {}) {
+    const invoice = this.invoices.get(invoiceId)!
+    invoice.paidCents += cents
+    if (adjustments.discountCents !== undefined) invoice.discountCents = adjustments.discountCents
+    if (adjustments.earlyDiscountCents !== undefined) invoice.earlyDiscountCents = adjustments.earlyDiscountCents
+    if (adjustments.feeCents !== undefined) invoice.feeCents = adjustments.feeCents
+    invoice.transactionId ??= `CAP-INV-${invoiceId.slice(5, 17)}`
+    invoice.status = invoice.paidCents >= invoice.totalCents ? 'PAID' : 'PARTIALLY_PAID'
   }
 
   /** Simulates PayPal reporting a different total than the one we asked for. */

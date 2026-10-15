@@ -118,6 +118,18 @@ export function fundableCents(warrant: WarrantBody, funding: FundingCharge): num
   return Math.max(0, Math.floor((net * warrant.contractorShareBps) / 10_000) - funding.payoutHeldCents)
 }
 
+/**
+ * The arithmetic behind a `funding.exceeds` refusal, in one sentence, so the gate, the page and the receipt all
+ * say the numbers the same way. The share is taken of what PayPal reported arrived, not of what was invoiced: a
+ * client who paid less can fund less, and a client who paid in full can fund the whole share.
+ */
+export function fundingArithmetic(warrant: WarrantBody, funding: FundingCharge, captureId: string | null, askedCents: number): string {
+  const net = Math.max(0, funding.capturedCents - funding.refundHeldCents)
+  const shareOf = Math.max(0, Math.floor((net * warrant.contractorShareBps) / 10_000))
+  const left = Math.max(0, shareOf - funding.payoutHeldCents)
+  return `client payment ${captureId ?? 'none'} settled ${net} cents; at a ${warrant.contractorShareBps / 100}% contractor share that is ${shareOf} cents, of which ${funding.payoutHeldCents} is already committed, so ${left} more cents is left; ${askedCents} cents was asked`
+}
+
 export type GateContext = {
   reservedCents: number
   priorCaptureIds: string[]
@@ -220,10 +232,7 @@ function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context:
     }
     const available = fundableCents(warrant, funding)
     if (proposal.amountCents > available) {
-      return deny(
-        Clause.fundingExceeds,
-        `client payment ${proposal.fundingCaptureId} can fund ${available} more cents at a ${warrant.contractorShareBps / 100}% contractor share`,
-      )
+      return deny(Clause.fundingExceeds, fundingArithmetic(warrant, funding, proposal.fundingCaptureId ?? null, proposal.amountCents))
     }
   }
   if (warrant.evidenceRequired && (!proposal.evidenceUrl || !httpsUrl(proposal.evidenceUrl))) {

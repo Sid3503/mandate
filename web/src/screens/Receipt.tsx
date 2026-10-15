@@ -10,7 +10,7 @@ import { when } from '../lib/format'
 import { useIsOwner, useNames, useOnline, useRefreshMoney, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { LedgerEvent, Packet, Warrant } from '../lib/types'
-import { AGENT_LABEL, EVENT, explain, fundedPhase, fullPhase, isPayout, KIND, paidPhase, type Names } from '../lib/words'
+import { AGENT_LABEL, EVENT, explain, fundedPhase, fullPhase, isPayout, KIND, namedAdjustment, paidPhase, settlementLine, type Names } from '../lib/words'
 
 export function Receipt() {
   const { id = '' } = useParams()
@@ -81,9 +81,10 @@ export function Receipt() {
             {p.cartHash ? <div className="panel-ink-sig"><Signature kind="lock" id={p.id} signature={p.lockSignature} keyId={p.lockKeyId} receipt={data} /></div> : null}
             <div className="match">
               <div><span>Approved</span><Money cents={data.amounts.approvedCents} size="lg" /></div>
-              <div><span>{p.kind === 'payment' ? 'Paid' : 'Settled'}</span><Money cents={data.amounts.capturedCents} size="lg" /></div>
-              <div className={`match-flag${data.amounts.match ? ' ok' : ''}`}>{data.amounts.match === null ? (p.kind === 'payment' ? 'not paid' : 'not settled') : data.amounts.match ? 'cents match ✓' : 'mismatch'}</div>
+              <div><span>{p.kind === 'payment' ? 'Paid' : 'Settled'}</span><Money cents={p.settledCents ?? p.capturedAmountCents} size="lg" /></div>
+              <div className={`match-flag${(p.deltaCents ?? 0) === 0 && data.amounts.match ? ' ok' : ''}`}>{settlementFlag(p)}</div>
             </div>
+            {settlementLine(p) && p.deltaCents ? <p className="fine">{settlementLine(p)}</p> : null}
           </section>
 
           {data.funding ? (
@@ -185,6 +186,18 @@ function DownloadReceipt({ packet }: { packet: Packet }) {
   return <button type="button" className="link" onClick={download}>Download receipt</button>
 }
 
+/**
+ * What the money did, in the words a receipt uses. A settlement short of the lock is a real settlement, not a
+ * mismatch, so it is named for what it is: the amount it fell short by, or the amount it went over by.
+ */
+function settlementFlag(p: Packet['proposal']): string {
+  const arrived = p.settledCents ?? p.capturedAmountCents
+  if (arrived === null || arrived === undefined) return p.kind === 'payment' ? 'not paid' : 'not settled'
+  const delta = p.deltaCents ?? 0
+  if (delta === 0) return 'cents match ✓'
+  return delta < 0 ? `short by ${dollars(-delta, p.currency)}` : `over by ${dollars(delta, p.currency)}`
+}
+
 function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant | undefined; names: Names }) {
   const p = packet.proposal
   const owner = useIsOwner()
@@ -193,7 +206,7 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
   const [claim, setClaim] = useState('')
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
   const toast = useToast()
-  const settle = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Settled ${dollars(done.amountCents)}`, body: 'PayPal confirmed it. The cents match the lock.' }); else if (done.phase === 'settled_short') toast({ title: `Part paid ${dollars(done.settledCents ?? 0)} of ${dollars(done.amountCents)}`, body: 'PayPal confirmed what arrived. The rest is still owed.', tone: 'info' }); else if (done.phase === 'invoice_sent') toast({ title: 'Invoice sent', body: 'It settles when the client pays it.', tone: 'info' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
+  const settle = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Settled ${dollars(done.amountCents)}`, body: 'PayPal confirmed it. The cents match the lock.' }); else if (done.phase === 'settled_short') toast({ title: `Settled short ${dollars(done.settledCents ?? 0)} of ${dollars(done.amountCents)}`, body: namedAdjustment(done.deltaReason) ? 'PayPal confirmed what arrived and named the difference in its own fields.' : 'PayPal confirmed what arrived and reported only part of the invoice as paid.', tone: 'info' }); else if (done.phase === 'invoice_sent') toast({ title: 'Invoice sent', body: 'It settles when the client pays it.', tone: 'info' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
   const tamper = useMutation({
     mutationFn: (cents: number) => api.capture(p.id, cents),
     onSettled: () => void refresh(),
@@ -431,7 +444,7 @@ function InvoicePanel({ packet, names }: { packet: Packet; names: Names }) {
   const refresh = useRefreshMoney()
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
   const toast = useToast()
-  const check = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Paid ${dollars(done.amountCents)}`, body: 'PayPal says the client paid the invoice.' }); else if (done.phase === 'settled_short') toast({ title: `Part paid ${dollars(done.settledCents ?? 0)} of ${dollars(done.amountCents)}`, body: 'PayPal says that much arrived. The rest is still owed.', tone: 'info' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
+  const check = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Paid ${dollars(done.amountCents)}`, body: 'PayPal says the client paid the invoice.' }); else if (done.phase === 'settled_short') toast({ title: `Settled short ${dollars(done.settledCents ?? 0)} of ${dollars(done.amountCents)}`, body: namedAdjustment(done.deltaReason) ? 'PayPal named the difference in its own fields.' : 'PayPal reported only part of the invoice as paid.', tone: 'info' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
   const owner = useIsOwner()
   const remind = useMutation({ mutationFn: () => api.remindInvoice(p.id), onSuccess: () => toast({ title: 'Reminder sent', body: 'PayPal emailed the client about the invoice.', tone: 'info' }), onSettled: () => void refresh() })
   const voidIt = useMutation({ mutationFn: () => api.cancelInvoice(p.id), onSuccess: () => toast({ title: 'Invoice cancelled', body: 'It can no longer be paid. The milestone can be billed again.', tone: 'info' }), onSettled: () => void refresh() })
@@ -440,11 +453,14 @@ function InvoicePanel({ packet, names }: { packet: Packet; names: Names }) {
   const arrived = p.settledCents ?? 0
   return (
     <section className="panel panel-lime" data-tour="receipt-action" aria-live="polite">
-      <div className="row between"><h2 className="panel-title">{partPaid ? `Part paid by ${names(p.payeeId)}` : `Waiting for ${names(p.payeeId)} to pay`}</h2><Chip tone="need">Invoice {packet.invoice?.status?.toLowerCase() ?? 'sent'}</Chip></div>
+      <div className="row between"><h2 className="panel-title">{partPaid ? `Settled short by ${names(p.payeeId)}` : `Waiting for ${names(p.payeeId)} to pay`}</h2><Chip tone="need">Invoice {packet.invoice?.status?.toLowerCase() ?? 'sent'}</Chip></div>
       {partPaid ? (
         <>
           <p className="payout-lead"><strong>PayPal says {names(p.payeeId)} paid {dollars(arrived, p.currency)} of the {dollars(p.amountCents, p.currency)} invoice.</strong></p>
-          <p>That {dollars(arrived, p.currency)} really arrived, so it counts and it can fund a payout. The other {dollars(Math.max(0, p.amountCents - arrived), p.currency)} is still owed, and this row stays open until PayPal says the whole invoice was paid. Nothing on this page can mark it paid.</p>
+          <p className="fine">{settlementLine(p)}</p>
+          <p>{namedAdjustment(p.deltaReason)
+            ? 'That money really arrived, so it counts and it can fund a payout, and the contractor share is taken from what arrived. PayPal named the difference in its own fields, so the difference is attributed rather than guessed at.'
+            : 'That money really arrived, so it counts and it can fund a payout, and the contractor share is taken from what arrived. PayPal reported only part of the invoice as paid and nothing accounts for the rest, so the rest is still owed and this row stays open until the whole invoice is paid.'}</p>
         </>
       ) : (
         <>
@@ -459,7 +475,7 @@ function InvoicePanel({ packet, names }: { packet: Packet; names: Names }) {
         {p.phase === 'invoice_sent' ? <button type="button" className="btn btn-ghost" disabled={!owner || !online || voidIt.isPending} onClick={() => voidIt.mutate()}>{voidIt.isPending ? 'Cancelling…' : 'Cancel this invoice'}</button> : null}
       </div>
       {checkedAt && check.isSuccess && !check.isPending && !fullPhase(p.phase) ? (
-        <div className="still-waiting" role="status"><Chip tone="need">{partPaid ? 'Part paid' : 'Still waiting'}</Chip><span>Checked PayPal at {checkedAt.toLocaleTimeString('en-US')}. {partPaid ? <>PayPal still reports {dollars(arrived, p.currency)} of {dollars(p.amountCents, p.currency)}, so nothing more has arrived.</> : <>The invoice has not been paid in full, so <strong>nothing is settled and $0 moved</strong>.</>}</span></div>
+        <div className="still-waiting" role="status"><Chip tone="need">{partPaid ? 'Settled short' : 'Still waiting'}</Chip><span>Checked PayPal at {checkedAt.toLocaleTimeString('en-US')}. {partPaid ? <>PayPal still reports {dollars(arrived, p.currency)} of {dollars(p.amountCents, p.currency)}, so nothing more has arrived.</> : <>The invoice has not been paid in full, so <strong>nothing is settled and $0 moved</strong>.</>}</span></div>
       ) : null}
       <ProblemCard error={check.error ?? remind.error ?? voidIt.error} />
     </section>

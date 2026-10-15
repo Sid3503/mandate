@@ -20,6 +20,9 @@ export const PAID_PHASES = ['captured', 'refunded', 'settled_short'] as const
 /** Money arrived and is still with the studio, so a payout may cite it and a refund may reverse it. */
 export const FUNDED_PHASES = ['captured', 'settled_short'] as const
 
+/** Less than the lock arrived. What a shortfall's reason was read from is on the row, in `delta_source`. */
+export const SHORT_PHASES = ['settled_short'] as const
+
 /** Nothing has finished yet: waiting, locked, sent, out, or unclaimed. */
 export const OPEN_PHASES = ['pending_approval', 'locked', 'order_created', 'capture_inflight', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'] as const
 
@@ -40,6 +43,7 @@ const members = (phases: readonly string[]) => new Set<string>(phases)
 const full = members(FULL_PHASES)
 const paid = members(PAID_PHASES)
 const funded = members(FUNDED_PHASES)
+const short = members(SHORT_PHASES)
 const watched = members(INVOICE_WATCH_PHASES)
 
 /** The lock was paid in full, to the cent. */
@@ -48,6 +52,8 @@ export const fullPhase = (phase: string): boolean => full.has(phase)
 export const paidPhase = (phase: string): boolean => paid.has(phase)
 /** Money arrived and is still with the studio, so a payout may cite it and a refund may reverse it. */
 export const fundedPhase = (phase: string): boolean => funded.has(phase)
+/** Less than the lock arrived. */
+export const shortPhase = (phase: string): boolean => short.has(phase)
 /** An invoice the server still re-reads from PayPal. */
 export const watchedInvoicePhase = (phase: string): boolean => watched.has(phase)
 

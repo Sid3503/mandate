@@ -452,15 +452,18 @@ More detail is in [web/README.md](../web/README.md).
                                      │              └──► capture_refused (live order ≠ lock)
                                      ▼                                   │
                                   captured ◄─────────────────────────────┘
-                                  settled_short (an invoice paid for less than the lock; the rest is still owed)
+                                  settled_short (an invoice that settled for less than the lock; the reason is PayPal's own)
                                    refunded (for kind: refund)
 ```
 
 `settled_short` is the one phase that means money arrived for less than the lock. PayPal confirmed it and the
 payment's id is stored as the capture id, so a payout can be funded from it and a refund can cite it, but only
 for what actually arrived. The row is not finished: the invoice stays watched, and a later payment that completes
-the lock moves it to `captured`. A gap that nothing arrived for is never `settled_short`, because there is no
-payment to store an id from, so the row keeps refusing to settle and only the recorded delta changes.
+the lock moves it to `captured`. The difference is recorded with the PayPal field it was read from (`deltaSource`):
+a discount PayPal says it applied early, a discount on the invoice itself, a fee PayPal reported, or, when PayPal
+reported no adjustment at all, the field that reported how much arrived. A gap that nothing arrived for is never
+`settled_short`, because there is no payment to store an id from, so the row keeps refusing to settle and only the
+recorded delta changes.
 
 Every "has this settled?" question in the server reads one of the predicates in `api/src/domain/phases.ts`
 (`fullPhase`, `fundedPhase`, `paidPhase`) rather than comparing the phase to a literal, and one test fails if a raw
@@ -492,6 +495,7 @@ Full API notes are in [api/README.md](../api/README.md).
 | Categories | `design`, `production` (so `lunch` is refused) |
 | Funding required | `true`: payouts must cite a captured client charge |
 | Contractor share | 6000 basis points (60%) of a client payment |
+| Part payment | `allowPartialPayment`, `false`: invoices this studio sends must be paid in full. PayPal offers part payment to sellers in some countries only (not India, Brazil or Israel), so this is a request to PayPal, not a guarantee |
 
 `PUT /v1/warrant` (owner only) writes the next version. Every proposal keeps the `warrantVersion` it was judged against. `GET /v1/warrant/versions` lists them all.
 
@@ -598,6 +602,7 @@ deal (signed) → delivery (proof link) → client's agent accepts (signed) → 
 | `locks.valid` | Every lock is the hash of the stored request and carries this server's signature. |
 | `moved.authorised` | Every request that moved money has a signed lock **and** either the owner's tap on that exact hash or a rule the owner signed (automatic line, standing rule, billing rule). |
 | `amounts.match` | What PayPal settled equals what was locked, to the cent. |
+| `amounts.explained` | A settlement short of the lock carries the PayPal field its reason was read from: a discount PayPal applied early, a credit on the bill, a fee PayPal reported, or the field that reported how much arrived. A row that claims a settlement with a reason no field stands behind fails. |
 | `payouts.funded` | Every payout cites a settled client payment on the same job, in the same currency, and the total promised out of one payment never passes the contractor share. |
 | `cap.respected` | In no month do the payouts still standing pass the cap that was in force when they were made. |
 | `jobs.in_covers_out` | No job paid out more than came in, after refunds. |
@@ -719,6 +724,7 @@ Before any money exists, two companies agree terms. Each company has its own **d
 | $200 in two milestones | Refused. `deal.under_seller_minimum` |
 | $300 in two $150 milestones | Agreed |
 
+- **Early-payment discount.** Terms may carry `earlyPaymentDiscount: { percentBps, days }` (optional). When a charge on that deal is billed as a PayPal invoice, the server asks PayPal for an early-payment discount of that percentage, due that many days after the server's clock, and PayPal reports back whether it was applied. Only the amount PayPal says it applied is ever used to explain a shortfall; a percentage on its own is not a number of cents.
 - **Privacy of limits.** An agent is told which of *its own* rules it broke, with the number. For the other side it is told only that their rules do not allow the terms, and which way to move (*Lower the total*). Notes an agent writes to the other side are scrubbed of its own private numbers before they are stored or shown.
 - **Who can speak for whom.** A key is bound to one side. The studio key speaks for the studio; a client key speaks for one client and can call only the deal routes and `/mcp`. The first client key is `BUYER_AGENT_KEY`; the rest are issued per client from the System page and rotate or revoke there. Pretending to be the other side is `403 deal.wrong_side`.
 - **Client keys.** `GET /v1/client-keys`, `POST /v1/client-keys` (`{name, partyId}`, owner only; the party must be a client on the rules), `POST /v1/client-keys/:id/revoke` and `POST /v1/client-keys/:id/rotate` (the old key dies as the new one is issued; shown once, hashed afterwards). A revoked key is refused with `403 client-key.revoked`.
@@ -781,7 +787,13 @@ An Ollama Cloud open-weights model, through the Vercel AI SDK, as an MCP client 
 With `INVOICES=auto` (the default when PayPal is configured) a client charge is billed as a **PayPal invoice**, created server-side with the toolkit's `create_invoice`, `send_invoice` and `get_invoice`. No model ever sees those tools.
 
 - The invoice is built from the locked cart: the client, the cents, the proof link, and the proposal id as its reference. The invoice number is derived from the proposal id, so a crash between *create* and *save* is recovered by finding the draft instead of making another.
-- The charge settles in full only when PayPal reports the invoice `PAID` for exactly the locked cents under that reference. A part-paid invoice, a different total, a cancelled invoice, or a payment made outside PayPal is never `captured`. A different total, a cancelled invoice, or a payment made outside PayPal changes nothing at all. A payment that really arrived, for less than the lock, moves the row to `settled_short` and is recorded on the row as `settledCents`, `deltaCents` (settled minus locked) and `deltaReason` (`full`, `partial`, `unexplained`), so the amount that actually arrived is a fact on the proposal and not only an event nobody reads. The invoice payment's id becomes the capture id on both paths, so contractor funding and refunds work from a short settlement too, capped by what arrived. A gap nothing arrived for (`unexplained`) keeps the row refusing to settle, because there is no payment to store an id from. The reason is re-derived from PayPal on every sweep, so a later full payment overwrites it, and a reason code added later can explain a row an earlier code could only call `unexplained`. A part-paid invoice appends `invoice.partial` once per change, not once per re-read, so the ledger says how many times the amount moved rather than how many times the server looked.
+- The charge settles in full only when PayPal reports the invoice `PAID` for exactly the locked cents under that reference. A part-paid invoice, a different total, a cancelled invoice, or a payment made outside PayPal is never `captured`. A payment that really arrived, for less than the lock, moves the row to `settled_short` and is recorded on the row as `settledCents`, `deltaCents` (settled minus locked), `deltaReason` and `deltaSource` (the PayPal field the reason was read from), so the amount that actually arrived is a fact on the proposal and not only an event nobody reads. The invoice payment's id becomes the capture id on both paths, so contractor funding and refunds work from a short settlement too, capped by what arrived.
+- **A short phase only ever carries an attributed reason.** Money that arrived with nothing behind it (`unexplained`) is recorded and left on the invoice, because there is no payment id to store as the capture id, and so is money that covers the lock while PayPal has not yet marked the invoice `PAID`. Both keep refusing to settle, so a `settled_short` row always has a reason a PayPal field stands behind, which is what lets the audit rely on it.
+- **Why a shortfall fell short.** `explainDelta` (`api/src/domain/settlement.ts`) answers this from PayPal's own fields, in this order: `early_payment_discount` (only when PayPal reports `is_applied`), then `amount.breakdown.discount` (a credit on the invoice), then `payments.transactions[].fee`. A field only explains the gap if its amount equals the gap **exactly**, so a discount that covers part of a shortfall does not get the credit for all of it. When nothing matches, the reason is `partial` and the field behind it is the one that reported how much arrived (`payments.paid_amount`). `full` means the lock was met or exceeded. `unexplained` means nothing arrived at all. A field that PayPal reports as a percentage with no amount is deliberately ignored: a percentage is not a number of cents.
+- **A total that moved.** A total below the lock is accepted only when a discount on the invoice explains the difference, and the row then settles short for what was actually paid; a total above the lock is always refused `cart.immutable`, exactly as before. `amounts.match` keeps its meaning: a full settlement still has to equal the locked cents to the cent.
+- **Overpayment.** When the payer sends more than the lock, the row settles `captured` for the locked cents, and the extra is recorded as `settledCents` with a positive `deltaCents` and reason `full`. The guarantee is untouched, and the tip is a fact on the row rather than a mismatch.
+- The reason is re-derived from PayPal on every sweep, so a later full payment overwrites it, and a reason code added later can explain a row an earlier code could only call `partial` or `unexplained`. A part-paid invoice appends `invoice.partial` once per change, not once per re-read, so the ledger says how many times the amount moved rather than how many times the server looked.
+- **What the server asks PayPal for.** `allow_partial_payment` comes from the rules version the charge was judged against (`allowPartialPayment`, off by default), and `early_payment_discount` comes from the deal's terms when the charge is a milestone on that deal. Nothing is sent that the owner did not sign.
 - A PayPal webhook for an invoice only names it. The server re-reads the invoice and settles on what PayPal says.
 - **Graceful fallback.** If the PayPal app has no Invoicing permission (the current sandbox app returns 403), the server records `invoice.unavailable` and bills by checkout instead. To use invoices for real, enable **Invoicing** on the app in the PayPal developer dashboard. Nothing in the code changes.
 

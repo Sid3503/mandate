@@ -163,7 +163,7 @@ export function NewRequest() {
                 <option value="">Choose a settled client payment</option>
                 {charges.map((row) => (
                   <option key={row.id} value={row.captureId ?? ''}>
-                    {names(row.payeeId)} · {dollars(row.capturedAmountCents)} · {row.jobId} · can fund {fundable.has(row.captureId ?? '') ? dollars(fundable.get(row.captureId ?? '')) : '…'}
+                    {names(row.payeeId)} · {dollars(row.settledCents ?? row.capturedAmountCents)} · {row.jobId} · can fund {fundable.has(row.captureId ?? '') ? dollars(fundable.get(row.captureId ?? '')) : '…'}
                   </option>
                 ))}
                 <option value={UNFUNDED}>Nothing yet · the client has not paid</option>
