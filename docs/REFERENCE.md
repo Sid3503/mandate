@@ -1010,7 +1010,7 @@ Auth is OAuth client credentials. The token is cached and never sent to the brow
 | Two payouts to `priya.shah@example.com` | US business | no account | Both `UNCLAIMED`, then cancelled and `RETURNED` from the receipt. |
 | Payout batch `EASAF4W2C3PDE` | US business | `priya.shah@example.com` | Sent by the server under a standing rule with no tap, `UNCLAIMED`, then cancelled and `RETURNED`. It also showed that PayPal refuses the cancel until the whole batch is `Processed` (`BATCH_NOT_COMPLETED`), which the console now explains. |
 | Order `51H50117X4794793P` | waiting on sandbox buyer | US business | Northwind $150 charge order created via gated route; capture skipped awaiting interactive browser buyer login. |
-| Refund `12C310409G863064M` | US business | Northwind | Real refund of $1.00 on capture `6GX18294LL7579630` via Mandate gated route. COMPLETED in real PayPal sandbox. |
+| Refund `12C310409G863064M` | US business | Northwind | Real refund of $1.00 on capture `6GX18294LL7579630` via Mandate gated route after parent proposal row was seeded in SQLite. COMPLETED in real PayPal sandbox. |
 | Payout batch `D9RZNWUWD2F3A` | US business | Priya | Contractor payout of $85.00 funded by capture `6GX18294LL7579630` via real PayPal Payouts v1 API. PENDING. |
 
 Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in the PayPal dashboard and `.env`.

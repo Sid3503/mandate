@@ -34,7 +34,7 @@ This pull request completes the final submission run for the PayPal AI Hackathon
 
 ### Rule tools
 - Natural language rule drafter evaluating wordings against deterministic safety rules with prompt injection defense and lookahead token budget caps:
-  - Real model eval (`gemma4:31b`, Oct 14 2026): 11/11 plain requests (100%), 0 hidden loosenings, 52,713 tokens used (halted before injection test group due to token cap).
+  - Real model eval (`gemma4:31b`, Oct 14 2026): 11 plain wordings evaluated only (100% pass, 0 hidden loosenings, 52,713 tokens used, halted cleanly before injection group due to token cap; full run needs ~145,000 tokens and was not done).
   - Prompt injection handling: fixed policy audit untrusted instruction preservation in `api/src/agents/drafter.ts`, verified 4/4 passing with scripted model in CI.
 - Try-it box with side-by-side spend proposal dry runs without writing rows to the database.
 - Tap-to-rule suggestions turning frequent manual approvals into safe automated rules with tap counts displayed on the Today dashboard.
@@ -108,15 +108,17 @@ All optional feature flags remain OFF by default:
 
 ## Human todo
 
-A checklist for production deployment is in [docs/HUMAN_TODO.md](file:///Users/siddharth.mishra/Desktop/paypal-ai-hack/docs/HUMAN_TODO.md):
+The authoritative checklist is in [docs/HUMAN_TODO.md](file:///Users/siddharth.mishra/Desktop/paypal-ai-hack/docs/HUMAN_TODO.md):
 1. Set AI model account monthly spend limit (5 minutes).
-2. Deploy web service to Render with persistent disk at `/data` (15 minutes).
-3. Configure `TRUST_PROXY=1` and `WEBAUTHN_RP_ID` domain (5 minutes).
-4. Run mobile phone passkey registration and unlock test (10 minutes).
-5. Record and upload 2:45 demo video following `docs/VIDEO_SCRIPT.md` (30 minutes).
-6. Submit Devpost entry using text from `docs/DEVPOST.md` (15 minutes).
-7. Key rotation: zero keys require rotation (history clean confirmed).
-8. Merge pull request to `main` without squashing history (3 minutes).
+2. Read gitleaks scan result in docs/SECRET_SCAN.md (HISTORY_CLEAN=true, zero rotation needed).
+3. Merge pull request to main without squashing history (3 minutes).
+4. Deploy web service to Render with persistent disk at `/var/data` (`DATABASE_PATH=/var/data/mandate.sqlite`) and configure environment variables (20 minutes). Note: persistent disk and continuous uptime require a paid instance type; check current Render plans.
+5. Run automated smoke test (`npm run smoke -- <url>`) and 10-step click path on the live URL (15 minutes).
+6. Run mobile phone passkey registration and unlock test (15 minutes).
+7. Register PayPal webhook and configure PAYPAL_WEBHOOK_ID (10 minutes).
+8. Run PageSpeed Insights on live URL (5 minutes).
+9. Record and upload 2:45 demo video following docs/VIDEO_SCRIPT.md (60 to 90 minutes).
+10. Submit Devpost entry using text from docs/DEVPOST.md (30 minutes).
 
 ## Checklist
 

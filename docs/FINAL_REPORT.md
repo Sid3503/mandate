@@ -81,7 +81,7 @@ This report documents the completion of the Mandate engineering runbook through 
 | **P8.T4** | done | Passkey publish ceremony bound to warrant body with grant reuse refusal: `api/test/stepup.test.ts`, `web/src/lib/api.ts` | `c3ebdb5` |
 | **P8.T5** | done | Policy paste with 20,000 char cap, 3-pass limit, and fenced untrusted prompt: `api/test/policy.test.ts`, `web/e2e/job.spec.ts` | `86984ae` |
 | **P8.T6** | done | Second reader wired behind `FLAG_SECOND_READER` off by default, executes when on: `api/test/drafter.test.ts` | `4a30cac` |
-| **P8.T7** | done | Eval of 30 wordings across 5 groups with scripted model in CI (checker only: 0 hidden loosenings), and real model eval (`gemma4:31b`: 11/11, 0 hidden loosenings, 52,697 tokens at 50,000 token cap): `api/test/eval-wordings.test.ts`, `api/scripts/eval-drafter.ts` | `59d7431` |
+| **P8.T7** | done | Eval of 30 wordings with scripted model in CI (0 hidden loosenings, 4/4 prompt injection cases set aside); real model eval on `gemma4:31b` evaluated 11 plain wordings only (100% pass, 0 hidden loosenings, 52,713 tokens, halted before injection group; full run estimated at ~145,000 tokens): `api/test/eval-wordings.test.ts`, `docs/EVAL.md` | `59d7431` |
 | **P9.T1** | done | Ask Mandate (Cmd/Ctrl + K) answering from ledger with no model: `web/e2e/job.spec.ts` | `e18d30c` |
 | **P9.T2** | done | Clerk context including receiptId and dealId across schemas and UI: `api/test/ask.test.ts` | `06f34de` |
 | **P9.T3** | done | Payee-role payments screen with settled shares and read-only access: `web/src/screens/PayeePayments.tsx`, `api/test/shares.test.ts` | `3c64831` |
@@ -176,8 +176,8 @@ Additionally, the centralized red team suite in `api/test/redteam.test.ts` exerc
   - **Today inside demo (`/app/`):** Performance 80, Accessibility 100, Best Practices 100, SEO 100.
   - Saved evidence files in `docs/evidence/q9/` and documented in `docs/PERF.md`.
 - **Model Evaluation:**
-  - Scripted model eval (`api/test/eval-wordings.test.ts`): labeled checker only (0 hidden loosenings).
-  - Real model eval (`api/scripts/eval-drafter.ts` using `gemma4:31b`): 11/11 plain requests carried out with nothing added (100%), 0 hidden loosenings, 52,697 tokens used (halted at token cap 50,000).
+  - Scripted model eval (`api/test/eval-wordings.test.ts`): labeled checker only (0 hidden loosenings, 4/4 prompt injection cases set aside).
+  - Real model eval (`api/scripts/eval-drafter.ts` using `gemma4:31b`): 11 plain wordings evaluated only (100% pass, 0 hidden loosenings, 52,713 tokens used, halted cleanly before injection test group due to token cap; full run needs ~145,000 tokens and was not done).
 - **Environment Preflight (`npm run preflight`):** Outputs `preflight ok`.
 - **Deploy Configuration:** `render.yaml` configured with persistent disk mount (`/var/data`, 1 GB) and `/ready` health check.
 
@@ -213,6 +213,6 @@ All feature flags remain **OFF by default** (`loadFlags({})`):
 
 ## 7. The Human List
 
-The human list, copied as written:
+The authoritative checklist is maintained in `docs/HUMAN_TODO.md`:
 
-set TRUST_PROXY=1 and a real domain for the passkey RP ID, a usage limit on the model account, a real phone passkey test, deploy, one unbroken live PayPal run, a real refund, the video, the deck, and the Devpost text.
+1 model account limit, 2 read the gitleaks result, 3 merge the PR, 4 Render deploy and env, 5 npm run smoke and the click path, 6 phone passkey test, 7 register the webhook and set PAYPAL_WEBHOOK_ID, 8 PageSpeed Insights on the live URL, 9 video, 10 Devpost.
