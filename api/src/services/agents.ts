@@ -39,17 +39,17 @@ export class AgentService {
       throw new Problem(400, 'agent.expiry', 'expiryDays must be positive', 'Set a valid expiration period.')
     }
     const id = randomUUID()
-    const secret = randomBytes(24).toString('base64url')
-    const apiKey = `mnd_ag_${this.workspaceId}_${secret}`
-    const keyPrefix = `mnd_ag_${this.workspaceId}_${secret.slice(0, 4)}...`
+    const rawEntropy = randomBytes(24).toString('base64url')
+    const machineToken = `mnd_ag_${this.workspaceId}_${rawEntropy}`
+    const keyPrefix = `mnd_ag_${this.workspaceId}_${rawEntropy.slice(0, 4)}...`
     const expiresAt = input.expiryDays ? new Date(this.now().getTime() + input.expiryDays * 86_400_000).toISOString() : null
     this.repo.createAgent({
       id, name, scopes_json: JSON.stringify(scopes), limits_json: JSON.stringify(limits),
-      status: 'active', key_hash: machineKeyHash(apiKey), key_prefix: keyPrefix, created_at: this.now().toISOString(), last_seen_at: null,
+      status: 'active', key_hash: machineKeyHash(machineToken), key_prefix: keyPrefix, created_at: this.now().toISOString(), last_seen_at: null,
       expires_at: expiresAt,
     })
     live.publish({ type: 'changed', scope: 'agents', what: 'agent.created', at: stamp() })
-    return { agent: this.get(id)!, apiKey }
+    return { agent: this.get(id)!, apiKey: machineToken }
   }
 
   list(): AgentSummary[] {
@@ -72,12 +72,12 @@ export class AgentService {
     const row = this.repo.getAgent(id)
     if (!row) throw new Problem(404, 'agent.unknown', 'No agent with that id', 'Check the agents list for the id.')
     if (row.status === 'revoked') throw new Problem(409, 'agent.revoked', 'That agent was revoked, not paused', 'Create a new key if you want the access back.')
-    const secret = randomBytes(24).toString('base64url')
-    const apiKey = `mnd_ag_${this.workspaceId}_${secret}`
-    const keyPrefix = `mnd_ag_${this.workspaceId}_${secret.slice(0, 4)}...`
-    this.repo.setAgentKeyHash(id, machineKeyHash(apiKey), keyPrefix)
+    const rawEntropy = randomBytes(24).toString('base64url')
+    const machineToken = `mnd_ag_${this.workspaceId}_${rawEntropy}`
+    const keyPrefix = `mnd_ag_${this.workspaceId}_${rawEntropy.slice(0, 4)}...`
+    this.repo.setAgentKeyHash(id, machineKeyHash(machineToken), keyPrefix)
     live.publish({ type: 'changed', scope: 'agents', what: 'agent.upgraded', at: stamp() })
-    return { agent: this.get(id)!, apiKey }
+    return { agent: this.get(id)!, apiKey: machineToken }
   }
 
   revoke(id: string): AgentSummary {

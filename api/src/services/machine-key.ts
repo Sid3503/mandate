@@ -56,21 +56,21 @@ export function acceptLegacyMachineKey(repo: Repo, token: string): void {
   // Check bare secret without prefix
   if (token.startsWith('mnd_ag_')) {
     const rest = token.slice('mnd_ag_'.length)
-    const secret = rest.includes('_') ? rest.slice(rest.lastIndexOf('_') + 1) : rest
+    const suffix = rest.includes('_') ? rest.slice(rest.lastIndexOf('_') + 1) : rest
     const row = repo.getAgentByKeyHash(plainHash(rest))
-      ?? repo.getAgentByKeyHash(plainHash(secret))
+      ?? repo.getAgentByKeyHash(plainHash(suffix))
       ?? repo.getAgentByKeyHash(machineKeyHash(rest))
-      ?? repo.getAgentByKeyHash(machineKeyHash(secret))
+      ?? repo.getAgentByKeyHash(machineKeyHash(suffix))
     if (row) repo.setAgentKeyHash(row.id, full)
     return
   }
   if (token.startsWith('mnd_cl_')) {
     const rest = token.slice('mnd_cl_'.length)
-    const secret = rest.includes('_') ? rest.slice(rest.lastIndexOf('_') + 1) : rest
+    const suffix = rest.includes('_') ? rest.slice(rest.lastIndexOf('_') + 1) : rest
     const row = repo.getClientKeyByKeyHash(plainHash(rest))
-      ?? repo.getClientKeyByKeyHash(plainHash(secret))
+      ?? repo.getClientKeyByKeyHash(plainHash(suffix))
       ?? repo.getClientKeyByKeyHash(machineKeyHash(rest))
-      ?? repo.getClientKeyByKeyHash(machineKeyHash(secret))
+      ?? repo.getClientKeyByKeyHash(machineKeyHash(suffix))
     if (row) repo.setClientKeyHash(row.id, full)
   }
 }

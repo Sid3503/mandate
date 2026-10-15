@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto'
+import { randomInt } from 'node:crypto'
 
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567'
 
@@ -8,8 +8,7 @@ export function isWorkspaceId(value: string): boolean {
 }
 
 export function newWorkspaceId(): string {
-  const bytes = randomBytes(20)
   let out = 'ws_'
-  for (let i = 0; i < 20; i += 1) out += ALPHABET[bytes[i]! % ALPHABET.length]
+  for (let i = 0; i < 20; i += 1) out += ALPHABET[randomInt(ALPHABET.length)]
   return out
 }

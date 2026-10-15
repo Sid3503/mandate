@@ -1481,7 +1481,7 @@ function tableCount(db: DatabaseSync, table: 'proposals' | 'events' | 'payees'):
 }
 
 function sameSecret(presented: string, expected: string): boolean {
-  const left = createHash('sha256').update(presented).digest()
-  const right = createHash('sha256').update(expected).digest()
-  return timingSafeEqual(left, right)
+  const a = Buffer.from(presented)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
 }
