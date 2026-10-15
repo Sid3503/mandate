@@ -66,6 +66,7 @@ const app = createApp({
     trustProxy: false,
     trustedProxyHops: product.trustedProxyHops,
     classedRates: false,
+    demoReset: true,
   },
 })
 

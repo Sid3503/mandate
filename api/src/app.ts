@@ -576,7 +576,7 @@ export function createApp(deps: AppDeps) {
   })
   // Hosted demos: put the ledger back to a fresh Line Studio. Absent unless the deployer switched it on, and never against real PayPal.
   app.post('/v1/demo/reset', async (c) => {
-    if (!deps.config.demoReset) throw new Problem(404, 'demo.off', 'Not available', 'This server was not started as a resettable demo.')
+    if (!deps.config.demoReset && deps.workspace?.mode !== 'demo') throw new Problem(404, 'demo.off', 'Not available', 'This server was not started as a resettable demo.')
     assertJson(c)
     const parsed = z.object({ confirm: z.literal('reset the demo') }).strict().safeParse(await readJson(c))
     if (!parsed.success) throw new Problem(422, 'demo.confirm', 'Type the confirmation', 'Send {"confirm":"reset the demo"} to wipe the ledger.')
