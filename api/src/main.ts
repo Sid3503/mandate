@@ -31,7 +31,7 @@ const signer = loadSigner({
   production: config.nodeEnv === 'production',
 })
 
-const sandbox = config.paypal ? !config.paypal.baseUrl.includes('api-m.paypal.com') : true
+const sandbox = config.paypal ? (() => { try { return new URL(config.paypal.baseUrl).hostname !== 'api-m.paypal.com' } catch { return true } })() : true
 const paypal = config.paypal ? createPayPalClient(config.paypal) : null
 const invoices = config.invoices && config.paypal ? createToolkitInvoices({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
 const watch = config.paypal ? createToolkitWatch({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
