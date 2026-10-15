@@ -21,22 +21,8 @@ export function LiveProof() {
           capture references, and passkey signatures.
         </p>
 
-        {query.isLoading ? <Loading label="Loading live proof…" /> : null}
+        {query.isLoading ? <Loading label="Loading live proof..." /> : null}
         <ProblemCard error={query.error} />
-
-        {!query.isLoading && files.length === 0 ? (
-          <div className="empty-state" data-testid="live-proof-empty" style={{ padding: '32px 0' }}>
-            <p className="mono" style={{ fontSize: '18px', fontWeight: 600, marginBottom: 8 }}>not added yet</p>
-            <p className="fine">
-              Live PayPal sandbox runs are recorded by human testing. Once added to <code className="mono">docs/live-proof/*.json</code>,
-              the verified receipts and PayPal capture IDs will appear here.
-            </p>
-            <div className="row gap-s wrap" style={{ marginTop: 16 }}>
-              <Link to="/verify" className="btn btn-ink btn-small">Verify any receipt here</Link>
-              <Link to="/proof" className="btn btn-ghost btn-small">View studio proof lines</Link>
-            </div>
-          </div>
-        ) : null}
 
         {files.length > 0 ? (
           <div className="proof-files-grid" data-testid="live-proof-files">
@@ -50,6 +36,17 @@ export function LiveProof() {
             ))}
           </div>
         ) : null}
+
+        <div className="empty-state" data-testid="live-proof-empty" style={{ padding: '24px 0', marginTop: files.length > 0 ? 20 : 0 }}>
+          <p className="mono" style={{ fontSize: '16px', fontWeight: 600, marginBottom: 8 }}>not added yet: interactive buyer login</p>
+          <p className="fine">
+            Live PayPal sandbox charge capture requires human buyer login at the approval URL. Steps needing interactive browser authentication remain marked not added yet until verified in a browser session.
+          </p>
+          <div className="row gap-s wrap" style={{ marginTop: 12 }}>
+            <Link to="/verify" className="btn btn-ink btn-small">Verify any receipt here</Link>
+            <Link to="/proof" className="btn btn-ghost btn-small">View studio proof lines</Link>
+          </div>
+        </div>
       </section>
     </div>
   )
