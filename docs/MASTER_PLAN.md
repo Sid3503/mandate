@@ -181,3 +181,5 @@ Web build: vite 8.3.2, 2452 modules, built in 875ms. Warning: some chunks are la
 Playwright (`npm --prefix web run e2e`): 112 passed (7.4m), 1 worker. Desktop tests 1 to 56 and phone tests 57 to 112, all in `web/e2e/job.spec.ts`. Axe runs inside that suite. "a receipt has a guide, and the open tour passes axe" is desktop 10 and phone 66. "every signed-in screen passes axe (WCAG 2.1 AA)" is desktop 30 and phone 86. No failures.
 
 P12.T3 complete: p95 read test passes in api/test/p95.test.ts, ControlRoom chunk split to 15.85 kB, mobile Lighthouse default throttling scored 56 perf / 98 a11y / 96 best practices / 100 SEO on Unlock (56/100/100/100 on Welcome and Today in demo); 4 vendor chunks exceed 1,000 kB uncompressed.
+
+Final run: 61 test files, 715 API tests passed, secret check passed, 135 Playwright tests passed, 20 guarantees verified. Lighthouse mobile: Welcome 90, Unlock 88, Today 80.

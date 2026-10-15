@@ -18,6 +18,7 @@ The numbers from the last run of those commands are filled in under "Baseline" a
 - Repair gate on 12 October 2026: `npm run gates` exited 0. Hygiene 23. Typecheck clean. API tests were 46 files, 542 tests, 8.50s. Secret check passed for 302 tracked files. The web build warned that `ControlRoom` is 4,602.45 kB. Playwright was 114 passed (7.6m): the existing 112, including axe, plus 2 passkey tests. Lighthouse was not run.
 - Later the same day, after `POST /ops/model/resume`: `npm run gates` exited 0 again. API tests were 46 files, 543 tests, 7.75s. Secret check passed for 306 tracked files. `ControlRoom` was still 4,602.45 kB. Playwright was 114 passed (7.5m). Lighthouse was not run. That repair run is the baseline before Phase 4. The 522 API tests and 112 Playwright tests above are the earlier audit, not that baseline.
 - Q0 gate on 12 October 2026, branch `q0-verify`: `npm run gates` exited 0. Hygiene 23. Typecheck clean. API tests were 47 files, 568 tests, 7.71s. Secret check passed for 313 tracked files. `ControlRoom` was still 4,602.45 kB. Playwright was 116 passed (7.5m), axe included. The two tests added after the repair baseline are the receipt canary and the Q0 passkey browser check. Lighthouse was not run.
+- Final run on `final/submission`: `npm run gates` passed with 61 test files, 715 API tests, 135 Playwright tests, 20 verified guarantees, clean secret check, and clean typecheck. Lighthouse mobile scores: Welcome 90, Unlock 88, Today 80.
 
 ## Assumptions that did not match the code
 
