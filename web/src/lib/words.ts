@@ -21,6 +21,7 @@ export const PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
   order_created: { label: 'Waiting on PayPal buyer', tone: 'need' },
   capture_inflight: { label: 'Settling', tone: 'ink' },
   captured: { label: 'Settled', tone: 'auto' },
+  settled_short: { label: 'Part paid · the rest is still owed', tone: 'need' },
   refunded: { label: 'Refunded', tone: 'auto' },
   capture_refused: { label: 'Refused at PayPal', tone: 'deny' },
   invoice_draft: { label: 'Invoice drafted', tone: 'need' },
@@ -42,6 +43,14 @@ const PAYOUT_PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
 export function phaseInfo(phase: string, kind?: Kind): { label: string; tone: 'deny' | 'auto' | 'need' | 'ink' | 'muted' } {
   return (kind === 'payment' ? PAYOUT_PHASE[phase] : undefined) ?? PHASE[phase] ?? { label: phase, tone: 'muted' }
 }
+
+/**
+ * Mirrors `api/src/domain/phases.ts`. The web has no server import, so these three questions are repeated here.
+ * `captured` is the lock paid in full; `settled_short` is money that really arrived, for less than the lock.
+ */
+export const fullPhase = (phase: string): boolean => phase === 'captured'
+export const fundedPhase = (phase: string): boolean => phase === 'captured' || phase === 'settled_short'
+export const paidPhase = (phase: string): boolean => phase === 'captured' || phase === 'settled_short' || phase === 'refunded'
 
 /** A contractor payout that is approved, sent, or finished. It is paid through PayPal Payouts, never Orders checkout. */
 export function isPayout(proposal: Pick<Proposal, 'kind'>): boolean {
@@ -66,7 +75,7 @@ export const EVENT: Record<string, string> = {
   'invoice.created': 'PayPal invoice drafted',
   'invoice.sent': 'Invoice sent to the client',
   'invoice.status': 'PayPal updated the invoice',
-  'invoice.partial': 'Invoice part-paid, not counted as settled',
+  'invoice.partial': 'Invoice part paid, short of the lock',
   'invoice.unavailable': 'Invoicing not permitted, used checkout instead',
   'payout.sent': 'Payout sent to PayPal',
   'payout.status': 'PayPal is processing the payout',

@@ -8,7 +8,7 @@ import { newKey } from '../lib/format'
 import { useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useWarrant } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { Kind, Proposal, ProposalInput } from '../lib/types'
-import { explain, KIND } from '../lib/words'
+import { explain, fundedPhase, KIND } from '../lib/words'
 
 const OTHER = '__other__'
 const UNFUNDED = '__none__'
@@ -37,7 +37,7 @@ export function NewRequest() {
 
   const rows = proposals.data?.data ?? []
   // Only PayPal captures can be refunded or fund a payout. A paid payout has a Payouts id, not a capture id.
-  const captured = rows.filter((row) => row.phase === 'captured' && Boolean(row.captureId) && (row.kind === 'charge' || row.kind === 'payment'))
+  const captured = rows.filter((row) => fundedPhase(row.phase) && Boolean(row.captureId) && (row.kind === 'charge' || row.kind === 'payment'))
   const charges = captured.filter((row) => row.kind === 'charge')
   const jobIds = [...new Set(rows.map((row) => row.jobId).filter((id): id is string => Boolean(id)))]
   const fundingJobs = [...new Set(charges.map((row) => row.jobId).filter((id): id is string => Boolean(id)))]

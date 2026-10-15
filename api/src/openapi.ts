@@ -301,7 +301,7 @@ export function buildOpenApi(publicUrl: string) {
     path: '/v1/proposals',
     tags: ['proposals'],
     security: bearer,
-    summary: 'Propose a client charge (money in), a contractor payment (money out), or a refund. A payment must cite a captured client charge on the same job. The gate decides. This never captures.',
+    summary: 'Propose a client charge (money in), a contractor payment (money out), or a refund. A payment must cite a settled client charge on the same job. The gate decides. This never captures.',
     request: {
       headers: z.object({ 'Idempotency-Key': z.string().min(8) }),
       body: { content: { 'application/json': { schema: ProposalCreateSchema } } },

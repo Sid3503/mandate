@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type { DatabaseSync } from 'node:sqlite'
+import { DEAD_PHASES, INVOICE_WATCH_PHASES, OPEN_PHASES, PAID_PHASES, RESERVED_PHASES, sqlList } from '../domain/phases'
 import type { PartyRules } from '../domain/deal'
 import { PartyRulesSchema } from '../domain/deal'
 import type { WarrantBody } from '../domain/schemas'
@@ -167,14 +168,13 @@ export type DeliveryRow = {
 
 export type PartyRulesRecord = { partyId: string; version: number; body: PartyRules; createdAt: string; origin: 'seed' | 'written' }
 
-/** Phases in which a payout's money is spoken for: locked, sent to PayPal, or paid. */
-export const RESERVED_PHASES = ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured'] as const
-/** A billed milestone stays billed unless its charge was refused or thrown away. */
-const DEAD_PHASES = ['denied', 'rejected', 'capture_refused', 'invoice_cancelled'] as const
-const RESERVED_SQL = RESERVED_PHASES.map((phase) => `'${phase}'`).join(', ')
-/** Everything that is not finished: waiting, locked, sent, out, or unclaimed. */
-export const OPEN_PHASES = ['pending_approval', 'locked', 'order_created', 'capture_inflight', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'] as const
-const OPEN_SQL = OPEN_PHASES.map((phase) => `'${phase}'`).join(', ')
+// The phase lists live in domain/phases.ts, with the predicates that read them. Re-exported here because the repo
+// is where the SQL that uses them lives.
+export { OPEN_PHASES, RESERVED_PHASES }
+const RESERVED_SQL = sqlList(RESERVED_PHASES)
+const OPEN_SQL = sqlList(OPEN_PHASES)
+const PAID_SQL = sqlList(PAID_PHASES)
+const INVOICE_WATCH_SQL = sqlList(INVOICE_WATCH_PHASES)
 
 export type PayoutUpdate = {
   phase: string
@@ -629,8 +629,9 @@ export class Repo {
     return (this.db.prepare(`SELECT payout_batch_id FROM proposals WHERE phase = 'payout_sent' AND payout_batch_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ payout_batch_id: string }>).map((row) => row.payout_batch_id)
   }
 
+  /** Invoices the server still re-reads from PayPal, including one that is part paid. */
   openInvoices(): string[] {
-    return (this.db.prepare(`SELECT invoice_id FROM proposals WHERE phase IN ('invoice_draft', 'invoice_sent') AND invoice_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ invoice_id: string }>).map((row) => row.invoice_id)
+    return (this.db.prepare(`SELECT invoice_id FROM proposals WHERE phase IN (${INVOICE_WATCH_SQL}) AND invoice_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ invoice_id: string }>).map((row) => row.invoice_id)
   }
 
   /** Payouts and bills a standing rule approved that have not reached PayPal yet. */
@@ -688,7 +689,7 @@ export class Repo {
   /** Settled and refunded requests, newest activity first. */
   settledProposals(sinceIso: string, limit: number): ProposalRow[] {
     return this.db.prepare(
-      `SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE phase IN ('captured', 'refunded') AND updated_at >= ? ORDER BY updated_at DESC, id DESC LIMIT ?`,
+      `SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE phase IN (${PAID_SQL}) AND updated_at >= ? ORDER BY updated_at DESC, id DESC LIMIT ?`,
     ).all(sinceIso, limit) as ProposalRow[]
   }
 
@@ -1031,6 +1032,30 @@ export class Repo {
       `UPDATE proposals SET settled_cents = ?, delta_cents = ? - amount_cents, delta_reason = ?, updated_at = ?
        WHERE id = ? AND (settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
     ).run(settledCents, settledCents, reason, now, id, settledCents, reason)
+    return Number(written.changes) > 0
+  }
+
+  /**
+   * PayPal put some, but not all, of the locked amount in. Store what arrived, why it fell short, and move the row
+   * to `settled_short`, so no reader has to infer "some money came" from a settled amount sitting on a row whose
+   * phase still says the invoice is out.
+   *
+   * The capture id is the PayPal payment id, the same kind of id a full capture stores, so a refund can cite this
+   * row and a payout can be funded from it. It may be absent if PayPal reported a payment without an id: the row
+   * still settles short, it just cannot be the parent of a refund.
+   *
+   * Re-derived on every sweep, exactly like `recordSettlement`: a later payment that completes the lock overwrites
+   * this through `markCaptured`, and a reason code added later can explain a row an earlier code could only call
+   * unexplained. Writes only on change, because `openInvoices` orders by updated_at. Returns true when the
+   * settlement was news.
+   */
+  settleShort(id: string, captureId: string | null, settledCents: number, reason: string, now: string): boolean {
+    const written = this.db.prepare(
+      `UPDATE proposals SET phase = 'settled_short', capture_id = COALESCE(capture_id, ?), settled_cents = ?,
+         delta_cents = ? - amount_cents, delta_reason = ?, updated_at = ?
+       WHERE id = ? AND kind = 'charge'
+         AND (phase IS NOT 'settled_short' OR settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
+    ).run(captureId, settledCents, settledCents, reason, now, id, settledCents, reason)
     return Number(written.changes) > 0
   }
 
