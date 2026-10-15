@@ -19,5 +19,4 @@ regexes = [
   '''test-proposer-[A-Za-z0-9_-]+''',
   '''idemp-proposal-isolated-123''',
   '''SZYN5YgOjGh0NBcPZHZgW4_krrmihjLHmVzzuoMdl2MFAAAAAw''',
-  '''-----BEGIN PRIVATE KEY-----''',
 ]
