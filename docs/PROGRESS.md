@@ -267,7 +267,7 @@ Verification pass completed across all 8 deliverables on branch `verify/final`.
 | F5 | done | Real PayPal sandbox runs: order 51H50117X4794793P created, real refund 12C310409G863064M completed, payout batch D9RZNWUWD2F3A sent | `c585599` |
 | F6 | done | Written docs/DEVPOST.md, docs/VIDEO_SCRIPT.md, docs/DECK.md, docs/HUMAN_TODO.md | `306e75e` |
 | F7 | done | MIT license verified, SECURITY.md advisory, README Quick Start, synchronized test numbers (715 tests, 135 e2e, 20 guarantees) | `b297cf2` |
-| F8 | done | Fresh worktree gates: 23 hygiene, 61 test files (715 tests), secret check clean (407 tracked files), web build clean (1.47s), Playwright 138 passed (9.3m) | pending |
+| F8 | done | Fresh worktree gates: 23 hygiene, 61 test files (715 tests), secret check clean (407 tracked files), web build clean (1.47s), Playwright 138 passed (9.3m) | `fd9d7e4` |
 | F9 | not started | Ship: PR creation and final summary | pending |
 
 ### Blocked
