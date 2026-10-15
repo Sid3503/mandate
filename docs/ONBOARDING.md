@@ -28,7 +28,7 @@ When you open Mandate, you are presented with three distinct paths tailored to d
    - Designed for production-style usage with device passkeys (WebAuthn / Face ID).
    - Starts with simulated PayPal so you can safely test policies without risking real accounts.
    - Requires generating and backing up one-time recovery codes.
-   - Workspaces and ledgers are preserved permanently on persistent storage.
+   - Workspaces and ledgers are preserved permanently on persistent storage mounted at `/var/data` (`DATABASE_PATH=/var/data/mandate.sqlite`).
 
 3. **Unlock Console (Default Studio):**
    - Direct access using an Owner API Key.
