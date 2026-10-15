@@ -920,8 +920,10 @@ export class MandateService {
       // Record what arrived and why it fell short, so the row stops pretending nothing happened.
       const reason = settlementReason(live.paidCents, row.amount_cents)
       this.repo.transaction(() => {
-        this.repo.recordSettlement(row.id, live.paidCents, reason, now)
-        this.repo.insertEvent(randomUUID(), row.id, 'invoice.partial', row.clause, { invoiceId: live.invoiceId, paidCents: live.paidCents, lockedCents: row.amount_cents, reason }, now)
+        // One divergence, one event. A sweep that learns nothing new writes no second row, and the same
+        // flag that guards the stored delta guards the append, so the two can never disagree.
+        const news = this.repo.recordSettlement(row.id, live.paidCents, reason, now)
+        if (news) this.repo.insertEvent(randomUUID(), row.id, 'invoice.partial', row.clause, { invoiceId: live.invoiceId, paidCents: live.paidCents, lockedCents: row.amount_cents, reason }, now)
       })
     }
     return { status: 200, body: toView(this.require(row.id)) }

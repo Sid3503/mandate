@@ -91,13 +91,17 @@ describe('the settlement delta: what arrived, and why', () => {
     // would mask an unguarded write here.
     const bare = h.repo.proposal(h.id)!
     expect(bare).toMatchObject({ settled_cents: 5_000, delta_cents: -10_000, delta_reason: 'partial' })
-    h.repo.recordSettlement(h.id, 5_000, 'partial', '2026-10-15T01:00:00.000Z')
+    expect(h.repo.recordSettlement(h.id, 5_000, 'partial', '2026-10-15T01:00:00.000Z')).toBe(false)
     const same = h.repo.proposal(h.id)!
     expect(same.updated_at).toBe(bare.updated_at)
     // A real change does write, so the guard is not a no-op.
-    h.repo.recordSettlement(h.id, 9_000, 'partial', '2026-10-15T02:00:00.000Z')
+    expect(h.repo.recordSettlement(h.id, 9_000, 'partial', '2026-10-15T02:00:00.000Z')).toBe(true)
     const changed = h.repo.proposal(h.id)!
     expect(changed).toMatchObject({ settled_cents: 9_000, delta_cents: -6_000, delta_reason: 'partial' })
     expect(changed.updated_at).toBe('2026-10-15T02:00:00.000Z')
+    // The reason alone is news too. S3 makes that reachable without the cents moving, and the event
+    // that stops a part-paid invoice appending on every sweep is this same flag.
+    expect(h.repo.recordSettlement(h.id, 9_000, 'unexplained', '2026-10-15T03:00:00.000Z')).toBe(true)
+    expect(h.repo.proposal(h.id)!.delta_reason).toBe('unexplained')
   })
 })

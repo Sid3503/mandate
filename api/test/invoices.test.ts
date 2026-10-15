@@ -69,6 +69,25 @@ describe('billing a client with a PayPal invoice', () => {
     expect((await call(app, 'GET', `/v1/jobs/${JOB}`)).json.totals.inCents).toBe(0)
   })
 
+  it('appends one invoice.partial however many times the sweep runs, and one more when the cents move', async () => {
+    const { app, id, invoices } = await billed(new FakeInvoices())
+    const sent = (await call(app, 'POST', `/v1/proposals/${id}/capture`)).json
+    invoices.pay(sent.invoiceId, 5_000)
+    const partial = (event: { type: string }) => event.type === 'invoice.partial'
+    const count = async () => ((await call(app, 'GET', `/v1/proposals/${id}/packet`)).json.events as Array<{ type: string }>).filter(partial).length
+
+    await call(app, 'POST', `/v1/proposals/${id}/capture`)
+    await call(app, 'POST', `/v1/proposals/${id}/capture`)
+    await call(app, 'POST', `/v1/proposals/${id}/capture`)
+    expect(await count()).toBe(1)
+
+    // The client pays more: that is news, so the ledger records it a second time.
+    invoices.pay(sent.invoiceId, 9_000)
+    await call(app, 'POST', `/v1/proposals/${id}/capture`)
+    expect(await count()).toBe(2)
+    expect((await call(app, 'GET', `/v1/proposals/${id}`)).json).toMatchObject({ settledCents: 9_000, deltaCents: -6_000 })
+  })
+
   it('refuses an invoice whose total no longer matches the lock', async () => {
     const { app, id, invoices } = await billed(new FakeInvoices())
     const sent = (await call(app, 'POST', `/v1/proposals/${id}/capture`)).json

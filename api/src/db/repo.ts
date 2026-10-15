@@ -990,12 +990,14 @@ export class Repo {
    * Re-derived on every sweep, so a later full payment overwrites this, and a reason code added later can
    * explain a row an earlier code could only call unexplained. Writes only on change, because openInvoices
    * orders by updated_at: bumping a stuck invoice every sweep would rotate it to the back of that queue.
+   * Returns true when this was news, which is what stops a part-paid invoice appending an event a minute.
    */
-  recordSettlement(id: string, settledCents: number, reason: string, now: string): void {
-    this.db.prepare(
+  recordSettlement(id: string, settledCents: number, reason: string, now: string): boolean {
+    const written = this.db.prepare(
       `UPDATE proposals SET settled_cents = ?, delta_cents = ? - amount_cents, delta_reason = ?, updated_at = ?
        WHERE id = ? AND (settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
     ).run(settledCents, settledCents, reason, now, id, settledCents, reason)
+    return Number(written.changes) > 0
   }
 
   /** The payout batch now exists at PayPal. From here the payout is in flight, not merely locked. */

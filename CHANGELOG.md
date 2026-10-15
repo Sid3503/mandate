@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- One divergence, one event (task S4 in `docs/ZORD_PASS.md`): a part-paid invoice appended `invoice.partial` on every once-a-minute sweep, forever, in an append-only ledger. `recordSettlement` now returns whether the row actually changed and `applyLiveInvoice` appends only then, so the same flag guards the stored delta and the event and the two cannot disagree. A further payment is news, so it still appends. Proof: `api/test/invoices.test.ts`.
+
 - Settlement delta (task S1 in `docs/ZORD_PASS.md`): a proposal now records what PayPal says actually arrived, in `settledCents`, `deltaCents` and `deltaReason` (`full`, `partial`, `unexplained`), on both a full settle and a short one. `amounts.match` is untouched and no phase changes, so a short invoice still reads `invoice_sent`. `recordSettlement` writes only when a value changes, which keeps a stuck invoice in its place in the once-a-minute sweep queue, and the reason is re-derived on every sweep so a later full payment overwrites it. The `invoice.partial` event carries the reason. Proof: `api/test/settlement.test.ts`.
 
 - Phase 12 (Hardening):
