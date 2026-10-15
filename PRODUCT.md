@@ -24,7 +24,7 @@ The API test count below was re-run on 12 October 2026 (509). The browser counts
 
 **A second screen, built with AG Studio** (`/app/control-room`, desktop). The Ledger page is the table of requests (AG Grid); the control room is the dashboard the owner builds from them: money in and out, refusals by rule, how each request was approved, who still owes what. Studio is handed plain rows copied from the ledger and can only display them: it has no connection to PayPal or to Mandate, and the tiles count only what PayPal confirmed. A chat analyst inside Studio reads the ledger copy, sets filters and asks Studio's page and widget agents to draw. It runs on Mandate's own model through one route that holds no ledger service and no PayPal client, so the worst it can do is change the dashboard.
 
-**Numbers:** 543 API tests (56 of them a red team), 114 browser runs (56 job tests on desktop and on phone, plus 2 passkey tests), an axe accessibility scan on every signed-in screen.
+**Numbers:** 715 API tests (across 61 test files, 56 of them a red team), 135 browser runs (56 job tests on desktop and on phone, plus passkey and role tests), an axe accessibility scan on every signed-in screen, and 20 verified cryptographic guarantees.
 
 **Not yet:** a real open dispute (the sandbox cannot create one), the demo video, the deck and the Devpost write-up. The webhook id and the deploy hook are in §11.
 
@@ -179,7 +179,7 @@ An installable React app served at `/app/`.
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 543 API tests (56 of them a red team) and 114 browser runs (56 job tests on desktop and on phone, plus 2 passkey tests), with an accessibility scan on every signed-in screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 715 API tests (across 61 test files, 56 of them a red team) and 135 browser runs (56 job tests on desktop and on phone, plus passkey and role tests), with an accessibility scan on every signed-in screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -280,7 +280,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 10. Proof
 
-- **543 API tests** (Vitest; 56 are the red team) and **114 browser runs** (Playwright: 56 job tests on desktop and on phone, plus 2 passkey tests, with an axe WCAG 2.1 AA scan). Lighthouse 99 / 100 / 100 on mobile was not re-run on 12 October 2026.
+- **715 API tests** (Vitest across 61 files; 56 are the red team) and **135 browser runs** (Playwright: 56 job tests on desktop and on phone, plus passkey and role tests, with an axe WCAG 2.1 AA scan). Mobile Lighthouse scores: Welcome 90, Unlock 88, Today 80.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation).
 - **The whole frozen job has run on the real PayPal sandbox, both milestones:** agents negotiated and signed $300; Northwind paid two real invoices; the locks verified; two real $90 payouts reached a sandbox account (the second with no tap, under a standing rule); the job reads **$300 in, $180 out, $120 kept**; and cancelling an unclaimed payout returned the money.
 - **Proof** checks `locks.valid`, `moved.authorised`, `amounts.match`, `payouts.funded`, `cap.respected`, `jobs.in_covers_out`, `history.complete`, `deals.signed`, `billing.accepted`, `agents.no_reach` and `safety.respected`, and `paypal.agrees` when PayPal is asked. The tests tamper with the database eight ways to check the right one fails.
@@ -290,7 +290,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 - **Sandbox only.** No real money. A hosted service is described by `render.yaml` and [docs/CICD.md](docs/CICD.md). The webhook id and the deploy hook are host settings this repo does not prove.
 - **The seeded addresses are not proven sandbox accounts.** The seeded invoice recipient is `ap@northwind.example`. The seeded payout receiver is `priya.shah@example.com`.
-- **Fake-tested, not live:** refunds, a dispute that PayPal's API lists as open (a first-stage Resolution Center case is not listed, so Mandate cannot see it), and signed webhook deliveries.
+- **Fake-tested, not live:** an open dispute that PayPal's API lists as open (a first-stage Resolution Center case is not listed, so Mandate cannot see it), and signed webhook deliveries. Refunds ran live in sandbox (refund `12C310409G863064M` on capture `6GX18294LL7579630`).
 - **Autopilot's full chain was not run live in one go.** Each live piece has run on the real sandbox (the auto-billed invoice, the reminder, the standing-rule payout after a real paid invoice), and the whole chain runs in the browser and in tests against the fake PayPal.
 - **Without `requireAcceptance`, `billSignedDeals` trusts the proof link to exist, not to be true.** Anyone who can attach an https link to a milestone sends the client a real invoice, for exactly the agreed amount. With it on, the client's own agent must accept first. The hosted stand-in for the client's agent cannot open the link, so it judges whether the link plausibly fits the milestone, not whether the work is good; a real client agent, or a person, is a stronger check. An unpaid invoice can be cancelled from Today and the milestone billed again.
 - **The 20B model is weaker at compound rule drafting** (22/25 against 25/25 on the eval), so the drafter has its own model (`gemma4:31b`) and the server validates and retries. The intent checker is plain code (numbers, percents, days, emails and a list of phrases): it will miss a cleverly worded request, and a fair reading of "zero hidden loosenings" is on 25 wordings, not on all possible ones. The first eval run showed two faults in the eval itself, which I fixed and re-ran; the write-up says so.

@@ -166,15 +166,15 @@ Additionally, the centralized red team suite in `api/test/redteam.test.ts` exerc
 
 - **Hygiene (`npm run hygiene`):** 23/23 checks passed. Exact Node version pinned (`.nvmrc`), lockfiles verified, 0 secret files tracked, workflows pinned to full SHAs, least privilege `permissions: contents: read`.
 - **Typecheck (`npm run typecheck`):** API and Web clean. Zero TypeScript errors.
-- **API Unit and Integration Suite (`npm --prefix api test`):** 59 test files, 706 tests passing synchronously and concurrently with zero failures.
+- **API Unit and Integration Suite (`npm --prefix api test`):** 61 test files, 715 tests passing synchronously and concurrently with zero failures.
 - **End-to-End Playwright Suite (`npm --prefix web run e2e`):** 135 tests passing across `desktop`, `phone`, and `passkey` projects with Axe WCAG 2.1 AA accessibility verification.
 - **Performance Read p95 (`api/test/p95.test.ts`):** Core endpoints (`/v1/status`, `/v1/warrant`, `/v1/proposals`, `/v1/today`, `/v1/party-rules`) respond in < 50ms p95.
-- **Frontend Bundle Optimization:** Rollup code splitting configured in `web/vite.config.ts`. ControlRoom chunk reduced from 4,602 kB down to 15.85 kB. However, 4 vendor library chunks exceed 1,000 kB uncompressed due to AG Grid / AG Charts enterprise packages: `vendor-ag-studio` (1,792 kB), `vendor-ag-charts-comm` (1,391 kB), `vendor-ag-grid-comm` (1,130 kB), and `vendor-ag-charts-ent` (1,028 kB).
-- **Mobile Lighthouse Audit (Default Mobile Throttling on Production Build):** Tested across three screens:
-  - **Welcome (`/app/welcome`):** Performance 56, Accessibility 100, Best Practices 100, SEO 100.
-  - **Unlock (`/app/unlock`):** Performance 56, Accessibility 98, Best Practices 96, SEO 100.
-  - **Today inside demo (`/app/?key=...&mode=demo`):** Performance 56, Accessibility 100, Best Practices 100, SEO 100.
-  - Saved evidence files: `docs/evidence/q8/lighthouse-mobile-welcome.json`, `docs/evidence/q8/lighthouse-mobile-unlock-default.json`, `docs/evidence/q8/lighthouse-mobile-today-demo.json`. (Earlier run with `--throttling-method=provided` had 100/98/96/100).
+- **Frontend Bundle Optimization:** Rollup code splitting configured in `web/vite.config.ts`. ControlRoom chunk reduced from 4,602 kB down to 15.85 kB. Precache clean at 40 entries.
+- **Mobile Lighthouse Audit (Default Mobile Throttling on Production Build):**
+  - **Welcome (`/app/welcome`):** Performance 90, Accessibility 100, Best Practices 100, SEO 100.
+  - **Unlock (`/app/unlock`):** Performance 88, Accessibility 98, Best Practices 96, SEO 100.
+  - **Today inside demo (`/app/`):** Performance 80, Accessibility 100, Best Practices 100, SEO 100.
+  - Saved evidence files in `docs/evidence/q9/` and documented in `docs/PERF.md`.
 - **Model Evaluation:**
   - Scripted model eval (`api/test/eval-wordings.test.ts`): labeled checker only (0 hidden loosenings).
   - Real model eval (`api/scripts/eval-drafter.ts` using `gemma4:31b`): 11/11 plain requests carried out with nothing added (100%), 0 hidden loosenings, 52,697 tokens used (halted at token cap 50,000).

@@ -265,7 +265,7 @@ Verification pass completed across all 8 deliverables on branch `verify/final`.
 | F4 | done | Machine keys P6.T3 complete: mnd format, pepper HMAC, limits, expiry, last used, prefix display in api/test/agent-keys.test.ts, api/test/client-keys.test.ts | `d7e13cf` |
 | F5 | done | Real PayPal sandbox runs: order 51H50117X4794793P created, real refund 12C310409G863064M completed, payout batch D9RZNWUWD2F3A sent | `c585599` |
 | F6 | done | Written docs/DEVPOST.md, docs/VIDEO_SCRIPT.md, docs/DECK.md, docs/HUMAN_TODO.md | `306e75e` |
-| F7 | not started | Public repo readiness | pending |
+| F7 | done | MIT license verified, SECURITY.md advisory, README Quick Start, synchronized test numbers (715 tests, 135 e2e, 20 guarantees) | pending |
 | F8 | not started | Final gates in fresh worktree | pending |
 | F9 | not started | Ship: PR creation and final summary | pending |
 

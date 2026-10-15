@@ -36,6 +36,19 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 
 Job totals for the live sandbox run: **$150 in, $90 out, $60 kept.**
 
+## Quick Start
+
+Get Mandate running locally in under two minutes with an isolated demo workspace:
+
+```bash
+git clone https://github.com/Sid3503/mandate.git && cd mandate
+npm run setup && npm run build
+PORT=8777 DEMO_ENABLED=1 FLAG_PASSKEYS=1 node api/node_modules/tsx/dist/cli.mjs api/src/dev/passkey-server.ts
+```
+
+Open `http://localhost:8777/app/welcome` and click **"Try the demo"**.
+For the complete 10-step click path and hosted deployment guide, see [docs/TRY_IT.md](docs/TRY_IT.md).
+
 ## Run it (real PayPal sandbox, real AI model)
 
 Needs Node.js 22+ (24 recommended) and Chrome. Put your PayPal sandbox app credentials and an Ollama Cloud API key (`OLLAMA_API_KEY`) in a repo-root `.env` (see [`api/.env.example`](api/.env.example)). It is gitignored; never commit it.
@@ -99,8 +112,8 @@ The console is four places: **Today** (what needs you), **Jobs** (money in relea
 Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests then Playwright), `npm run demo`. Before pushing: `npm run check` (about 20 seconds; the same checks CI starts with), or `npm run ci` for everything CI runs.
 
 ## Quality
-
-543 API tests (including a 56-case red team), re-run on 12 October 2026. 56 job tests run on both desktop and phone (112 runs) plus 2 passkey tests (114 browser runs), including an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile was not re-run for this change. The model scores in this file were not re-run either.
+ 
+715 API tests (across 61 test files, including fast-check property sequences, red-team cases 1 to 35, and chaos tests). 135 Playwright browser tests across desktop and mobile Pixel 7 emulation with axe WCAG 2.1 AA accessibility scans. Mobile Lighthouse audit: Welcome 90, Unlock 88, Today 80. 20 verified cryptographic guarantees in docs/guarantees.json.
 
 ## Where to read next
 
