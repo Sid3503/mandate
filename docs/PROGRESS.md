@@ -96,6 +96,7 @@
 - Full `npm run gates` after Q7 on 14 October 2026: 57 files, 698 API tests, 11.30s, secret check 375 tracked files, Playwright 134 passed (9.0m), axe included, exit 0.
 - `gates:fast` on `q8-hardening` after Q8.2: 58 files, 703 API tests, 18.16s, secret check 375 tracked files, exit 0.
 - `gates:fast` on `q8-hardening` after Q8.3: 59 files, 704 API tests, 15.76s, secret check 376 tracked files, exit 0.
+- Full `npm run gates` in fresh worktree on 15 October 2026: 23 hygiene passed, 61 API test files, 715 API tests passed, secret check 407 tracked files, web build 1.47s, Playwright 138 passed (9.3m), axe included, exit 0.
 
 ## Open items
 
@@ -266,7 +267,7 @@ Verification pass completed across all 8 deliverables on branch `verify/final`.
 | F5 | done | Real PayPal sandbox runs: order 51H50117X4794793P created, real refund 12C310409G863064M completed, payout batch D9RZNWUWD2F3A sent | `c585599` |
 | F6 | done | Written docs/DEVPOST.md, docs/VIDEO_SCRIPT.md, docs/DECK.md, docs/HUMAN_TODO.md | `306e75e` |
 | F7 | done | MIT license verified, SECURITY.md advisory, README Quick Start, synchronized test numbers (715 tests, 135 e2e, 20 guarantees) | `b297cf2` |
-| F8 | not started | Final gates in fresh worktree | pending |
+| F8 | done | Fresh worktree gates: 23 hygiene, 61 test files (715 tests), secret check clean (407 tracked files), web build clean (1.47s), Playwright 138 passed (9.3m) | pending |
 | F9 | not started | Ship: PR creation and final summary | pending |
 
 ### Blocked
