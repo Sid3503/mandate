@@ -60,6 +60,9 @@ export type ProposalView = {
   refundId: string | null
   approveUrl: string | null
   capturedAmountCents: number | null
+  settledCents: number | null
+  deltaCents: number | null
+  deltaReason: string | null
   payoutBatchId: string | null
   payoutItemId: string | null
   payoutStatus: string | null
@@ -103,6 +106,9 @@ export function toView(row: ProposalRow): ProposalView {
     refundId: row.refund_id,
     approveUrl: row.approve_url,
     capturedAmountCents: row.captured_amount_cents,
+    settledCents: row.settled_cents,
+    deltaCents: row.delta_cents,
+    deltaReason: row.delta_reason,
     payoutBatchId: row.payout_batch_id,
     payoutItemId: row.payout_item_id,
     payoutStatus: row.payout_status,
@@ -123,6 +129,17 @@ export function toView(row: ProposalRow): ProposalView {
 
 /** PayPal's reporting API wants 2026-10-05T10:00:00+0000, not the usual ISO with milliseconds and Z. */
 const payPalTime = (date: Date) => date.toISOString().replace(/\.\d+Z$/, '+0000')
+
+/**
+ * Why a payment that is not the locked amount fell short. A closed code read from PayPal's own numbers,
+ * never from a model. S1 ships the three codes it can compute today. S3 adds early_discount, credit_note
+ * and paypal_fee when it reads the breakdown fields. Until then a gap no field explains is unexplained,
+ * which is the honest answer, not a guess.
+ */
+function settlementReason(settledCents: number, lockedCents: number): 'full' | 'partial' | 'unexplained' {
+  if (settledCents >= lockedCents) return 'full'
+  return settledCents > 0 ? 'partial' : 'unexplained'
+}
 
 export class MandateService {
   constructor(
@@ -900,7 +917,12 @@ export class MandateService {
       this.repo.insertEvent(randomUUID(), row.id, 'invoice.cancelled', row.clause, { invoiceId: live.invoiceId, reason: 'cancelled at PayPal' }, now)
     } else if (paid) {
       // Paid, but not in full or not through PayPal: the money is not the locked cents, so it is not called settled.
-      this.repo.insertEvent(randomUUID(), row.id, 'invoice.partial', row.clause, { invoiceId: live.invoiceId, paidCents: live.paidCents, lockedCents: row.amount_cents }, now)
+      // Record what arrived and why it fell short, so the row stops pretending nothing happened.
+      const reason = settlementReason(live.paidCents, row.amount_cents)
+      this.repo.transaction(() => {
+        this.repo.recordSettlement(row.id, live.paidCents, reason, now)
+        this.repo.insertEvent(randomUUID(), row.id, 'invoice.partial', row.clause, { invoiceId: live.invoiceId, paidCents: live.paidCents, lockedCents: row.amount_cents, reason }, now)
+      })
     }
     return { status: 200, body: toView(this.require(row.id)) }
   }

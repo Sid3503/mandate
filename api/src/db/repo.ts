@@ -50,6 +50,12 @@ export type ProposalRow = {
   invoice_id: string | null
   invoice_url: string | null
   invoice_status: string | null
+  /** What PayPal reported actually arrived. Null until a settlement is seen. */
+  settled_cents: number | null
+  /** settled_cents minus the locked amount. Negative means the client paid less. */
+  delta_cents: number | null
+  /** Why the settled amount was not the locked amount. A closed code, never a model's word. */
+  delta_reason: string | null
   created_at: string
   updated_at: string
 }
@@ -236,7 +242,7 @@ const PROPOSAL_COLUMNS = `id, warrant_id, warrant_version, kind, parent_capture_
   category, description, evidence_url, prompt, gate, clause, detail, phase, cart_hash, order_id, capture_id,
   refund_id, approve_url, captured_amount_cents, reserved_at, job_id, funding_capture_id, payout_batch_id, payout_item_id,
   payout_status, payout_txn_id, payout_fee_cents, deal_id, milestone, lock_sig, lock_key_id, invoice_id, invoice_url,
-  invoice_status, created_at, updated_at`
+  invoice_status, settled_cents, delta_cents, delta_reason, created_at, updated_at`
 
 /** How many transactions are open on each database, however many Repo objects look at it. */
 const DEPTH = new WeakMap<DatabaseSync, number>()
@@ -974,8 +980,22 @@ export class Repo {
   /** A client paid an invoice. Same end state as a captured order, so funding and refunds work unchanged. */
   markCaptured(id: string, captureId: string, amountCents: number, now: string): void {
     this.db.prepare(
-      `UPDATE proposals SET phase = 'captured', capture_id = ?, captured_amount_cents = ?, updated_at = ? WHERE id = ? AND kind IN ('payment', 'charge')`,
-    ).run(captureId, amountCents, now, id)
+      `UPDATE proposals SET phase = 'captured', capture_id = ?, captured_amount_cents = ?, settled_cents = ?,
+         delta_cents = ? - amount_cents, delta_reason = 'full', updated_at = ? WHERE id = ? AND kind IN ('payment', 'charge')`,
+    ).run(captureId, amountCents, amountCents, amountCents, now, id)
+  }
+
+  /**
+   * PayPal reports a payment that is not the locked amount. Store what really arrived and the code for why.
+   * Re-derived on every sweep, so a later full payment overwrites this, and a reason code added later can
+   * explain a row an earlier code could only call unexplained. Writes only on change, because openInvoices
+   * orders by updated_at: bumping a stuck invoice every sweep would rotate it to the back of that queue.
+   */
+  recordSettlement(id: string, settledCents: number, reason: string, now: string): void {
+    this.db.prepare(
+      `UPDATE proposals SET settled_cents = ?, delta_cents = ? - amount_cents, delta_reason = ?, updated_at = ?
+       WHERE id = ? AND (settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
+    ).run(settledCents, settledCents, reason, now, id, settledCents, reason)
   }
 
   /** The payout batch now exists at PayPal. From here the payout is in flight, not merely locked. */
