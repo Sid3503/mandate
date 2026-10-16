@@ -4,6 +4,7 @@ import { changedKeys, checkReader, factsOf, groundSentence, inSentence, listChan
 import { LINE_STUDIO_WARRANT, WarrantBodySchema } from '../src/domain/schemas'
 import { scriptedModel, type ScriptedStep } from './mockModel'
 import { call, closeAll, harness } from './support'
+import { loadFlags } from '../src/flags'
 
 afterEach(closeAll)
 
@@ -172,6 +173,8 @@ function pipeline(plan: Plan = {}) {
   return { model, readerCalls: () => readerCalls }
 }
 
+const ON = loadFlags({ FLAG_POLICY_PASTE: '1' })
+const h = (options: Parameters<typeof harness>[0] = {}) => harness({ flags: ON, ...options })
 const read = (app: Parameters<typeof call>[0], text = POLICY, key?: string) => call(app, 'POST', '/v1/rules/policy', { key, body: { text } })
 const row = (json: { sentences: Array<{ text: string; status: string; reasons: string[]; carriedBy: string[]; already: boolean }> }, needle: string) => json.sentences.find((item) => item.text.includes(needle))!
 const callsTo = (model: ReturnType<typeof pipeline>['model'], stage: Stage) => model.prompts.filter((prompt) => stageOf(prompt) === stage)
@@ -179,7 +182,7 @@ const callsTo = (model: ReturnType<typeof pipeline>['model'], stage: Stage) => m
 describe('POST /v1/rules/policy', () => {
   it('has a model say what each sentence is, drafts only the rules, has a model check the draft, and publishes nothing', async () => {
     const { model } = pipeline()
-    const { app } = harness({ model })
+    const { app } = h({ model })
     const made = await read(app)
     expect(made.status).toBe(200)
     expect(made.json.audit).toBe('ok')
@@ -205,7 +208,7 @@ describe('POST /v1/rules/policy', () => {
 
   it('shows the model the policy only inside a fence, never in its instructions', async () => {
     const { model } = pipeline()
-    await read(harness({ model }).app)
+    await read(h({ model }).app)
     for (const prompt of [...callsTo(model, 'reader'), ...callsTo(model, 'auditor')]) {
       const [system, rest] = prompt.split('\n---\n')
       expect(system).not.toContain('99,999')
@@ -220,7 +223,7 @@ describe('POST /v1/rules/policy', () => {
       audit: (text) => (/Ignore all previous/.test(text) ? { verdict: 'not_enforced', suspicious: true, gap: 'Orders the system to raise the cap.' } : null),
       support: (change, ids) => (change === 1 ? [] : ids),
     })
-    const made = await read(harness({ model }).app)
+    const made = await read(h({ model }).app)
     expect(row(made.json, 'Ignore all previous')).toMatchObject({ status: 'untrusted' })
     expect(made.json.draft.added.length).toBeGreaterThanOrEqual(1)
     expect(made.json.draft.added[0].why).toContain('No sentence of your policy asks for this')
@@ -228,26 +231,26 @@ describe('POST /v1/rules/policy', () => {
 
   it('flags a change in the draft that no sentence asked for', async () => {
     const { model } = pipeline({ patch: { ...CAP_AND_PRIYA, perPaymentCeilingDollars: 450 }, support: (change, ids) => (change === 4 ? [] : ids) })
-    const made = await read(harness({ model }).app)
+    const made = await read(h({ model }).app)
     expect(made.json.draft.added).toEqual([expect.objectContaining({ phrase: expect.stringContaining('per-payment ceiling') })])
   })
 
   it('does not believe "enforced" when the evidence points at nothing', async () => {
     const { model } = pipeline({ audit: (text) => (/Every request needs/.test(text) ? { evidence: [{ fact: 'noSuchSetting', quote: 'link to the work' }] } : null) })
-    const made = await read(harness({ model }).app)
+    const made = await read(h({ model }).app)
     expect(row(made.json, 'Every request needs')).toMatchObject({ status: 'not_covered', carriedBy: [] })
     expect(row(made.json, 'Every request needs').reasons.join(' ')).toContain('not believed')
   })
 
   it('catches a number in the wrong place', async () => {
     const { model } = pipeline({ audit: (text) => (/at most \$120/.test(text) ? { verdict: 'not_enforced', evidence: [], gap: 'The $120 is the per-payment ceiling, not the monthly cap.' } : null) })
-    const made = await read(harness({ model }).app)
+    const made = await read(h({ model }).app)
     expect(row(made.json, 'at most $120')).toMatchObject({ status: 'not_covered', reasons: ['The $120 is the per-payment ceiling, not the monthly cap.'] })
   })
 
   it('still returns the draft when the audit fails, but marks every sentence unchecked and the draft as unchecked', async () => {
     const { model } = pipeline({ failAudit: true })
-    const made = await read(harness({ model }).app)
+    const made = await read(h({ model }).app)
     expect(made.status).toBe(200)
     expect(made.json.audit).toBe('failed')
     expect(row(made.json, 'at most $120').status).toBe('unchecked')
@@ -257,20 +260,20 @@ describe('POST /v1/rules/policy', () => {
 
   it('reports a sentence nobody answered for as unchecked, never as fine', async () => {
     const { model } = pipeline({ skip: (text) => /Every request needs/.test(text) })
-    const made = await read(harness({ model }).app)
+    const made = await read(h({ model }).app)
     expect(row(made.json, 'Every request needs')).toMatchObject({ status: 'unchecked' })
   })
 
   it('sends a reader back to answer for the ids it left out', async () => {
     const { model, readerCalls } = pipeline({ dropFirst: true })
-    const made = await read(harness({ model }).app)
+    const made = await read(h({ model }).app)
     expect(readerCalls()).toBe(2)
     expect(row(made.json, 'Spending policy').status).toBe('context')
   })
 
   it('makes no draft, and calls no drafter, when nothing in the paste is a rule', async () => {
     const { model } = pipeline({ kind: () => 'judgment' })
-    const made = await read(harness({ model }).app, 'Welcome to the team. We value honest, fair dealing. Use good judgment.')
+    const made = await read(h({ model }).app, 'Welcome to the team. We value honest, fair dealing. Use good judgment.')
     expect(made.status).toBe(200)
     expect(made.json.draft).toBeNull()
     expect(callsTo(model, 'drafter')).toHaveLength(0)
@@ -279,27 +282,34 @@ describe('POST /v1/rules/policy', () => {
 
   it('fails honestly, with nothing changed, when the reader cannot be reached', async () => {
     const { model } = pipeline({ failReader: true })
-    const { app } = harness({ model })
+    const { app } = h({ model })
     const made = await read(app)
     expect(made.status).toBeGreaterThanOrEqual(500)
     expect((await call(app, 'GET', '/v1/warrant')).json.version).toBe(1)
   })
 
   it('is the owner\'s alone, and refuses a paste that is too short, too long, or has extra fields', async () => {
-    const { app } = harness({ model: pipeline().model })
+    const { app } = h({ model: pipeline().model })
     expect((await read(app, POLICY, 'test-proposer-key-32chars')).status).toBe(403)
     expect((await read(app, 'Pay Priya.')).status).toBe(400)
-    expect((await read(app, 'x '.repeat(7000))).status).toBe(400)
+    expect((await read(app, 'x '.repeat(11_000))).status).toBe(400)
     expect((await call(app, 'POST', '/v1/rules/policy', { body: { text: POLICY, extra: 1 } })).status).toBe(400)
   })
 
   it('says there is no model when none is configured', async () => {
-    const made = await read(harness().app)
+    const made = await read(h().app)
     expect(made.status).toBe(503)
   })
 
+  it('returns 404 when FLAG_POLICY_PASTE is off and 200 when on', async () => {
+    const off = harness({ model: pipeline().model, flags: loadFlags({}) })
+    expect((await read(off.app)).status).toBe(404)
+    const on = h({ model: pipeline().model })
+    expect((await read(on.app)).status).toBe(200)
+  })
+
   it('writes a run for the reader and the auditor, with the prompt version', async () => {
-    const { app } = harness({ model: pipeline().model })
+    const { app } = h({ model: pipeline().model })
     await read(app)
     const runs = (await call(app, 'GET', '/v1/agent-runs')).json.data as Array<{ id: string; agent: string }>
     const version = async (agent: string) => (await call(app, 'GET', `/v1/agent-runs/${runs.find((item) => item.agent === agent)!.id}`)).json.promptVersion

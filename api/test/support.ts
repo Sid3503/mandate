@@ -1,4 +1,8 @@
 import { createApp, type AppDeps } from '../src/app'
+import type { ControlStore } from '../src/control/store'
+import type { ServerFlags } from '../src/flags'
+import type { ModelBudget } from '../src/ops/budget'
+import type { TenantRegistry } from '../src/tenancy/registry'
 import { migrate, openDatabase, seed } from '../src/db/database'
 import { Repo } from '../src/db/repo'
 import type { InvoicePort } from '../src/paypal/invoices'
@@ -6,6 +10,7 @@ import type { WatchPort } from '../src/paypal/watch'
 import type { AgentModel } from '../src/agents/model'
 import { ephemeralSigner, type Signer } from '../src/domain/signing'
 import { FakePayPal } from '../src/paypal/fake'
+import type { SafetyConfig } from '../src/services/safety'
 import { buildServices, type Services } from '../src/services/container'
 
 export const NOW = new Date('2026-10-03T12:00:00.000Z')
@@ -23,7 +28,7 @@ export function closeAll() {
 
 export type Requester = { request: (input: string, init?: RequestInit) => Response | Promise<Response> }
 
-export function harness(options: { commit?: string | null; demoReset?: boolean; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: { tripAfter: number; windowSeconds?: number } } = {}) {
+export function harness(options: { commit?: string | null; demoReset?: boolean; flags?: ServerFlags; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: Partial<SafetyConfig>; control?: ControlStore | null; registry?: TenantRegistry | null; budget?: ModelBudget | null; adminKey?: string | null; webauthn?: { rpID: string; rpName: string; origins: string[] } | null; workspace?: { id: string; mode: 'default' | 'demo' | 'studio' | 'live' }; masterKey?: string | null; demo?: { root: string; template: string } | null; classedRates?: boolean; redact?: string[]; rateLimitPerMinute?: number; trustProxy?: boolean; trustedProxyHops?: number; webDist?: string | null; cookieSecure?: boolean; log?: boolean } = {}) {
   const db = openDatabase(':memory:')
   open.push(db)
   migrate(db)
@@ -41,22 +46,50 @@ export function harness(options: { commit?: string | null; demoReset?: boolean; 
     watch: options.watch,
     model: options.model,
     draining: options.draining,
-    services: (services = buildServices({ db, paypal, invoices: options.invoices, watch: options.watch, publicUrl: 'http://127.0.0.1:8787', now: () => clock, signer: useSigner, safety: options.breaker ?? { tripAfter: 0 } })),
+    control: options.control,
+    registry: options.registry,
+    budget: options.budget,
+    workspace: options.workspace,
+    masterKey: options.masterKey,
+    demo: options.demo,
+    services: (services = buildServices({
+      db,
+      paypal,
+      invoices: options.invoices,
+      watch: options.watch,
+      publicUrl: 'http://127.0.0.1:8787',
+      now: () => clock,
+      signer: useSigner,
+      safety: options.breaker ?? { tripAfter: 0 },
+      payeeBook: options.flags?.payeeBook,
+      newPayeeWaitHours: options.flags?.newPayeeWaitHours,
+      control: options.control,
+      workspaceId: options.workspace?.id ?? 'ws_default',
+      onExternalRef: (kind, externalId) => options.control?.rememberRef(kind, externalId, options.workspace?.id ?? 'ws_default'),
+    })),
     now: () => clock,
     config: {
       apiKey: OWNER_KEY,
       proposerKey: STUDIO_KEY,
       buyerAgentKey: BUYER_KEY,
       buyerAgentParty: 'client_northwind',
-      webDist: null,
-      rateLimitPerMinute: 0,
+      webDist: options.webDist ?? null,
+      rateLimitPerMinute: options.rateLimitPerMinute ?? 0,
+      trustProxy: options.trustProxy,
+      trustedProxyHops: options.trustedProxyHops,
+      cookieSecure: options.cookieSecure,
       paypalConfigured: paypal !== null,
-      log: false,
+      log: options.log ?? false,
       publicUrl: 'http://127.0.0.1:8787',
       commit: options.commit,
       webhookId: options.webhookId,
       clientAgent: options.clientAgent,
       demoReset: options.demoReset,
+      flags: options.flags,
+      adminKey: options.adminKey,
+      webauthn: options.webauthn,
+      classedRates: options.classedRates,
+      redact: options.redact,
     },
   })
   const app = build()

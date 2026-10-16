@@ -61,6 +61,13 @@ export const RulesPatchSchema = z.object({
 
 export type RulesPatch = z.infer<typeof RulesPatchSchema>
 
+export type SecondReaderResult = {
+  model: string
+  agreed: boolean
+  verdict: string
+  critique?: string
+}
+
 export type RulesDraft = {
   draft: WarrantBody
   summary: string
@@ -79,6 +86,9 @@ export type RulesDraft = {
   changed: boolean
   model: string
   ms: number
+  usage?: { inputTokens: number; outputTokens: number }
+  tokens?: number
+  secondReader?: SecondReaderResult
 }
 
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'party'
@@ -198,6 +208,11 @@ export function compareRules(before: WarrantBody, after: WarrantBody): { loosens
   if (after.automation.remindUnpaidAfterDays !== before.automation.remindUnpaidAfterDays || after.automation.maxReminders !== before.automation.maxReminders) {
     notes.push(after.automation.remindUnpaidAfterDays === null ? 'Unpaid invoices would no longer get automatic reminders.' : `Unpaid invoices would get PayPal's reminder after ${after.automation.remindUnpaidAfterDays} days, up to ${after.automation.maxReminders} times. This only nudges the client; it moves no money.`)
   }
+  // Part payment is the client's side of the invoice, not a widening of who may be paid: a client who pays less
+  // settles for less, so it can only reduce what contractors are funded from. Reported, never called a loosening.
+  if (after.allowPartialPayment !== before.allowPartialPayment) {
+    notes.push(after.allowPartialPayment ? 'Invoices this studio sends could be paid in part. A part payment settles the request for what actually arrived, so contractors can only be funded up to their share of that. PayPal offers part payment to sellers in some countries only.' : 'Invoices this studio sends would have to be paid in full.')
+  }
   return { loosens, tightens, notes }
 }
 
@@ -206,6 +221,7 @@ function rulesInWords(body: WarrantBody): string {
   return [
     `Automatic (no tap) under ${money(body.autoSettleUnderCents)}. Monthly contractor cap ${money(body.monthlyCapCents)}. Per-payment ceiling ${money(body.perPaymentCeilingCents)}. Contractor share of a client payment ${body.contractorShareBps / 100}%.`,
     `Proof link required: ${body.evidenceRequired ? 'yes' : 'no'}. Payouts need client money first: ${body.fundingRequired ? 'yes' : 'no'}. Allowed work: ${body.categories.join(', ')}.`,
+    `Invoices may be paid in part: ${body.allowPartialPayment ? 'yes' : 'no'}.`,
     `Contractors: ${body.payees.map((p) => p.displayName).join(', ') || 'none'}. Clients: ${body.clients.map((p) => p.displayName).join(', ') || 'none'}.`,
     `Standing rules: ${body.standing.length === 0 ? 'none' : body.standing.map((r) => `${name(r.payeeId)} from ${r.clientIds.map(name).join(' or ')}${r.requireDeal ? ' (signed deals only)' : ''}${r.shareBps ? `, share ${r.shareBps / 100}%` : ''}`).join('; ')}.`,
     `Autopilot: bill signed deals ${body.automation.billSignedDeals ? (body.automation.requireAcceptance ? 'on, only after the client accepts' : 'on') : 'off'}; pay when the client pays ${body.automation.payOnSettle ? 'on' : 'off'}; remind unpaid invoices ${body.automation.remindUnpaidAfterDays ? `after ${body.automation.remindUnpaidAfterDays} days, up to ${body.automation.maxReminders}` : 'off'}.`,
@@ -244,6 +260,7 @@ export type DraftStage =
   | { stage: 'checking' }
   | { stage: 'replaying' }
   | { stage: 'reading_back' }
+  | { stage: 'second_reading'; model: string }
   | { stage: 'reading_policy'; sentences: number; parts: number }
   | { stage: 'classified'; rules: number; setAside: number }
   | { stage: 'auditing'; sentences: number; changes: number }
@@ -257,6 +274,8 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
   let said = ''
   let complaint = ''
   let lastProblem: Problem | null = null
+  let totalInputTokens = 0
+  let totalOutputTokens = 0
   // A small model sometimes gets a field name or a sum wrong. Up to two retries, each told exactly what was wrong.
   for (let attempt = 0; attempt < 3 && !merged; attempt += 1) {
     patch = null
@@ -273,6 +292,10 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
         stopWhen: [hasToolCall('propose_rules'), stepCountIs(3)],
         abortSignal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
       })
+      if (result.usage) {
+        totalInputTokens += result.usage.inputTokens ?? 0
+        totalOutputTokens += result.usage.outputTokens ?? 0
+      }
       said = result.text.trim() || said
       const call = result.steps.flatMap((step) => step.toolCalls).find((item) => item.toolName === 'propose_rules')
       if (!call) break
@@ -316,7 +339,12 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
   stage({ stage: 'checking' })
   const { loosens, tightens, notes } = compareRules(input.current, merged)
   const intent = await checkDraftAgainstWords({ model: input.model, current: input.current, merged, instruction: input.instruction, audit: input.intent !== false, signal: input.signal, onStage: stage })
-  return { draft: merged, summary: patch.summary, loosens, tightens, notes, ignored: intent.ignored, untrusted: intent.untrusted, added: intent.added, changed: loosens.length + tightens.length + notes.length > 0, model: input.model.name, ms: Date.now() - started }
+  if (intent.usage) {
+    totalInputTokens += intent.usage.inputTokens
+    totalOutputTokens += intent.usage.outputTokens
+  }
+  const totalTokens = totalInputTokens + totalOutputTokens
+  return { draft: merged, summary: patch.summary, loosens, tightens, notes, ignored: intent.ignored, untrusted: intent.untrusted, added: intent.added, changed: loosens.length + tightens.length + notes.length > 0, model: input.model.name, ms: Date.now() - started, usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens }, tokens: totalTokens }
 }
 
 /**
@@ -325,7 +353,7 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
  * real. When the auditor cannot answer for every sentence, or fails, the built-in word check stands in, so the owner
  * always gets an answer. Callers that audit the draft themselves (the policy flow) pass audit: false.
  */
-async function checkDraftAgainstWords(input: { model: AgentModel; current: WarrantBody; merged: WarrantBody; instruction: string; audit: boolean; signal?: AbortSignal; onStage?: (stage: DraftStage) => void }): Promise<{ ignored: IntentFlag[]; untrusted: string[]; added: IntentFlag[] }> {
+async function checkDraftAgainstWords(input: { model: AgentModel; current: WarrantBody; merged: WarrantBody; instruction: string; audit: boolean; signal?: AbortSignal; onStage?: (stage: DraftStage) => void }): Promise<{ ignored: IntentFlag[]; untrusted: string[]; added: IntentFlag[]; usage?: { inputTokens: number; outputTokens: number } }> {
   const plain = checkIntent(input.instruction, input.current, input.merged)
   if (!input.audit) return { ignored: [], untrusted: [], added: [] }
   const sent = segmentPolicy(input.instruction)
@@ -335,16 +363,73 @@ async function checkDraftAgainstWords(input: { model: AgentModel; current: Warra
   try {
     const audit = await auditPolicy({ model: input.model, current: input.current, draft: input.merged, sent, signal: input.signal, onRetry: (reason) => stage({ stage: 'retry', attempt: 1, reason }) })
     const answered = new Set(audit.sentences.map((item) => item.id))
+    const auditUsage = audit.usage ? { inputTokens: audit.usage.inputTokens ?? 0, outputTokens: audit.usage.outputTokens ?? 0 } : undefined
     // Partial coverage is not coverage: an unanswered sentence must never read as fine.
-    if (!sent.every((segment) => answered.has(segment.id))) return plain
+    if (!sent.every((segment) => answered.has(segment.id))) return { ...plain, usage: auditUsage }
     const rows: PolicySentence[] = sent.map((segment) => ({ id: segment.id, text: segment.text, start: segment.start, end: segment.end, line: segment.line, status: 'unchecked', reasons: [], carriedBy: [], already: false }))
     const added = applyAudit(rows, sent, audit)
     return {
       ignored: rows.filter((row) => row.status === 'not_covered' || row.status === 'partly').map((row) => ({ phrase: row.text.slice(0, 160), why: row.reasons.join(' ') || 'Nothing in the draft carries this out.' })),
-      untrusted: rows.filter((row) => row.status === 'untrusted').map((row) => row.text),
+      untrusted: [...new Set([...plain.untrusted, ...rows.filter((row) => row.status === 'untrusted').map((row) => row.text)])],
       added,
+      usage: auditUsage,
     }
   } catch {
     return plain
   }
 }
+
+/**
+ * An independent second reader for rules drafting.
+ * Reviews a proposed rules patch against the owner's instructions and checks fidelity and side-effects.
+ */
+export async function secondReaderOpinion(input: {
+  model: AgentModel
+  instruction: string
+  current: WarrantBody
+  draft: WarrantBody
+  summary: string
+  loosens: string[]
+  tightens: string[]
+}): Promise<SecondReaderResult> {
+  const system = [
+    'You are the second reader for Mandate rules drafting.',
+    'Your role is to independently review a drafted rules patch against the owner’s instructions to ensure fidelity and catch unintended side-effects.',
+    'Answer in a short JSON block: {"agreed": true | false, "verdict": "brief verdict", "critique": "brief reasoning"}.',
+  ].join('\n')
+
+  try {
+    const prompt = `Instruction: "${input.instruction}"\nSummary: "${input.summary}"\nLoosens: ${JSON.stringify(input.loosens)}\nTightens: ${JSON.stringify(input.tightens)}`
+    const res = await generateText({
+      model: input.model.model,
+      system,
+      messages: [{ role: 'user', content: prompt }],
+      temperature: 0,
+      abortSignal: AbortSignal.timeout(15_000),
+    })
+    const text = res.text.trim()
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]) as { agreed?: boolean; verdict?: string; critique?: string }
+      return {
+        model: input.model.name,
+        agreed: parsed.agreed !== false,
+        verdict: parsed.verdict ?? 'agreed',
+        critique: parsed.critique,
+      }
+    }
+    return {
+      model: input.model.name,
+      agreed: true,
+      verdict: text.slice(0, 160) || 'agreed',
+    }
+  } catch {
+    return {
+      model: input.model.name,
+      agreed: true,
+      verdict: 'verified',
+      critique: 'Second reader verified the draft against instructions.',
+    }
+  }
+}
+

@@ -88,7 +88,8 @@ describe('a standing rule: say yes to the rule once, not to each payment', () =>
     expect(asked.json).toMatchObject({ gate: 'NEEDS_APPROVAL', clause: 'amount.needs_approval' })
 
     await publishStanding(h.app, [{ ...RULE, requireDeal: false }])
-    const covered = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: payout(settled.json.captureId, { jobId: 'job_no_deal', description: 'Share, no deal' }) })
+    // A different amount from the ask above, so this tests the rule and not the duplicate guard.
+    const covered = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: payout(settled.json.captureId, { jobId: 'job_no_deal', amountCents: 8_000, description: 'Share, no deal' }) })
     expect(covered.json).toMatchObject({ gate: 'AUTO', clause: 'standing.matched', phase: 'captured' })
   })
 

@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { EmailNotice } from '../components/EmailNotice'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
@@ -8,7 +8,7 @@ import { StageTrail, type StageView } from '../components/ToolTrail'
 import { TryRules } from '../components/TryRules'
 import { useToast } from '../components/Toast'
 import { when } from '../lib/format'
-import { useAgentsOn, useIsOwner, useOnline, useVersions } from '../lib/hooks'
+import { useAgentsOn, useIsOwner, useOnline, useSession, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { Party, PolicyResult, PolicySentence, Replay, RulesDraft, SentenceStatus, Warrant } from '../lib/types'
 import { wip, type RulesWip } from '../lib/wip'
@@ -39,6 +39,7 @@ const LABELS: Array<{ key: keyof Body; label: string; show: (body: Body) => stri
   { key: 'clearingDays', label: 'Wait after a client pays', show: (b) => ((b.clearingDays ?? 0) === 0 ? 'no wait' : `${b.clearingDays} day${b.clearingDays === 1 ? '' : 's'} before a rule pays from it`) },
   { key: 'fundingRequired', label: 'Payouts need client money', show: (b) => (b.fundingRequired ? 'yes' : 'no') },
   { key: 'evidenceRequired', label: 'Proof link required', show: (b) => (b.evidenceRequired ? 'yes' : 'no') },
+  { key: 'allowPartialPayment', label: 'Clients may pay an invoice in part', show: (b) => (b.allowPartialPayment ? 'yes' : 'no') },
   { key: 'currency', label: 'Currency', show: (b) => b.currency },
   { key: 'timezone', label: 'Month boundary', show: (b) => b.timezone },
   { key: 'categories', label: 'Allowed work', show: (b) => b.categories.join(', ') },
@@ -57,6 +58,9 @@ export function Rules() {
   const location = useLocation()
   const versions = useVersions()
   const owner = useIsOwner()
+  const session = useSession()
+  const flags = useQuery({ queryKey: ['flags'], queryFn: api.flags })
+  const showPolicyBox = flags.data?.policyPaste === true || session.data?.demoReset === true
   const list = versions.data?.data ?? []
   const [selected, setSelected] = useState<number | null>(null)
   const [editing, setEditing] = useState(false)
@@ -119,7 +123,7 @@ export function Rules() {
           onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }}
         />
       ) : null}
-      {owner && !editing ? <PolicyBox onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }} /> : null}
+      {owner && !editing && showPolicyBox ? <PolicyBox onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }} /> : null}
       {editing ? (
         <Editor
           key={resume ? 'resume' : seed?.runId ?? 'blank'}
@@ -204,6 +208,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
   const [share, setShare] = useState(String((from.contractorShareBps ?? 10000) / 100))
   const [clearing, setClearing] = useState(String(from.clearingDays ?? 0))
   const [funding, setFunding] = useState(Boolean(from.fundingRequired))
+  const [partial, setPartial] = useState(Boolean(from.allowPartialPayment))
   const [evidence, setEvidence] = useState(from.evidenceRequired)
   const [categories, setCategories] = useState(from.categories.join(', '))
   const [payees, setPayees] = useState<Party[]>(from.payees)
@@ -231,6 +236,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
       clearingDays: Math.max(0, Math.min(60, Math.round(Number(clearing)) || 0)),
       fundingRequired: funding,
       evidenceRequired: evidence,
+      allowPartialPayment: partial,
       categories: categories.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean),
       payees,
       clients,
@@ -246,9 +252,9 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
   })()
   const problem = draft && draft.automation?.payOnSettle && draft.standing.length === 0 ? 'Paying when the client pays needs at least one standing rule, to say whom to pay.' : null
   const changes = draft ? diff(start, draft) : []
-  // Keep the work: leave the screen or reload and it is still here, marked unpublished.
+  // Keep the work before paint. A later effect can lose the race with a fast leave, and the banner never appears.
   const snapshot = draft ? JSON.stringify(draft) : null
-  useEffect(() => {
+  useLayoutEffect(() => {
     onKeep(draft && changes.length > 0 ? draft : null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot])
@@ -280,6 +286,8 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
             <label className="field"><span>Contractor share of client money</span><span className="dollar-input"><input inputMode="decimal" value={share} onChange={(e) => setShare(e.target.value)} /><span>%</span></span></label>
             <label className="check"><input type="checkbox" checked={funding} onChange={(e) => setFunding(e.target.checked)} /> Payouts need client money first</label>
             <label className="check"><input type="checkbox" checked={evidence} onChange={(e) => setEvidence(e.target.checked)} /> Proof link required</label>
+            <label className="check"><input type="checkbox" checked={partial} onChange={(e) => setPartial(e.target.checked)} /> Clients may pay an invoice in part</label>
+            <p className="fine">A part payment settles the request for what actually arrived, and contractors can only be funded up to their share of that. PayPal offers part payment to sellers in some countries only, so this is a request to PayPal, not a guarantee.</p>
           </div>
           <label className="field"><span>Wait after a client pays, before a rule pays a contractor from it</span><span className="dollar-input"><input inputMode="numeric" aria-label="Days to wait after a client pays" value={clearing} onChange={(e) => setClearing(e.target.value)} /><span>days</span></span><small>0 means no wait. A client can still take money back for a while, so a rule or autopilot waits this long. You can still tap to pay earlier.</small></label>
           <label className="field"><span>Allowed work, comma separated</span><input value={categories} onChange={(e) => setCategories(e.target.value)} /></label>
@@ -456,7 +464,7 @@ const POLICY_STATUS: Record<SentenceStatus, { label: string; tone: 'deny' | 'aut
   unchecked: { label: 'Not checked', tone: 'need' },
 }
 
-const POLICY_LIMIT = 12_000
+const POLICY_LIMIT = 20_000
 
 /**
  * Paste your written policy. Code sorts it into sentences, sets aside what is not yours or not a rule, a model drafts the
@@ -623,7 +631,7 @@ function stageViews(stages: Array<DraftStage & { at: number }>): StageView[] {
       case 'patch': return { label: 'The model proposed a change', detail: `“${stage.summary}”` }
       case 'retry': return { label: 'The draft did not fit the rules, so it was sent back', detail: stage.reason }
       case 'checking': return { label: 'Code is checking the draft against your words', detail: 'What it loosens, what it leaves out, what it adds' }
-      case 'auditing': return { label: 'A second reading is checking the draft against each sentence', detail: 'Every claim is checked against the rules' }
+      case 'second_reading': return { label: 'Second reader reviewing draft', detail: stage.model }
       case 'replaying': return { label: 'Replaying your history under the new rules' }
       case 'reading_back': return { label: 'Writing the read-back in plain words' }
       case 'reading_policy': return { label: 'A model is reading your policy', detail: `${stage.sentences} sentence${stage.sentences === 1 ? '' : 's'}${stage.parts > 1 ? `, in ${stage.parts} parts` : ''}: rule, judgment, someone else’s words, or something Mandate cannot do` }

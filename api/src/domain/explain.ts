@@ -45,6 +45,7 @@ export function explainClause(input: ExplainInput): string {
     case 'deal.unknown': return 'The deal this charge names does not exist or was never agreed.'
     case 'deal.milestone_mismatch': return 'A milestone can only be billed for exactly its agreed amount.'
     case 'deal.milestone_billed': return 'That milestone has already been billed.'
+    case 'duplicate.open': return 'This is the same ask as one that is already open: the same money, on the same job, from the same source. Finish or reject that one first.'
     case 'deal.milestone_unknown': return 'The deal has no such milestone.'
     case 'deal.job_mismatch': return 'That deal belongs to a different job.'
     case 'deal.party_mismatch': return 'That deal was made with a different client.'

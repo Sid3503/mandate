@@ -2,11 +2,63 @@ import type { components } from './openapi'
 
 export type Proposal = components['schemas']['Proposal']
 export type Warrant = components['schemas']['Warrant']
-export type Session = components['schemas']['Session']
+export type SessionRole = 'owner' | 'approver' | 'proposer' | 'viewer' | 'payee'
+export type Session = Omit<components['schemas']['Session'], 'role'> & { role: SessionRole }
+
+/** Planned switches from GET /v1/flags. Off means that feature is not active. */
+export type ServerFlags = {
+  tenancy: boolean
+  demoEnabled: boolean
+  demoTtlHours: number
+  demoMaxActive: number
+  demoMaxPerIpHour: number
+  passkeys: boolean
+  requirePasskeyForMoney: boolean
+  legacyOwnerKeyEnabled: boolean
+  invites: boolean
+  inviteTtlHours: number
+  safetyBreaker: boolean
+  payeeBook: boolean
+  newPayeeWaitHours: number
+  policyPaste: boolean
+  secondReader: boolean
+  mcpExposeReadTools: boolean
+  paypalLogin: boolean
+  modelEnabled: boolean
+}
 export type Deal = components['schemas']['Deal']
 export type Kind = Proposal['kind']
 export type Gate = Proposal['gate']
 export type Party = Warrant['payees'][number]
+
+export type PayeeBookEntry = {
+  id: string
+  name: string
+  email: string
+  status: 'active' | 'pending' | 'disabled'
+  verified_method: string
+  first_seen: string
+  total_paid_cents: number
+  change_pending: boolean
+  change_email: string | null
+  cooling: boolean
+  waitUntil: string | null
+  diagnostics: {
+    canPay: boolean
+    reason: string
+    clause: string | null
+  }
+  history?: Array<{
+    id: string
+    kind: string
+    amountCents: number
+    currency: string
+    phase: string
+    clause: string | null
+    description: string
+    createdAt: string
+  }>
+}
 
 export type Page<T> = { data: T[]; nextCursor: string | null }
 
@@ -22,7 +74,15 @@ export type LedgerEvent = {
 export type Packet = {
   proposal: Proposal
   payee: Party | null
-  warrant: { id: string; version: number; currency: string; monthlyCapCents: number; autoSettleUnderCents: number } | null
+  warrant: { id: string; version: number; currency: string; monthlyCapCents: number; autoSettleUnderCents: number; signed: boolean } | null
+  approvalProof: {
+    method: 'passkey' | 'owner-key' | 'demo' | 'legacy' | 'rule'
+    tone: 'red' | 'amber' | 'grey' | 'ink'
+    who: string
+    how: string
+    at: string | null
+    fingerprint: string | null
+  } | null
   prompt: string | null
   clause: string
   approval: LedgerEvent | null
@@ -118,8 +178,19 @@ export type Safety = {
 }
 
 export type AgentScope = 'read' | 'propose' | 'stream' | 'mcp' | 'deals'
-export type AgentRow = { id: string; name: string; scopes: AgentScope[]; limits: { proposalsPerHour: number; centsPerHour: number }; status: 'active' | 'suspended' | 'revoked'; createdAt: string; lastSeenAt: string | null }
-export type ClientKeyRow = { id: string; name: string; partyId: string; status: 'active' | 'revoked'; createdAt: string; lastSeenAt: string | null }
+export type AgentScorecard = {
+  agentId: string
+  name: string
+  status: 'active' | 'suspended' | 'revoked'
+  requests: number
+  refusals: number
+  auto: number
+  needsTap: number
+  lastSeenAt: string | null
+  breakerTripped: boolean
+}
+export type AgentRow = { id: string; name: string; scopes: AgentScope[]; limits: { proposalsPerHour: number; centsPerHour: number; proposalsPerDay?: number; centsPerDay?: number }; status: 'active' | 'suspended' | 'revoked'; keyPrefix?: string; createdAt: string; lastSeenAt: string | null; lastUsedAt?: string | null; expiresAt?: string | null; scorecard?: AgentScorecard }
+export type ClientKeyRow = { id: string; name: string; partyId: string; status: 'active' | 'revoked'; keyPrefix?: string; createdAt: string; lastSeenAt: string | null; lastUsedAt?: string | null; expiresAt?: string | null }
 
 export type Suggestion = { id: string; payeeId: string; payeeName: string; clientId: string; clientName: string; approved: number; totalCents: number; largestCents: number; firstAt: string; draft: string }
 export type Suggestions = { suggestions: Suggestion[]; taps: { thisMonth: number; lastMonth: number; byRule: number } }
@@ -236,11 +307,19 @@ export type ActivityRow = {
   counterparty: string | null
   proposalId: string | null
   matchedBy: string | null
+  /** Signed cents the ledger holds for the matched request, or null when nothing matched. */
+  expectedCents: number | null
+  /** Currency the ledger holds for the matched request, or null. */
+  expectedCurrency: string | null
+  /** This row's cents minus what the ledger holds. Null when unmatched or when the request was paid in parts. */
+  deltaCents: number | null
+  /** Whether the matched request's money lines up. Null when nothing was compared. */
+  balanced: boolean | null
 }
 
 export type Activity =
   | { available: false; reason: string }
-  | { available: true; from: string; to: string; rows: ActivityRow[]; matched: number; unmatched: number; unmatchedNetCents: number }
+  | { available: true; from: string; to: string; rows: ActivityRow[]; matched: number; unmatched: number; unmatchedNetCents: number; mismatched: number; mismatchedNetCents: number }
 
 export type ToolSummary = {
   total: number
@@ -360,6 +439,7 @@ export type RulesDraft = {
   model: string
   ms: number
   runId: string
+  secondReader?: { model: string; agreed: boolean; verdict: string; critique?: string }
 }
 
 export type SentenceStatus = 'covered' | 'partly' | 'not_covered' | 'unenforceable' | 'context' | 'untrusted' | 'skipped' | 'unchecked'

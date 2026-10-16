@@ -19,16 +19,24 @@ import { session } from './lib/session'
 import { Today } from './screens/Today'
 import { Proof } from './screens/Proof'
 import { Verify } from './screens/Verify'
+import { Join } from './screens/Join'
 import { Landing } from './screens/Landing'
+import { Studio } from './screens/Studio'
 import { Clerk } from './screens/Clerk'
 import { Deals } from './screens/Deals'
 import { JobScreen, Jobs } from './screens/Jobs'
 import { NewRequest } from './screens/NewRequest'
 import { Receipt } from './screens/Receipt'
 import { Rules } from './screens/Rules'
+import { Members } from './screens/Members'
+import { Sessions } from './screens/Sessions'
 import { System } from './screens/System'
 import { SharedStatus } from './screens/SharedStatus'
 import { Unlock } from './screens/Unlock'
+import { Connect } from './screens/Connect'
+import { LiveProof } from './screens/LiveProof'
+import { PayeePayments } from './screens/PayeePayments'
+import { Payees } from './screens/Payees'
 import { Loading } from './components/ui'
 
 const ControlRoom = lazy(() => import('./screens/ControlRoom'))
@@ -48,7 +56,8 @@ queryClient.getQueryCache().subscribe((event) => {
   const error = event.query.state.error
   if (error instanceof ApiError && error.status === 401) {
     session.clear()
-    if (!location.pathname.endsWith('/unlock')) location.assign('/app/unlock')
+    try { localStorage.setItem('mandate.session.expired', '1') } catch {}
+    if (!location.pathname.endsWith('/unlock')) location.assign('/app/unlock?reason=expired')
   }
 })
 
@@ -84,7 +93,7 @@ function GlobalGuards() {
 function RequireKey({ children }: { children: ReactNode }) {
   const where = useLocation()
   // The front door: a visitor with no key sees what Mandate is before being asked for one.
-  if (!session.get()) return <Navigate to={where.pathname === '/' ? '/welcome' : '/unlock'} replace state={{ from: where.pathname }} />
+  if (!session.get() && !session.workspace()) return <Navigate to={where.pathname === '/' ? '/welcome' : '/unlock'} replace state={{ from: where.pathname }} />
   return <>{children}</>
 }
 
@@ -98,7 +107,10 @@ createRoot(document.getElementById('root')!).render(
         <Routes>
           <Route path="/welcome" element={<Landing />} />
           <Route path="/unlock" element={<Unlock />} />
+          <Route path="/studio" element={<Studio />} />
+          <Route path="/join" element={<Join />} />
           <Route path="/verify" element={<Verify />} />
+          <Route path="/live-proof" element={<LiveProof />} />
           <Route path="/s/:token" element={<SharedStatus />} />
           <Route element={<RequireKey><LiveProvider><Shell /></LiveProvider></RequireKey>}>
             <Route index element={<Today />} />
@@ -113,6 +125,12 @@ createRoot(document.getElementById('root')!).render(
             <Route path="rules" element={<Rules />} />
             <Route path="proof" element={<Proof />} />
             <Route path="system" element={<System />} />
+            <Route path="sessions" element={<Sessions />} />
+            <Route path="members" element={<Members />} />
+            <Route path="connect" element={<Connect />} />
+            <Route path="live-proof" element={<LiveProof />} />
+            <Route path="payments" element={<PayeePayments />} />
+            <Route path="payees" element={<Payees />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

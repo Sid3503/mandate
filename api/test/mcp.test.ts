@@ -222,8 +222,9 @@ describe('finding the client payment that can still fund a payout', () => {
     const b = await agree(app, { jobId: 'job_b_open' })
     const paidB = await collect(app, b.id, 0)
     // The newest thing to happen is a refused attempt on job A, which is what used to mislead the clerk.
+    // A different amount, so it is a new ask rather than a repeat of the one already locked.
     const { use } = await connect(app, STUDIO_KEY)
-    const refused = await use('propose', { ...payout, jobId: 'job_a_exhausted', fundingCaptureId: paidA.captureId })
+    const refused = await use('propose', { ...payout, amountCents: 1_000, jobId: 'job_a_exhausted', fundingCaptureId: paidA.captureId })
     expect(refused.data).toMatchObject({ decision: 'DENY', ruleCode: 'funding.exceeds' })
 
     const jobs = await use('get_jobs', {})
@@ -236,3 +237,50 @@ describe('finding the client payment that can still fund a payout', () => {
     expect(narrowed.data.payoutsPossibleFrom[0]).toMatchObject({ jobId: 'job_b_open' })
   })
 })
+
+describe('MCP_EXPOSE_READ_TOOLS wiring (P11.T3)', () => {
+  it('disables read tools when exposeReadTools is false and keeps them when true', async () => {
+    const { services } = harness()
+    const { createMandateMcpServer } = await import('../src/mcp/server')
+
+    const hidden = createMandateMcpServer({
+      services,
+      principal: { role: 'proposer', side: 'studio' } as never,
+      runId: 'r-hidden',
+      budget: { asks: 1 },
+      exposeReadTools: false,
+    })
+    const hiddenTools = Object.entries((hidden as any)._registeredTools)
+      .filter(([, t]: any) => t.enabled !== false)
+      .map(([name]) => name)
+      .sort()
+    expect(hiddenTools).toEqual(['offer_deal', 'propose'])
+
+    const exposed = createMandateMcpServer({
+      services,
+      principal: { role: 'proposer', side: 'studio' } as never,
+      runId: 'r-exposed',
+      budget: { asks: 1 },
+      exposeReadTools: true,
+    })
+    const exposedTools = Object.entries((exposed as any)._registeredTools)
+      .filter(([, t]: any) => t.enabled !== false)
+      .map(([name]) => name)
+      .sort()
+    expect(exposedTools).toEqual(['explain', 'get_jobs', 'get_rules', 'list_ledger', 'offer_deal', 'propose'])
+  })
+
+  it('drops read tools over HTTP when x-mandate-expose-read is 0', async () => {
+    const { app } = harness()
+    const transport = new StreamableHTTPClientTransport(new URL('http://mandate.test/mcp'), {
+      fetch: (input, init) => Promise.resolve(app.fetch(new Request(input as string, init))),
+      requestInit: { headers: { authorization: `Bearer ${STUDIO_KEY}`, 'x-mandate-run': crypto.randomUUID(), 'x-mandate-expose-read': '0' } },
+    })
+    const client = new Client({ name: 'test-agent', version: '1.0.0' })
+    await client.connect(transport)
+    const tools = (await client.listTools()).tools
+    expect(tools.map((t) => t.name).sort()).toEqual(['offer_deal', 'propose'])
+    await client.close()
+  })
+})
+

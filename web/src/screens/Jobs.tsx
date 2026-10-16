@@ -8,7 +8,7 @@ import { useIsOwner, useNames, useProposals } from '../lib/hooks'
 import { dollars } from '../lib/money'
 import { jobNext, jobStages } from '../lib/jobTrack'
 import type { Job, Proposal } from '../lib/types'
-import type { Names } from '../lib/words'
+import { fundedPhase, settlementLine, type Names } from '../lib/words'
 
 export function Jobs() {
   const proposals = useProposals()
@@ -120,8 +120,9 @@ export function JobScreen() {
                 </Link>
                 <PhaseChip phase={charge.phase} />
               </div>
+              {charge.deltaCents !== null && charge.deltaCents !== 0 ? <p className="fine" data-tour="job-delta">{settlementLine(charge)}</p> : null}
               <div className="charge-funds">
-                {charge.phase === 'captured' ? (
+                {fundedPhase(charge.phase) ? (
                   <>
                     <span className="mono small">{charge.captureId}</span>
                     <span>can still fund <strong>{dollars(charge.fundableCents)}</strong></span>

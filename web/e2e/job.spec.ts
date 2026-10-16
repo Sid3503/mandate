@@ -623,6 +623,12 @@ test('the owner can stop everything with one button; agents are refused with the
   })).json()
   expect(['system.paused', 'funding.missing']).toContain(refused.clause)
 
+  // Today shows Stopped proof: paused banner, stopped card, and refusal under Stopped by the rules.
+  await page.goto('/app')
+  await expect(page.getByTestId('paused-banner')).toContainText('Mandate is paused')
+  await expect(page.getByTestId('today-stopped-card')).toContainText('Automation stopped')
+  await expect(page.getByTestId('today-stopped')).toBeVisible()
+
   // The System page shows the history, signed.
   await page.goto('/app/system')
   await expect(page.getByTestId('safety-panel')).toContainText('Paused · Odd requests on Friday')
@@ -685,6 +691,7 @@ test('a suggested rule shows on Today and opens the drafter with the words fille
   const card = page.getByTestId('tap-to-rule')
   await expect(card).toContainText('approved Priya Shah', { timeout: 20_000 })
   await expect(card).toContainText('4 times')
+  await expect(card).toContainText('4 taps this month')
   await shots(page, '44-tap-to-rule')
   await card.getByRole('link', { name: 'Draft this rule' }).click()
   await expect(page).toHaveURL(/\/rules/)

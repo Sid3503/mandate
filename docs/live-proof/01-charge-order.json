@@ -1,0 +1,9 @@
+{
+  "step": "charge_order_created",
+  "description": "Northwind $150 milestone 1 charge order created in PayPal sandbox",
+  "proposalId": "55c7307d-9c3e-4042-b92a-a905a521026b",
+  "orderId": "51H50117X4794793P",
+  "status": "CREATED",
+  "amount": "$150.00 USD",
+  "skipped": "Capture skipped because PayPal requires interactive human buyer login via browser at approveUrl"
+}

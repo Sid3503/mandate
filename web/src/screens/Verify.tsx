@@ -20,6 +20,7 @@ export function Verify() {
   const [verdict, setVerdict] = useState<Verdict | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [fingerprint, setFingerprint] = useState('')
   const ran = useRef(false)
 
   useEffect(() => {
@@ -57,7 +58,7 @@ export function Verify() {
     }
     setBusy(true)
     try {
-      setVerdict(await verifyReceipt(receipt, use))
+      setVerdict(await verifyReceipt(receipt, use, { fingerprint }))
     } finally {
       setBusy(false)
     }
@@ -91,6 +92,10 @@ export function Verify() {
           <h2 className="panel-title" id="h-receipt">The receipt</h2>
           <label className="sr-only" htmlFor="receipt-json">Receipt JSON</label>
           <textarea id="receipt-json" rows={10} value={text} spellCheck={false} placeholder='{ "proposal": { … }, "lock": { "hash": "…", "signature": "…", "keyId": "…" } }' onChange={(event) => setText(event.target.value)} />
+          <label className="field">
+            <span>Fingerprint you saved</span>
+            <input data-testid="typed-fingerprint" value={fingerprint} spellCheck={false} onChange={(event) => setFingerprint(event.target.value)} placeholder="Optional. Leave blank to check the key on the receipt." />
+          </label>
           <div className="row gap-s wrap">
             <button type="button" className="btn btn-ink btn-big" disabled={!text.trim() || busy} onClick={() => void run()}>{busy ? 'Checking…' : 'Verify this receipt'}</button>
             <label className="btn btn-ghost">Choose a file<input type="file" accept="application/json,.json" className="sr-only" onChange={(event) => void onFile(event)} /></label>
@@ -125,7 +130,7 @@ export function Verify() {
 
         <section className="panel">
           <h2 className="panel-title">What this proves, and what it does not</h2>
-          <p className="fine"><strong>It proves</strong> that the payee, amount, currency, category, proof link, job and funding on the receipt are exactly what the owner approved, that the Mandate server’s key signed that, and (when present) that the client’s own agent signed its acceptance of exactly the proof that was billed.</p>
+          <p className="fine"><strong>It proves</strong> that the payee, amount, currency, category, proof link, job and funding on the receipt are exactly what was locked, that the Mandate server’s key signed that, and (when present) that the client’s own agent signed its acceptance of exactly the proof that was billed. A passkey line, when the receipt has one, is checked as a signature by the key on the receipt. An algorithm this page does not know says "cannot verify here".</p>
           <p className="fine"><strong>It does not prove</strong> that PayPal moved the money. Check the PayPal ids on the receipt in PayPal. The checker is one short file, <code>web/src/lib/verify.ts</code>, and it runs in your browser.</p>
         </section>
       </main>

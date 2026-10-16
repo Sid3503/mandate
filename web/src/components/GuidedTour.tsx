@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useLocation } from 'react-router-dom'
 import { CircleHelp } from 'lucide-react'
 import { useSession } from '../lib/hooks'
+import { session } from '../lib/session'
 import { TOURS, tourFor, TOUR_LABEL, type TourId } from '../lib/tours'
 import { findTarget, Tour, useTour, type TourStep } from './ui/product-tour'
 
@@ -18,6 +19,9 @@ function isSeen(id: TourId): boolean {
 function markSeen(id: TourId): void {
   try {
     localStorage.setItem(storageKey(id), '1')
+    if (id === 'coach') {
+      localStorage.setItem('mandate.coach.seen', '1')
+    }
   } catch {
     // Private mode: the tour simply offers itself again next time.
   }
@@ -69,9 +73,12 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   }, [active])
 
   useEffect(() => {
-    if (!me.data || isSeen('welcome')) return
+    if (!me.data) return
+    if (localStorage.getItem('mandate.tour.welcome') === '1' || localStorage.getItem('mandate.coach.seen') === '1') return
+    const isDemo = session.mode() === 'demo'
+    const targetTour: TourId = isDemo ? 'coach' : 'welcome'
     const timer = window.setTimeout(() => {
-      if (!isOpen.current) start('welcome')
+      if (!isOpen.current) start(targetTour)
     }, 700)
     return () => window.clearTimeout(timer)
   }, [me.data, start])

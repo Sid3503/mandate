@@ -4,7 +4,7 @@
     "notebooklm": {
       "type": "local",
       "command": [
-        "/Users/siddharth.mishra/.local/bin/notebooklm-mcp"
+        "notebooklm-mcp"
       ],
       "enabled": true
     },
@@ -14,7 +14,7 @@
       "enabled": true,
       "oauth": false,
       "headers": {
-        "Authorization": "Bearer {file:.opencode.firecrawl_key}"
+        "Authorization": "Bearer {env:FIRECRAWL_API_KEY}"
       }
     }
   }

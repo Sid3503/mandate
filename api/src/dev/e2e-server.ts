@@ -7,6 +7,7 @@ import { buildServices } from '../services/container'
 import { migrate, openDatabase, seed } from '../db/database'
 import { createAgentModel } from '../agents/model'
 import { FakeInvoices, FakePayPal, FakeWatch } from '../paypal/fake'
+import { loadFlags } from '../flags'
 import { demoModel } from './demo-model'
 
 const port = Number(process.env.PORT ?? 8799)
@@ -45,6 +46,7 @@ const app = createApp({
     commit: process.env.GIT_COMMIT?.trim() || null,
     // The tests run against a fake PayPal, so the reset a hosted demo uses is safe to offer here.
     demoReset: true,
+    flags: loadFlags({ FLAG_POLICY_PASTE: '1', ...process.env }),
   },
 })
 
@@ -73,6 +75,19 @@ app.post('/__fake/payouts/:outcome', async (c) => {
   } else if (outcome === 'SUCCESS' || outcome === 'PENDING' || outcome === 'FAILED') paypal.payoutOutcome = outcome
   else return c.json({ error: 'unknown outcome' }, 400)
   return c.json({ ok: true, outcome })
+})
+
+// A dev server may set a cookie instead of reading ?key= from the URL
+app.get('/__fake/session', (c) => {
+  const token = c.req.query('key') ?? 'owner-e2e-key-0123456789'
+  const workspace = c.req.query('workspace')
+  c.header('set-cookie', `mandate_session=${token}; Path=/; SameSite=Lax`)
+  if (workspace) {
+    c.header('set-cookie', `mandate_workspace=${workspace}; Path=/; SameSite=Lax`, { append: true })
+  }
+  const redirect = c.req.query('redirect')
+  if (redirect) return c.redirect(redirect, 302)
+  return c.json({ ok: true, session: 'cookie_set' })
 })
 
 serve({ fetch: app.fetch, hostname: '127.0.0.1', port }, () => {

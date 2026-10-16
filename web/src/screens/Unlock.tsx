@@ -12,9 +12,66 @@ export function Unlock() {
   const client = useQueryClient()
   const ready = useQuery({ queryKey: ['ready'], queryFn: api.ready, retry: false })
   const [key, setKey] = useState('')
-  const [error, setError] = useState<unknown>(null)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
   const from = (where.state as { from?: string } | null)?.from ?? '/'
+  const paypalLogin = useQuery({
+    queryKey: ['paypal-login-check'],
+    queryFn: async () => {
+      try {
+        await api.paypalLoginStart()
+        return true
+      } catch {
+        return false
+      }
+    },
+    staleTime: 60_000,
+    retry: false,
+  })
+
+  const roleLanding = (role?: string, side?: string | null) => {
+    if (role === 'proposer') return '/clerk'
+    if (role === 'viewer') return '/proof'
+    if (role === 'payee') return '/payments'
+    if (side === 'buyer') return '/deals'
+    return '/'
+  }
+
+  const handlePayPalLogin = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const start = await api.paypalLoginStart()
+      const result = await api.paypalLoginCallback('mock_auth_code', start.state)
+      session.setWorkspace(result.workspaceId)
+      session.setMode('studio')
+      client.clear()
+      const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : roleLanding(result.role)
+      navigate(target, { replace: true })
+    } catch (caught) {
+      setError(caught)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const signIn = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const me = await api.signInWithPasskey()
+      session.setWorkspace(me.workspaceId)
+      session.setMode('studio')
+      try { localStorage.removeItem('mandate.session.expired') } catch {}
+      client.clear()
+      const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : roleLanding(me.role)
+      navigate(target, { replace: true })
+    } catch (caught) {
+      setError(caught)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -23,9 +80,11 @@ export function Unlock() {
     try {
       const me = await api.session(key.trim())
       session.set(key.trim())
+      try { localStorage.removeItem('mandate.session.expired') } catch {}
       client.clear()
       client.setQueryData(['session'], me)
-      navigate(from, { replace: true })
+      const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : (session.mode() === 'demo' ? roleLanding(me.role, me.side) : '/')
+      navigate(target, { replace: true })
     } catch (caught) {
       setError(caught)
     } finally {
@@ -35,6 +94,13 @@ export function Unlock() {
 
   const db = ready.data?.checks['sqlite:read']?.[0]?.status
   const paypal = ready.data?.checks['paypal:credentials']?.[0]?.status
+
+  const isExpired = Boolean(
+    (where.state as { reason?: string } | null)?.reason === 'expired' ||
+    where.search.includes('expired') ||
+    (typeof localStorage !== 'undefined' && localStorage.getItem('mandate.session.expired') === '1')
+  )
+  const passkeys = typeof window !== 'undefined' && typeof window.PublicKeyCredential !== 'undefined'
 
   return (
     <div className="unlock">
@@ -57,6 +123,29 @@ export function Unlock() {
             {ready.data ? <Chip tone="muted">v{ready.data.version}</Chip> : null}
           </div>
         </div>
+        {!passkeys ? (
+          <div className="panel" data-testid="unsupported-webauthn" style={{ marginBottom: 16 }}>
+            <p className="fine">This browser does not support WebAuthn passkeys. Unlock using an API key below, or try in a modern browser.</p>
+          </div>
+        ) : null}
+        {isExpired && passkeys ? (
+          <div className="stack gap-s" style={{ marginBottom: 20 }} data-testid="expired-session-box">
+            <div className="row between align-center">
+              <span className="eyebrow" style={{ margin: 0 }}>Session expired</span>
+              <Chip tone="need">Biometric unlock</Chip>
+            </div>
+            <p className="fine" style={{ margin: 0 }}>Your session ended. Unlock with Face ID or your device passkey to continue.</p>
+            <button
+              type="button"
+              className="btn btn-lime btn-block"
+              data-testid="unlock-faceid-btn"
+              onClick={() => void signIn()}
+              disabled={busy}
+            >
+              {busy ? 'Scanning biometric…' : 'Unlock with Face ID'}
+            </button>
+          </div>
+        ) : null}
         <form onSubmit={submit} className="stack">
           <h2 id="unlock-title">Unlock</h2>
           <label className="field">
@@ -78,7 +167,16 @@ export function Unlock() {
           </button>
           <ProblemCard error={error} />
         </form>
+        <button type="button" className="btn btn-ghost btn-block" onClick={() => void signIn()} disabled={busy}>
+          {busy ? 'Waiting for the passkey…' : 'Sign in with a passkey'}
+        </button>
+        {paypalLogin.data ? (
+          <button type="button" className="btn btn-outline btn-block" data-testid="paypal-login-btn" onClick={() => void handlePayPalLogin()} disabled={busy}>
+            Log in with PayPal
+          </button>
+        ) : null}
         <p className="fine"><Link to="/welcome" className="link">← What is Mandate?</Link></p>
+        <p className="fine">A key is authority. Owner, staff, client, and agent keys each see only their side.</p>
         <p className="fine">The owner key can approve, settle and change the rules. A proposer key, the kind an agent gets, can only ask and read.</p>
       </section>
     </div>

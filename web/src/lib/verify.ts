@@ -22,9 +22,20 @@ export type Receipt = {
     signature: string | null
     keyId: string | null
   } | null
+  approval?: { payload?: PasskeyMaterial } | null
 }
 
-export type Check = { id: 'hash' | 'lock' | 'acceptance'; label: string; ok: boolean; detail: string }
+export type Check = { id: 'hash' | 'lock' | 'acceptance' | 'passkey'; label: string; ok: boolean; detail: string }
+
+export type PasskeyMaterial = {
+  method?: string
+  fingerprint?: string
+  rpId?: string
+  origin?: string
+  challenge?: string
+  publicKey?: { kty?: string; crv?: string; alg?: number; x?: string; y?: string }
+  assertion?: { type?: string; response?: { authenticatorData?: string; clientDataJSON?: string; signature?: string } }
+}
 
 export type Verdict = { ok: boolean; checks: Check[]; recomputed: string | null }
 
@@ -80,7 +91,116 @@ async function verifyEd25519(message: string, signature: string | null | undefin
   }
 }
 
-export async function verifyReceipt(receipt: Receipt, keys: PublicKey[]): Promise<Verdict> {
+/** DER SEQUENCE of two INTEGERs becomes the 32-byte r || s WebCrypto expects. A 64-byte signature is already raw. */
+export function derToRaw(signature: Uint8Array): Uint8Array<ArrayBuffer> | null {
+  if (signature.length === 64) return copyBytes(signature)
+  const sequenceLength = signature[1]
+  if (signature[0] !== 0x30 || sequenceLength === undefined || signature.length < 8) return null
+  let offset = 2
+  if ((sequenceLength & 0x80) !== 0) return null
+  const read = (): Uint8Array | null => {
+    if (signature[offset] !== 0x02) return null
+    const length = signature[offset + 1]
+    if (length === undefined) return null
+    offset += 2
+    const bytes = signature.slice(offset, offset + length)
+    offset += length
+    if (bytes.length < 32) {
+      const padded = new Uint8Array(new ArrayBuffer(32))
+      padded.set(bytes, 32 - bytes.length)
+      return padded
+    }
+    if (bytes.length === 32) return bytes
+    const lead = bytes[0]
+    const high = bytes[1]
+    if (bytes.length === 33 && lead === 0 && high !== undefined && (high & 0x80) === 0x80) return bytes.slice(1)
+    return null
+  }
+  const r = read()
+  const s = read()
+  if (!r || !s) return null
+  const raw = new Uint8Array(new ArrayBuffer(64))
+  raw.set(r, 0)
+  raw.set(s, 32)
+  return raw
+}
+
+function copyBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+  const copy = new Uint8Array(new ArrayBuffer(bytes.length))
+  copy.set(bytes)
+  return copy
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false
+  let diff = 0
+  for (let i = 0; i < left.length; i += 1) diff |= (left[i] ?? 0) ^ (right[i] ?? 0)
+  return diff === 0
+}
+
+/**
+ * Checks the passkey assertion on a receipt. An algorithm other than ES256 is "cannot verify here" and is never called valid.
+ * The success words are "valid signature by this key". They name the fingerprint, the RP ID, and the origin.
+ */
+export async function verifyPasskey(material: PasskeyMaterial, typedFingerprint = ''): Promise<Check> {
+  const label = 'The passkey signature'
+  const cannot = (detail = 'cannot verify here'): Check => ({ id: 'passkey', label, ok: false, detail })
+  const key = material.publicKey
+  if (!key || key.kty !== 'EC' || key.crv !== 'P-256' || key.alg !== -7 || !key.x || !key.y) return cannot()
+  const response = material.assertion?.response
+  if (!response?.authenticatorData || !response.clientDataJSON || !response.signature) return cannot('The passkey signature is missing.')
+  if (!material.rpId || !material.origin || !material.challenge) return cannot('The receipt does not name the site this signature was for.')
+  let authData: Uint8Array<ArrayBuffer>
+  let clientBytes: Uint8Array<ArrayBuffer>
+  let signature: Uint8Array<ArrayBuffer>
+  try {
+    authData = fromBase64Url(response.authenticatorData)
+    clientBytes = fromBase64Url(response.clientDataJSON)
+    signature = fromBase64Url(response.signature)
+  } catch {
+    return cannot()
+  }
+  if (authData.length < 37) return cannot('The authenticator data is too short.')
+  const flags = authData[32] ?? 0
+  if ((flags & 0x01) === 0) return cannot('The user-presence flag is off.')
+  if ((flags & 0x04) === 0) return cannot('The user-verification flag is off.')
+  const rpHash = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(material.rpId)))
+  if (!sameBytes(authData.slice(0, 32), rpHash)) return cannot(`The relying party hash does not match ${material.rpId}.`)
+  let client: { type?: string; challenge?: string; origin?: string }
+  try {
+    client = JSON.parse(new TextDecoder().decode(clientBytes)) as { type?: string; challenge?: string; origin?: string }
+  } catch {
+    return cannot()
+  }
+  if (client.type !== 'webauthn.get') return cannot('The signature type is not a login assertion.')
+  if (client.challenge !== material.challenge) return cannot('The challenge does not match the one on the receipt.')
+  if (client.origin !== material.origin) return cannot(`The origin does not match ${material.origin}.`)
+  const raw = derToRaw(signature)
+  if (!raw) return cannot()
+  const clientHash = new Uint8Array(await crypto.subtle.digest('SHA-256', clientBytes))
+  const signed = new Uint8Array(new ArrayBuffer(authData.length + clientHash.length))
+  signed.set(authData, 0)
+  signed.set(clientHash, authData.length)
+  try {
+    const cryptoKey = await crypto.subtle.importKey('jwk', { kty: 'EC', crv: 'P-256', x: key.x, y: key.y }, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
+    const ok = await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, cryptoKey, raw, signed)
+    if (!ok) return cannot('The signature does not match this key.')
+  } catch {
+    return cannot()
+  }
+  const fingerprint = material.fingerprint ?? ''
+  const typed = typedFingerprint.trim().toLowerCase()
+  if (typed && typed !== fingerprint.toLowerCase()) return cannot('The signature is by a different key than the fingerprint you typed.')
+  const matched = typed ? ' It matches the fingerprint you typed.' : ''
+  return {
+    id: 'passkey',
+    label,
+    ok: true,
+    detail: `valid signature by this key. Fingerprint ${fingerprint}. RP ID ${material.rpId}. Origin ${material.origin}.${matched}`,
+  }
+}
+
+export async function verifyReceipt(receipt: Receipt, keys: PublicKey[], options: { fingerprint?: string } = {}): Promise<Verdict> {
   const checks: Check[] = []
   let recomputed: string | null = null
   const proposal = receipt.proposal
@@ -105,6 +225,8 @@ export async function verifyReceipt(receipt: Receipt, keys: PublicKey[]): Promis
       detail: !linked ? 'The client accepted a different proof link than the one on this receipt.' : signed.detail,
     })
   }
+  const passkey = receipt.approval?.payload
+  if (passkey && (passkey.method === 'passkey' || passkey.assertion)) checks.push(await verifyPasskey(passkey, options.fingerprint))
   if (checks.length === 0) checks.push({ id: 'lock', label: 'Something to check', ok: false, detail: 'This does not look like a Mandate receipt. Paste the JSON from a receipt’s Download button.' })
   return { ok: checks.every((check) => check.ok), checks, recomputed }
 }

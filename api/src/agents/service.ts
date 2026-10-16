@@ -3,11 +3,13 @@ import { randomUUID } from 'node:crypto'
 import type { ModelMessage } from 'ai'
 import { verdictFor, type Side } from '../domain/deal'
 import { resolveClient } from '../domain/gate'
+import { paidPhase } from '../domain/phases'
 import { WARRANT_ID } from '../domain/schemas'
 import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from '../services/principal'
-import { draftRules, type DraftStage } from './drafter'
+import { draftRules, secondReaderOpinion, type DraftStage, type SecondReaderResult } from './drafter'
+import type { ServerFlags } from '../flags'
 import { auditPolicy, readAll, type Audit, type Read } from './policyAgents'
 import { applyAudit, countStatuses, firstPass, instructionFor, listChanges, POLICY_MAX_SENTENCES, READ_CHUNK, segmentPolicy, sendable } from './policy'
 import { ModelHealth } from './health'
@@ -16,6 +18,7 @@ import { assessProof } from './proof'
 import { explainRules } from './explainer'
 import { readBack } from './intent'
 import { claimsMoneyMoved, composeReply, unsupportedAmounts, type Outcome } from './guard'
+import { usageTokens, type ModelBudget } from '../ops/budget'
 import type { AgentModel } from './model'
 import { clerkSystem, negotiatorSystem, PROMPT_VERSIONS, promptVersion, reviewerSystem, untrusted, type PromptId } from './prompts'
 import { runAgent, type AgentEvent, type RunOutput, type TraceStep } from './runtime'
@@ -77,10 +80,13 @@ export class AgentService {
     private readonly drafterModel: AgentModel | null = null,
     /** Tried once if the main model errors, so a bad model day does not end the conversation. */
     private readonly fallbackModel: AgentModel | null = null,
+    /** When set, a call past the cap or after the kill switch never reaches the model. */
+    private readonly budget: ModelBudget | null = null,
+    private readonly flags: ServerFlags | null = null,
   ) {}
 
   get enabled(): boolean {
-    return this.model !== null
+    return this.model !== null && this.budget?.blocked() == null
   }
 
   get modelName(): string | null {
@@ -89,6 +95,8 @@ export class AgentService {
 
   private need(): AgentModel {
     if (!this.model) throw new Problem(503, 'agents.unconfigured', 'No language model is configured', 'Set OLLAMA_API_KEY to turn the agents on. The rules and the console work without it.')
+    const paused = this.budget?.reserve()
+    if (paused) throw new Problem(503, 'budget/exhausted', 'AI is paused', paused)
     return this.model
   }
 
@@ -108,7 +116,9 @@ export class AgentService {
    * same model when there is no other). Every call is counted in the model's health. Nothing is retried after a Problem
    * that is not about the model (a stop, a refusal), and no retry can send a request twice: a request's key is the run id.
    */
-  private async withModels<T extends { ms: number; usage?: { inputTokens?: number | undefined; outputTokens?: number | undefined } }>(run: (model: AgentModel) => Promise<T>, options: { retrySame?: boolean; primary?: AgentModel } = {}): Promise<{ output: T; model: AgentModel; fellBack: boolean }> {
+  private async withModels<T extends { ms: number; usage?: { inputTokens?: unknown; outputTokens?: unknown } }>(run: (model: AgentModel) => Promise<T>, options: { retrySame?: boolean; primary?: AgentModel } = {}): Promise<{ output: T; model: AgentModel; fellBack: boolean }> {
+    const paused = this.budget?.blocked()
+    if (paused) throw new Problem(503, 'budget/exhausted', 'AI is paused', paused)
     const primary = options.primary ?? this.need()
     const other = this.fallbackModel && this.fallbackModel.name !== primary.name ? this.fallbackModel : null
     let order: AgentModel[] = other ? [primary, other] : options.retrySame ? [primary, primary] : [primary]
@@ -118,7 +128,8 @@ export class AgentService {
     for (const [index, model] of order.entries()) {
       try {
         const output = await run(model)
-        this.health.success(model.name, output.ms, output.usage)
+        this.health.success(model.name, output.ms, output.usage as { inputTokens?: number; outputTokens?: number } | undefined)
+        if (output.usage) this.budget?.correct(usageTokens(output.usage.inputTokens), usageTokens(output.usage.outputTokens))
         return { output, model, fellBack: model.name !== primary.name }
       } catch (error) {
         last = error
@@ -132,7 +143,7 @@ export class AgentService {
 
   // ---------- the clerk ----------
 
-  async clerk(input: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string } }, who: Principal, hooks: { onStep?: (step: TraceStep) => void; onEvent?: (event: ClerkStreamEvent) => void } = {}): Promise<ClerkReply> {
+  async clerk(input: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } }, who: Principal, hooks: { onStep?: (step: TraceStep) => void; onEvent?: (event: ClerkStreamEvent) => void } = {}): Promise<ClerkReply> {
     const model = this.need()
     if (who.side === 'buyer') throw new Problem(403, 'auth.forbidden', 'Not available to a client agent', 'The clerk works for the studio.')
     this.limit(who, 'clerk', 12)
@@ -156,7 +167,7 @@ export class AgentService {
       // The clerk acts as a studio proposer whoever is typing. The owner's own key does not make the clerk stronger.
       // Its words are streamed to the screen as they are written, through a guard that takes them back the moment they
       // claim money moved or state a figure nobody supplied (the final reply is still checked the same way).
-      ;({ output: run, model: usedModel, fellBack } = await this.withModels((chosen) => runAgent({ ...options, model: chosen, onEvent: hooks.onEvent ? guardedStream(userText, hooks.onEvent) : undefined })))
+      ;({ output: run, model: usedModel, fellBack } = await this.withModels((chosen) => runAgent({ ...options, model: chosen, onEvent: hooks.onEvent ? guardedStream(userText, hooks.onEvent) : undefined }), { primary: model }))
     } catch (error) {
       this.record({ id: runId, agent: 'clerk', who, conversationId, model: model.name, input: input.message, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0 })
       throw error
@@ -179,13 +190,18 @@ export class AgentService {
   }
 
   /** What the person is looking at, in words, checked against the ledger. The app says it; the model does not. */
-  private screenFor(context: { jobId?: string; proposalId?: string } | undefined): string | null {
+  private screenFor(context: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } | undefined): string | null {
     if (!context) return null
     const warrant = this.services.repo.latestWarrant()
     const name = (id: string | null) => [...(warrant?.body.payees ?? []), ...(warrant?.body.clients ?? [])].find((party) => party.id === id)?.displayName ?? id ?? 'unknown'
-    if (context.proposalId) {
-      const row = this.services.repo.proposal(context.proposalId)
+    const proposalId = context.receiptId ?? context.proposalId
+    if (proposalId) {
+      const row = this.services.repo.proposal(proposalId)
       if (row) return `the receipt for a ${row.kind === 'charge' ? 'client charge' : row.kind === 'refund' ? 'refund' : 'contractor payout'} of $${(row.amount_cents / 100).toFixed(2)} ${row.kind === 'charge' ? 'to bill' : 'for'} ${name(row.payee_id)}${row.job_id ? `, job ${row.job_id}` : ''}, which is ${row.phase.replaceAll('_', ' ')}`
+    }
+    if (context.dealId) {
+      const deal = this.services.repo.deal(context.dealId)
+      if (deal) return `the page for deal ${context.dealId} with ${name(deal.buyer_id)}${deal.job_id ? `, job ${deal.job_id}` : ''}, status ${deal.status}`
     }
     if (context.jobId && this.services.repo.proposalsForJob(context.jobId).length > 0) {
       const charge = this.services.repo.proposalsForJob(context.jobId).find((row) => row.kind === 'charge')
@@ -236,7 +252,7 @@ export class AgentService {
     let run: RunOutput
     let used = model
     try {
-      ;({ output: run, model: used } = await this.withModels((chosen) => runAgent({ model: chosen, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'decide_delivery', toolChoice: 'required', timeoutMs: 45_000, onEvent })))
+      ;({ output: run, model: used } = await this.withModels((chosen) => runAgent({ model: chosen, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'decide_delivery', toolChoice: 'required', timeoutMs: 45_000, onEvent }), { primary: model }))
     } catch (error) {
       this.record({ id: runId, agent: 'reviewer', who, conversationId: runId, model: model.name, input: prompt, output: null, steps: [checkStep], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0, prompt: 'reviewer' })
       live.publish({ type: 'review', stage: 'failed', dealId, milestone, model: model.name, note: error instanceof Problem ? error.detail : 'The model call failed.', at: stamp() })
@@ -297,7 +313,35 @@ export class AgentService {
       } catch {
         this.record({ id: randomUUID(), agent: 'rules_explainer', who, conversationId: runId, model: used.name, input: instruction.slice(0, 500), output: null, steps: [], status: 'error', error: 'fallback', ms: 0, prompt: 'rulesExplainer' })
       }
-      return { ...draft, runId, readBack: readBackLines, readBackBy, replay }
+      let secondReader: SecondReaderResult | undefined
+      if (this.flags?.secondReader) {
+        const secondModel = this.fallbackModel ?? used
+        stage({ stage: 'second_reading', model: secondModel.name })
+        secondReader = await secondReaderOpinion({
+          model: secondModel,
+          instruction,
+          current: warrant.body,
+          draft: draft.draft,
+          summary: draft.summary,
+          loosens: draft.loosens,
+          tightens: draft.tightens,
+        })
+        this.record({
+          id: randomUUID(),
+          agent: 'second_reader',
+          who,
+          conversationId: runId,
+          model: secondModel.name,
+          input: instruction.slice(0, 500),
+          output: JSON.stringify(secondReader),
+          steps: [],
+          status: 'ok',
+          error: null,
+          ms: 0,
+          prompt: 'secondReader',
+        })
+      }
+      return { ...draft, runId, readBack: readBackLines, readBackBy, replay, ...(secondReader ? { secondReader } : {}) }
     } catch (error) {
       this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: model.name, input: instruction, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0, prompt: 'drafter' })
       throw error
@@ -369,10 +413,10 @@ export class AgentService {
    * the browser, against a copy of the ledger. Nothing here is handed a service, the ledger or PayPal.
    */
   async studioTurn(turn: StudioTurn, who: Principal, hooks: { onEvent: (event: StudioEvent) => void; signal?: AbortSignal }) {
-    this.need()
+    const model = this.need()
     this.limit(who, 'studio', 40)
-    const { output: done, model } = await this.withModels((chosen) => runStudioTurn({ model: chosen, turn, signal: hooks.signal, onEvent: hooks.onEvent }))
-    this.record({ id: randomUUID(), agent: 'studio', who, conversationId: randomUUID(), model: model.name, input: JSON.stringify(turn.input.slice(-1)[0] ?? {}).slice(0, 2000), output: JSON.stringify(done.output).slice(0, 4000), steps: [], status: 'ok', error: null, ms: done.ms, usage: { inputTokens: done.usage?.inputTokens, outputTokens: done.usage?.outputTokens } })
+    const { output: done, model: used } = await this.withModels((chosen) => runStudioTurn({ model: chosen, turn, signal: hooks.signal, onEvent: hooks.onEvent }), { primary: model })
+    this.record({ id: randomUUID(), agent: 'studio', who, conversationId: randomUUID(), model: used.name, input: JSON.stringify(turn.input.slice(-1)[0] ?? {}).slice(0, 2000), output: JSON.stringify(done.output).slice(0, 4000), steps: [], status: 'ok', error: null, ms: done.ms, usage: { inputTokens: done.usage?.inputTokens, outputTokens: done.usage?.outputTokens } })
     const { emitted: _emitted, ms: _ms, ...response } = done
     return response
   }
@@ -462,7 +506,7 @@ export class AgentService {
       try {
         // A model service can hiccup. One quiet retry (on the fallback model if there is one) saves a live demo.
         // Only the model call is retried: an offer that reached the rules is never sent twice (its key is the run id).
-        ;({ output: run, model: turnModel } = await this.withModels((chosen) => runAgent({ model: chosen, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'offer_deal', toolChoice: 'required', timeoutMs: 45_000, signal: hooks.signal, onEvent }), { retrySame: true }))
+        ;({ output: run, model: turnModel } = await this.withModels((chosen) => runAgent({ model: chosen, services: this.services, principal, runId, system, messages: [{ role: 'user', content: prompt }], asks: 1, maxSteps: 3, stopAfter: 'offer_deal', toolChoice: 'required', timeoutMs: 45_000, signal: hooks.signal, onEvent }), { primary: model, retrySame: true }))
       } catch (error) {
         if (hooks.signal?.aborted) {
           stopped = true
@@ -567,7 +611,7 @@ export function guardedStream(userText: string, emit: (event: ClerkStreamEvent) 
     if (event.type === 'tool_end') {
       evidence.push(JSON.stringify(event.output ?? {}))
       const data = (event.output ?? {}) as Record<string, unknown>
-      if (event.ok && (data.phase === 'captured' || data.phase === 'refunded')) moved = true
+      if (event.ok && paidPhase(data.phase as string)) moved = true
     }
     if (event.type !== 'text') return emit(event)
     if (retracted) return

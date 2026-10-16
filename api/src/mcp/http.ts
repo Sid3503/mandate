@@ -1,6 +1,7 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import { randomUUID } from 'node:crypto'
 import { stableHash } from '../domain/hash'
+import type { ServerFlags } from '../flags'
 import type { Services } from '../services/container'
 import { actorLabel, STUDIO, type Principal } from '../services/principal'
 import { createMandateMcpServer } from './server'
@@ -75,7 +76,7 @@ const rpcError = (status: number, message: string, headers: Record<string, strin
  * server without a stream does. (An empty 200 made real clients reconnect over and over.) The Accept header is
  * filled in when a plain HTTP client leaves it out, because every answer here is JSON anyway.
  */
-export async function handleMcp(request: Request, services: Services, caller: Principal): Promise<Response> {
+export async function handleMcp(request: Request, services: Services, caller: Principal, flags?: ServerFlags): Promise<Response> {
   if (request.method !== 'POST') return rpcError(405, 'This door answers POST only. It keeps no session and has no event stream.', { allow: 'POST' })
   const text = await request.text()
   if (text.length > MAX_BODY) return rpcError(413, 'That request is too large.')
@@ -89,7 +90,11 @@ export async function handleMcp(request: Request, services: Services, caller: Pr
   // The body is parsed as JSON whatever the client called it (some HTTP tools say text/plain).
   if (!/json/i.test(headers.get('content-type') ?? '')) headers.set('content-type', 'application/json')
   const normalised = new Request(request.url, { method: 'POST', headers, body: text })
-  const server = createMandateMcpServer({ services, principal, runId, budget: budgetFor(runId) })
+  const exposeHeader = request.headers.get('x-mandate-expose-read')
+  const exposeReadTools = exposeHeader !== null
+    ? (exposeHeader === '1' || exposeHeader === 'true')
+    : undefined
+  const server = createMandateMcpServer({ services, principal, runId, budget: budgetFor(runId), flags, exposeReadTools })
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
   await server.connect(transport)
   try {

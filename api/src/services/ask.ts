@@ -41,7 +41,7 @@ const ONE_OFF = /^\s*(please\s+)?(pay|bill|refund|send)\b/i
 export class AskService {
   constructor(private readonly today: TodayService) {}
 
-  route(message: string, context?: { jobId?: string }): AskRoute {
+  route(message: string, context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string }): AskRoute {
     const text = message.trim()
     const url = /https:\/\/[^\s)]+/i.exec(text)?.[0] ?? null
     const quick = this.quickFor(text)
@@ -61,10 +61,11 @@ export class AskService {
     return QUICK_WORDS.find(([, pattern]) => pattern.test(text))?.[0] ?? null
   }
 
-  private deliveryAction(text: string, url: string | null, context?: { jobId?: string }): AskRoute | null {
+  private deliveryAction(text: string, url: string | null, context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string }): AskRoute | null {
     const data = this.today.build()
     let open = data.readyToBill.filter((item) => item.delivery?.status !== 'awaiting')
     if (context?.jobId) open = open.filter((item) => item.jobId === context.jobId)
+    if (context?.dealId) open = open.filter((item) => item.dealId === context.dealId)
     if (open.length === 0) return null
     const lower = text.toLowerCase()
     const byName = open.filter((item) => lower.includes(item.buyerName.toLowerCase()))

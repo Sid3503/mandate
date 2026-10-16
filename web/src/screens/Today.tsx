@@ -2,11 +2,12 @@ import { useMutation } from '@tanstack/react-query'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useToast } from '../components/Toast'
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAsk } from '../components/Ask'
 import { BalanceNote } from '../components/PayPalFeatures'
 import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
+import { session } from '../lib/session'
 import { useQuery } from '@tanstack/react-query'
 import { relative } from '../lib/format'
 import { reviewKey, useLive, type ReviewState } from '../lib/live'
@@ -14,9 +15,10 @@ import { BreakIt } from '../components/BreakIt'
 import { EmailNotice } from '../components/EmailNotice'
 import { ToolTrail } from '../components/ToolTrail'
 import { dollars } from '../lib/money'
-import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useToday, useWarrant } from '../lib/hooks'
+import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useSession, useToday, useWarrant } from '../lib/hooks'
 import type { Delivery, Proposal, Today as TodayData, TodayAction, TodayItem } from '../lib/types'
-import { explain, isPayout, KIND, type Names } from '../lib/words'
+import { canonicalCart } from '../lib/verify'
+import { explain, isPayout, KIND, paidPhase, type Names } from '../lib/words'
 
 const HOW: Record<NonNullable<TodayItem['how']>, { label: string; tone: 'auto' | 'ink' }> = {
   tap: { label: 'Your tap', tone: 'ink' },
@@ -40,8 +42,21 @@ const KIND_LABEL: Record<TodayItem['kind'], { label: string; tone: 'deny' | 'nee
 }
 
 export function Today() {
+  const me = useSession()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    if (session.mode() !== 'demo') return
+    const role = me.data?.role
+    if (role === 'proposer') navigate('/clerk', { replace: true })
+    else if (role === 'viewer') navigate('/proof', { replace: true })
+    else if (role === 'payee') navigate('/payments', { replace: true })
+    else if (me.data?.side === 'buyer') navigate('/deals', { replace: true })
+  }, [me.data?.role, me.data?.side, navigate])
+
   const proposals = useProposals()
   const today = useToday()
+  const status = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 15_000, retry: false })
   const names = useNames()
   const warrant = useWarrant()
   const captures = useCaptures(proposals.data?.data)
@@ -66,6 +81,12 @@ export function Today() {
       {proposals.isLoading || today.isLoading ? <Loading /> : null}
       <ProblemCard error={proposals.error ?? today.error} />
       <EmailNotice />
+      {status.data?.paused ? (
+        <div className="paused-card" data-testid="today-stopped-card" role="status">
+          <Chip tone="deny">Stopped</Chip>
+          <span><strong>Automation stopped.</strong> Mandate is paused{status.data.paused.reason ? ` (${status.data.paused.reason})` : ''}. Automatic billing and payouts are halted.</span>
+        </div>
+      ) : null}
       {data?.next ? <NextForJob next={data.next} /> : null}
 
       {data ? <MonthStrip data={data} /> : null}
@@ -109,7 +130,7 @@ export function Today() {
       {data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length >= 4 ? <Setup data={data} /> : null}
 
       {refused.length > 0 || (data?.stopped.count ?? 0) > 0 ? (
-        <section className="section" data-tour="refused" aria-labelledby="h-stopped">
+        <section className="section" data-tour="refused" aria-labelledby="h-stopped" data-testid="today-stopped">
           <h2 className="section-title" id="h-stopped">Stopped by the rules{data && data.stopped.count > 0 ? <span className="section-note"> · {data.stopped.count} in 30 days, {dollars(data.stopped.cents)} kept safe</span> : null}</h2>
           <div className="refusals">
             {refused.map((row) => (
@@ -157,7 +178,7 @@ function TapToRule() {
       <div>
         <span className="eyebrow">You keep saying yes</span>
         <p>You have approved {first.payeeName}'s payouts from {first.clientName}'s money {first.approved} times ({dollars(first.totalCents)} in all, the largest {dollars(first.largestCents)}) and never said no.
-          {taps && taps.thisMonth > 0 ? <> That is {taps.thisMonth} {taps.thisMonth === 1 ? 'tap' : 'taps'} this month.</> : null}</p>
+          {taps && typeof taps.thisMonth === 'number' ? <> That is {taps.thisMonth} {taps.thisMonth === 1 ? 'tap' : 'taps'} this month.</> : null}</p>
         <p className="fine">Make it a rule and these payouts need no tap. You will see exactly what it allows before you sign anything.</p>
       </div>
       <Link className="btn btn-ink btn-small" to="/rules" state={{ draft: first.draft }}>Draft this rule</Link>
@@ -273,7 +294,7 @@ function BillRow({ item, auto, accept, hosted = false }: { item: TodayData['read
       const charge = made.charge
       toast(charge.gate === 'DENY'
         ? { title: 'Refused', body: `${charge.clause}. Nothing was billed.`, tone: 'bad' }
-        : charge.phase === 'invoice_sent' || charge.phase === 'captured'
+        : charge.phase === 'invoice_sent' || paidPhase(charge.phase)
           ? { title: `Invoice sent to ${item.buyerName}`, body: `${dollars(item.amountCents)} for ${item.title}. It settles only when PayPal says it was paid.` }
           : { title: 'Billed', body: 'It is waiting for your tap.', tone: 'info' })
     },
@@ -387,13 +408,14 @@ function ItemRow({ item }: { item: TodayItem }) {
       if (action === 'settle' || action === 'check') return api.capture(item.proposalId)
       if (action === 'remind') return api.remindInvoice(item.proposalId)
       if (action === 'cancel_payout') return api.cancelPayout(item.proposalId)
-      if (action === 'approve') return api.approve(item.proposalId)
+      if (action === 'approve') return api.approve(item.proposalId, session.mode() === 'demo' ? 'demo' : 'auto')
       if (action === 'reject') return api.reject(item.proposalId)
       return Promise.resolve(null)
     },
     onSuccess: (result, action) => {
       if (action === 'remind') toast({ title: 'Reminder sent', body: 'PayPal emailed the client about the invoice.', tone: 'info' })
       else if (action === 'cancel_payout') toast({ title: 'Payout cancelled', body: 'PayPal returned the money.', tone: 'info' })
+      else if (result && 'phase' in result && result.phase === 'settled_short') toast({ title: `Part paid ${dollars(result.settledCents ?? 0)} of ${dollars(result.amountCents)}`, body: 'PayPal confirmed what arrived. The rest is still owed.', tone: 'info' })
       else if (result && 'phase' in result && result.phase === 'captured') toast({ title: `Settled ${dollars(result.amountCents)}`, body: 'PayPal confirmed it.' })
       else if (action === 'settle' || action === 'check') toast({ title: 'Checked with PayPal', body: 'Not settled yet. Nothing is counted as paid until PayPal says so.', tone: 'info' })
     },
@@ -444,6 +466,44 @@ const ACTION: Record<Exclude<TodayAction, 'open'>, (item: TodayItem) => string> 
   cancel_payout: () => 'Cancel and return the money',
 }
 
+/** The cart hash the tap will lock. A locked row already has it. A waiting row is hashed the same way the server hashes it. */
+function useLockPreview(proposal: Proposal): string | null {
+  const [preview, setPreview] = useState<string | null>(proposal.cartHash)
+  useEffect(() => {
+    if (proposal.cartHash) {
+      setPreview(proposal.cartHash)
+      return
+    }
+    if (!proposal.payeeId || !proposal.category || !proposal.evidenceUrl) {
+      setPreview(null)
+      return
+    }
+    let cancel = false
+    const text = canonicalCart({
+      id: proposal.id,
+      warrantId: proposal.warrantId,
+      warrantVersion: proposal.warrantVersion,
+      payeeId: proposal.payeeId,
+      amountCents: proposal.amountCents,
+      currency: proposal.currency,
+      category: proposal.category,
+      evidenceUrl: proposal.evidenceUrl,
+      kind: proposal.kind,
+      parentCaptureId: proposal.parentCaptureId,
+      jobId: proposal.jobId,
+      fundingCaptureId: proposal.fundingCaptureId,
+      dealId: proposal.dealId,
+      milestone: proposal.milestone,
+    })
+    void crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)).then((buf) => {
+      if (cancel) return
+      setPreview([...new Uint8Array(buf)].map((byte) => byte.toString(16).padStart(2, '0')).join(''))
+    })
+    return () => { cancel = true }
+  }, [proposal])
+  return preview
+}
+
 function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   proposal: Proposal
   names: Names
@@ -455,7 +515,9 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   const online = useOnline()
   const refresh = useRefreshMoney()
   const toast = useToast()
-  const approve = useMutation({ mutationFn: () => api.approve(proposal.id), onSuccess: (locked) => { onLocked(locked); toast({ title: `Approved ${dollars(locked.amountCents)}`, body: 'Locked and signed. Nothing has moved yet.' }); void refresh() } })
+  const demo = session.mode() === 'demo'
+  const lockPreview = useLockPreview(proposal)
+  const approve = useMutation({ mutationFn: (how: 'auto' | 'demo' | 'passkey') => api.approve(proposal.id, how), onSuccess: (locked) => { onLocked(locked); toast({ title: 'Signed and sent', body: 'Nothing has moved yet.' }); void refresh() } })
   const reject = useMutation({ mutationFn: () => api.reject(proposal.id), onSuccess: () => { toast({ title: 'Rejected', body: 'Nothing moved.', tone: 'info' }); void refresh() } })
   const locked = proposal.phase !== 'pending_approval'
   const kind = KIND[proposal.kind]
@@ -479,6 +541,8 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
           <div><dt>Funded by</dt><dd>{funding ? <>{names(funding.payeeId)} <Money cents={funding.capturedAmountCents} size="sm" /> settled ✓</> : <span className="mono">{proposal.fundingCaptureId ?? 'none'}</span>}</dd></div>
         ) : null}
         {proposal.jobId ? <div className="opt"><dt>Job</dt><dd><Link to={`/jobs/${proposal.jobId}`} className="mono">{proposal.jobId}</Link></dd></div> : null}
+        <div><dt>Hash</dt><dd><Hash value={lockPreview} /></dd></div>
+        <div><dt>Clause</dt><dd className="mono">{proposal.clause}</dd></div>
         <div data-tour="approval-why"><dt>Why you?</dt><dd>{why}</dd></div>
         {proposal.prompt ? <div className="opt"><dt>Asked as</dt><dd className="quote">“{proposal.prompt}”</dd></div> : null}
       </dl>
@@ -493,9 +557,10 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
         </div>
       ) : (
         <div className="approval-actions">
-          <button type="button" className="btn btn-lime btn-big" data-tour="approve" disabled={disabled} onClick={() => approve.mutate()}>
-            {approve.isPending ? 'Locking…' : <>Approve <span className="money">{dollars(proposal.amountCents, proposal.currency)}</span></>}
+          <button type="button" className="btn btn-lime btn-big" data-tour="approve" disabled={disabled} onClick={() => approve.mutate(demo ? 'demo' : 'auto')}>
+            {approve.isPending ? 'Locking…' : demo ? 'Demo tap' : <>Approve <span className="money">{dollars(proposal.amountCents, proposal.currency)}</span></>}
           </button>
+          {demo ? <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => approve.mutate('passkey')}>Try with my passkey</button> : null}
           <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => reject.mutate()}>{reject.isPending ? 'Rejecting…' : 'Reject'}</button>
           {!owner ? <p className="fine">This key can ask and read. Only the owner key can approve.</p> : null}
         </div>

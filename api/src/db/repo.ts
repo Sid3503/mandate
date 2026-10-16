@@ -1,9 +1,16 @@
-import { live, stamp } from '../services/live'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import type { DatabaseSync } from 'node:sqlite'
+import { DEAD_PHASES, expectedSignedCents, INVOICE_WATCH_PHASES, OPEN_PHASES, PAID_PHASES, RESERVED_PHASES, sqlList } from '../domain/phases'
+import type { LedgerMoney } from '../domain/reconcile'
 import type { PartyRules } from '../domain/deal'
 import { PartyRulesSchema } from '../domain/deal'
 import type { WarrantBody } from '../domain/schemas'
 import { WarrantBodySchema } from '../domain/schemas'
+import { live, stamp } from '../services/live'
+
+/** Who caused the ledger event on this request. Absent means an older owner-key or system write. */
+export type ActorStamp = { memberId: string; displayName: string; role: string; via: string }
+export const actorContext = new AsyncLocalStorage<ActorStamp>()
 
 export type ProposalKind = 'payment' | 'charge' | 'refund'
 
@@ -30,6 +37,10 @@ export type ProposalRow = {
   refund_id: string | null
   approve_url: string | null
   captured_amount_cents: number | null
+  /** What PayPal said it took on the capture. Null when PayPal stated no fee, never zero. */
+  capture_fee_cents: number | null
+  /** What PayPal said reached the seller on the capture. Null when PayPal stated no net, never zero. */
+  capture_net_cents: number | null
   reserved_at: string | null
   job_id: string | null
   funding_capture_id: string | null
@@ -45,6 +56,14 @@ export type ProposalRow = {
   invoice_id: string | null
   invoice_url: string | null
   invoice_status: string | null
+  /** What PayPal reported actually arrived. Null until a settlement is seen. */
+  settled_cents: number | null
+  /** settled_cents minus the locked amount. Negative means the client paid less. */
+  delta_cents: number | null
+  /** Why the settled amount was not the locked amount. A closed code, never a model's word. */
+  delta_reason: string | null
+  /** The PayPal field that reason was read from, when it was read from one. */
+  delta_source: string | null
   created_at: string
   updated_at: string
 }
@@ -77,8 +96,10 @@ export type AgentRow = {
   limits_json: string
   status: string
   key_hash: string
+  key_prefix?: string | null
   created_at: string
   last_seen_at: string | null
+  expires_at?: string | null
 }
 
 /** One client's own key: bound to one client on the warrant, never to the studio, never to another client. */
@@ -88,8 +109,10 @@ export type ClientKeyRow = {
   party_id: string
   status: string
   key_hash: string
+  key_prefix?: string | null
   created_at: string
   last_seen_at: string | null
+  expires_at?: string | null
 }
 
 /** A read-only link to one job's status for one person. Only a hash of the secret is stored. */
@@ -152,11 +175,13 @@ export type DeliveryRow = {
 
 export type PartyRulesRecord = { partyId: string; version: number; body: PartyRules; createdAt: string; origin: 'seed' | 'written' }
 
-/** Phases in which a payout's money is spoken for: locked, sent to PayPal, or paid. */
-export const RESERVED_PHASES = ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured'] as const
-/** A billed milestone stays billed unless its charge was refused or thrown away. */
-const DEAD_PHASES = ['denied', 'rejected', 'capture_refused', 'invoice_cancelled'] as const
-const RESERVED_SQL = RESERVED_PHASES.map((phase) => `'${phase}'`).join(', ')
+// The phase lists live in domain/phases.ts, with the predicates that read them. Re-exported here because the repo
+// is where the SQL that uses them lives.
+export { OPEN_PHASES, RESERVED_PHASES }
+const RESERVED_SQL = sqlList(RESERVED_PHASES)
+const OPEN_SQL = sqlList(OPEN_PHASES)
+const PAID_SQL = sqlList(PAID_PHASES)
+const INVOICE_WATCH_SQL = sqlList(INVOICE_WATCH_PHASES)
 
 export type PayoutUpdate = {
   phase: string
@@ -192,6 +217,7 @@ export type WarrantRecord = {
   version: number
   body: WarrantBody
   createdAt: string
+  signatureJson: string | null
 }
 
 export type NewProposal = {
@@ -222,11 +248,24 @@ export type NewProposal = {
   now: string
 }
 
+/** The fields that decide what money a request asks for, and where it comes from. Two asks that agree on all of them are the same ask. */
+export type DuplicateKey = {
+  kind: string
+  payeeId: string | null
+  amountCents: number
+  currency: string
+  jobId: string | null
+  fundingCaptureId: string | null
+  dealId: string | null
+  milestone: number | null
+  parentCaptureId: string | null
+}
+
 const PROPOSAL_COLUMNS = `id, warrant_id, warrant_version, kind, parent_capture_id, payee_id, amount_cents, currency,
   category, description, evidence_url, prompt, gate, clause, detail, phase, cart_hash, order_id, capture_id,
-  refund_id, approve_url, captured_amount_cents, reserved_at, job_id, funding_capture_id, payout_batch_id, payout_item_id,
+  refund_id, approve_url, captured_amount_cents, capture_fee_cents, capture_net_cents, reserved_at, job_id, funding_capture_id, payout_batch_id, payout_item_id,
   payout_status, payout_txn_id, payout_fee_cents, deal_id, milestone, lock_sig, lock_key_id, invoice_id, invoice_url,
-  invoice_status, created_at, updated_at`
+  invoice_status, settled_cents, delta_cents, delta_reason, delta_source, created_at, updated_at`
 
 /** How many transactions are open on each database, however many Repo objects look at it. */
 const DEPTH = new WeakMap<DatabaseSync, number>()
@@ -258,30 +297,34 @@ export class Repo {
 
   latestWarrant(): WarrantRecord | null {
     const row = this.db.prepare(
-      'SELECT id, version, body_json, created_at FROM warrants ORDER BY version DESC LIMIT 1',
-    ).get() as { id: string; version: number; body_json: string; created_at: string } | undefined
+      'SELECT id, version, body_json, created_at, signature_json FROM warrants ORDER BY version DESC LIMIT 1',
+    ).get() as { id: string; version: number; body_json: string; created_at: string; signature_json: string | null } | undefined
     if (!row) return null
-    return { id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at }
+    return { id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, signatureJson: row.signature_json }
   }
 
   warrant(id: string, version: number): WarrantRecord | null {
     const row = this.db.prepare(
-      'SELECT id, version, body_json, created_at FROM warrants WHERE id = ? AND version = ?',
-    ).get(id, version) as { id: string; version: number; body_json: string; created_at: string } | undefined
+      'SELECT id, version, body_json, created_at, signature_json FROM warrants WHERE id = ? AND version = ?',
+    ).get(id, version) as { id: string; version: number; body_json: string; created_at: string; signature_json: string | null } | undefined
     if (!row) return null
-    return { id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at }
+    return { id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, signatureJson: row.signature_json }
+  }
+
+  rawWarrants(): Array<{ id: string; version: number; body_json: string; created_at: string; signature_json: string | null }> {
+    return this.db.prepare(
+      'SELECT id, version, body_json, created_at, signature_json FROM warrants ORDER BY version DESC',
+    ).all() as Array<{ id: string; version: number; body_json: string; created_at: string; signature_json: string | null }>
   }
 
   warrantVersions(): WarrantRecord[] {
-    const rows = this.db.prepare(
-      'SELECT id, version, body_json, created_at FROM warrants ORDER BY version DESC',
-    ).all() as Array<{ id: string; version: number; body_json: string; created_at: string }>
-    return rows.map((row) => ({ id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at }))
+    const rows = this.rawWarrants()
+    return rows.map((row) => ({ id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, signatureJson: row.signature_json }))
   }
 
-  insertWarrant(id: string, version: number, body: WarrantBody, now: string): void {
-    this.db.prepare('INSERT INTO warrants (id, version, body_json, created_at) VALUES (?, ?, ?, ?)').run(
-      id, version, JSON.stringify(body), now,
+  insertWarrant(id: string, version: number, body: WarrantBody, now: string, signatureJson: string | null = null): void {
+    this.db.prepare('INSERT INTO warrants (id, version, body_json, created_at, signature_json) VALUES (?, ?, ?, ?, ?)').run(
+      id, version, JSON.stringify(body), now, signatureJson,
     )
     live.publish({ type: 'changed', scope: 'rules', what: 'rules.published', at: stamp() })
   }
@@ -377,12 +420,85 @@ export class Repo {
    */
   stampEvents: (() => Record<string, unknown>) | null = null
 
+  payeeRow(id: string): { id: string; email: string; status: string; change_pending: number; change_email: string | null; first_seen: string; verified_method: string; total_paid_cents: number } | null {
+    return this.db.prepare('SELECT id, email, status, change_pending, change_email, first_seen, verified_method, total_paid_cents FROM payees WHERE id = ?').get(id) as { id: string; email: string; status: string; change_pending: number; change_email: string | null; first_seen: string; verified_method: string; total_paid_cents: number } | undefined ?? null
+  }
+
+  /** The payout book. Reading it does not change a payment. */
+  listPayees(): Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number; change_email: string | null }> {
+    return this.db.prepare('SELECT id, email, status, verified_method, first_seen, total_paid_cents, change_pending, change_email FROM payees ORDER BY email').all() as Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number; change_email: string | null }>
+  }
+
+  insertPayee(payee: { id: string; email: string; status?: string; verified_method?: string; first_seen?: string }): void {
+    const status = payee.status ?? 'active'
+    const verified = payee.verified_method ?? 'unverified'
+    const seen = payee.first_seen ?? new Date().toISOString()
+    this.db.prepare(
+      'INSERT OR IGNORE INTO payees (id, email, status, verified_method, first_seen, total_paid_cents, change_pending) VALUES (?, ?, ?, ?, ?, 0, 0)',
+    ).run(payee.id, payee.email, status, verified, seen)
+  }
+
+  updatePayeePaidCents(id: string, amountCents: number): void {
+    this.db.prepare('UPDATE payees SET total_paid_cents = total_paid_cents + ? WHERE id = ?').run(amountCents, id)
+  }
+
+  requestPayeeChange(id: string, newEmail: string): void {
+    this.db.prepare('UPDATE payees SET change_email = ?, change_pending = 1 WHERE id = ?').run(newEmail, id)
+    live.publish({ type: 'changed', scope: 'rules', what: 'payee.change_requested', at: stamp() })
+  }
+
+  confirmPayeeChange(id: string): void {
+    const row = this.payeeRow(id)
+    if (!row || !row.change_email) return
+    const newEmail = row.change_email
+    this.db.prepare('UPDATE payees SET email = change_email, change_email = NULL, change_pending = 0 WHERE id = ?').run(id)
+    const warrant = this.latestWarrant()
+    if (warrant) {
+      const target = warrant.body.payees.find((p) => p.id === id)
+      if (target && target.email !== newEmail) {
+        const updatedPayees = warrant.body.payees.map((p) => p.id === id ? { ...p, email: newEmail } : p)
+        const updatedBody = { ...warrant.body, payees: updatedPayees }
+        this.db.prepare('UPDATE warrants SET body_json = ? WHERE id = ? AND version = ?').run(
+          JSON.stringify(updatedBody), warrant.id, warrant.version,
+        )
+      }
+    }
+    live.publish({ type: 'changed', scope: 'rules', what: 'payee.change_confirmed', at: stamp() })
+  }
+
+  cancelPayeeChange(id: string): void {
+    this.db.prepare('UPDATE payees SET change_email = NULL, change_pending = 0 WHERE id = ?').run(id)
+    live.publish({ type: 'changed', scope: 'rules', what: 'payee.change_cancelled', at: stamp() })
+  }
+
+  attestPayee(id: string): void {
+    this.db.prepare("UPDATE payees SET verified_method = 'owner_attested', status = 'active' WHERE id = ?").run(id)
+    live.publish({ type: 'changed', scope: 'rules', what: 'payee.attested', at: stamp() })
+  }
+
+  payeeHistory(id: string, limit = 20): Array<{ id: string; kind: string; amountCents: number; currency: string; phase: string; clause: string | null; description: string; createdAt: string }> {
+    const rows = this.db.prepare(
+      'SELECT id, kind, amount_cents, currency, phase, clause, description, created_at FROM proposals WHERE payee_id = ? ORDER BY created_at DESC LIMIT ?',
+    ).all(id, limit) as Array<{ id: string; kind: string; amount_cents: number; currency: string; phase: string; clause: string | null; description: string; created_at: string }>
+    return rows.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      amountCents: r.amount_cents,
+      currency: r.currency,
+      phase: r.phase,
+      clause: r.clause,
+      description: r.description,
+      createdAt: r.created_at,
+    }))
+  }
+
   insertEvent(id: string, proposalId: string, type: string, clause: string | null, payload: unknown, now: string): void {
     const extra = this.stampEvents?.()
     if (extra && Object.keys(extra).length > 0 && payload && typeof payload === 'object' && !Array.isArray(payload)) payload = { ...(payload as object), ...extra }
+    const actor = actorContext.getStore() ?? null
     this.db.prepare(
-      'INSERT INTO events (id, proposal_id, type, clause, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(id, proposalId, type, clause, JSON.stringify(payload), now)
+      'INSERT INTO events (id, proposal_id, type, clause, payload_json, created_at, actor_json) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run(id, proposalId, type, clause, JSON.stringify(payload), now, actor ? JSON.stringify(actor) : null)
     live.publish({ type: 'changed', scope: 'ledger', what: type, id: proposalId, at: stamp() })
   }
 
@@ -520,8 +636,9 @@ export class Repo {
     return (this.db.prepare(`SELECT payout_batch_id FROM proposals WHERE phase = 'payout_sent' AND payout_batch_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ payout_batch_id: string }>).map((row) => row.payout_batch_id)
   }
 
+  /** Invoices the server still re-reads from PayPal, including one that is part paid. */
   openInvoices(): string[] {
-    return (this.db.prepare(`SELECT invoice_id FROM proposals WHERE phase IN ('invoice_draft', 'invoice_sent') AND invoice_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ invoice_id: string }>).map((row) => row.invoice_id)
+    return (this.db.prepare(`SELECT invoice_id FROM proposals WHERE phase IN (${INVOICE_WATCH_SQL}) AND invoice_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ invoice_id: string }>).map((row) => row.invoice_id)
   }
 
   /** Payouts and bills a standing rule approved that have not reached PayPal yet. */
@@ -553,15 +670,33 @@ export class Repo {
   openProposals(limit: number): ProposalRow[] {
     return this.db.prepare(
       `SELECT ${PROPOSAL_COLUMNS} FROM proposals
-       WHERE phase IN ('pending_approval', 'locked', 'order_created', 'capture_inflight', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed')
+       WHERE phase IN (${OPEN_SQL})
        ORDER BY updated_at DESC, id DESC LIMIT ?`,
     ).all(limit) as ProposalRow[]
+  }
+
+  /**
+   * An open request that asks for exactly the same money, on the same job, in the same currency, from the same
+   * source. Used to refuse a second ask while the first is still live. Every field is part of "the same ask",
+   * and every one is null safe, so two asks with no deal, or no funding, still match each other. The description
+   * is deliberately not part of it: rewording the note does not make it a different ask.
+   */
+  openDuplicate(key: DuplicateKey): ProposalRow | null {
+    const found = this.db.prepare(
+      `SELECT ${PROPOSAL_COLUMNS} FROM proposals
+       WHERE phase IN (${OPEN_SQL})
+         AND kind = ? AND amount_cents = ? AND currency = ?
+         AND payee_id IS ? AND job_id IS ? AND funding_capture_id IS ?
+         AND deal_id IS ? AND milestone IS ? AND parent_capture_id IS ?
+       ORDER BY created_at ASC, id ASC LIMIT 1`,
+    ).get(key.kind, key.amountCents, key.currency, key.payeeId, key.jobId, key.fundingCaptureId, key.dealId, key.milestone, key.parentCaptureId)
+    return (found as ProposalRow | undefined) ?? null
   }
 
   /** Settled and refunded requests, newest activity first. */
   settledProposals(sinceIso: string, limit: number): ProposalRow[] {
     return this.db.prepare(
-      `SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE phase IN ('captured', 'refunded') AND updated_at >= ? ORDER BY updated_at DESC, id DESC LIMIT ?`,
+      `SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE phase IN (${PAID_SQL}) AND updated_at >= ? ORDER BY updated_at DESC, id DESC LIMIT ?`,
     ).all(sinceIso, limit) as ProposalRow[]
   }
 
@@ -671,15 +806,21 @@ export class Repo {
     return (this.db.prepare('SELECT * FROM paypal_disputes ORDER BY updated_at DESC LIMIT ?').all(limit) as DisputeRecord[]).map(disputeRow)
   }
 
-  /** Every PayPal id this ledger created or was told about. A PayPal transaction with none of these did not come from Mandate. */
-  knownPayPalIds(): Map<string, string> {
-    const map = new Map<string, string>()
-    const rows = this.db.prepare(`SELECT id, order_id, capture_id, refund_id, payout_batch_id, payout_item_id, payout_txn_id, invoice_id FROM proposals`).all() as Array<Record<string, string | null>>
+  /**
+   * Every PayPal id this ledger created or was told about, and every proposal id, with the money the ledger says that
+   * request is. A PayPal transaction with none of these did not come from Mandate. One lookup answers both "whose is
+   * this?" and "what should it be?", so a matched transaction can never be accepted without its amount also being in
+   * hand. `cents` is signed the way PayPal's transaction report signs money.
+   */
+  knownPayPalIds(): Map<string, LedgerMoney> {
+    const map = new Map<string, LedgerMoney>()
+    const rows = this.db.prepare(`SELECT id, kind, amount_cents, captured_amount_cents, settled_cents, currency, order_id, capture_id, refund_id, payout_batch_id, payout_item_id, payout_txn_id, invoice_id FROM proposals`).all() as Array<{ id: string; kind: string; amount_cents: number; captured_amount_cents: number | null; settled_cents: number | null; currency: string; [key: string]: string | number | null }>
     for (const row of rows) {
-      map.set(row.id!, row.id!)
+      const money: LedgerMoney = { proposalId: row.id, cents: expectedSignedCents(row), currency: row.currency }
+      map.set(money.proposalId, money)
       for (const key of ['order_id', 'capture_id', 'refund_id', 'payout_batch_id', 'payout_item_id', 'payout_txn_id', 'invoice_id']) {
         const value = row[key]
-        if (value) map.set(value, row.id!)
+        if (value) map.set(value as string, money)
       }
     }
     return map
@@ -703,12 +844,33 @@ export class Repo {
     return this.db.prepare('SELECT * FROM agent_runs WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?').all(conversationId, limit) as AgentRunRow[]
   }
 
-  safetyState(): { paused: number; reason: string | null; since: string | null; by: string | null; epoch: number } {
-    return this.db.prepare('SELECT paused, reason, since, by, epoch FROM safety_state WHERE id = 1').get() as never
+  safetyState(): { paused: number; reason: string | null; since: string | null; by: string | null; epoch: number; autopilot_paused?: number; config_json?: string | null } {
+    return this.db.prepare('SELECT paused, reason, since, by, epoch, autopilot_paused, config_json FROM safety_state WHERE id = 1').get() as never
   }
 
-  setSafetyState(state: { paused: boolean; reason: string | null; since: string | null; by: string | null; epoch: number }): void {
-    this.db.prepare('UPDATE safety_state SET paused = ?, reason = ?, since = ?, by = ?, epoch = ? WHERE id = 1').run(state.paused ? 1 : 0, state.reason, state.since, state.by, state.epoch)
+  setSafetyState(state: { paused: boolean; reason: string | null; since: string | null; by: string | null; epoch: number; autopilotPaused?: boolean }): void {
+    this.db.prepare('UPDATE safety_state SET paused = ?, reason = ?, since = ?, by = ?, epoch = ?, autopilot_paused = ? WHERE id = 1').run(
+      state.paused ? 1 : 0,
+      state.reason,
+      state.since,
+      state.by,
+      state.epoch,
+      state.autopilotPaused ? 1 : 0,
+    )
+  }
+
+  safetyConfig<T = unknown>(): T | null {
+    const row = this.db.prepare('SELECT config_json FROM safety_state WHERE id = 1').get() as { config_json?: string | null } | undefined
+    if (row?.config_json) {
+      try {
+        return JSON.parse(row.config_json) as T
+      } catch {}
+    }
+    return null
+  }
+
+  setSafetyConfig(config: unknown): void {
+    this.db.prepare('UPDATE safety_state SET config_json = ? WHERE id = 1').run(JSON.stringify(config))
   }
 
   insertSafetyEvent(row: { id: string; at: string; type: string; by: string; reason: string | null; detail: string | null; sig: string | null; keyId: string | null }): void {
@@ -719,8 +881,8 @@ export class Repo {
     return this.db.prepare('SELECT * FROM safety_events ORDER BY at DESC, rowid DESC LIMIT ?').all(limit) as never
   }
 
-  allSafetyEvents(): Array<{ id: string; at: string; type: string; by: string; reason: string | null }> {
-    return this.db.prepare('SELECT id, at, type, by, reason FROM safety_events ORDER BY at ASC, rowid ASC').all() as never
+  allSafetyEvents(): Array<{ id: string; at: string; type: string; by: string; reason: string | null; detail: string | null; sig: string | null; key_id: string | null }> {
+    return this.db.prepare('SELECT id, at, type, by, reason, detail, sig, key_id FROM safety_events ORDER BY at ASC, rowid ASC').all() as never
   }
 
   insertClientError(row: { id: string; at: string; role: string; scope: string; message: string; stack: string | null; url: string | null; agent: string | null; releaseId: string | null }): void {
@@ -733,9 +895,14 @@ export class Repo {
     return this.db.prepare('SELECT * FROM client_errors ORDER BY at DESC, rowid DESC LIMIT ?').all(limit) as never
   }
 
+  trimClientErrors(olderThanIso: string): number {
+    const result = this.db.prepare('DELETE FROM client_errors WHERE at < ?').run(olderThanIso)
+    return Number(result.changes)
+  }
+
   createAgent(row: AgentRow): void {
-    this.db.prepare(`INSERT INTO agents (id, name, scopes_json, limits_json, status, key_hash, created_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.scopes_json, row.limits_json, row.status, row.key_hash, row.created_at, row.last_seen_at)
+    this.db.prepare(`INSERT INTO agents (id, name, scopes_json, limits_json, status, key_hash, key_prefix, created_at, last_seen_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.scopes_json, row.limits_json, row.status, row.key_hash, row.key_prefix ?? null, row.created_at, row.last_seen_at, row.expires_at ?? null)
   }
 
   listAgents(): AgentRow[] {
@@ -756,6 +923,37 @@ export class Repo {
 
   setAgentSeen(id: string, at: string): void {
     this.db.prepare('UPDATE agents SET last_seen_at = ? WHERE id = ?').run(at, id)
+  }
+
+  setAgentKeyHash(id: string, keyHash: string, keyPrefix?: string | null): void {
+    if (keyPrefix !== undefined) {
+      this.db.prepare('UPDATE agents SET key_hash = ?, key_prefix = ? WHERE id = ?').run(keyHash, keyPrefix, id)
+    } else {
+      this.db.prepare('UPDATE agents SET key_hash = ? WHERE id = ?').run(keyHash, id)
+    }
+  }
+
+  agentProposalStats(agentId: string): { total: number; auto: number; needsTap: number; refusals: number } {
+    const actor = `agent:${agentId}`
+    const rows = this.db.prepare(
+      `SELECT payload_json FROM events WHERE type = 'proposal.created'`
+    ).all() as Array<{ payload_json: string }>
+    let total = 0
+    let auto = 0
+    let needsTap = 0
+    let refusals = 0
+    for (const r of rows) {
+      try {
+        const payload = JSON.parse(r.payload_json) as { actor?: string; gate?: string }
+        if (payload.actor === actor) {
+          total += 1
+          if (payload.gate === 'AUTO') auto += 1
+          else if (payload.gate === 'DENY') refusals += 1
+          else if (payload.gate === 'NEEDS_APPROVAL' || payload.gate === 'TAP') needsTap += 1
+        }
+      } catch {}
+    }
+    return { total, auto, needsTap, refusals }
   }
 
   createShare(row: ShareRow): void {
@@ -780,8 +978,8 @@ export class Repo {
   }
 
   createClientKey(row: ClientKeyRow): void {
-    this.db.prepare(`INSERT INTO client_keys (id, name, party_id, status, key_hash, created_at, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.party_id, row.status, row.key_hash, row.created_at, row.last_seen_at)
+    this.db.prepare(`INSERT INTO client_keys (id, name, party_id, status, key_hash, key_prefix, created_at, last_seen_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.name, row.party_id, row.status, row.key_hash, row.key_prefix ?? null, row.created_at, row.last_seen_at, row.expires_at ?? null)
   }
 
   listClientKeys(): ClientKeyRow[] {
@@ -798,6 +996,14 @@ export class Repo {
 
   setClientKeyStatus(id: string, status: string, at: string): void {
     this.db.prepare('UPDATE client_keys SET status = ?, last_seen_at = ? WHERE id = ?').run(status, at, id)
+  }
+
+  setClientKeyHash(id: string, keyHash: string, keyPrefix?: string | null): void {
+    if (keyPrefix !== undefined) {
+      this.db.prepare('UPDATE client_keys SET key_hash = ?, key_prefix = ? WHERE id = ?').run(keyHash, keyPrefix, id)
+    } else {
+      this.db.prepare('UPDATE client_keys SET key_hash = ? WHERE id = ?').run(keyHash, id)
+    }
   }
 
   setClientKeySeen(id: string, at: string): void {
@@ -819,11 +1025,60 @@ export class Repo {
     ).run(orderId, approveUrl, now, id)
   }
 
-  /** A client paid an invoice. Same end state as a captured order, so funding and refunds work unchanged. */
-  markCaptured(id: string, captureId: string, amountCents: number, now: string): void {
+  /**
+   * A client paid in full, whether through a captured order or a paid invoice; both end in the same state, so funding
+   * and refunds work unchanged. `capturedCents` is the lock, which is what the guarantee and the contractor share are
+   * measured against; `settledCents` is what PayPal reported arrived, which can be more than the lock when the payer
+   * adds a tip. Keeping the two apart is what lets `amounts.match` stay exact without hiding the money. `feeCents`
+   * and `netCents` are what PayPal stated it took and paid out on a capture, null when it stated neither.
+   */
+  markCaptured(id: string, captureId: string, capturedCents: number, settledCents: number, now: string, feeCents: number | null = null, netCents: number | null = null): void {
+    // COALESCE, like applyPayout: a re-read that does not repeat a fee PayPal already stated cannot erase it.
     this.db.prepare(
-      `UPDATE proposals SET phase = 'captured', capture_id = ?, captured_amount_cents = ?, updated_at = ? WHERE id = ? AND kind IN ('payment', 'charge')`,
-    ).run(captureId, amountCents, now, id)
+      `UPDATE proposals SET phase = 'captured', capture_id = ?, captured_amount_cents = ?, settled_cents = ?,
+         capture_fee_cents = COALESCE(?, capture_fee_cents), capture_net_cents = COALESCE(?, capture_net_cents),
+         delta_cents = ? - amount_cents, delta_reason = 'full', delta_source = NULL, updated_at = ?
+       WHERE id = ? AND kind IN ('payment', 'charge')`,
+    ).run(captureId, capturedCents, settledCents, feeCents, netCents, settledCents, now, id)
+  }
+
+  /**
+   * PayPal reports a payment that is not the locked amount. Store what really arrived and the code for why.
+   * Re-derived on every sweep, so a later full payment overwrites this, and a reason code added later can
+   * explain a row an earlier code could only call unexplained. Writes only on change, because openInvoices
+   * orders by updated_at: bumping a stuck invoice every sweep would rotate it to the back of that queue.
+   * Returns true when this was news, which is what stops a part-paid invoice appending an event a minute.
+   */
+  recordSettlement(id: string, settledCents: number, reason: string, source: string | null, now: string): boolean {
+    const written = this.db.prepare(
+      `UPDATE proposals SET settled_cents = ?, delta_cents = ? - amount_cents, delta_reason = ?, delta_source = ?, updated_at = ?
+       WHERE id = ? AND (settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
+    ).run(settledCents, settledCents, reason, source, now, id, settledCents, reason)
+    return Number(written.changes) > 0
+  }
+
+  /**
+   * PayPal put some, but not all, of the locked amount in. Store what arrived, why it fell short, and move the row
+   * to `settled_short`, so no reader has to infer "some money came" from a settled amount sitting on a row whose
+   * phase still says the invoice is out.
+   *
+   * The capture id is the PayPal payment id, the same kind of id a full capture stores, so a refund can cite this
+   * row and a payout can be funded from it. It may be absent if PayPal reported a payment without an id: the row
+   * still settles short, it just cannot be the parent of a refund.
+   *
+   * Re-derived on every sweep, exactly like `recordSettlement`: a later payment that completes the lock overwrites
+   * this through `markCaptured`, and a reason code added later can explain a row an earlier code could only call
+   * unexplained. Writes only on change, because `openInvoices` orders by updated_at. Returns true when the
+   * settlement was news.
+   */
+  settleShort(id: string, captureId: string | null, settledCents: number, reason: string, source: string | null, now: string): boolean {
+    const written = this.db.prepare(
+      `UPDATE proposals SET phase = 'settled_short', capture_id = COALESCE(capture_id, ?), settled_cents = ?,
+         delta_cents = ? - amount_cents, delta_reason = ?, delta_source = ?, updated_at = ?
+       WHERE id = ? AND kind = 'charge'
+         AND (phase IS NOT 'settled_short' OR settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
+    ).run(captureId, settledCents, settledCents, reason, source, now, id, settledCents, reason)
+    return Number(written.changes) > 0
   }
 
   /** The payout batch now exists at PayPal. From here the payout is in flight, not merely locked. */

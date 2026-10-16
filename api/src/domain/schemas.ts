@@ -59,6 +59,12 @@ export const WarrantBodySchema = z.object({
   contractorShareBps: z.number().int().min(0).max(10_000).default(10_000),
   /** Days a client payment must have been settled before a rule may send a payout from it with no tap. 0 means no wait. The owner can still tap to pay earlier. */
   clearingDays: z.number().int().min(0).max(60).default(0),
+  /**
+   * Whether an invoice this studio sends may be paid in part. Off unless the owner asks for it, which is what the
+   * invoice path hardcoded before this became a rule. PayPal offers the option only to sellers in some countries,
+   * and ignores it elsewhere, so turning it on is a request, not a guarantee.
+   */
+  allowPartialPayment: z.boolean().default(false),
   standing: z.array(StandingRuleSchema).max(20).default([]),
   automation: AutomationSchema.default(NO_AUTOMATION),
 }).strict().superRefine((warrant, ctx) => {
@@ -171,8 +177,18 @@ export const LINE_STUDIO_WARRANT: WarrantBody = {
   fundingRequired: true,
   contractorShareBps: 6000,
   clearingDays: 0,
+  allowPartialPayment: false,
 }
 
 export const DEMO_JOB_ID = 'job_northwind_logo'
 
 export const WARRANT_ID = 'wnt_line_studio'
+
+export const SafetyConfigSchema = z.object({
+  tripAfter: z.number().int().min(0).max(100).optional(),
+  windowSeconds: z.number().int().min(1).max(86400).optional(),
+  unknownPayeeTripAfter: z.number().int().min(0).max(100).optional(),
+  unknownPayeeWindowSeconds: z.number().int().min(1).max(86400).optional(),
+  agentRateLimitPerMinute: z.number().int().min(0).max(1000).optional(),
+  autopilotFailureTripAfter: z.number().int().min(0).max(100).optional(),
+}).strict()

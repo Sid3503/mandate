@@ -29,6 +29,7 @@ const NAV: NavItem[] = [
 /** Quiet shortcuts on the desktop rail. On a phone they live inside Jobs and Today. */
 const MORE: NavItem[] = [
   { to: '/deals', label: 'Deals', tour: 'nav-deals', icon: 'M3 12h7 M14 12h7 M9 7l3 5-3 5 M15 7l-3 5 3 5' },
+  { to: '/payees', label: 'Payees', tour: 'nav-payees', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75' },
   { to: '/new', label: 'Request form', tour: 'nav-new', icon: 'M12 5v14 M5 12h14' },
   { to: '/clerk', label: 'Ask Mandate', tour: 'nav-clerk', icon: 'M4 5h16v11H9l-5 4z M8 9h8 M8 12h5' },
   { to: '/system#h-connect', label: 'Connect an agent', tour: 'nav-connect', icon: 'M8 12h8 M5 8v8 M19 8v8 M3 10v4 M21 10v4' },
@@ -161,6 +162,29 @@ function ShellFrame() {
     toast({ title: 'Locked', body: 'The key is gone from this tab.', tone: 'info', key: 'lock' })
     navigate('/unlock', { replace: true })
   }
+
+  const onSwitchDemoRole = async (role: 'owner' | 'approver' | 'proposer' | 'viewer' | 'payee') => {
+    try {
+      await api.switchDemoRole(role)
+      await client.invalidateQueries()
+      toast({ title: `Switched to ${role}`, body: `You are now browsing as ${role}.`, tone: 'info', key: 'demo-role' })
+      const landing = role === 'proposer' ? '/clerk' : role === 'viewer' ? '/proof' : role === 'payee' ? '/payments' : '/'
+      navigate(landing)
+    } catch {
+      toast({ title: 'Could not switch role', body: 'The demo role switch failed.', tone: 'warn', key: 'demo-role-error' })
+    }
+  }
+
+  const onResetDemo = async () => {
+    try {
+      await api.resetDemo()
+      await client.invalidateQueries()
+      toast({ title: 'Demo reset', body: 'The ledger and rules are back to a fresh Line Studio.', tone: 'info', key: 'demo-reset' })
+      navigate('/')
+    } catch {
+      toast({ title: 'Could not reset demo', body: 'Reset failed.', tone: 'warn', key: 'demo-reset-error' })
+    }
+  }
   return (
     <div className="shell" data-collapsed={collapsed ? 'true' : 'false'}>
       <a className="skip" href="#main">Skip to content</a>
@@ -225,6 +249,39 @@ function ShellFrame() {
             <NavLink to="/system" className="topbar-sys" aria-label="System">v{me.data?.version ?? '—'}</NavLink>
           </div>
         </header>
+        {session.mode() === 'demo' ? (
+          <div className="demo-banner" role="status" data-testid="demo-banner">
+            <div className="row between align-center wrap gap-s">
+              <div>
+                Simulated PayPal. No real money. Your demo ends in 24 hours.{' '}
+                <Link to="/live-proof" className="link small" data-testid="live-proof-link" style={{ marginLeft: 6 }}>Live proof ↗</Link>
+              </div>
+              <div className="row gap-xs align-center demo-controls" data-testid="demo-role-switcher">
+                <span className="small muted">Role:</span>
+                {(['owner', 'approver', 'proposer', 'viewer', 'payee'] as const).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    className={`btn btn-small ${me.data?.role === r ? 'btn-ink' : 'btn-ghost'}`}
+                    data-testid={`demo-role-${r}`}
+                    onClick={() => void onSwitchDemoRole(r)}
+                  >
+                    {r}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  data-testid="demo-reset-btn"
+                  onClick={() => void onResetDemo()}
+                  title="Reset the demo to start clean"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {!online ? (
           <div className="offline" role="status">
             <strong>Offline</strong> Reading what was already loaded. Nothing that moves money can be sent until you are back online.

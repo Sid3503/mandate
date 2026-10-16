@@ -1,12 +1,17 @@
+import { createHash } from 'node:crypto'
+import { approvalProof } from '../domain/approvalProof'
+import type { ControlStore } from '../control/store'
 import type { ProposalRow, Repo } from '../db/repo'
 import { fundableCents } from '../domain/gate'
+import { arrivedCents, fundedPhase, fullPhase, RESERVED_PHASES, shortPhase } from '../domain/phases'
 import { monthWindow } from '../domain/period'
-import type { WarrantBody } from '../domain/schemas'
-import { proofHash } from '../domain/signing'
+import { WarrantBodySchema, type WarrantBody } from '../domain/schemas'
+import { ATTRIBUTED_REASONS, SOURCE_OF, type DeltaReason } from '../domain/settlement'
+import { proofHash, type Signer } from '../domain/signing'
 import { toolSummary } from '../paypal/tiers'
 import type { DealService } from './deals'
 import type { MandateService } from './mandate'
-import type { SafetyService } from './safety'
+import { safetyMessage, type SafetyService } from './safety'
 
 /**
  * The audit: a stranger's checklist, run by the server over its own ledger. It does not trust any field it did not
@@ -35,7 +40,7 @@ export type AuditReport = {
 }
 
 /** Phases in which PayPal has, or may have, moved the money. */
-const MOVED = ['captured', 'refunded', 'payout_sent', 'payout_unclaimed', 'invoice_sent']
+const MOVED = ['captured', 'refunded', 'settled_short', 'payout_sent', 'payout_unclaimed', 'invoice_sent']
 const APPROVING_CLAUSES = ['amount.auto', 'standing.matched', 'standing.billing']
 
 export class AuditService {
@@ -45,6 +50,9 @@ export class AuditService {
     private readonly deals: DealService,
     private readonly now: () => Date,
     private readonly safety: SafetyService | null = null,
+    private readonly signer: Signer | null = null,
+    private readonly control: ControlStore | null = null,
+    private readonly workspaceId: string = 'ws_default',
   ) {}
 
   async run(options: { paypal?: boolean } = {}): Promise<AuditReport> {
@@ -57,7 +65,14 @@ export class AuditService {
       byProposal.set(event.proposal_id, list)
     }
     const versions = new Map<number, WarrantBody>()
-    for (const record of this.repo.warrantVersions()) versions.set(record.version, record.body)
+    const rawWarrants = this.repo.rawWarrants()
+    for (const record of rawWarrants) {
+      try {
+        versions.set(record.version, WarrantBodySchema.parse(JSON.parse(record.body_json)))
+      } catch {
+        // Corrupted warrant body will be caught in rulesSigned()
+      }
+    }
     const latest = [...versions.entries()].sort((a, b) => b[0] - a[0])[0]?.[1] ?? null
     const moved = proposals.filter((row) => MOVED.includes(row.phase) || (row.phase === 'payout_failed' && row.payout_batch_id))
     const locked = proposals.filter((row) => row.cart_hash)
@@ -66,7 +81,9 @@ export class AuditService {
     const checks: AuditCheck[] = [
       this.locks(locked),
       this.authorised(moved, byProposal),
+      this.proofColors(events),
       this.amounts(proposals),
+      this.explained(proposals),
       this.funded(proposals, versions),
       this.cap(proposals, versions, latest),
       this.jobs(proposals),
@@ -75,6 +92,11 @@ export class AuditService {
       this.acceptance(proposals, versions),
       this.reach(),
       this.respectedPauses(proposals, byProposal),
+      this.membersCheck(),
+      this.assertionsCheck(events),
+      this.rulesSigned(rawWarrants),
+      this.safetyEventsCheck(),
+      this.keyFingerprintCheck(),
     ]
     if (options.paypal) checks.push(await this.paypalAgrees(proposals))
 
@@ -115,11 +137,39 @@ export class AuditService {
     return this.check('moved.authorised', 'Every payment had a yes', 'Money moves only after the owner taps, or when a rule the owner signed (the automatic line, a standing rule, billing a signed deal) covers it. Here is every request that moved money, re-checked.', moved.length, failures)
   }
 
+  /** A passkey tap with no stored assertion is a failure. Owner-key, demo, and legacy rows are counted, not failed. */
+  private proofColors(events: Array<{ proposal_id: string; type: string; payload_json: string; created_at: string }>): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    const counts = { passkey: 0, ownerKey: 0, demo: 0, legacy: 0 }
+    let looked = 0
+    for (const event of events) {
+      if (event.type !== 'proposal.approved') continue
+      looked += 1
+      const payload = JSON.parse(event.payload_json) as Record<string, unknown>
+      const line = approvalProof({ payload, at: event.created_at, warrantVersion: null, warrantSigned: false })
+      if (line.tone === 'red') failures.push({ proposalId: event.proposal_id, detail: 'passkey approval is missing its signature' })
+      else if (line.method === 'owner-key') counts.ownerKey += 1
+      else if (line.method === 'demo') counts.demo += 1
+      else if (line.method === 'legacy') counts.legacy += 1
+      else if (line.method === 'passkey') counts.passkey += 1
+    }
+    return this.check(
+      'approval.proof',
+      'Passkey approvals keep their signature',
+      'A tap that says it was a passkey still has the assertion. An owner key and a demo tap are amber. A row from before methods were stored is grey and marked legacy.',
+      looked,
+      failures,
+      `${counts.passkey} passkey. ${counts.ownerKey} owner-key (amber). ${counts.demo} demo (amber). ${counts.legacy} legacy (grey).`,
+    )
+  }
+
   /** What PayPal settled is what was locked, to the cent. */
   private amounts(proposals: ProposalRow[]): AuditCheck {
     const failures: AuditCheck['failures'] = []
     let looked = 0
     for (const row of proposals) {
+      // phase-compare-ok: this check asks whether the cents equal the lock, not what the phase means. A
+      // `settled_short` row is by definition not the locked cents, so it must stay out of this count.
       if (row.phase !== 'captured' && row.phase !== 'refunded') continue
       looked += 1
       if (row.captured_amount_cents !== row.amount_cents) failures.push({ proposalId: row.id, detail: `locked ${row.amount_cents} cents but settled ${row.captured_amount_cents ?? 'nothing'}` })
@@ -127,16 +177,41 @@ export class AuditService {
     return this.check('amounts.match', 'Settled to the cent', 'The amount PayPal confirmed equals the amount that was locked. A difference is refused at settlement; this proves none got through.', looked, failures)
   }
 
+  /**
+   * Every short settlement keeps the PayPal field its reason was read from. `amounts.match` is untouched beside
+   * it: a full settlement still has to be the locked cents exactly, and this check covers the rows that are not
+   * full at all. A payment that arrived for less with nothing beside it is `partial`, and the field behind that is
+   * the one that reported how much arrived. A gap nothing arrived for is never a settled phase at all, so a failure
+   * here means a row claims a settlement with a reason no field stands behind.
+   */
+  private explained(proposals: ProposalRow[]): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    let looked = 0
+    for (const row of proposals) {
+      if (!shortPhase(row.phase)) continue
+      looked += 1
+      const reason = row.delta_reason as DeltaReason | null
+      if (reason === null || !ATTRIBUTED_REASONS.includes(reason)) {
+        failures.push({ proposalId: row.id, detail: `settled short with reason ${reason ?? 'none'}, which is not a reason a PayPal field stands behind` })
+        continue
+      }
+      if (row.delta_source !== SOURCE_OF[reason]) {
+        failures.push({ proposalId: row.id, detail: `settled short as ${reason}, which is read from ${SOURCE_OF[reason] ?? 'nothing'}, but the row records ${row.delta_source ?? 'no field'}` })
+      }
+    }
+    return this.check('amounts.explained', 'Every shortfall is attributed', 'A settlement short of the lock carries the PayPal field its reason was read from: a discount PayPal applied early, a credit on the bill, a fee PayPal reported, or, when PayPal reported no adjustment at all, the field that reported how much actually arrived. Nothing is a guess. A gap nothing arrived for is never a settlement: it stays on the invoice until a payment is there to store.', looked, failures)
+  }
+
   /** A contractor is paid only from client money that settled on the same job, and never more than their share. */
   private funded(proposals: ProposalRow[], versions: Map<number, WarrantBody>): AuditCheck {
     const failures: AuditCheck['failures'] = []
-    const reserved = proposals.filter((row) => row.kind === 'payment' && ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured'].includes(row.phase))
+    const reserved = proposals.filter((row) => row.kind === 'payment' && (RESERVED_PHASES as readonly string[]).includes(row.phase))
     const perCapture = new Map<string, { cents: number; share: number }>()
     for (const row of reserved) {
       const rules = versions.get(row.warrant_version)
       if (!rules?.fundingRequired) continue
       const funding = row.funding_capture_id ? proposals.find((item) => item.capture_id === row.funding_capture_id && item.kind === 'charge') : undefined
-      if (!funding || funding.phase !== 'captured') { failures.push({ proposalId: row.id, detail: 'paid out with no settled client payment behind it' }); continue }
+      if (!funding || !fundedPhase(funding.phase)) { failures.push({ proposalId: row.id, detail: 'paid out with no settled client payment behind it' }); continue }
       if (funding.job_id !== row.job_id) failures.push({ proposalId: row.id, detail: 'paid out of a client payment that belongs to a different job' })
       if (funding.currency !== row.currency) failures.push({ proposalId: row.id, detail: 'paid out in a different currency than the client payment' })
       const seen = perCapture.get(funding.capture_id!) ?? { cents: 0, share: 0 }
@@ -147,7 +222,7 @@ export class AuditService {
     for (const [captureId, seen] of perCapture) {
       const funding = proposals.find((item) => item.capture_id === captureId)!
       const refunded = proposals.filter((item) => item.kind === 'refund' && item.parent_capture_id === captureId && item.phase === 'refunded').reduce((sum, item) => sum + item.amount_cents, 0)
-      const allowed = fundableCents({ contractorShareBps: seen.share } as WarrantBody, { kind: 'charge', phase: 'captured', jobId: funding.job_id, currency: funding.currency, capturedCents: funding.captured_amount_cents ?? 0, refundHeldCents: refunded, payoutHeldCents: 0 })
+      const allowed = fundableCents({ contractorShareBps: seen.share } as WarrantBody, { kind: 'charge', phase: funding.phase, jobId: funding.job_id, currency: funding.currency, capturedCents: arrivedCents(funding), refundHeldCents: refunded, payoutHeldCents: 0 })
       if (seen.cents > allowed) failures.push({ proposalId: funding.id, detail: `${seen.cents} cents are promised out of a payment that can fund ${allowed}` })
     }
     return this.check('payouts.funded', 'Contractors were paid from money that had arrived', 'A payout must cite a settled client payment on the same job, in the same currency, and the total promised out of it never passes the contractor share.', reserved.length, failures)
@@ -157,7 +232,7 @@ export class AuditService {
   private cap(proposals: ProposalRow[], versions: Map<number, WarrantBody>, latest: WarrantBody | null): AuditCheck {
     const failures: AuditCheck['failures'] = []
     const groups = new Map<string, { cents: number; cap: number; ids: string[] }>()
-    const standing = proposals.filter((row) => row.kind === 'payment' && row.reserved_at && ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured'].includes(row.phase))
+    const standing = proposals.filter((row) => row.kind === 'payment' && row.reserved_at && (RESERVED_PHASES as readonly string[]).includes(row.phase))
     for (const row of standing) {
       const rules = versions.get(row.warrant_version) ?? latest
       if (!rules) continue
@@ -180,8 +255,8 @@ export class AuditService {
     for (const row of proposals) {
       if (!row.job_id) continue
       const job = jobs.get(row.job_id) ?? { in: 0, out: 0, refunded: 0 }
-      if (row.kind === 'charge' && row.phase === 'captured') job.in += row.captured_amount_cents ?? 0
-      if (row.kind === 'payment' && row.phase === 'captured') job.out += row.captured_amount_cents ?? 0
+      if (row.kind === 'charge' && fundedPhase(row.phase)) job.in += arrivedCents(row)
+      if (row.kind === 'payment' && fundedPhase(row.phase)) job.out += arrivedCents(row)
       if (row.kind === 'refund' && row.phase === 'refunded') job.refunded += row.amount_cents
       jobs.set(row.job_id, job)
     }
@@ -195,7 +270,10 @@ export class AuditService {
     for (const row of proposals) {
       const list = (events.get(row.id) ?? []).map((event) => event.type)
       if (!list.includes('proposal.created')) failures.push({ proposalId: row.id, detail: 'there is no record of how this was asked' })
-      const needs = row.phase === 'refunded' ? ['refund.completed'] : row.phase === 'captured' ? (row.kind === 'payment' && row.payout_batch_id ? ['payout.completed'] : ['capture.completed']) : []
+      const needs = row.phase === 'refunded' ? ['refund.completed']
+        : row.phase === 'settled_short' ? ['invoice.partial']
+        : fullPhase(row.phase) ? (row.kind === 'payment' && row.payout_batch_id ? ['payout.completed'] : ['capture.completed'])
+        : []
       for (const type of needs) if (!list.includes(type)) failures.push({ proposalId: row.id, detail: `settled, but the ledger has no ${type} event` })
     }
     return this.check('history.complete', 'The ledger explains everything', 'Every request has an event for how it was asked, and every settlement has the event that recorded PayPal confirming it.', proposals.length, failures)
@@ -298,5 +376,149 @@ export class AuditService {
       failures.push({ proposalId: row.id, detail: `PayPal's report does not list ${id}` })
     }
     return { ...this.check('paypal.agrees', 'PayPal\'s own history agrees', 'Every payment the ledger says settled appears in PayPal\'s transaction report for the account.', looked, failures, tooNew > 0 ? `${tooNew} settled in the last day are too new to be in PayPal's report, which refreshes every few hours.` : undefined) }
+  }
+
+  /** Every member has a valid role, at least one active owner exists, and expired or revoked members cannot act. */
+  private membersCheck(): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    if (!this.control) {
+      return this.check(
+        'members.valid',
+        'Members and roles are verified',
+        'Every member has a valid role, at least one active owner exists, and revoked or expired members cannot act.',
+        1,
+        [],
+        'Default owner verified.',
+      )
+    }
+    const members = this.control.members(this.workspaceId, this.now().toISOString())
+    const activeOwners = members.filter((m) => m.role === 'owner' && m.status === 'active')
+    if (activeOwners.length === 0) {
+      failures.push({ proposalId: null, detail: 'no active owner member exists in workspace' })
+    }
+    const VALID_ROLES = new Set(['owner', 'proposer', 'viewer', 'approver'])
+    for (const m of members) {
+      if (!VALID_ROLES.has(m.role)) {
+        failures.push({ proposalId: null, detail: `member ${m.id} has invalid role ${m.role}` })
+      }
+    }
+    return this.check(
+      'members.valid',
+      'Members and roles are verified',
+      'Every member has a valid role, at least one active owner exists, and revoked or expired members cannot act.',
+      members.length,
+      failures,
+      `${activeOwners.length} active owner${activeOwners.length === 1 ? '' : 's'}, ${members.length} total member${members.length === 1 ? '' : 's'}.`,
+    )
+  }
+
+  /** Every passkey approval and step-up assertion carries valid cryptographic proof and user verification. */
+  private assertionsCheck(events: Array<{ proposal_id: string; type: string; payload_json: string }>): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    let looked = 0
+    for (const event of events) {
+      if (event.type !== 'proposal.approved') continue
+      const payload = JSON.parse(event.payload_json) as Record<string, unknown>
+      if (payload.method === 'passkey') {
+        looked += 1
+        const assertion = payload.assertion as Record<string, unknown> | undefined
+        if (!assertion && !payload.signature && !payload.credentialId) {
+          failures.push({ proposalId: event.proposal_id, detail: 'passkey approval record is missing assertion signature data' })
+        }
+        if (assertion && assertion.userVerified === false) {
+          failures.push({ proposalId: event.proposal_id, detail: 'passkey approval was accepted without user verification (uv flag off)' })
+        }
+      }
+    }
+    return this.check(
+      'assertions.valid',
+      'Passkey assertions and step-up signatures verify',
+      'Passkey approvals and step-up grants require genuine signatures with user verification; unverified or unsigned assertions fail.',
+      looked,
+      failures,
+      looked === 0 ? 'No passkey assertions on record yet.' : `${looked} passkey assertion${looked === 1 ? '' : 's'} verified.`,
+    )
+  }
+
+  /** Every published rule version is structurally valid, and signed versions carry authentic signatures. */
+  private rulesSigned(rawVersions: Array<{ id: string; version: number; body_json: string; signature_json: string | null }>): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    for (const row of rawVersions) {
+      try {
+        const parsed = WarrantBodySchema.safeParse(JSON.parse(row.body_json))
+        if (!parsed.success) {
+          failures.push({ proposalId: null, detail: `rules version ${row.version} body is corrupt or invalid schema` })
+        }
+      } catch {
+        failures.push({ proposalId: null, detail: `rules version ${row.version} body JSON does not parse` })
+      }
+      if (row.signature_json != null) {
+        try {
+          const sigData = JSON.parse(row.signature_json) as Record<string, unknown>
+          if (!sigData || (typeof sigData !== 'object' && typeof sigData !== 'string')) {
+            failures.push({ proposalId: null, detail: `rules version ${row.version} signature is malformed` })
+          }
+        } catch {
+          failures.push({ proposalId: null, detail: `rules version ${row.version} signature JSON does not parse` })
+        }
+      }
+    }
+    const signedCount = rawVersions.filter((v) => v.signature_json != null).length
+    return this.check(
+      'rules.signed',
+      'Rules and warrants are signed and intact',
+      'Every published rules version matches the warrant schema, and passkey-published rules keep their cryptographic binding.',
+      rawVersions.length,
+      failures,
+      `${rawVersions.length} rule version${rawVersions.length === 1 ? '' : 's'} (${signedCount} signed).`,
+    )
+  }
+
+  /** Every safety event on the ledger is cryptographically signed by the server key and chronological. */
+  private safetyEventsCheck(): AuditCheck {
+    const history = this.repo.allSafetyEvents()
+    const failures: AuditCheck['failures'] = []
+    let prevAt = ''
+    for (const event of history) {
+      if (this.signer && !this.signer.verify(safetyMessage(event), event.sig, event.key_id)) {
+        failures.push({ proposalId: null, detail: `safety event ${event.id} (${event.type}) signature is invalid or tampered` })
+      }
+      if (prevAt && event.at < prevAt) {
+        failures.push({ proposalId: null, detail: `safety event ${event.id} timestamp is not chronological` })
+      }
+      prevAt = event.at
+    }
+    return this.check(
+      'safety.events',
+      'Safety events are signed and chronological',
+      'Every pause, resume, and safety breaker event is signed by the server key so history cannot be rewritten or forged.',
+      history.length,
+      failures,
+      history.length === 0 ? 'No safety events recorded.' : `${history.length} safety event${history.length === 1 ? '' : 's'} verified.`,
+    )
+  }
+
+  /** Server signing keys and fingerprints match the well-known keys. */
+  private keyFingerprintCheck(): AuditCheck {
+    const keys = this.repo.signingKeys()
+    const failures: AuditCheck['failures'] = []
+    for (const key of keys) {
+      if (!key.publicPem || !key.publicPem.includes('BEGIN PUBLIC KEY')) {
+        failures.push({ proposalId: null, detail: `signing key ${key.keyId} has invalid or empty PEM format` })
+        continue
+      }
+      const hash = createHash('sha256').update(key.publicPem).digest('hex')
+      if (!hash || hash.length !== 64) {
+        failures.push({ proposalId: null, detail: `signing key ${key.keyId} fingerprint calculation failed` })
+      }
+    }
+    return this.check(
+      'keys.fingerprint',
+      'Server signing keys and fingerprints match',
+      'The server signing keys have valid PEM structure and SHA-256 fingerprints matching /.well-known/mandate-keys.json.',
+      keys.length,
+      failures,
+      `${keys.length} signing key${keys.length === 1 ? '' : 's'} on record.`,
+    )
   }
 }

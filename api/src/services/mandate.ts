@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { RESERVED_PHASES, type Repo, type ProposalRow, type ProposalKind, type PayoutUpdate } from '../db/repo'
-import { clearingState, Clause, decide, fundableCents, type Decision, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
+import { clearingState, Clause, decide, fundableCents, fundingArithmetic, type Decision, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
+import { approvalProof, type ApprovalProof } from '../domain/approvalProof'
 import { cartHash, stableHash, type CartFields } from '../domain/hash'
 import { acceptanceMessage, lockMessage, proofHash, type Signer } from '../domain/signing'
 import { monthWindow } from '../domain/period'
+import { arrivedCents, fullPhase, fundedPhase, PAID_PHASES, paidPhase, watchedInvoicePhase } from '../domain/phases'
+import { ATTRIBUTED_REASONS, explainDelta, explainTotal, SOURCE_OF, type InvoiceMoney } from '../domain/settlement'
+import { DealTermsSchema, type DealTerms } from '../domain/deal'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
 import { NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
@@ -13,6 +17,7 @@ import { assessFeatures } from '../domain/paypalFeatures'
 import { reconcile } from '../domain/reconcile'
 import { Problem } from '../http/problem'
 import { paypalProblem } from './paypalProblem'
+import { applyPayeeBook, type PayeeView } from '../domain/payee-book'
 import { applyPause, NOT_PAUSED } from '../domain/safety'
 import type { SafetyService } from './safety'
 import { runIdempotent } from './idempotency'
@@ -58,6 +63,12 @@ export type ProposalView = {
   refundId: string | null
   approveUrl: string | null
   capturedAmountCents: number | null
+  captureFeeCents: number | null
+  captureNetCents: number | null
+  settledCents: number | null
+  deltaCents: number | null
+  deltaReason: string | null
+  deltaSource: string | null
   payoutBatchId: string | null
   payoutItemId: string | null
   payoutStatus: string | null
@@ -101,6 +112,12 @@ export function toView(row: ProposalRow): ProposalView {
     refundId: row.refund_id,
     approveUrl: row.approve_url,
     capturedAmountCents: row.captured_amount_cents,
+    captureFeeCents: row.capture_fee_cents,
+    captureNetCents: row.capture_net_cents,
+    settledCents: row.settled_cents,
+    deltaCents: row.delta_cents,
+    deltaReason: row.delta_reason,
+    deltaSource: row.delta_source,
     payoutBatchId: row.payout_batch_id,
     payoutItemId: row.payout_item_id,
     payoutStatus: row.payout_status,
@@ -122,6 +139,38 @@ export function toView(row: ProposalRow): ProposalView {
 /** PayPal's reporting API wants 2026-10-05T10:00:00+0000, not the usual ISO with milliseconds and Z. */
 const payPalTime = (date: Date) => date.toISOString().replace(/\.\d+Z$/, '+0000')
 
+/** What PayPal reported about one invoice, in the shape the settlement rules read. */
+function moneyOf(live: LiveInvoice): InvoiceMoney {
+  return {
+    totalCents: live.totalCents,
+    paidCents: live.paidCents,
+    discountCents: live.discountCents,
+    earlyDiscountCents: live.earlyDiscountCents,
+    feeCents: live.feeCents,
+  }
+}
+
+/**
+ * The deal's early-payment discount as PayPal wants it, when the deal carries one. The due date is this server's
+ * clock, not PayPal's: the deal said `days` from when the invoice goes out, and that is what PayPal is told.
+ */
+function earlyPaymentDiscountOf(terms: DealTerms | null, now: Date): { percentBps: number; dueDate: string } | null {
+  const discount = terms?.earlyPaymentDiscount
+  if (!discount) return null
+  return { percentBps: discount.percentBps, dueDate: new Date(now.getTime() + discount.days * 86_400_000).toISOString().slice(0, 10) }
+}
+
+/** The terms of a deal that was already agreed, or null when the row cannot be read. Never throws on a stale row. */
+function dealTermsOf(json: string | undefined): DealTerms | null {
+  if (!json) return null
+  try {
+    const parsed = DealTermsSchema.safeParse(JSON.parse(json))
+    return parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
+}
+
 export class MandateService {
   constructor(
     private readonly repo: Repo,
@@ -138,8 +187,20 @@ export class MandateService {
       /** The emergency stop and the breaker. Absent in tests that do not need it. */
       safety?: SafetyService
       agents?: import('./agents').AgentService
+      /** When set, a new payee cannot pass on a standing rule alone. Off unless the caller turns the book on. */
+      payeeBook?: boolean
+      newPayeeWaitHours?: number
+      onExternalRef?: (kind: string, externalId: string) => void
     } = {},
   ) {}
+
+  get hasExternalRef(): boolean {
+    return typeof this.options.onExternalRef === 'function'
+  }
+
+  setOnExternalRef(cb: (kind: string, externalId: string) => void): void {
+    this.options.onExternalRef = cb
+  }
 
   /**
    * Boot-time housekeeping. Remembers the public key, and signs locks made before signatures existed, but only
@@ -218,7 +279,7 @@ export class MandateService {
    * Publishes the next version of the rules. A caller that says which version it started from (`expectedVersion`) is
    * refused if someone has published since: two people editing never silently overwrite each other.
    */
-  publishWarrant(input: unknown, expectedVersion?: number): HttpResult {
+  publishWarrant(input: unknown, expectedVersion?: number, signatureJson: string | null = null): HttpResult {
     const parsed = WarrantBodySchema.safeParse(input)
     if (!parsed.success) throw parsed.error
     const now = this.iso()
@@ -229,7 +290,16 @@ export class MandateService {
       }
       const version = current ? current.version + 1 : 1
       const id = current?.id ?? WARRANT_ID
-      this.repo.insertWarrant(id, version, parsed.data, now)
+      this.repo.insertWarrant(id, version, parsed.data, now, signatureJson)
+      for (const payee of parsed.data.payees) {
+        this.repo.insertPayee({
+          id: payee.id,
+          email: payee.email,
+          status: 'active',
+          verified_method: 'unverified',
+          first_seen: now,
+        })
+      }
       return { id, version, createdAt: now, ...parsed.data }
     })
     return { status: 201, body: saved }
@@ -263,7 +333,7 @@ export class MandateService {
     const row = this.repo.proposal(id)
     if (!row || !['payment', 'charge'].includes(row.kind) || !STANDING_CLAUSES.includes(row.clause) || !['locked', 'order_created'].includes(row.phase)) return null
     // Paused: a payout the owner's rule already approved waits, locked, and is sent when Mandate is resumed.
-    if (this.options.safety?.paused()) {
+    if (this.options.safety?.isAutopilotPaused()) {
       const last = [...this.repo.eventsFor(id)].reverse().find((event) => event.type === 'standing.waiting')
       if (!last || (JSON.parse(last.payload_json) as { code?: string }).code !== Clause.systemPaused) {
         this.repo.insertEvent(randomUUID(), id, 'standing.waiting', Clause.standingMatched, { code: Clause.systemPaused, detail: 'Mandate is paused, so this waits locked until the owner resumes it' }, this.iso())
@@ -283,6 +353,7 @@ export class MandateService {
     }
     try {
       await this.capture(id)
+      this.options.safety?.noteAutopilotSuccess()
     } catch (error) {
       if (!(error instanceof Problem)) throw error
       const now = this.iso()
@@ -294,6 +365,7 @@ export class MandateService {
         }
       } else if (this.require(id).phase !== 'capture_refused') {
         // The lock, the funding or the state is wrong. Retrying cannot fix that, and it must not hold the money forever.
+        this.options.safety?.noteAutopilotFailure(error.code)
         this.repo.transaction(() => {
           this.repo.setPhase(id, 'capture_refused', now)
           this.repo.insertEvent(randomUUID(), id, 'capture.refused', error.code, { detail: error.detail, via: 'standing rule' }, now)
@@ -343,7 +415,7 @@ export class MandateService {
    */
   private async remindOverdueInvoices(): Promise<number> {
     const automation = this.repo.latestWarrant()?.body.automation
-    if (this.options.safety?.paused() || !this.invoices || !automation?.remindUnpaidAfterDays || automation.maxReminders < 1) return 0
+    if (this.options.safety?.isAutopilotPaused() || !this.invoices || !automation?.remindUnpaidAfterDays || automation.maxReminders < 1) return 0
     let sent = 0
     for (const row of this.repo.invoicesOut()) {
       const events = this.repo.eventsFor(row.id)
@@ -359,17 +431,25 @@ export class MandateService {
 
   /** Looks for standing-rule payouts that are approved but not yet sent (PayPal was down, or a dispute held them) and sends them. */
   async sweepStanding(): Promise<number> {
-    if (this.options.safety?.paused()) return 0
+    if (this.options.safety?.isAutopilotPaused()) return 0
     const stuck = this.repo.lockedStandingItems()
     for (const row of stuck) await this.dispatchStanding(row.id)
     return stuck.length
   }
 
-  approve(id: string): HttpResult {
+  /** Cart hash for a request that is still waiting. Null when there is nothing to sign. */
+  approvalHash(id: string): string | null {
+    const row = this.repo.proposal(id)
+    if (!row || row.phase !== 'pending_approval' || row.gate === 'DENY') return null
+    if (!row.payee_id || !row.category || !row.evidence_url) return null
+    return cartHash(this.cartFields(row))
+  }
+
+  approve(id: string, assertion: unknown = null, stamp: { method: 'passkey' | 'owner-key' | 'demo'; fingerprint?: string | null; publicKey?: { kty: 'EC'; crv: 'P-256'; alg: -7; x: string; y: string } | null; rpId?: string | null; origin?: string | null; challenge?: string | null } | null = null): HttpResult {
     const now = this.iso()
     return this.repo.transaction(() => {
       const row = this.require(id)
-      if (['locked', 'order_created', 'captured', 'refunded', ...INVOICE_PHASES, ...PAYOUT_LIVE_PHASES].includes(row.phase)) {
+      if (['locked', 'order_created', ...PAID_PHASES, ...INVOICE_PHASES, ...PAYOUT_LIVE_PHASES].includes(row.phase)) {
         return { status: 200, body: toView(this.require(id)) }
       }
       if (row.phase !== 'pending_approval' || row.gate === 'DENY') {
@@ -407,7 +487,15 @@ export class MandateService {
       const fields = this.cartFields(row)
       const hash = cartHash(fields)
       this.repo.lockProposal(row.id, hash, this.signer.sign(lockMessage(row.id, hash)), now)
-      this.repo.insertEvent(randomUUID(), row.id, 'proposal.approved', row.clause, { actor: 'owner', cartHash: hash }, now)
+      const method = stamp?.method ?? (assertion ? 'passkey' : 'owner-key')
+      const payload: Record<string, unknown> = { actor: 'owner', cartHash: hash, method }
+      if (assertion) payload.assertion = assertion
+      if (stamp?.fingerprint) payload.fingerprint = stamp.fingerprint
+      if (stamp?.publicKey) payload.publicKey = stamp.publicKey
+      if (stamp?.rpId) payload.rpId = stamp.rpId
+      if (stamp?.origin) payload.origin = stamp.origin
+      if (stamp?.challenge) payload.challenge = stamp.challenge
+      this.repo.insertEvent(randomUUID(), row.id, 'proposal.approved', row.clause, payload, now)
       return { status: 200, body: toView(this.require(id)) }
     })
   }
@@ -433,7 +521,7 @@ export class MandateService {
     const before = this.repo.proposal(id)?.phase
     const result = await this.captureCore(id, claimedAmountCents)
     // A client payment that has just settled may owe a contractor their share. Only a settling counts, not a re-read.
-    if (before && before !== 'captured') await this.afterMoney(id).catch(() => undefined)
+    if (before && !fullPhase(before)) await this.afterMoney(id).catch(() => undefined)
     return result
   }
 
@@ -458,10 +546,8 @@ export class MandateService {
       return await this.settlePayment(current)
     } catch (error) {
       if (this.require(id).phase === 'capture_inflight') this.repo.setPhase(id, resume, this.iso())
-      if (error instanceof PayPalError) {
-        throw paypalProblem(error, 'to settle this request', { proposalId: id })
-      }
-      throw error
+      if (error instanceof Problem) throw error
+      throw paypalProblem(error, 'to settle this request', { proposalId: id })
     }
   }
 
@@ -488,6 +574,7 @@ export class MandateService {
           payeeAttached: created.payeeAttached,
         }, now)
       })
+      this.options.onExternalRef?.('order', created.orderId)
     }
     const saved = this.require(current.id)
     const live = await this.paypal.getOrder(saved.order_id!)
@@ -508,7 +595,7 @@ export class MandateService {
     }
     const now = this.iso()
     this.repo.transaction(() => {
-      this.repo.markCaptured(saved.id, captured.captureId, captured.amountCents, now)
+      this.repo.markCaptured(saved.id, captured.captureId, captured.amountCents, captured.amountCents, now, captured.feeCents, captured.netCents)
       this.repo.insertEvent(randomUUID(), saved.id, 'capture.completed', saved.clause, {
         orderId: saved.order_id,
         captureId: captured.captureId,
@@ -703,6 +790,7 @@ export class MandateService {
           currency: current.currency,
         }, now)
       })
+      this.options.onExternalRef?.('payout', sent.batchId)
     }
     const saved = this.require(current.id)
     const live = await this.paypal.getPayout(batchId)
@@ -737,8 +825,11 @@ export class MandateService {
     const now = this.iso()
     this.repo.transaction(() => {
       this.repo.applyPayout(row.id, update, now)
+      if (fullPhase(update.phase) && row.payee_id) {
+        this.repo.updatePayeePaidCents(row.payee_id, item.amountCents)
+      }
       if (row.phase !== update.phase || row.payout_status !== item.status) {
-        const type = update.phase === 'captured' ? 'payout.completed'
+        const type = fullPhase(update.phase) ? 'payout.completed'
           : update.phase === 'payout_unclaimed' ? 'payout.unclaimed'
           : update.phase === 'payout_failed' ? 'payout.failed'
           : 'payout.status'
@@ -778,8 +869,9 @@ export class MandateService {
     if (!row.invoice_id) {
       const warrant = this.repo.warrant(row.warrant_id, row.warrant_version)
       const client = warrant?.body.clients.find((item) => item.id === row.payee_id)
-      if (!client) throw new Problem(409, Clause.payeeUnknown, 'Client is not on the rules', 'The client for this charge is not on the rules it was approved under. Nothing was sent.')
+      if (!warrant || !client) throw new Problem(409, Clause.payeeUnknown, 'Client is not on the rules', 'The client for this charge is not on the rules it was approved under. Nothing was sent.')
       const number = invoiceNumberFor(row.id)
+      const terms = dealTermsOf(row.deal_id ? this.repo.deal(row.deal_id)?.terms_json : undefined)
       let invoiceId: string | null = null
       try {
         invoiceId = (await invoices.findByNumber(number))?.invoiceId ?? null
@@ -794,6 +886,10 @@ export class MandateService {
             note: row.prompt ?? row.description,
             recipientEmail: client.email,
             recipientName: client.displayName,
+            // Both come from something the owner signed, not from a constant here: whether this client may pay
+            // in part is a rule, and the discount is a term of the deal this charge bills.
+            allowPartialPayment: warrant.body.allowPartialPayment,
+            earlyPaymentDiscount: earlyPaymentDiscountOf(terms, this.now()),
           })).invoiceId
         }
       } catch (error) {
@@ -810,6 +906,7 @@ export class MandateService {
         this.repo.saveInvoiceDraft(row.id, invoiceId!, now)
         this.repo.insertEvent(randomUUID(), row.id, 'invoice.created', row.clause, { invoiceId, invoiceNumber: number, amountCents: row.amount_cents }, now)
       })
+      this.options.onExternalRef?.('invoice', invoiceId!)
       row = this.require(row.id)
     }
     // Send once. A drafted invoice is sent; one PayPal already reports as sent, paid or cancelled is only read.
@@ -827,17 +924,24 @@ export class MandateService {
 
   private applyLiveInvoice(row: ProposalRow, live: LiveInvoice, by: 'server' | null = null): HttpResult {
     const paid = live.status === 'PAID' || live.status === 'PARTIALLY_PAID' || live.paidCents > 0
-    const mismatch = live.totalCents !== row.amount_cents || live.currency !== row.currency || (live.reference !== null && live.reference !== row.id)
-    if (mismatch) {
+    const money = moneyOf(live)
+    const ours = live.currency === row.currency && (live.reference === null || live.reference === row.id)
+    // A total that is not the locked amount is a different bill, unless a discount PayPal carries accounts for
+    // exactly the difference. The lock is still the authority; a discount the studio applied is not an edit to it.
+    const explainedTotal = live.totalCents === row.amount_cents ? null : explainTotal(row.amount_cents, money)
+    if (!ours || (live.totalCents !== row.amount_cents && !explainedTotal)) {
       // The invoice is not the one we locked. Whatever it says, we do not call it paid.
       return this.refuseLive(row, live.totalCents, live.currency)
     }
-    if (live.status === 'PAID' && live.paidCents === row.amount_cents && live.transactionId) {
+    const settlement = explainDelta(row.amount_cents, money)
+    if (settlement.reason === 'full' && live.status === 'PAID' && live.transactionId) {
       const now = this.iso()
       this.repo.transaction(() => {
-        this.repo.markCaptured(row.id, live.transactionId!, live.paidCents, now)
+        // The lock was paid, so this is a full settlement whatever the payer added: the guarantee is that the
+        // locked cents were paid, and what arrived sits beside it in settled_cents.
+        this.repo.markCaptured(row.id, live.transactionId!, row.amount_cents, settlement.settledCents, now)
         this.repo.setInvoiceStatus(row.id, live.status, now)
-        this.repo.insertEvent(randomUUID(), row.id, 'capture.completed', row.clause, { invoiceId: live.invoiceId, captureId: live.transactionId, amountCents: live.paidCents, via: 'invoice', ...(by ? { by } : {}) }, now)
+        this.repo.insertEvent(randomUUID(), row.id, 'capture.completed', row.clause, { invoiceId: live.invoiceId, captureId: live.transactionId, amountCents: settlement.settledCents, via: 'invoice', ...(by ? { by } : {}) }, now)
       })
       return { status: 200, body: toView(this.require(row.id)) }
     }
@@ -854,8 +958,25 @@ export class MandateService {
       this.repo.setPhase(row.id, 'invoice_cancelled', now)
       this.repo.insertEvent(randomUUID(), row.id, 'invoice.cancelled', row.clause, { invoiceId: live.invoiceId, reason: 'cancelled at PayPal' }, now)
     } else if (paid) {
-      // Paid, but not in full or not through PayPal: the money is not the locked cents, so it is not called settled.
-      this.repo.insertEvent(randomUUID(), row.id, 'invoice.partial', row.clause, { invoiceId: live.invoiceId, paidCents: live.paidCents, lockedCents: row.amount_cents }, now)
+      // Paid, but not the locked cents: the money is not called captured. Money that really arrived settles the
+      // row short, and the payment id it came with is stored as the capture id, so a payout can be funded from it
+      // and a refund can cite it. A gap nothing arrived for cannot be settled, because there is no payment to
+      // store an id from: it is recorded, and it keeps refusing to settle.
+      const reason = settlement.reason
+      const source = SOURCE_OF[reason]
+      this.repo.transaction(() => {
+        // One divergence, one event. A sweep that learns nothing new writes no second row, and the same
+        // flag that guards the stored delta guards the append, so the two can never disagree.
+        //
+        // Only a reason a PayPal field stands behind moves the row to a settled phase. `unexplained` means nothing
+        // arrived, and a `full` that PayPal has not marked the invoice PAID for yet is money in flight: both are
+        // recorded and left on the invoice, so a row never claims a settlement PayPal has not confirmed, and
+        // `amounts.explained` can rely on every short phase carrying a reason with a field behind it.
+        const news = ATTRIBUTED_REASONS.includes(reason)
+          ? this.repo.settleShort(row.id, live.transactionId, settlement.settledCents, reason, source, now)
+          : this.repo.recordSettlement(row.id, settlement.settledCents, reason, source, now)
+        if (news) this.repo.insertEvent(randomUUID(), row.id, 'invoice.partial', row.clause, { invoiceId: live.invoiceId, paidCents: live.paidCents, lockedCents: row.amount_cents, reason, source }, now)
+      })
     }
     return { status: 200, body: toView(this.require(row.id)) }
   }
@@ -864,9 +985,9 @@ export class MandateService {
   async refreshInvoice(invoiceId: string, by: 'server' | null = null): Promise<{ refreshed: boolean }> {
     if (!this.invoices) return { refreshed: false }
     const row = this.repo.proposalByInvoice(invoiceId)
-    if (!row || !INVOICE_PHASES.includes(row.phase)) return { refreshed: false }
+    if (!row || !watchedInvoicePhase(row.phase)) return { refreshed: false }
     this.applyLiveInvoice(row, await this.invoices.get(invoiceId), by)
-    if (this.repo.proposal(row.id)?.phase === 'captured') await this.afterMoney(row.id).catch(() => undefined)
+    if (fullPhase(this.repo.proposal(row.id)?.phase ?? '')) await this.afterMoney(row.id).catch(() => undefined)
     return { refreshed: true }
   }
 
@@ -883,7 +1004,7 @@ export class MandateService {
   async resumeAutopilot(): Promise<number> {
     let asked = 0
     for (const row of this.repo.allProposals()) {
-      if (row.kind === 'charge' && row.phase === 'captured') {
+      if (row.kind === 'charge' && fullPhase(row.phase)) {
         const before = this.repo.eventsFor(row.id).filter((event) => event.type === 'autopilot.payout_asked').length
         await this.afterMoney(row.id).catch(() => undefined)
         asked += this.repo.eventsFor(row.id).filter((event) => event.type === 'autopilot.payout_asked').length - before
@@ -895,9 +1016,11 @@ export class MandateService {
 
   private async afterMoney(id: string): Promise<void> {
     const charge = this.repo.proposal(id)
-    if (!charge || charge.kind !== 'charge' || charge.phase !== 'captured' || !charge.capture_id) return
+    // Only a client payment that settled in full pays a standing share by itself. A part payment leaves the share
+    // for the owner to ask for: paying it out of money that has not all arrived is a decision, not a standing rule.
+    if (!charge || charge.kind !== 'charge' || !fullPhase(charge.phase) || !charge.capture_id) return
     // Paused: do not ask. Resuming goes back over every settled client payment and asks for what was missed.
-    if (this.options.safety?.paused()) return
+    if (this.options.safety?.isAutopilotPaused()) return
     const warrant = this.repo.latestWarrant()
     if (!warrant?.body.automation.payOnSettle) return
     const body = warrant.body
@@ -905,7 +1028,7 @@ export class MandateService {
     for (const rule of body.standing) {
       if (already.includes(rule.id)) continue
       if (!rule.clientIds.includes(charge.payee_id ?? '') || (rule.requireDeal && !charge.deal_id)) continue
-      const net = Math.max(0, (charge.captured_amount_cents ?? 0) - this.repo.heldRefundCents(charge.capture_id))
+      const net = Math.max(0, arrivedCents(charge) - this.repo.heldRefundCents(charge.capture_id))
       const owed = Math.floor((net * (rule.shareBps ?? body.contractorShareBps)) / 10_000) - this.repo.heldPayoutCentsFor(charge.capture_id, rule.payeeId)
       if (owed <= 0 || !charge.category || !charge.evidence_url) continue
       // Clearing: the client's money could still be taken back, so the autopilot waits and says until when. It asks again by itself once it has cleared.
@@ -978,6 +1101,18 @@ export class MandateService {
     return { data, nextCursor: rows.length > limit && last ? encodeCursor(last.createdAt, last.id) : null }
   }
 
+  private approvalLine(row: ProposalRow, warrant: { signatureJson: string | null } | null, approval: { payload: unknown; createdAt: string } | null): ApprovalProof | null {
+    const signed = warrant?.signatureJson != null
+    if (approval) {
+      const payload = approval.payload && typeof approval.payload === 'object' ? approval.payload as Record<string, unknown> : {}
+      return approvalProof({ payload, at: approval.createdAt, warrantVersion: row.warrant_version, warrantSigned: signed })
+    }
+    if (row.clause === 'standing.matched' || row.clause === 'standing.billing') {
+      return approvalProof({ payload: null, at: null, warrantVersion: row.warrant_version, warrantSigned: signed })
+    }
+    return null
+  }
+
   packet(id: string) {
     const row = this.require(id)
     const warrant = this.repo.warrant(row.warrant_id, row.warrant_version)
@@ -990,11 +1125,12 @@ export class MandateService {
       createdAt: event.created_at,
     }))
     const approval = events.find((event) => event.type === 'proposal.approved') ?? null
-    const captured = row.phase === 'captured' || row.phase === 'refunded'
+    const settled = paidPhase(row.phase)
     return {
       proposal: toView(row),
       payee,
-      warrant: warrant ? { id: warrant.id, version: warrant.version, currency: warrant.body.currency, monthlyCapCents: warrant.body.monthlyCapCents, autoSettleUnderCents: warrant.body.autoSettleUnderCents } : null,
+      warrant: warrant ? { id: warrant.id, version: warrant.version, currency: warrant.body.currency, monthlyCapCents: warrant.body.monthlyCapCents, autoSettleUnderCents: warrant.body.autoSettleUnderCents, signed: warrant.signatureJson != null } : null,
+      approvalProof: this.approvalLine(row, warrant, approval),
       prompt: row.prompt,
       clause: row.clause,
       approval,
@@ -1010,7 +1146,7 @@ export class MandateService {
       amounts: {
         approvedCents: row.cart_hash ? row.amount_cents : null,
         capturedCents: row.captured_amount_cents,
-        match: captured ? row.captured_amount_cents === row.amount_cents : null,
+        match: settled ? arrivedCents(row) === row.amount_cents : null,
       },
       orderId: row.order_id,
       captureId: row.capture_id,
@@ -1057,9 +1193,25 @@ export class MandateService {
       proposalId: charge.id,
       clientId: charge.payee_id,
       jobId: charge.job_id,
-      capturedCents: charge.captured_amount_cents,
+      capturedCents: arrivedCents(charge),
       orderId: charge.order_id,
       phase: charge.phase,
+    }
+  }
+
+  private payeeView(id: string | null, nowMs: number): PayeeView | null {
+    if (!id) return null
+    const row = this.repo.payeeRow(id)
+    if (!row) return { status: 'missing', changePending: false, waitUntil: null }
+    const waitHours = this.options.newPayeeWaitHours ?? 24
+    const seen = Date.parse(row.first_seen)
+    const waitUntilMs = Number.isFinite(seen) ? seen + waitHours * 3_600_000 : nowMs
+    const cooling = row.verified_method !== 'owner_attested' && row.total_paid_cents === 0 && waitHours > 0 && nowMs < waitUntilMs
+    const status = row.status === 'active' || row.status === 'pending' || row.status === 'disabled' ? row.status : 'missing'
+    return {
+      status: status === 'active' && cooling ? 'pending' : status,
+      changePending: row.change_pending === 1,
+      waitUntil: cooling ? new Date(waitUntilMs).toISOString() : null,
     }
   }
 
@@ -1083,7 +1235,19 @@ export class MandateService {
     const dealId = input.kind === 'charge' ? input.dealId ?? null : null
     const milestone = dealId ? input.milestone ?? null : null
     const deal = input.kind === 'charge' ? this.dealContext(dealId, milestone, jobId, evidenceUrl) : null
-    const decision = applyPause(decide(warrant.body, {
+    const openDuplicate = this.repo.openDuplicate({
+      kind: input.kind,
+      payeeId: payee?.id ?? null,
+      amountCents: input.amountCents,
+      currency: input.currency,
+      jobId,
+      fundingCaptureId,
+      dealId,
+      milestone,
+      parentCaptureId: input.parentCaptureId ?? null,
+    })
+    const safety = this.options.safety?.state() ?? NOT_PAUSED
+    const decision = decide(warrant.body, {
       kind: input.kind,
       payeeId: payee?.id ?? null,
       amountCents: input.amountCents,
@@ -1092,7 +1256,7 @@ export class MandateService {
       evidenceUrl,
       parent: parent ? {
         payeeId: parent.payee_id ?? '',
-        amountCents: parent.amount_cents,
+        amountCents: arrivedCents(parent),
         heldCents: this.repo.heldRefundCents(parent.capture_id!),
         currency: parent.currency,
         category: parent.category ?? '',
@@ -1105,8 +1269,14 @@ export class MandateService {
       dealId,
       milestone,
       deal,
-    }, { ...cap, nowMs: Date.parse(now) }), this.options.safety?.state() ?? NOT_PAUSED, actor)
-    return { decision, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap }
+      openDuplicate: openDuplicate ? { id: openDuplicate.id } : null,
+      safety,
+      actor,
+    }, { ...cap, nowMs: Date.parse(now) })
+    const withPayee = this.options.payeeBook && input.kind === 'payment'
+      ? applyPayeeBook(decision, this.payeeView(payee?.id ?? null, Date.parse(now)))
+      : decision
+    return { decision: withPayee, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap }
   }
 
   /** A settled client payment with money left to fund a payout, for the try-it cases to cite. Null when there is none yet. */
@@ -1115,7 +1285,7 @@ export class MandateService {
     if (!warrant) return null
     let best: { captureId: string; jobId: string | null; canStillFundCents: number } | null = null
     for (const row of this.repo.allProposals()) {
-      if (row.kind !== 'charge' || row.phase !== 'captured' || !row.capture_id) continue
+      if (row.kind !== 'charge' || !fundedPhase(row.phase) || !row.capture_id) continue
       const left = fundableCents(warrant.body, this.fundingState(row))
       if (left > 0 && (!best || left > best.canStillFundCents)) best = { captureId: row.capture_id, jobId: row.job_id, canStillFundCents: left }
     }
@@ -1143,6 +1313,9 @@ export class MandateService {
     if (!warrant) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
     const { decision, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap } = this.judge(input, warrant, now, actor)
     const id = randomUUID()
+    // The gate judged this ask before the row had an id. Its refusal names the ask that is already open;
+    // adding this one's own id lets the stored refusal be read on its own, from the ledger.
+    const detail = decision.clause === Clause.duplicateOpen ? `${decision.detail}; this ask is ${id}` : decision.detail
     const lockNow = decision.gate === 'AUTO'
     const fields: CartFields | null = lockNow && payee && category && evidenceUrl ? {
       proposalId: id,
@@ -1182,7 +1355,7 @@ export class MandateService {
       prompt: input.prompt ?? null,
       gate: decision.gate,
       clause: decision.clause,
-      detail: decision.detail,
+      detail: detail,
       phase,
       cartHash: lockHash,
       lockSig: lockSig?.signature ?? null,
@@ -1260,8 +1433,13 @@ export class MandateService {
         resume: row.phase,
       }
     }
-    if (row.phase === 'captured' || row.phase === 'refunded' || row.phase === 'payout_failed') {
+    if (fullPhase(row.phase) || row.phase === 'refunded' || row.phase === 'payout_failed') {
       return { result: { status: 200, body: toView(row) }, row, resume: row.phase }
+    }
+    if (row.phase === 'settled_short') {
+      // A part-paid invoice is re-read from PayPal, never captured again. The phase is left exactly as it is, so a
+      // read that learns nothing new writes nothing: the refresh decides whether the rest of the money has arrived.
+      return { result: null, row, resume: row.phase }
     }
     if (row.phase === 'capture_inflight') {
       const age = Date.now() - Date.parse(row.updated_at)
@@ -1293,7 +1471,7 @@ export class MandateService {
           fundingCaptureId: row.funding_capture_id,
         })
       }
-      const over = !state || state.phase !== 'captured' || !warrant
+      const over = !state || !fundedPhase(state.phase) || !warrant
         || Math.floor((Math.max(0, state.capturedCents - state.refundHeldCents) * warrant.body.contractorShareBps) / 10_000) < state.payoutHeldCents
       if (over) {
         this.repo.insertEvent(randomUUID(), row.id, 'capture.refused', Clause.fundingExceeds, { fundingCaptureId: row.funding_capture_id }, now)
@@ -1395,7 +1573,7 @@ export class MandateService {
       phase: row.phase,
       jobId: row.job_id,
       currency: row.currency,
-      capturedCents: row.captured_amount_cents ?? 0,
+      capturedCents: arrivedCents(row),
       refundHeldCents: row.capture_id ? this.repo.heldRefundCents(row.capture_id) : 0,
       payoutHeldCents: row.capture_id ? this.repo.heldPayoutCents(row.capture_id) : 0,
       clientId: row.payee_id,
@@ -1409,14 +1587,14 @@ export class MandateService {
   private fundingBlock(row: ProposalRow, warrant: WarrantBody): { clause: string; detail: string } | null {
     if (row.kind !== 'payment' || !warrant.fundingRequired) return null
     const funding = row.funding_capture_id ? this.repo.paymentByCapture(row.funding_capture_id) : null
-    if (!funding || funding.kind !== 'charge' || funding.phase !== 'captured') {
-      return { clause: Clause.fundingMissing, detail: 'a contractor payout must cite a captured client payment' }
+    if (!funding || funding.kind !== 'charge' || !fundedPhase(funding.phase)) {
+      return { clause: Clause.fundingMissing, detail: 'a contractor payout must cite a client payment that has settled' }
     }
     const state = this.fundingState(funding)
     if (state.disputed) return { clause: Clause.fundingDisputed, detail: `the client has an open PayPal dispute on ${row.funding_capture_id}` }
     const available = fundableCents(warrant, state)
     if (row.amount_cents > available) {
-      return { clause: Clause.fundingExceeds, detail: `client payment ${row.funding_capture_id} can fund ${available} more cents` }
+      return { clause: Clause.fundingExceeds, detail: fundingArithmetic(warrant, state, row.funding_capture_id, row.amount_cents) }
     }
     return null
   }
@@ -1435,8 +1613,8 @@ export class MandateService {
     const payouts = rows.filter((row) => row.kind === 'payment')
     const refunds = rows.filter((row) => row.kind === 'refund')
     const refundedOf = (row: ProposalRow) => (row.capture_id ? this.repo.refundedCents(row.capture_id) : 0)
-    const inCents = charges.filter((row) => row.phase === 'captured').reduce((sum, row) => sum + (row.captured_amount_cents ?? 0) - refundedOf(row), 0)
-    const outCents = payouts.filter((row) => row.phase === 'captured').reduce((sum, row) => sum + (row.captured_amount_cents ?? 0) - refundedOf(row), 0)
+    const inCents = charges.filter((row) => fundedPhase(row.phase)).reduce((sum, row) => sum + arrivedCents(row) - refundedOf(row), 0)
+    const outCents = payouts.filter((row) => fundedPhase(row.phase)).reduce((sum, row) => sum + arrivedCents(row) - refundedOf(row), 0)
     const heldCents = payouts.filter((row) => ['locked', 'order_created', 'capture_inflight', ...PAYOUT_LIVE_PHASES].includes(row.phase)).reduce((sum, row) => sum + row.amount_cents, 0)
     return {
       jobId,
@@ -1444,8 +1622,8 @@ export class MandateService {
       contractorShareBps: warrant?.body.contractorShareBps ?? null,
       charges: charges.map((row) => ({
         ...toView(row),
-        fundableCents: row.phase === 'captured' && warrant ? fundableCents(warrant.body, this.fundingState(row)) : 0,
-        clearing: row.phase === 'captured' && warrant ? clearingState(warrant.body, this.fundingState(row), this.now().getTime()) : { pending: false, clearsAt: null },
+        fundableCents: fundedPhase(row.phase) && warrant ? fundableCents(warrant.body, this.fundingState(row)) : 0,
+        clearing: fundedPhase(row.phase) && warrant ? clearingState(warrant.body, this.fundingState(row), this.now().getTime()) : { pending: false, clearsAt: null },
       })),
       payouts: payouts.map(toView),
       refunds: refunds.map(toView),
@@ -1565,10 +1743,10 @@ export class MandateService {
       case Clause.fundingMissing: {
         // Two different situations hide behind this one code: the client has not paid, or the client has paid and every cent
         // the contractor may take from it is already paid out. Say which, from the ledger.
-        const paid = row.job_id ? this.repo.proposalsForJob(row.job_id).filter((item) => item.kind === 'charge' && item.phase === 'captured') : []
+        const paid = row.job_id ? this.repo.proposalsForJob(row.job_id).filter((item) => item.kind === 'charge' && fundedPhase(item.phase)) : []
         const left = paid.reduce((sum, item) => sum + fundableCents(body, this.fundingState(item, row.payee_id)), 0)
         if (paid.length === 0) out.push({ text: 'The client has to pay first. Bill the next milestone, and once the client has paid, this payout can be asked for.', tested: false })
-        else if (left <= 0) out.push({ text: `The client has paid ${dollars(paid.reduce((sum, item) => sum + (item.captured_amount_cents ?? 0), 0))} on this job, and the contractor's whole share of it has already been paid out. Nothing is left to fund another payout until the client pays again, for example the next milestone.`, tested: false })
+        else if (left <= 0) out.push({ text: `The client has paid ${dollars(paid.reduce((sum, item) => sum + arrivedCents(item), 0))} on this job, and the contractor's whole share of it has already been paid out. Nothing is left to fund another payout until the client pays again, for example the next milestone.`, tested: false })
         else out.push({ text: `A client payment on this job can still fund ${dollars(left)}. Ask for that payout and cite that payment.`, tested: false })
         break
       }
@@ -1642,7 +1820,7 @@ function payoutUpdate(item: NonNullable<LivePayout['item']>): PayoutUpdate {
     itemId: item.itemId,
     transactionId: item.transactionId,
     feeCents: item.feeCents,
-    paidCents: phase === 'captured' ? item.amountCents : null,
+    paidCents: fullPhase(phase) ? item.amountCents : null,
   }
 }
 
@@ -1673,5 +1851,6 @@ function emptyWarrant(): WarrantBody {
     fundingRequired: false,
     contractorShareBps: 10_000,
     clearingDays: 0,
+    allowPartialPayment: false,
   }
 }

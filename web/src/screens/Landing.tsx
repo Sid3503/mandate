@@ -1,6 +1,9 @@
-import { Link } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import { useReveal } from '../components/Motion'
 import { Mark } from '../components/Shell'
+import { ProblemCard } from '../components/ui'
+import { ApiError, api } from '../lib/api'
 import { session } from '../lib/session'
 
 const REPO = 'https://github.com/Sid3503/mandate'
@@ -28,8 +31,31 @@ const TOOLS = [
 
 export function Landing() {
   const root = useReveal()
-  const unlocked = Boolean(session.get())
+  const navigate = useNavigate()
+  const unlocked = Boolean(session.get() || session.workspace())
   const cta = unlocked ? '/' : '/unlock'
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+
+  const startDemo = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      const started = await api.demoStart()
+      session.setWorkspace(started.workspaceId)
+      session.setMode(started.mode)
+      navigate('/')
+    } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 404) {
+        setError(new ApiError(404, caught.code, 'The demo door is off', 'The demo door is off on this server. Use a key.', caught.body))
+      } else {
+        setError(caught)
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="land" ref={root}>
       <a className="skip" href="#land-main">Skip to content</a>
@@ -54,7 +80,16 @@ export function Landing() {
               <Link className="btn btn-ink btn-big" to={cta}>Open the console</Link>
               <a className="btn btn-ghost btn-big" href="#how">See how it works</a>
             </div>
-            <p className="fine">PayPal sandbox only. Nothing here moves real money.</p>
+            <div className="row gap-s wrap align-center" data-testid="three-doors">
+              <button type="button" className="btn btn-lime btn-big" data-testid="door-demo" onClick={startDemo} disabled={busy}>{busy ? 'Starting the demo…' : 'Try the demo'}</button>
+              <Link className="btn btn-ink btn-big" data-testid="door-studio" to="/studio">Create your studio</Link>
+              <Link className="link small" data-testid="door-key" to="/unlock" style={{ alignSelf: 'center', marginLeft: 4 }}>I have a key</Link>
+            </div>
+            <ProblemCard error={error} />
+            <div className="trust-strip fine" data-testid="trust-strip">
+              <span>Sandbox only</span> · <span>AI cannot move money</span> · <Link to="/verify">Check any receipt yourself</Link>
+            </div>
+            <p className="fine">AI can ask to spend your money. It can never spend it. Rules you sign decide. PayPal moves exactly what you approved.</p>
           </div>
 
           <figure className="land-figure" aria-label="An example approval card">

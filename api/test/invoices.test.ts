@@ -58,15 +58,34 @@ describe('billing a client with a PayPal invoice', () => {
     expect(refund.json.clause).not.toBe('refund.unlinked')
   })
 
-  it('does not call an invoice settled when PayPal says it was paid a different amount', async () => {
+  it('settles an invoice short when PayPal says it was paid a different amount, and counts what arrived', async () => {
     const { app, id, invoices } = await billed(new FakeInvoices())
     const sent = (await call(app, 'POST', `/v1/proposals/${id}/capture`)).json
     invoices.pay(sent.invoiceId, 5_000)
     const partial = await call(app, 'POST', `/v1/proposals/${id}/capture`)
-    expect(partial.json).toMatchObject({ phase: 'invoice_sent', capturedAmountCents: null })
+    expect(partial.json).toMatchObject({ phase: 'settled_short', capturedAmountCents: null })
     const events = (await call(app, 'GET', `/v1/proposals/${id}/packet`)).json.events.map((e: { type: string }) => e.type)
     expect(events).toContain('invoice.partial')
-    expect((await call(app, 'GET', `/v1/jobs/${JOB}`)).json.totals.inCents).toBe(0)
+    expect((await call(app, 'GET', `/v1/jobs/${JOB}`)).json.totals.inCents).toBe(5_000)
+  })
+
+  it('appends one invoice.partial however many times the sweep runs, and one more when the cents move', async () => {
+    const { app, id, invoices } = await billed(new FakeInvoices())
+    const sent = (await call(app, 'POST', `/v1/proposals/${id}/capture`)).json
+    invoices.pay(sent.invoiceId, 5_000)
+    const partial = (event: { type: string }) => event.type === 'invoice.partial'
+    const count = async () => ((await call(app, 'GET', `/v1/proposals/${id}/packet`)).json.events as Array<{ type: string }>).filter(partial).length
+
+    await call(app, 'POST', `/v1/proposals/${id}/capture`)
+    await call(app, 'POST', `/v1/proposals/${id}/capture`)
+    await call(app, 'POST', `/v1/proposals/${id}/capture`)
+    expect(await count()).toBe(1)
+
+    // The client pays more: that is news, so the ledger records it a second time.
+    invoices.pay(sent.invoiceId, 9_000)
+    await call(app, 'POST', `/v1/proposals/${id}/capture`)
+    expect(await count()).toBe(2)
+    expect((await call(app, 'GET', `/v1/proposals/${id}`)).json).toMatchObject({ settledCents: 9_000, deltaCents: -6_000 })
   })
 
   it('refuses an invoice whose total no longer matches the lock', async () => {
@@ -106,7 +125,7 @@ describe('billing a client with a PayPal invoice', () => {
     const invoices = new FakeInvoices()
     const { app, id, db } = await billed(invoices)
     // The server made the draft, then died before it could save the invoice id.
-    await invoices.createDraft({ proposalId: id, invoiceNumber: invoiceNumberFor(id), amountCents: 15_000, currency: 'USD', title: 't', description: 'd', note: 'n', recipientEmail: 'ap@northwind.example', recipientName: 'Northwind' })
+    await invoices.createDraft({ proposalId: id, invoiceNumber: invoiceNumberFor(id), amountCents: 15_000, currency: 'USD', title: 't', description: 'd', note: 'n', recipientEmail: 'ap@northwind.example', recipientName: 'Northwind', allowPartialPayment: false, earlyPaymentDiscount: null })
     expect(db.prepare('SELECT invoice_id FROM proposals WHERE id = ?').get(id)).toEqual({ invoice_id: null })
     const sent = await call(app, 'POST', `/v1/proposals/${id}/capture`)
     expect(sent.json.phase).toBe('invoice_sent')

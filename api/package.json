@@ -22,9 +22,10 @@
   "dependencies": {
     "@ai-sdk/mcp": "^2.0.66",
     "@asteasolutions/zod-to-openapi": "^9.1.0",
-    "@hono/node-server": "^1.19.12",
+    "@hono/node-server": "1.19.17",
     "@modelcontextprotocol/sdk": "^1.32.0",
     "@paypal/agent-toolkit": "^1.11.0",
+    "@simplewebauthn/server": "14.0.3",
     "ai": "^7.0.127",
     "ai-sdk-ollama": "^4.4.0",
     "hono": "^4.13.12",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.9.1",
+    "fast-check": "4.10.2",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^5.0.3"
