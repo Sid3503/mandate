@@ -706,7 +706,7 @@ Calling capture again on a `payout_sent` or `payout_unclaimed` payout re-reads i
 
 A locked payout can be cancelled (`POST …/reject`, owner only) while no batch has been sent. This also voids a checkout an older build opened for it: that Orders order is never captured, and sending the payout ignores it. A payout already at PayPal cannot be cancelled.
 
-The sender pays PayPal's Payouts fee (`$0.25` per item in the sandbox) from the studio's balance on top of the $90, so Priya receives the full $90. It is stored as `payoutFeeCents` and shown on the receipt.
+The sender pays PayPal's Payouts fee (`$0.25` per item in the sandbox) from the studio's balance on top of the $90, so Priya receives the full $90. It is stored as `payoutFeeCents` and shown on the receipt. Money coming in carries its fee the other way: a completed checkout capture states `seller_receivable_breakdown` with the `paypal_fee` PayPal took and the `net_amount` that reached the studio, stored as `captureFeeCents` and `captureNetCents` and shown on the receipt. An absent field is `null`, never zero.
 
 ---
 
@@ -885,7 +885,7 @@ The base URL is `http://127.0.0.1:8787` locally. Everything under `/v1` needs a 
 | `GET /v1/paypal/features`, `POST /v1/paypal/features/check` | owner | Which PayPal features the app may use, read from its token scopes |
 | `GET /v1/paypal/tools` | owner | Every PayPal Agent Toolkit tool, its tier, and whether the server uses it |
 | `GET /v1/paypal/balance` | owner | The account balance PayPal reports, with its age. Advice only. |
-| `GET /v1/paypal/activity` | owner | Last 30 days of PayPal activity matched to the ledger |
+| `GET /v1/paypal/activity` | owner | Last 30 days of PayPal activity matched to the ledger, with the money on each matched row checked |
 | `GET /v1/paypal/disputes`, `POST /v1/paypal/disputes/sync` | owner | Stored disputes; read them from PayPal now |
 | `GET /v1/ledger` | any key | Append-only events, cursor-paged |
 
@@ -974,7 +974,7 @@ The PayPal developer dashboard has a tick box per feature on each app. Mandate r
 | Payouts | Pays the contractor. An **unclaimed** payout can be cancelled and the money returned. | `…/capture`, `POST …/cancel-payout` | Contractors cannot be paid. |
 | Invoicing (Agent Toolkit) | Bills with a real invoice; the owner can send a **reminder** or **cancel** a wrong one (the milestone can then be billed again). | `POST …/remind-invoice`, `POST …/cancel-invoice` | Billing falls back to checkout. |
 | Customer disputes | Watches for client disputes every minute, on demand, and on `CUSTOMER.DISPUTE.*` webhooks. A disputed client payment cannot fund a payout (`funding.disputed`). | `GET /v1/paypal/disputes`, `POST /v1/paypal/disputes/sync` | Payouts are not held for disputes. |
-| Transaction search | Lists the last 30 days of PayPal activity and matches it to the ledger; a transaction Mandate did not create is flagged **Not in Mandate**. Read-only. | `GET /v1/paypal/activity` | The Ledger's PayPal activity tab shows the enable steps. |
+| Transaction search | Lists the last 30 days of PayPal activity and matches it to the ledger; a transaction Mandate did not create is flagged **Not in Mandate**, and one that matched a request but whose cents or currency differ from what the ledger holds is flagged **Does not add up**. Read-only. | `GET /v1/paypal/activity` | The Ledger's PayPal activity tab shows the enable steps. |
 | Webhooks | Payout, invoice and dispute events nudge a re-read. Optional signature verification and event-id de-duplication. | `POST /v1/webhooks/paypal` | The owner presses Check PayPal. |
 
 All of these routes are owner-only. The watch calls are read-only and go through PayPal's Agent Toolkit (`list_transactions`, `list_disputes`, `get_dispute`).

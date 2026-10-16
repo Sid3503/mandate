@@ -90,7 +90,10 @@ export class FakePayPal implements PayPalPort {
     }
     order.status = 'COMPLETED'
     order.captureId ??= `CAP-${orderId.slice(6, 18)}`
-    return { captureId: order.captureId, amountCents: order.amountCents, currency: order.currency, status: 'COMPLETED' }
+    // PayPal states the fee it took on a completed capture. The fake stands in with PayPal's published US rate
+    // (2.9% + $0.30) so the receipt has a fee to show; the product reads the number, it never computes one.
+    const feeCents = Math.round((order.amountCents * 29) / 1000) + 30
+    return { captureId: order.captureId, amountCents: order.amountCents, currency: order.currency, status: 'COMPLETED', feeCents, netCents: order.amountCents - feeCents }
   }
 
   async refundCapture(input: { proposalId: string; captureId: string; amountCents: number; currency: string }) {

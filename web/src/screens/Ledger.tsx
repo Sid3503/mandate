@@ -199,6 +199,21 @@ function Events() {
   )
 }
 
+/** Whether a matched PayPal transaction agrees with the money the ledger holds for the request it matched. */
+function moneyCell(row: ActivityRow | undefined) {
+  if (!row || row.proposalId === null) return <span className="muted">—</span>
+  if (row.balanced === null) return <span className="muted">Not checked</span>
+  const ledger = dollars(row.expectedCents, row.expectedCurrency ?? 'USD')
+  if (row.balanced) return <Chip tone="auto" title={`PayPal shows ${dollars(row.cents, row.currency)}; the ledger holds ${ledger}.`}>Agrees</Chip>
+  if (row.expectedCurrency && row.currency !== row.expectedCurrency) {
+    return <Chip tone="deny" title={`PayPal shows ${row.currency}; the ledger holds ${row.expectedCurrency}.`}>{`${row.currency} vs ${row.expectedCurrency}`}</Chip>
+  }
+  if (row.deltaCents === null) {
+    return <Chip tone="deny" title={`PayPal's rows for this request add up to ${dollars(row.cents, row.currency)}; the ledger holds ${ledger}.`}>Does not add up</Chip>
+  }
+  return <Chip tone="deny" title={`PayPal shows ${dollars(row.cents, row.currency)}; the ledger holds ${ledger}.`}>{`Differs by ${dollars(Math.abs(row.deltaCents), row.currency)}`}</Chip>
+}
+
 /** What PayPal says moved in the account over the last 30 days, lined up against this ledger. */
 function PayPalActivity() {
   const navigate = useNavigate()
@@ -212,6 +227,10 @@ function PayPalActivity() {
     {
       headerName: 'In the ledger?', width: 190,
       cellRenderer: (params: ICellRendererParams<ActivityRow>) => params.data?.proposalId ? <Chip tone="auto">Matched</Chip> : <Chip tone="deny">Not in Mandate</Chip>,
+    },
+    {
+      headerName: 'The money', width: 210,
+      cellRenderer: (params: ICellRendererParams<ActivityRow>) => moneyCell(params.data),
     },
   ], [])
   if (activity.isLoading) return <Loading label="Asking PayPal" />
@@ -229,14 +248,14 @@ function PayPalActivity() {
   }
   return (
     <>
-      <div className="grid-tools"><p className="fine">{data.matched} matched to a Mandate request · <strong>{data.unmatched}</strong> that Mandate has no record of ({dollars(data.unmatchedNetCents)} net) · last 30 days</p></div>
+      <div className="grid-tools"><p className="fine">{data.matched} matched to a Mandate request · <strong>{data.unmatched}</strong> that Mandate has no record of ({dollars(data.unmatchedNetCents)} net){data.mismatched ? <> · <strong>{data.mismatched}</strong> whose money does not agree ({dollars(data.mismatchedNetCents)} net)</> : null} · last 30 days</p></div>
       <div className="grid-wrap" style={{ height: Math.min(640, 140 + data.rows.length * 46) }}>
         <AgGridReact<ActivityRow>
           theme={theme}
           rowData={data.rows}
           columnDefs={columns}
           getRowId={(params) => params.data.id}
-          rowClassRules={{ 'row-refused': (params) => params.data?.proposalId === null }}
+          rowClassRules={{ 'row-refused': (params) => params.data?.proposalId === null || params.data?.balanced === false }}
           onRowClicked={(event) => event.data?.proposalId && navigate(`/p/${event.data.proposalId}`)}
           rowHeight={44}
           headerHeight={40}
@@ -244,7 +263,7 @@ function PayPalActivity() {
           overlayNoRowsTemplate="PayPal shows no activity in this window."
         />
       </div>
-      <p className="fine">Read-only. Nothing on this tab moves money. A row marked Not in Mandate is money PayPal shows that no Mandate request created or recorded.</p>
+      <p className="fine">Read-only. Nothing on this tab moves money. A row marked Not in Mandate is money PayPal shows that no Mandate request created or recorded. A row whose money does not agree matched a request, but PayPal's cents or currency differ from what the ledger holds, so it is surfaced rather than accepted.</p>
     </>
   )
 }

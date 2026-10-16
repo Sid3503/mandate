@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import type { DatabaseSync } from 'node:sqlite'
-import { DEAD_PHASES, INVOICE_WATCH_PHASES, OPEN_PHASES, PAID_PHASES, RESERVED_PHASES, sqlList } from '../domain/phases'
+import { DEAD_PHASES, expectedSignedCents, INVOICE_WATCH_PHASES, OPEN_PHASES, PAID_PHASES, RESERVED_PHASES, sqlList } from '../domain/phases'
+import type { LedgerMoney } from '../domain/reconcile'
 import type { PartyRules } from '../domain/deal'
 import { PartyRulesSchema } from '../domain/deal'
 import type { WarrantBody } from '../domain/schemas'
@@ -36,6 +37,10 @@ export type ProposalRow = {
   refund_id: string | null
   approve_url: string | null
   captured_amount_cents: number | null
+  /** What PayPal said it took on the capture. Null when PayPal stated no fee, never zero. */
+  capture_fee_cents: number | null
+  /** What PayPal said reached the seller on the capture. Null when PayPal stated no net, never zero. */
+  capture_net_cents: number | null
   reserved_at: string | null
   job_id: string | null
   funding_capture_id: string | null
@@ -258,7 +263,7 @@ export type DuplicateKey = {
 
 const PROPOSAL_COLUMNS = `id, warrant_id, warrant_version, kind, parent_capture_id, payee_id, amount_cents, currency,
   category, description, evidence_url, prompt, gate, clause, detail, phase, cart_hash, order_id, capture_id,
-  refund_id, approve_url, captured_amount_cents, reserved_at, job_id, funding_capture_id, payout_batch_id, payout_item_id,
+  refund_id, approve_url, captured_amount_cents, capture_fee_cents, capture_net_cents, reserved_at, job_id, funding_capture_id, payout_batch_id, payout_item_id,
   payout_status, payout_txn_id, payout_fee_cents, deal_id, milestone, lock_sig, lock_key_id, invoice_id, invoice_url,
   invoice_status, settled_cents, delta_cents, delta_reason, delta_source, created_at, updated_at`
 
@@ -801,15 +806,21 @@ export class Repo {
     return (this.db.prepare('SELECT * FROM paypal_disputes ORDER BY updated_at DESC LIMIT ?').all(limit) as DisputeRecord[]).map(disputeRow)
   }
 
-  /** Every PayPal id this ledger created or was told about. A PayPal transaction with none of these did not come from Mandate. */
-  knownPayPalIds(): Map<string, string> {
-    const map = new Map<string, string>()
-    const rows = this.db.prepare(`SELECT id, order_id, capture_id, refund_id, payout_batch_id, payout_item_id, payout_txn_id, invoice_id FROM proposals`).all() as Array<Record<string, string | null>>
+  /**
+   * Every PayPal id this ledger created or was told about, and every proposal id, with the money the ledger says that
+   * request is. A PayPal transaction with none of these did not come from Mandate. One lookup answers both "whose is
+   * this?" and "what should it be?", so a matched transaction can never be accepted without its amount also being in
+   * hand. `cents` is signed the way PayPal's transaction report signs money.
+   */
+  knownPayPalIds(): Map<string, LedgerMoney> {
+    const map = new Map<string, LedgerMoney>()
+    const rows = this.db.prepare(`SELECT id, kind, amount_cents, captured_amount_cents, settled_cents, currency, order_id, capture_id, refund_id, payout_batch_id, payout_item_id, payout_txn_id, invoice_id FROM proposals`).all() as Array<{ id: string; kind: string; amount_cents: number; captured_amount_cents: number | null; settled_cents: number | null; currency: string; [key: string]: string | number | null }>
     for (const row of rows) {
-      map.set(row.id!, row.id!)
+      const money: LedgerMoney = { proposalId: row.id, cents: expectedSignedCents(row), currency: row.currency }
+      map.set(money.proposalId, money)
       for (const key of ['order_id', 'capture_id', 'refund_id', 'payout_batch_id', 'payout_item_id', 'payout_txn_id', 'invoice_id']) {
         const value = row[key]
-        if (value) map.set(value, row.id!)
+        if (value) map.set(value as string, money)
       }
     }
     return map
@@ -1014,18 +1025,21 @@ export class Repo {
     ).run(orderId, approveUrl, now, id)
   }
 
-  /** A client paid an invoice. Same end state as a captured order, so funding and refunds work unchanged. */
   /**
-   * A client paid in full. `capturedCents` is the lock, which is what the guarantee and the contractor share are
-   * measured against; `settledCents` is what PayPal reported arrived, which can be more than the lock when the
-   * payer adds a tip. Keeping the two apart is what lets `amounts.match` stay exact without hiding the money.
+   * A client paid in full, whether through a captured order or a paid invoice; both end in the same state, so funding
+   * and refunds work unchanged. `capturedCents` is the lock, which is what the guarantee and the contractor share are
+   * measured against; `settledCents` is what PayPal reported arrived, which can be more than the lock when the payer
+   * adds a tip. Keeping the two apart is what lets `amounts.match` stay exact without hiding the money. `feeCents`
+   * and `netCents` are what PayPal stated it took and paid out on a capture, null when it stated neither.
    */
-  markCaptured(id: string, captureId: string, capturedCents: number, settledCents: number, now: string): void {
+  markCaptured(id: string, captureId: string, capturedCents: number, settledCents: number, now: string, feeCents: number | null = null, netCents: number | null = null): void {
+    // COALESCE, like applyPayout: a re-read that does not repeat a fee PayPal already stated cannot erase it.
     this.db.prepare(
       `UPDATE proposals SET phase = 'captured', capture_id = ?, captured_amount_cents = ?, settled_cents = ?,
+         capture_fee_cents = COALESCE(?, capture_fee_cents), capture_net_cents = COALESCE(?, capture_net_cents),
          delta_cents = ? - amount_cents, delta_reason = 'full', delta_source = NULL, updated_at = ?
        WHERE id = ? AND kind IN ('payment', 'charge')`,
-    ).run(captureId, capturedCents, settledCents, settledCents, now, id)
+    ).run(captureId, capturedCents, settledCents, feeCents, netCents, settledCents, now, id)
   }
 
   /**

@@ -63,6 +63,8 @@ export type ProposalView = {
   refundId: string | null
   approveUrl: string | null
   capturedAmountCents: number | null
+  captureFeeCents: number | null
+  captureNetCents: number | null
   settledCents: number | null
   deltaCents: number | null
   deltaReason: string | null
@@ -110,6 +112,8 @@ export function toView(row: ProposalRow): ProposalView {
     refundId: row.refund_id,
     approveUrl: row.approve_url,
     capturedAmountCents: row.captured_amount_cents,
+    captureFeeCents: row.capture_fee_cents,
+    captureNetCents: row.capture_net_cents,
     settledCents: row.settled_cents,
     deltaCents: row.delta_cents,
     deltaReason: row.delta_reason,
@@ -591,7 +595,7 @@ export class MandateService {
     }
     const now = this.iso()
     this.repo.transaction(() => {
-      this.repo.markCaptured(saved.id, captured.captureId, captured.amountCents, captured.amountCents, now)
+      this.repo.markCaptured(saved.id, captured.captureId, captured.amountCents, captured.amountCents, now, captured.feeCents, captured.netCents)
       this.repo.insertEvent(randomUUID(), saved.id, 'capture.completed', saved.clause, {
         orderId: saved.order_id,
         captureId: captured.captureId,

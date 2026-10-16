@@ -19,6 +19,10 @@ export type CapturedPayment = {
   amountCents: number
   currency: string
   status: string
+  /** What PayPal said it took on this capture (`seller_receivable_breakdown.paypal_fee`). Null when it said nothing. */
+  feeCents: number | null
+  /** What PayPal said reached the seller (`seller_receivable_breakdown.net_amount`). Null when it said nothing. */
+  netCents: number | null
 }
 
 export type RefundedPayment = {

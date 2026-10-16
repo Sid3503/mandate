@@ -1,4 +1,4 @@
-import { centsToPayPal, payPalToCents } from '../domain/money'
+import { centsToPayPal, moneyCents, payPalToCents } from '../domain/money'
 import { PayPalError } from './port'
 import { createToolkit, type Json } from './toolkit'
 
@@ -162,19 +162,6 @@ export function parseInvoice(invoice: Json, fallbackId: string): LiveInvoice {
     earlyDiscountCents: early && early.is_applied === true ? moneyCents(early) : null,
     feeCents: feeCents(transactions),
   }
-}
-
-/**
- * A money amount PayPal states, in cents. A discount or a fee entry is documented as a bare money object in one
- * place and as `{ amount: money }` in another, so both are read. A `percent` alone is deliberately ignored: a
- * percentage is not a number of cents, and this server does not do its own arithmetic to invent one.
- */
-function moneyCents(value: unknown): number | null {
-  if (value === null || typeof value !== 'object') return null
-  const entry = value as Json
-  const nested = (entry.amount ?? {}) as Json
-  const raw = typeof nested.value === 'string' ? nested.value : typeof entry.value === 'string' ? entry.value : null
-  return raw === null ? null : payPalToCents(raw)
 }
 
 /** The seller's fee PayPal reported on a payment, when it reports one at all. Absent means unknown, never zero. */
