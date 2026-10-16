@@ -5819,6 +5819,10 @@ export interface components {
             refundId: string | null;
             approveUrl: string | null;
             capturedAmountCents: number | null;
+            /** @description What PayPal said it took on the capture. Null when PayPal stated no fee, never zero. */
+            captureFeeCents: number | null;
+            /** @description What PayPal said reached the seller on the capture. Null when PayPal stated no net, never zero. */
+            captureNetCents: number | null;
             /** @description What PayPal reported actually arrived. Null until a settlement is seen. */
             settledCents: number | null;
             /** @description settledCents minus the locked amount. Negative means the client paid less. */

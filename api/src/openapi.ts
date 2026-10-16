@@ -51,6 +51,8 @@ const ProposalSchema = z.object({
   refundId: z.string().nullable(),
   approveUrl: z.string().nullable(),
   capturedAmountCents: z.number().int().nullable(),
+  captureFeeCents: z.number().int().nullable().describe('What PayPal said it took on the capture. Null when PayPal stated no fee, never zero.'),
+  captureNetCents: z.number().int().nullable().describe('What PayPal said reached the seller on the capture. Null when PayPal stated no net, never zero.'),
   settledCents: z.number().int().nullable().describe('What PayPal reported actually arrived. Null until a settlement is seen.'),
   deltaCents: z.number().int().nullable().describe('settledCents minus the locked amount. Negative means the client paid less.'),
   deltaReason: z.string().nullable().describe('Why the settled amount was not the locked amount: full, early_discount, credit_note, paypal_fee, partial or unexplained. Closed list, and a code is only used when the PayPal field behind it was present.'),

@@ -307,11 +307,19 @@ export type ActivityRow = {
   counterparty: string | null
   proposalId: string | null
   matchedBy: string | null
+  /** Signed cents the ledger holds for the matched request, or null when nothing matched. */
+  expectedCents: number | null
+  /** Currency the ledger holds for the matched request, or null. */
+  expectedCurrency: string | null
+  /** This row's cents minus what the ledger holds. Null when unmatched or when the request was paid in parts. */
+  deltaCents: number | null
+  /** Whether the matched request's money lines up. Null when nothing was compared. */
+  balanced: boolean | null
 }
 
 export type Activity =
   | { available: false; reason: string }
-  | { available: true; from: string; to: string; rows: ActivityRow[]; matched: number; unmatched: number; unmatchedNetCents: number }
+  | { available: true; from: string; to: string; rows: ActivityRow[]; matched: number; unmatched: number; unmatchedNetCents: number; mismatched: number; mismatchedNetCents: number }
 
 export type ToolSummary = {
   total: number

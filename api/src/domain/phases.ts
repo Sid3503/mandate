@@ -66,5 +66,16 @@ export function arrivedCents(row: { settled_cents: number | null; captured_amoun
   return row.settled_cents ?? row.captured_amount_cents ?? 0
 }
 
+/**
+ * The cents this request should show on PayPal's side, signed the way PayPal's own transaction report signs money:
+ * a client charge is positive, a payout or a refund is negative. What actually arrived wins over the lock, so a
+ * short settlement is compared against the money that really moved rather than against a lock it never met, and a
+ * known shortfall is not re-flagged as a disagreement. `amount_cents` is the fallback for money still in flight.
+ */
+export function expectedSignedCents(row: { kind: string; amount_cents: number; captured_amount_cents: number | null; settled_cents: number | null }): number {
+  const cents = row.settled_cents ?? row.captured_amount_cents ?? row.amount_cents
+  return row.kind === 'charge' ? cents : -cents
+}
+
 /** A phase list as the inside of a SQL `IN (...)`. */
 export const sqlList = (phases: readonly string[]): string => phases.map((phase) => `'${phase}'`).join(', ')

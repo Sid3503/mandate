@@ -1,4 +1,4 @@
-import { centsToPayPal, payPalToCents } from '../domain/money'
+import { centsToPayPal, moneyCents, payPalToCents } from '../domain/money'
 import { paypalRequestId } from '../domain/hash'
 import { arr, obj, str } from './toolkit'
 import { UpstreamGuard, type GuardOptions } from './resilience'
@@ -148,11 +148,16 @@ export function createPayPalClient(options: {
       })
       const capture = firstCapture(json)
       const amount = capture?.amount
+      const breakdown = asJson(capture?.seller_receivable_breakdown) ?? {}
       return {
         captureId: stringField(capture, 'id'),
         status: stringField(capture, 'status'),
         amountCents: payPalToCents(stringField(asJson(amount), 'value')),
         currency: stringField(asJson(amount), 'currency_code'),
+        // PayPal states the fee it took and the net that reached the seller only on a capture that is complete. An
+        // absent field is null, never zero: zero would claim a fact PayPal did not state.
+        feeCents: moneyCents(breakdown.paypal_fee),
+        netCents: moneyCents(breakdown.net_amount),
       } satisfies CapturedPayment
     },
     async refundCapture(input) {

@@ -115,6 +115,8 @@ export function Receipt() {
                   {data.invoice ? <KV label="Invoice" mono>{data.invoice.id}</KV> : <KV label="Order" mono>{p.orderId ?? '—'}</KV>}
                   {data.invoice ? <KV label="Invoice is">{data.invoice.status ?? '—'}</KV> : null}
                   <KV label="Capture" mono>{p.captureId ?? '—'}</KV>
+                  {p.captureFeeCents != null ? <KV label="PayPal fee">{dollars(p.captureFeeCents, p.currency)} (taken from the payment)</KV> : null}
+                  {p.captureNetCents != null ? <KV label="Reached the studio">{dollars(p.captureNetCents, p.currency)}</KV> : null}
                 </>
               )}
               {p.refundId ? <KV label="Refund" mono>{p.refundId}</KV> : null}

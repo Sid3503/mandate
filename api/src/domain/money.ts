@@ -15,3 +15,16 @@ export function payPalToCents(value: string): number {
   const cents = dollars * 100 + fraction
   return negative ? -cents : cents
 }
+
+/**
+ * A money amount PayPal states, in cents, or null when it states nothing. PayPal writes a money object bare in one
+ * place and as `{ amount: money }` in another, so both are read. A `percent` alone is deliberately ignored: a
+ * percentage is not a number of cents, and this server does not do its own arithmetic to invent one.
+ */
+export function moneyCents(value: unknown): number | null {
+  if (value === null || typeof value !== 'object') return null
+  const entry = value as { amount?: unknown; value?: unknown }
+  const nested = (entry.amount ?? {}) as { value?: unknown }
+  const raw = typeof nested.value === 'string' ? nested.value : typeof entry.value === 'string' ? entry.value : null
+  return raw === null ? null : payPalToCents(raw)
+}

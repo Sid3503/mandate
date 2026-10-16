@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS proposals (
   refund_id TEXT,
   approve_url TEXT,
   captured_amount_cents INTEGER,
+  capture_fee_cents INTEGER,
+  capture_net_cents INTEGER,
   reserved_at TEXT,
   job_id TEXT,
   funding_capture_id TEXT,
@@ -275,7 +277,7 @@ export function migrate(db: DatabaseSync): void {
   const columns = new Set((db.prepare('PRAGMA table_info(proposals)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!columns.has('job_id')) db.exec('ALTER TABLE proposals ADD COLUMN job_id TEXT')
   if (!columns.has('funding_capture_id')) db.exec('ALTER TABLE proposals ADD COLUMN funding_capture_id TEXT')
-  for (const [name, type] of [['deal_id', 'TEXT'], ['milestone', 'INTEGER'], ['lock_sig', 'TEXT'], ['lock_key_id', 'TEXT'], ['invoice_id', 'TEXT'], ['invoice_url', 'TEXT'], ['invoice_status', 'TEXT'], ['settled_cents', 'INTEGER'], ['delta_cents', 'INTEGER'], ['delta_reason', 'TEXT'], ['delta_source', 'TEXT']] as const) {
+  for (const [name, type] of [['deal_id', 'TEXT'], ['milestone', 'INTEGER'], ['lock_sig', 'TEXT'], ['lock_key_id', 'TEXT'], ['invoice_id', 'TEXT'], ['invoice_url', 'TEXT'], ['invoice_status', 'TEXT'], ['settled_cents', 'INTEGER'], ['delta_cents', 'INTEGER'], ['delta_reason', 'TEXT'], ['delta_source', 'TEXT'], ['capture_fee_cents', 'INTEGER'], ['capture_net_cents', 'INTEGER']] as const) {
     if (!columns.has(name)) db.exec(`ALTER TABLE proposals ADD COLUMN ${name} ${type}`)
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS proposals_invoice ON proposals(invoice_id) WHERE invoice_id IS NOT NULL')
