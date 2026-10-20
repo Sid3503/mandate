@@ -15,6 +15,32 @@ import { DEAL_RULE } from '../lib/words'
 
 const newKey = () => `web-deal-${crypto.randomUUID()}`
 
+const PLAYING_CLIENT = 'mandate.deals.playing-client'
+
+/**
+ * Whose chair the owner sits in. In a real deal the client sets its own ceiling, with its own key, in its own console,
+ * so the studio never sees it: on the owner's screen the client's number is sealed. A demo has no real client, so the
+ * owner may play it, openly, with the screen saying so. Remembered per browser; nothing about it reaches the server.
+ */
+function usePlayingClient(): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(() => {
+    try {
+      return window.localStorage.getItem(PLAYING_CLIENT) === '1'
+    } catch {
+      return false
+    }
+  })
+  const set = (next: boolean) => {
+    setOn(next)
+    try {
+      window.localStorage.setItem(PLAYING_CLIENT, next ? '1' : '0')
+    } catch {
+      /* storage unavailable: the choice lasts for this visit */
+    }
+  }
+  return [on, set]
+}
+
 export function Deals() {
   const deals = useDeals()
   const owner = useIsOwner()
@@ -25,6 +51,9 @@ export function Deals() {
   const toast = useToast()
   const live = useNegotiation(() => void refresh())
   const [highlight, setHighlight] = useState<string | null>(null)
+  const [playingClient, setPlayingClient] = usePlayingClient()
+  // The owner is the studio. The client's ceiling is the client's, so it is sealed unless the owner plays the client.
+  const sealed = owner && !playingClient
   const rules = useQuery({ queryKey: ['party-rules'], queryFn: api.partyRules, enabled: owner })
   // Not the owner: this key reads its own sheet only. A client key may read nothing else about the other company.
   const mine = useQuery({ queryKey: ['party-rules', 'mine'], queryFn: api.myPartyRules, enabled: session.data !== undefined && !owner, retry: false })
@@ -111,15 +140,15 @@ export function Deals() {
 
       <p className="lede deals-lede">A deal only exists where the studio’s rules and the client’s rules overlap. Agents can say anything to each other. The rules decide what stands.</p>
       <ProblemCard error={live.state.phase === 'failed' ? live.state.error : null} />
-      {live.state.phase !== 'idle' ? <NegotiationStage state={live.state} buyerMax={buyerMax} sellerMin={sellerMin} onStop={live.stop} onReset={live.reset} onJump={jump} /> : null}
+      {live.state.phase !== 'idle' ? <NegotiationStage state={live.state} buyerMax={sealed ? undefined : buyerMax} sellerMin={sellerMin} onStop={live.stop} onReset={live.reset} onJump={jump} /> : null}
 
       {/* The bar that makes first boot honest: these numbers came with the box. Nothing counts until a person keeps them. */}
-      {sheetsReady && live.state.phase === 'idle' ? <KeepBar sheets={sheetRows} owner={owner} /> : null}
+      {sheetsReady && live.state.phase === 'idle' ? <KeepBar sheets={sheetRows} owner={owner} sealed={sealed} /> : null}
 
-      {owner && rules.data && live.state.phase === 'idle' ? <RuleBand rules={sheetRows} examples={!confirmed} /> : null}
+      {owner && rules.data && live.state.phase === 'idle' ? <RuleBand rules={sheetRows} examples={!confirmed} sealed={sealed} /> : null}
 
       {/* The writer for the numbers above: each company writes its own limit, and nobody else can reach it. */}
-      {sheetsReady && live.state.phase === 'idle' ? <PriceSheets parties={parties} owner={owner} /> : null}
+      {sheetsReady && live.state.phase === 'idle' ? <PriceSheets parties={parties} owner={owner} sealed={sealed} playing={owner && playingClient} onPlay={setPlayingClient} /> : null}
 
       {deals.isLoading ? <Loading /> : null}
       <ProblemCard error={deals.error} />
@@ -148,7 +177,7 @@ function groupThreads(rows: Deal[]): Array<{ id: string; deals: Deal[] }> {
  * version of each sheet, which is exactly what "a person chose them" means in this product. A company that already
  * wrote its sheet never sees this bar.
  */
-function KeepBar({ sheets, owner }: { sheets: PartyRulesView[]; owner: boolean }) {
+function KeepBar({ sheets, owner, sealed = false }: { sheets: PartyRulesView[]; owner: boolean; sealed?: boolean }) {
   const queryClient = useQueryClient()
   const online = useOnline()
   const toast = useToast()
@@ -170,7 +199,7 @@ function KeepBar({ sheets, owner }: { sheets: PartyRulesView[]; owner: boolean }
         <Chip tone="need">{examples.length} to keep</Chip>
       </div>
       <p className="fine">
-        These numbers came with the sample studio so you can try the product: {examples.map((sheet) => sheet.role === 'buyer' ? `${sheet.displayName} pays at most ${dollars(sheet.maxTotalCents)}` : `${sheet.displayName} takes a job for at least ${dollars(sheet.minTotalCents)}`).join(' · ')}.{' '}
+        These numbers came with the sample studio so you can try the product: {examples.map((sheet) => sheet.role === 'buyer' ? (sealed ? `${sheet.displayName}’s ceiling (sealed: it is theirs)` : `${sheet.displayName} pays at most ${dollars(sheet.maxTotalCents)}`) : `${sheet.displayName} takes a job for at least ${dollars(sheet.minTotalCents)}`).join(' · ')}.{' '}
         Nothing is judged, and the agents do not talk, until a person chooses them. Keeping records your choice; changing them in the forms below records a better one.
       </p>
       <div className="row gap-s wrap">
@@ -182,10 +211,26 @@ function KeepBar({ sheets, owner }: { sheets: PartyRulesView[]; owner: boolean }
 }
 
 /** Each company's limits as a band on a line, so "why was $450 refused?" is a picture, not a paragraph. */
-function RuleBand({ rules, examples }: { rules: PartyRulesView[]; examples: boolean }) {
+function RuleBand({ rules, examples, sealed = false }: { rules: PartyRulesView[]; examples: boolean; sealed?: boolean }) {
   const buyer = rules.find((item) => item.role === 'buyer')
   const seller = rules.find((item) => item.role === 'seller')
   if (!buyer?.maxTotalCents || !seller?.minTotalCents) return null
+  if (sealed) {
+    // The studio's side of the picture only. The client's number is theirs; the rules still judge every offer by it.
+    return (
+      <section className="rule-band panel" aria-label="Where a deal can exist" data-tour="deal-band">
+        <div className="row between wrap gap-s">
+          <h2 className="panel-title">Where a deal can exist</h2>
+          <Chip tone={examples ? 'need' : 'auto'}>{examples ? 'starting examples' : `from ${dollars(seller.minTotalCents)} · their ceiling sealed`}</Chip>
+        </div>
+        <div className="band-legend">
+          <span><b>{seller.displayName}</b> (you) needs at least {dollars(seller.minTotalCents)}</span>
+          <span className="sealed-number"><b>{buyer.displayName}</b> pays at most <span aria-label="sealed">🔒 sealed</span></span>
+        </div>
+        <p className="fine">A deal can only exist above your floor and under {buyer.displayName}’s ceiling. You never see their number, and they never see yours: the rules check every offer against both, and each agent is told only its own.</p>
+      </section>
+    )
+  }
   const top = Math.max(buyer.maxTotalCents, seller.minTotalCents) * 1.25
   const at = (cents: number) => `${Math.min(100, (cents / top) * 100)}%`
   const fits = seller.minTotalCents <= buyer.maxTotalCents
@@ -222,7 +267,8 @@ type SheetParty = {
  * The writer for the numbers the band above draws. Each company writes its own limit: the form sends only the price,
  * the server keeps everything else about the company, and the other side's sheet is not reachable from here at all.
  */
-function PriceSheets({ parties, owner }: { parties: SheetParty[]; owner: boolean }) {
+function PriceSheets({ parties, owner, sealed = false, playing = false, onPlay }: { parties: SheetParty[]; owner: boolean; sealed?: boolean; playing?: boolean; onPlay?: (on: boolean) => void }) {
+  const client = parties.find((party) => party.role === 'buyer')?.displayName || 'the client'
   const unset = parties.filter((party) => {
     const number = party.role === 'buyer' ? party.sheet?.maxTotalCents : party.sheet?.minTotalCents
     return number === undefined
@@ -238,17 +284,48 @@ function PriceSheets({ parties, owner }: { parties: SheetParty[]; owner: boolean
         <h2 className="panel-title">{owner ? 'What each company will accept' : 'What your company will accept'}</h2>
         <Chip tone={state === 'set' ? 'auto' : 'need'}>{state === 'set' ? (owner ? 'both numbers are set' : 'your number is set') : state === 'examples' ? (owner || examples.length > 1 ? 'starting examples' : 'starting example') : `${unset.length} still to set`}</Chip>
       </div>
+      {owner && onPlay ? (
+        <div className={`seat-bar${playing ? ' is-playing' : ''}`} data-testid="seat-bar">
+          <p>
+            {playing
+              ? <><strong>You are playing {client} for this demo.</strong> In a real deal {client} sets this number itself, with its own key, in its own console, and you never see it.</>
+              : <><strong>You are Line Studio.</strong> You set your own floor. {client} sets its own ceiling with its own key, so it is sealed here. This demo has no real {client}, so you can play them.</>}
+          </p>
+          <button type="button" className="btn btn-ghost btn-small" onClick={() => onPlay(!playing)} data-testid="seat-toggle">
+            {playing ? 'Back to your own seat' : `Play ${client} for this demo`}
+          </button>
+        </div>
+      ) : null}
       <p className="fine">
-        {state === 'set'
+        {sealed && state !== 'missing'
+          ? `A deal has to fit between your floor and ${client}’s ceiling. You see only yours; each company’s agent is told its own and never the other’s.`
+          : state === 'set'
           ? 'A deal has to fit between these two numbers. Only this console sees both: each company’s agent is told its own and never the other’s.'
           : state === 'examples'
             ? 'These are still the sample numbers that came with the studio. Keep them in the bar above, or change them here — until then nothing is judged.'
             : 'A deal can only exist where the two numbers overlap. Until both are set there is nothing for the rules to judge against, so offers and negotiation are held.'}
       </p>
       <div className="stack">
-        {parties.map((party) => <PriceSheetForm key={party.key} party={party} />)}
+        {parties.map((party) => sealed && party.role === 'buyer'
+          ? <SealedSheet key={party.key} party={party} onPlay={() => onPlay?.(true)} />
+          : <PriceSheetForm key={party.key} party={party} />)}
       </div>
     </section>
+  )
+}
+
+/** The client's sheet as the studio sees it: there, versioned, and not the studio's to read or write. */
+function SealedSheet({ party, onPlay }: { party: SheetParty; onPlay: () => void }) {
+  const set = party.sheet?.maxTotalCents !== undefined
+  return (
+    <div className="sheet-form sheet-sealed" data-tour="price-buyer-sealed">
+      <div className="row between wrap gap-s">
+        <span className="eyebrow">{party.displayName || 'A client on the warrant'} · their number</span>
+        {party.sheet ? <span className="mono small">sheet v{party.sheet.version}</span> : <Chip tone="need">not set</Chip>}
+      </div>
+      <p><span aria-hidden="true">🔒 </span>{set ? `${party.displayName} has set the most it will pay for a whole job. It is sealed: only ${party.displayName} and the rules see it.` : `${party.displayName || 'This client'} has not set its ceiling yet. A client sets it with its own key.`}</p>
+      <p className="fine">In this demo there is no real {party.displayName || 'client'}. To see or change their number, <button type="button" className="link" onClick={onPlay}>play {party.displayName || 'the client'}</button>.</p>
+    </div>
   )
 }
 
@@ -261,7 +338,7 @@ function PriceSheetForm({ party }: { party: SheetParty }) {
   const [value, setValue] = useState(() => (current === undefined ? '' : centsInput(current)))
   const [name, setName] = useState(party.displayName)
   const cents = parseCents(value)
-  const label = party.role === 'buyer' ? 'pays at most' : 'takes a job for at least'
+  const label = party.role === 'buyer' ? 'pays at most' : 'needs at least'
   const noun = party.role === 'buyer' ? 'ceiling' : 'floor'
   const save = useMutation({
     mutationFn: () => api.putPartyRules(party.partyId, {

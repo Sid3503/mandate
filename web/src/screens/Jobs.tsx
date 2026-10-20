@@ -55,9 +55,18 @@ export function Flow({ totals, compact = false }: { totals: Job['totals']; compa
   )
 }
 
+/** Who moves each stage forward, so the track reads as people acting, not states changing. */
+const WHO: Record<ReturnType<typeof jobStages>[number]['id'], (client: string) => string> = {
+  agreed: (client) => `You and ${client}, each inside your own limit`,
+  billed: () => 'You, with one tap',
+  client: (client) => `${client}, on their own link`,
+  contractor: () => 'Your rule, or your tap',
+}
+
 export function JobTrack({ job, owner }: { job: Job; owner: boolean }) {
   const stages = jobStages(job)
   const next = jobNext(job, owner)
+  const client = job.client?.displayName ?? 'The client'
   return (
     <section className="job-track" data-tour="job-track" data-testid="job-track" aria-label="Where this job is">
       <ol className="track">
@@ -66,6 +75,7 @@ export function JobTrack({ job, owner }: { job: Job; owner: boolean }) {
             <span className="track-dot" aria-hidden="true">{stage.state === 'done' ? '✓' : ''}</span>
             <strong>{stage.label}</strong>
             <small>{stage.detail}</small>
+            <small className="track-who">{WHO[stage.id](client)}</small>
           </li>
         ))}
       </ol>
