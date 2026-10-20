@@ -23,7 +23,7 @@ import { BillMilestoneSchema, DealOfferSchema, DecideDeliverySchema } from './do
 import type { Signer } from './domain/signing'
 import { IdempotencyKeySchema, ProposalCreateSchema, CaptureSchema, ListQuerySchema, WarrantBodySchema, SafetyConfigSchema, type WarrantBody } from './domain/schemas'
 import { onError, Problem, sendProblem, invalidRequest } from './http/problem'
-import { WEB_CSP, webAsset } from './http/web'
+import { webCsp, webAsset } from './http/web'
 import { buildOpenApi } from './openapi'
 import type { InvoicePort } from './paypal/invoices'
 import { PayPalError, type PayPalPort } from './paypal/port'
@@ -83,6 +83,8 @@ export type AppDeps = {
     commit?: string | null
     /** PayPal's id for the registered webhook. When set, a webhook must carry a signature PayPal confirms. */
     webhookId?: string | null
+    /** Which PayPal the browser SDK talks to, and which hosts the console's content security policy may name. */
+    paypalEnvironment?: 'sandbox' | 'live'
     /** `auto` lets the hosted stand-in for the client's agent answer a delivery as soon as it arrives. */
     clientAgent?: 'auto' | 'manual'
     /** Lets the owner wipe the ledger back to a fresh Line Studio. Sandbox demos only. */
@@ -177,6 +179,7 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/notify\/test$/ },
   { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
+  { method: 'POST', pattern: /^\/v1\/pay\/(session|capture)$/ },
   { method: 'POST', pattern: /^\/v1\/workspace\/passkey-rule$/ },
   { method: 'POST', pattern: /^\/v1\/members\/[^/]+\/(role|revoke)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit|flags)$/ },
@@ -206,6 +209,32 @@ function buyerMayCall(method: string, path: string): boolean {
 /** A status link carries its own proof in the path, so it needs no key. It can only read one person's view of one job. */
 function isShareRead(method: string, path: string): boolean {
   return method === 'GET' && /^\/v1\/share\/[^/]+$/.test(path)
+}
+
+/**
+ * A link that may pay may only be used from this console. The link is the only proof a buyer has, so a link that
+ * travelled to another site must not work there: it would be another site's page taking the payment.
+ */
+function requireOwnOrigin(c: { req: { header(name: string): string | undefined } }, deps: { config: { publicUrl?: string } }): void {
+  const origin = c.req.header('origin')
+  if (!origin) return
+  const here = deps.config.publicUrl
+  const refused = () => new Problem(403, 'auth.origin', 'Not from this console', 'This link may only be used from the console that sent it.')
+  if (!here) throw refused()
+  try {
+    if (new URL(origin).origin !== new URL(here).origin) throw refused()
+  } catch (error) {
+    if (error instanceof Problem) throw error
+    throw refused()
+  }
+}
+
+/**
+ * Paying on our own page. A status link that was given the right to pay may open a checkout and finish it, with no
+ * key: the link is the proof, and it is in the path rather than a query string so it does not leak by referrer.
+ */
+function isSharePay(method: string, path: string): boolean {
+  return method === 'POST' && /^\/v1\/share\/[^/]+\/pay\/(session|capture)$/.test(path)
 }
 
 function isWeb(path: string): boolean {
@@ -238,7 +267,12 @@ const ShareCreateSchema = z.object({
   partyId: z.string().trim().min(1).max(120),
   ttlDays: z.number().int().min(1).max(90).optional(),
   label: z.string().trim().max(120).optional(),
+  /** True when this link may also pay what is due, not only look at it. Only a client is ever asked to pay. */
+  canPay: z.boolean().optional(),
 }).strict()
+
+/** Which bill a page is paying. The server finds the rest of the facts from the lock. */
+const PayRequestSchema = z.object({ proposalId: z.string().trim().min(1).max(64) }).strict()
 
 const TrySchema = z.object({ request: ProposalCreateSchema, rules: WarrantBodySchema.optional() }).strict()
 const CasesSchema = z.object({ rules: WarrantBodySchema.optional() }).strict()
@@ -346,7 +380,7 @@ export function createApp(deps: AppDeps) {
   })
 
   app.use('*', async (c, next) => {
-    if (isAnonymous(c.req.path) || isWeb(c.req.path) || isShareRead(c.req.method, c.req.path)) return next()
+    if (isAnonymous(c.req.path) || isWeb(c.req.path) || isShareRead(c.req.method, c.req.path) || isSharePay(c.req.method, c.req.path)) return next()
     if (!deps.nested && c.req.path.startsWith('/w/')) return next()
     const header = c.req.header('authorization') ?? ''
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
@@ -446,7 +480,7 @@ export function createApp(deps: AppDeps) {
     const headers: Record<string, string> = {
       'content-type': asset.type,
       'cache-control': asset.cache,
-      'content-security-policy': WEB_CSP,
+      'content-security-policy': webCsp(deps.config.paypalEnvironment ?? 'sandbox'),
     }
     if (asset.encoding) headers['content-encoding'] = asset.encoding
     headers.vary = 'accept-encoding'
@@ -597,6 +631,47 @@ export function createApp(deps: AppDeps) {
   })
   app.post('/v1/shares/:id/revoke', (c) => c.json(services.shares.revoke(c.req.param('id'))))
   app.get('/v1/share/:token', (c) => c.json(services.shares.view(c.req.param('token'))))
+
+  // Paying on our own page. A client holding a link that was given the right to pay opens a card form here and
+  // settles here, without a key and without leaving the console. The link is the only proof, so it must also come
+  // from this console: a link that travelled to another site cannot be used from there.
+  app.post('/v1/share/:token/pay/session', async (c) => {
+    assertJson(c)
+    requireOwnOrigin(c, deps)
+    const parsed = PayRequestSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const allowed = services.shares.payable(c.req.param('token'), parsed.data.proposalId)
+    try {
+      return c.json(await services.mandate.paySession(allowed.proposalId))
+    } catch (error) {
+      // PayPal refusing to open the order is the payer's problem to read, not a crash.
+      if (error instanceof PayPalError) throw paypalProblem(error, 'to open the payment form', { proposalId: allowed.proposalId })
+      throw error
+    }
+  })
+  app.post('/v1/share/:token/pay/capture', async (c) => {
+    assertJson(c)
+    requireOwnOrigin(c, deps)
+    const parsed = PayRequestSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const allowed = services.shares.payable(c.req.param('token'), parsed.data.proposalId)
+    const settled = await services.mandate.capture(allowed.proposalId)
+    return c.json(settled.body, settled.status as 200)
+  })
+  // The same two steps for the owner, who may pay a bill themselves or open it on another screen.
+  app.post('/v1/pay/session', async (c) => {
+    assertJson(c)
+    const parsed = PayRequestSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return c.json(await services.mandate.paySession(parsed.data.proposalId))
+  })
+  app.post('/v1/pay/capture', async (c) => {
+    assertJson(c)
+    const parsed = PayRequestSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const settled = await services.mandate.capture(parsed.data.proposalId)
+    return c.json(settled.body, settled.status as 200)
+  })
   app.get('/v1/client-keys', (c) => c.json(services.clientKeys.list()))
   app.post('/v1/client-keys', async (c) => {
     assertJson(c)
@@ -847,7 +922,7 @@ export function createApp(deps: AppDeps) {
     const waitHours = flags.newPayeeWaitHours ?? 24
     return c.json({ ok: true, payee: enrichPayee(row, warrant, nowMs, waitHours) })
   })
-  app.get('/v1/session', (c) => c.json({ role: c.get('memberRole') ?? c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName }, demoReset: deps.config.demoReset === true }))
+  app.get('/v1/session', (c) => c.json({ role: c.get('memberRole') ?? c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName, reason: agents.offReason, budget: agents.budgetUsage }, demoReset: deps.config.demoReset === true }))
   app.get('/v1/flags', (c) => c.json(deps.config.flags ?? defaultFlags()))
   app.post('/v1/workspace/passkey-rule', async (c) => {
     assertJson(c)
@@ -903,7 +978,6 @@ export function createApp(deps: AppDeps) {
   app.get('/v1/proposals/:id/verify', (c) => c.json(service.verifyLock(c.req.param('id'))))
 
   app.post('/v1/proposals/:id/approve', async (c) => {
-    await assertEmpty(c)
     const id = c.req.param('id')
     if (c.get('memberRole') === 'approver') {
       const limit = c.get('approvalLimit')
@@ -942,7 +1016,9 @@ export function createApp(deps: AppDeps) {
     }
     const demo = !assertion && workspacePasskeyOn(deps).mode === 'demo' && c.req.header('x-mandate-demo-tap') === '1'
     const method = assertion ? 'passkey' : demo ? 'demo' : 'owner-key'
-    return send(c, service.approve(id, assertion, { method, fingerprint, publicKey, rpId: deps.config.webauthn?.rpID ?? null, origin, challenge }))
+    // The owner may say how the client will pay: an invoice they get by email, or a card form on our own page.
+    const instrument = await readInstrument(c)
+    return send(c, service.approve(id, assertion, { method, fingerprint, publicKey, rpId: deps.config.webauthn?.rpID ?? null, origin, challenge }, instrument))
   })
   app.post('/v1/proposals/:id/reject', async (c) => {
     await assertEmpty(c)
@@ -1473,6 +1549,18 @@ async function readJson(c: { req: { text: () => Promise<string> } }): Promise<un
   } catch {
     throw new Problem(400, 'request.invalid', 'Request is invalid', 'Body is not JSON.')
   }
+}
+
+/**
+ * How the owner wants a client charge paid, if they said. Everything else in the cart still comes from the lock, so
+ * the only thing a body can say here is which instrument the client will pay with.
+ */
+async function readInstrument(c: { req: { text: () => Promise<string> } }): Promise<'invoice' | 'checkout' | null> {
+  const text = (await c.req.text()).trim()
+  if (!text) return null
+  const parsed = z.object({ instrument: z.enum(['invoice', 'checkout']).optional() }).strict().safeParse(JSON.parse(text) as unknown)
+  if (!parsed.success) throw invalidRequest(parsed.error)
+  return parsed.data.instrument ?? null
 }
 
 function tableCount(db: DatabaseSync, table: 'proposals' | 'events' | 'payees'): number {

@@ -426,6 +426,8 @@ export type IntentFlag = { phrase: string; why: string }
 export type RulesDraft = {
   draft: Omit<Warrant, 'id' | 'version' | 'createdAt'>
   summary: string
+  /** Who wrote the summary: the model, or the code, when the model's contradicted the code's own list. */
+  summaryBy: 'model' | 'code'
   loosens: string[]
   tightens: string[]
   notes: string[]
@@ -465,7 +467,7 @@ export type ClerkStreamEvent =
   | { type: 'error'; code: string; message: string }
 
 /** A read-only link to one job for one person, as the owner sees it in a list. The secret is never part of it. */
-export type ShareSummary = { id: string; jobId: string; partyId: string; partyName: string; role: 'contractor' | 'client'; label: string; createdAt: string; expiresAt: string; revokedAt: string | null; lastSeenAt: string | null; views: number; active: boolean }
+export type ShareSummary = { id: string; jobId: string; partyId: string; partyName: string; role: 'contractor' | 'client'; label: string; createdAt: string; expiresAt: string; revokedAt: string | null; lastSeenAt: string | null; views: number; active: boolean; canPay: boolean }
 
 /** What the holder of a link sees. */
 export type ShareView = {
@@ -475,9 +477,32 @@ export type ShareView = {
   with: string | null
   asOf: string
   expiresAt: string
+  /** True when this link may pay what is due, not only look at it. */
+  canPay: boolean
   contractor?: {
     clientPayment: { state: 'waiting' | 'clearing' | 'received'; clearsAt: string | null }
     payouts: Array<{ amountCents: number; state: 'asked' | 'approved' | 'sending' | 'unclaimed' | 'paid' | 'failed'; label: string; at: string }>
   }
-  client?: { invoices: Array<{ description: string; amountCents: number; state: 'due' | 'paid'; payUrl: string | null; at: string }> }
+  client?: {
+    invoices: Array<{
+      description: string
+      amountCents: number
+      state: 'due' | 'paid'
+      payUrl: string | null
+      at: string
+      /** When the client may pay this on our own page instead of leaving for PayPal. */
+      payable: { proposalId: string; amountCents: number; currency: string; description: string; instrument: 'checkout' } | null
+    }>
+  }
+}
+
+/** What a browser needs to open a card form against a locked bill. It cannot capture and cannot change an amount. */
+export type PaySession = {
+  proposalId: string
+  orderId: string
+  clientToken: string
+  amountCents: number
+  currency: string
+  description: string
+  environment: 'sandbox' | 'live'
 }

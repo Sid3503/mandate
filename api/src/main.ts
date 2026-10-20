@@ -41,6 +41,7 @@ const services = buildServices({
   safety: { tripAfter: config.breakerRefusals, windowSeconds: config.breakerWindowSeconds },
   payeeBook: flags.payeeBook,
   newPayeeWaitHours: flags.newPayeeWaitHours,
+  paypalEnvironment: sandbox ? 'sandbox' : 'live',
 })
 
 // Ollama Cloud's open-weights models power the agents. With no key they are off and everything else works.
@@ -94,6 +95,7 @@ const app = createApp({
     publicUrl: config.publicUrl,
     commit: config.commit,
     webhookId: config.paypalWebhookId,
+    paypalEnvironment: config.paypalEnvironment,
     clientAgent: config.clientAgent,
     demoReset: config.demoReset,
     flags,

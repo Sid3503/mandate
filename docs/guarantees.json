@@ -11,7 +11,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "funded",
@@ -23,7 +23,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "cap",
@@ -35,7 +35,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "unknown",
@@ -46,7 +46,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "refused",
@@ -57,7 +57,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "once",
@@ -69,7 +69,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "lock",
@@ -80,7 +80,7 @@
         "test/redteam.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "attributed",
@@ -91,7 +91,7 @@
         "test/audit.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "yes",
@@ -102,7 +102,7 @@
         "test/standing.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "proof",
@@ -113,7 +113,7 @@
         "test/stepup.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "members",
@@ -124,7 +124,7 @@
         "test/identity.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "assertions",
@@ -135,7 +135,7 @@
         "test/stepup.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "rules",
@@ -146,7 +146,7 @@
         "test/stepup.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "safety_events",
@@ -157,7 +157,7 @@
         "test/safety.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "keys",
@@ -168,7 +168,7 @@
         "test/verify.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "agents",
@@ -180,7 +180,7 @@
         "test/redteam.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "words",
@@ -190,7 +190,28 @@
         "test/agents.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+    },
+    {
+      "id": "address",
+      "promise": "An address can only enter the rules if the owner wrote it: a model may not guess, complete or correct where the money goes.",
+      "tests": [
+        "test/drafter-honesty.test.ts",
+        "test/drafter.test.ts",
+        "test/intent.test.ts"
+      ],
+      "status": "pass",
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+    },
+    {
+      "id": "locked_amount",
+      "promise": "A buyer paying on our own page cannot change what is paid: the order is made from the lock, and the server refuses to capture if the amount, the currency or the reference differ.",
+      "tests": [
+        "test/embedded-pay.test.ts",
+        "test/property.test.ts"
+      ],
+      "status": "pass",
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "paused",
@@ -202,7 +223,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "verify",
@@ -211,7 +232,7 @@
         "test/verify.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "studio",
@@ -221,7 +242,7 @@
         "test/control-room.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     },
     {
       "id": "down",
@@ -231,7 +252,7 @@
         "test/robust.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-15T23:02:05.196Z"
+      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
     }
   ],
   "deepRun": {

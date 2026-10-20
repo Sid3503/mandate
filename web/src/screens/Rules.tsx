@@ -597,7 +597,11 @@ function DraftNote({ result, replay = true }: { result: RulesDraft; replay?: boo
         </div>
       ) : null}
       {replay ? <ReplayBody replay={result.replay} /> : null}
-      <p className="fine">The model’s summary: “{result.summary}”</p>
+      {result.summaryBy === 'code' ? (
+        <p className="fine">The model’s own summary said something the code disagreed with, so it was left out. This is the change, said by code: “{result.summary}”</p>
+      ) : (
+        <p className="fine">The model’s summary: “{result.summary}”</p>
+      )}
     </div>
   )
 }

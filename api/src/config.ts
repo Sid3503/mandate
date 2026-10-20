@@ -75,6 +75,8 @@ export type AppConfig = {
   demoReset: boolean
   version: string
   paypal: { clientId: string; clientSecret: string; baseUrl: string } | null
+  /** Which PayPal the browser SDK must talk to, and which hosts the console's content security policy may name. */
+  paypalEnvironment: 'sandbox' | 'live'
   /** The id PayPal gave the webhook when it was registered. With it, every webhook is checked against PayPal's signature. */
   paypalWebhookId: string | null
   /** Boot secrets wrapped in SecretString so logging or inspection never reveals raw values. */
@@ -148,6 +150,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     version: VERSION,
     paypalWebhookId: value.PAYPAL_WEBHOOK_ID ?? null,
     paypal,
+    paypalEnvironment: (() => { try { return new URL(value.PAYPAL_API).hostname === 'api-m.paypal.com' ? 'live' : 'sandbox' } catch { return 'sandbox' } })(),
     secrets: {
       apiKey: new SecretString(apiKey),
       proposerKey: proposerKey ? new SecretString(proposerKey) : null,

@@ -99,6 +99,8 @@ h1, h2, h3 { margin: 0; }
 
 /* ---------- buttons, fields ---------- */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 44px; padding: 10px 18px; border: 2px solid var(--ink); font: 700 15px/1 var(--body); text-decoration: none; cursor: pointer; background: var(--surface); transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s ease; user-select: none; }
+.spinner { display: inline-block; width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid currentColor; border-top-color: transparent; border-radius: 999px; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .btn:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: var(--shadow-s); }
 .btn:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: none; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -130,6 +132,17 @@ h1, h2, h3 { margin: 0; }
 .dollar-input.big > span { font-size: 28px; }
 .check { display: flex; gap: 10px; align-items: center; font-weight: 600; padding-top: 22px; }
 .check input { width: 20px; height: 20px; accent-color: var(--ink); }
+
+/* Paying on our own page. The card fields are PayPal's iframes; everything around them is ours. */
+.pay-panel { display: grid; gap: 10px; padding: 14px; margin-top: 10px; border: 2px solid var(--ink); background: var(--surface); }
+.pay-fields { display: grid; gap: 10px; }
+.pay-field { min-height: 46px; }
+.pay-field iframe { width: 100% !important; }
+.pay-problem { color: var(--deny, #b3261e); font-weight: 600; }
+.instrument { align-items: center; font-weight: 600; }
+.instrument label { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.instrument input { width: 18px; height: 18px; accent-color: var(--ink); }
+.instrument .eyebrow { color: var(--mute); }
 
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 2px solid var(--ink); padding: 0; margin: 0; background: var(--surface); }
 .segmented label, .segmented button { display: grid; place-items: center; min-height: 48px; padding: 8px 12px; cursor: pointer; font: 700 14px/1.1 var(--body); border: 0; border-right: 2px solid var(--ink); background: transparent; text-align: center; }
@@ -273,6 +286,9 @@ h1, h2, h3 { margin: 0; }
 .approval-facts .one-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .approval-actions { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
 .approval-actions .fine { grid-column: 1 / -1; }
+/* How the client will pay sits on its own line above the buttons, so the choice is read, not squeezed. */
+.approval-actions .instrument { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 12px; border: 2px solid var(--ink); background: var(--surface); }
+.approval-actions .instrument .fine { flex: 1 1 100%; margin: 0; }
 .approval-locked { display: grid; gap: 10px; border-top: 2px solid var(--ink); padding-top: 14px; }
 .lock-line { display: grid; gap: 4px; }
 

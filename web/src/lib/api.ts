@@ -1,6 +1,6 @@
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 import { session } from './session'
-import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
+import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -106,7 +106,7 @@ export type DraftStreamEvent = ({ type: 'stage' } & DraftStage) | { type: 'done'
 export type NegotiationEvent =
   | { type: 'start'; threadId: string; model: string; maxOffers: number; studio: string; client: string }
   | { type: 'turn_start'; turn: number; side: 'buyer' | 'seller'; company: string }
-  | { type: 'turn_tool'; turn: number; side: 'buyer' | 'seller'; phase: 'start' | 'call' | 'end'; id: string; tool: string; input?: unknown; ok?: boolean; ms?: number }
+  | { type: 'turn_tool'; turn: number; side: 'buyer' | 'seller'; phase: 'start' | 'call' | 'end'; id: string; tool: string; input?: unknown; ok?: boolean; ms?: number; output?: unknown }
   | { type: 'turn'; turn: number; side: 'buyer' | 'seller'; runId: string; ms: number; deal: import('./types').Deal }
   | { type: 'turn_error'; turn: number; side: 'buyer' | 'seller'; runId: string; error: string }
   | { type: 'done'; threadId: string; agreed: boolean; dealId: string | null; stopped: boolean }
@@ -212,7 +212,7 @@ const streamDraft = (instruction: string, onEvent: (event: DraftStreamEvent) => 
 
 const streamPolicy = (text: string, onEvent: (event: PolicyStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/rules/policy/stream', { text }, onEvent, signal)
 
-async function approveWithPasskey(id: string): Promise<Proposal> {
+async function approveWithPasskey(id: string, body?: unknown): Promise<Proposal> {
   const optionsFor = () => request<{ challengeId: string; options: { allowCredentials?: unknown[] } }>('/auth/stepup/options', { method: 'POST', body: { kind: 'approve', proposalId: id } })
   let started = await optionsFor()
   if (!started.options.allowCredentials || started.options.allowCredentials.length === 0) {
@@ -223,7 +223,7 @@ async function approveWithPasskey(id: string): Promise<Proposal> {
   }
   const signed = await startAuthentication({ optionsJSON: started.options as never })
   const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
-  return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant } })
+  return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant }, body })
 }
 
 export const api = {
@@ -319,10 +319,19 @@ export const api = {
     return (answer.result?.tools ?? []).map((tool) => tool.name)
   },
   shares: (jobId: string) => request<{ data: ShareSummary[] }>(`/v1/jobs/${encodeURIComponent(jobId)}/shares`),
-  createShare: (jobId: string, input: { partyId: string; ttlDays?: number; label?: string }) => request<{ share: ShareSummary; token: string; url: string }>(`/v1/jobs/${encodeURIComponent(jobId)}/shares`, { method: 'POST', body: input }),
+  createShare: (jobId: string, input: { partyId: string; ttlDays?: number; label?: string; canPay?: boolean }) => request<{ share: ShareSummary; token: string; url: string }>(`/v1/jobs/${encodeURIComponent(jobId)}/shares`, { method: 'POST', body: input }),
   revokeShare: (id: string) => request<ShareSummary>(`/v1/shares/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
   /** Opened by someone who holds a link and no key. It sends no key even if this browser has one. */
   shareView: (token: string) => request<ShareView>(`/v1/share/${encodeURIComponent(token)}`, { key: '' }),
+  /**
+   * Opens a card form for a locked bill on our own page. The link is the only proof a buyer has, so it sends no key.
+   */
+  paySession: (token: string, proposalId: string) => request<PaySession>(`/v1/share/${encodeURIComponent(token)}/pay/session`, { method: 'POST', body: { proposalId }, key: '' }),
+  /** The server captures the order it made from the lock, after re-reading it and checking it still matches. */
+  payCapture: (token: string, proposalId: string) => request<Proposal>(`/v1/share/${encodeURIComponent(token)}/pay/capture`, { method: 'POST', body: { proposalId }, key: '' }),
+  /** The same two steps for the owner, who may pay a bill themselves. */
+  paySessionOwner: (proposalId: string) => request<PaySession>('/v1/pay/session', { method: 'POST', body: { proposalId } }),
+  payCaptureOwner: (proposalId: string) => request<Proposal>('/v1/pay/capture', { method: 'POST', body: { proposalId } }),
   notify: () => request<{ enabled: boolean; lastSentAt: string | null; lastError: string | null; sent: number }>('/v1/notify'),
   notifyTest: () => request<{ enabled: boolean; lastSentAt: string | null; lastError: string | null; sent: number }>('/v1/notify/test', { method: 'POST' }),
   resetDemo: () => request<{ reset: true }>('/v1/demo/reset', { method: 'POST', body: { confirm: 'reset the demo' } }),
@@ -360,14 +369,15 @@ export const api = {
   proposal: (id: string) => request<Proposal>(`/v1/proposals/${id}`),
   packet: (id: string) => request<Packet>(`/v1/proposals/${id}/packet`),
   propose: (input: ProposalInput, idempotencyKey: string) => request<Proposal>('/v1/proposals', { method: 'POST', body: input, idempotencyKey }),
-  approve: async (id: string, how: 'auto' | 'demo' | 'passkey' = 'auto') => {
-    if (how === 'demo') return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-demo-tap': '1' } })
-    if (how === 'passkey') return approveWithPasskey(id)
+  approve: async (id: string, how: 'auto' | 'demo' | 'passkey' = 'auto', instrument: 'invoice' | 'checkout' | null = null) => {
+    const body = instrument ? { instrument } : undefined
+    if (how === 'demo') return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-demo-tap': '1' }, body })
+    if (how === 'passkey') return approveWithPasskey(id, body)
     try {
-      return await request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST' })
+      return await request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', body })
     } catch (error) {
       if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
-      return approveWithPasskey(id)
+      return approveWithPasskey(id, body)
     }
   },
   reject: (id: string) => request<Proposal>(`/v1/proposals/${id}/reject`, { method: 'POST' }),

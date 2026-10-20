@@ -5786,6 +5786,14 @@ export interface components {
             agents: {
                 enabled: boolean;
                 model: string | null;
+                /** @enum {string|null} */
+                reason: "no_key" | "daily_budget" | null;
+                budget: {
+                    tokensIn: number;
+                    tokensOut: number;
+                    cap: number;
+                    percent: number;
+                } | null;
             };
             version: string;
             paypalConfigured: boolean;
@@ -5843,6 +5851,11 @@ export interface components {
             invoiceId: string | null;
             invoiceUrl: string | null;
             invoiceStatus: string | null;
+            /**
+             * @description How this charge is to be paid: a PayPal invoice the client gets, or a card form on our own page.
+             * @enum {string|null}
+             */
+            payInstrument: "invoice" | "checkout" | null;
             createdAt: string;
             updatedAt: string;
         };

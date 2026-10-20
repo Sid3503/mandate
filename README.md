@@ -33,6 +33,7 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 | Today, Ask, Proof | A landing page of what waits for the owner, what is in flight and what was done for them (and how); a clerk on Cmd/Ctrl + K; and a Proof page that re-verifies every lock, every yes and every amount from the ledger. | built |
 | Standing rules | The owner signs one rule for Priya's share. The $90 is then sent with no tap, after the same checks: funding, share, cap, proof, dispute hold, signed lock. Anything that does not match still waits. | built, red-teamed, real Payouts call verified |
 | Invoices | A client charge is billed as a PayPal invoice through the Agent Toolkit, and settled only when PayPal says it was paid. Falls back to checkout where the app lacks the permission. | built, live in sandbox |
+| **Paying on our own page** | A client with a link that may pay opens a card form *inside* the console: no PayPal account, no leaving the page, and the amount is the locked one. The order is made from the lock and the server refuses to capture if it differs. | built, tested |
 
 Job totals for the live sandbox run: order `51H50117X4794793P` created for $150 (capture skipped awaiting interactive buyer login); $1.00 refund executed via gated route on prior capture; $85.00 contractor payout sent to Priya via real PayPal Payouts API (`D9RZNWUWD2F3A`).
 

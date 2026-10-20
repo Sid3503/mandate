@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { WarrantBody } from '../domain/schemas'
-import { quantitiesIn } from './intent'
+import { quantitiesIn, wrongSwitchClaim } from './intent'
 import { factsOf } from './policy'
 import { rulesExplainerSystem } from './prompts'
 import { callTool } from './structured'
@@ -80,6 +80,9 @@ export async function explainRules(input: { model: AgentModel; draft: WarrantBod
         return `${where} writes ${shown}, which is in neither the cited facts nor the worked example.`
       }
     }
+    // A number can be right while the sentence around it is not. Check what it claims about the switches too.
+    const wrong = wrongSwitchClaim(text, input.draft)
+    if (wrong) return `${where} says something about “${wrong}” that the rules do not say. Say what the rules say, or leave it out.`
     return null
   }
   const called = await callTool({

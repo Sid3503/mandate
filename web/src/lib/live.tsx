@@ -26,7 +26,7 @@ export const useLive = () => useContext(LiveContext)
 type ServerEvent =
   | { type: 'changed'; scope: 'ledger' | 'delivery' | 'deal' | 'rules' | 'safety'; what: string; id?: string; dealId?: string; milestone?: number }
   | { type: 'review'; stage: 'started' | 'decided' | 'failed'; dealId: string; milestone: number; model?: string; decision?: 'accepted' | 'rejected'; note?: string | null; ms?: number }
-  | { type: 'agent'; agent: 'reviewer'; dealId: string; milestone: number; call: { phase: 'start' | 'call' | 'end'; id: string; tool: string; source: 'code' | 'model'; input?: unknown; ok?: boolean; ms?: number; note?: string } }
+  | { type: 'agent'; agent: 'reviewer'; dealId: string; milestone: number; call: { phase: 'start' | 'call' | 'end'; id: string; tool: string; source: 'code' | 'model'; input?: unknown; ok?: boolean; ms?: number; note?: string; output?: unknown } }
   | { type: 'hello' }
 
 const KEYS: Record<string, string[][]> = {

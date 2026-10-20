@@ -1,4 +1,4 @@
-export type RateClass = 'auth' | 'key-unlock' | 'ask' | 'write' | 'read'
+export type RateClass = 'auth' | 'key-unlock' | 'ask' | 'pay' | 'write' | 'read'
 
 export type RateDecision = { ok: true } | { ok: false; retryAfter: number }
 
@@ -44,9 +44,10 @@ export class RateLimiter {
       if (!minute.ok) return minute
       return this.hit(`auth:h:${input.ip}:${input.principal}`, at, 3_600_000, 20)
     }
-    const limit = input.className === 'key-unlock' ? 10 : input.className === 'ask' ? 12 : input.className === 'write' ? 60 : 300
+    const limit = input.className === 'key-unlock' ? 10 : input.className === 'ask' ? 12 : input.className === 'pay' ? 20 : input.className === 'write' ? 60 : 300
     const window = input.className === 'key-unlock' ? 60_000 : 60_000
-    const key = input.className === 'key-unlock' ? `unlock:${input.ip}` : `${input.className}:${input.principal}`
+    // Paying on our own page has no key of its own, so it is counted per address, like unlocking a console.
+    const key = input.className === 'key-unlock' ? `unlock:${input.ip}` : input.className === 'pay' ? `pay:${input.ip}` : `${input.className}:${input.principal}`
     return this.hit(key, at, window, limit)
   }
 
@@ -72,6 +73,7 @@ export function rateClass(method: string, path: string): RateClass {
   if (path.startsWith('/auth/')) return 'auth'
   if (path === '/v1/session') return 'key-unlock'
   if (path === '/v1/ask' || path.startsWith('/v1/clerk')) return 'ask'
+  if (/^\/v1\/share\/[^/]+\/pay\//.test(path) || path.startsWith('/v1/pay/')) return 'pay'
   if (method === 'GET' || method === 'HEAD') return 'read'
   return 'write'
 }

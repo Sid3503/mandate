@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { ModelBudget } from '../src/ops/budget'
 import { agree, BUYER_KEY, call, closeAll, collect, confirmPrices, EVIDENCE, harness, JOB, STUDIO_KEY, terms } from './support'
 import { scriptedModel, type ScriptContext } from './mockModel'
 
@@ -113,14 +114,31 @@ describe('the clerk', () => {
     expect(runs[0]).toMatchObject({ agent: 'clerk', status: 'error' })
   })
 
+  it('says why the agents are off: no key, or the day\'s budget is used up', async () => {
+    const off = harness({ model: null })
+    expect((await call(off.app, 'GET', '/v1/session')).json.agents).toEqual({ enabled: false, model: null, reason: 'no_key', budget: null })
+    closeAll()
+    // A budget with no room left: the model is there, and the console must not say the key is missing.
+    const spent = new ModelBudget({ globalDailyTokens: 1_000, workspaceDailyTokens: 1_000, maxOutputTokens: 100, maxSteps: 4 }, () => new Date())
+    spent.correct(1_000, 0)
+    const { app } = harness({ model: scriptedModel(() => ({ text: 'hi' })), budget: spent })
+    const session = (await call(app, 'GET', '/v1/session')).json
+    expect(session.agents).toMatchObject({ enabled: false, reason: 'daily_budget' })
+    expect(session.agents.budget).toMatchObject({ cap: 1_000, percent: 100 })
+    const refused = await clerk(app, 'hi', STUDIO_KEY)
+    expect(refused.status).toBe(503)
+    expect(refused.json.code).toBe('budget/exhausted')
+    expect(refused.json.detail).not.toContain('OLLAMA_API_KEY')
+  })
+
   it('is off without a model, and off-limits to a client\'s agent', async () => {
     const off = harness({ model: null })
     expect((await clerk(off.app, 'hi', STUDIO_KEY)).json.code).toBe('agents.unconfigured')
-    expect((await call(off.app, 'GET', '/v1/session')).json.agents).toEqual({ enabled: false, model: null })
+    expect((await call(off.app, 'GET', '/v1/session')).json.agents).toEqual({ enabled: false, model: null, reason: 'no_key', budget: null })
     const { app } = harness({ model: scriptedModel(() => ({ text: 'hi' })) })
     expect((await clerk(app, 'hi', BUYER_KEY)).status).toBe(403)
     expect((await call(app, 'GET', '/v1/agent-runs', { key: STUDIO_KEY })).status).toBe(403)
-    expect((await call(app, 'GET', '/v1/session')).json.agents).toEqual({ enabled: true, model: 'scripted-model' })
+    expect((await call(app, 'GET', '/v1/session')).json.agents).toEqual({ enabled: true, model: 'scripted-model', reason: null, budget: null })
   })
 
   it('limits how fast one key can spend the model quota', async () => {

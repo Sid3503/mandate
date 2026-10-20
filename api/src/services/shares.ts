@@ -18,7 +18,10 @@ const DAY_MS = 86_400_000
 export const SHARE_DEFAULT_DAYS = 30
 export const SHARE_MAX_DAYS = 90
 
-export type ShareSummary = { id: string; jobId: string; partyId: string; partyName: string; role: 'contractor' | 'client'; label: string; createdAt: string; expiresAt: string; revokedAt: string | null; lastSeenAt: string | null; views: number; active: boolean }
+export type ShareSummary = { id: string; jobId: string; partyId: string; partyName: string; role: 'contractor' | 'client'; label: string; createdAt: string; expiresAt: string; revokedAt: string | null; lastSeenAt: string | null; views: number; active: boolean; canPay: boolean }
+
+/** What a client may pay on our page, when the owner gave this link the right to pay. */
+export type PayableBill = { proposalId: string; amountCents: number; currency: string; description: string; instrument: 'checkout' }
 
 export type ShareView = {
   role: 'contractor' | 'client'
@@ -28,12 +31,14 @@ export type ShareView = {
   with: string | null
   asOf: string
   expiresAt: string
+  /** True when this link may pay what is due, not only look at it. */
+  canPay: boolean
   contractor?: {
     clientPayment: { state: 'waiting' | 'clearing' | 'received'; clearsAt: string | null }
     payouts: Array<{ amountCents: number; state: PayoutState; label: string; at: string }>
   }
   client?: {
-    invoices: Array<{ description: string; amountCents: number; state: 'due' | 'paid'; payUrl: string | null; at: string }>
+    invoices: Array<{ description: string; amountCents: number; state: 'due' | 'paid'; payUrl: string | null; at: string; payable: PayableBill | null }>
   }
 }
 
@@ -54,7 +59,7 @@ export class ShareService {
   constructor(private readonly repo: Repo, private readonly mandate: MandateService, private readonly now: () => Date) {}
 
   /** Issues a link. The full link is returned once; afterwards only a hash exists. */
-  issue(input: { jobId: string; partyId: string; ttlDays?: number; label?: string }): { share: ShareSummary; token: string } {
+  issue(input: { jobId: string; partyId: string; ttlDays?: number; label?: string; canPay?: boolean }): { share: ShareSummary; token: string } {
     // Throws 404 if no proposal names the job.
     const job = this.mandate.job(input.jobId)
     const warrant = this.repo.latestWarrant()?.body
@@ -63,6 +68,8 @@ export class ShareService {
     const isContractor = Boolean(warrant?.payees.some((payee) => payee.id === partyId))
     if (!isClient && !isContractor) throw new Problem(422, 'share.party_unknown', 'That person is not on this job', 'Pick the client billed on this job, or a contractor on the rules.')
     const role: ShareRow['role'] = isClient ? 'client' : 'contractor'
+    // Only a client is ever asked to pay, so only a client may be given the right to pay.
+    const canPay = role === 'client' && input.canPay === true
     const ttl = Math.min(SHARE_MAX_DAYS, Math.max(1, Math.round(input.ttlDays ?? SHARE_DEFAULT_DAYS)))
     const id = randomUUID()
     const secret = randomBytes(24).toString('base64url')
@@ -72,6 +79,7 @@ export class ShareService {
       label: (input.label?.trim() || `${this.nameOf(partyId)}'s link`).slice(0, 120),
       secret_hash: createHash('sha256').update(secret).digest('hex'),
       created_at: at.toISOString(), expires_at: new Date(at.getTime() + ttl * DAY_MS).toISOString(), revoked_at: null, last_seen_at: null, views: 0,
+      can_pay: canPay ? 1 : 0,
     })
     return { share: this.summary(this.repo.getShare(id)!), token: `${id}~${secret}` }
   }
@@ -93,16 +101,20 @@ export class ShareService {
     const nowIso = this.now().toISOString()
     this.repo.noteShareSeen(row.id, nowIso)
     const job = this.mandate.job(row.job_id)
-    const base = { jobId: row.job_id, asOf: nowIso, expiresAt: row.expires_at, who: this.nameOf(row.party_id) }
+    const base = { jobId: row.job_id, asOf: nowIso, expiresAt: row.expires_at, who: this.nameOf(row.party_id), canPay: row.can_pay === 1 }
     if (row.role === 'client') {
       const mine = job.charges.filter((charge) => charge.payeeId === row.party_id)
       const invoices: NonNullable<ShareView['client']>['invoices'] = []
       for (const charge of mine) {
-        // phase-compare-ok: the client's own invoice reads "paid" only when the lock was paid in full. A part
+        // A bill the client may pay here: the owner locked it, it is not settled, and PayPal did not invoice it.
+        // A charge that already has an invoice is paid through that invoice, so it is never also payable here.
+        const payable: PayableBill | null = base.canPay && charge.payInstrument === 'checkout' && ['locked', 'order_created'].includes(charge.phase)
+          ? { proposalId: charge.id, amountCents: charge.amountCents, currency: charge.currency, description: charge.description, instrument: 'checkout' }
+          : null        // phase-compare-ok: the client's own invoice reads "paid" only when the lock was paid in full. A part
         // payment is shown as still due, which is what the client still owes on it.
-        if (charge.phase === 'captured') invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'paid', payUrl: null, at: charge.updatedAt })
-        else if (paidPhase(charge.phase)) invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'due', payUrl: charge.invoiceUrl ?? charge.approveUrl ?? null, at: charge.updatedAt })
-        else if (['invoice_sent', 'order_created'].includes(charge.phase)) invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'due', payUrl: charge.invoiceUrl ?? charge.approveUrl ?? null, at: charge.updatedAt })
+        if (charge.phase === 'captured') invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'paid', payUrl: null, at: charge.updatedAt, payable: null })
+        else if (paidPhase(charge.phase)) invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'due', payUrl: charge.invoiceUrl ?? charge.approveUrl ?? null, at: charge.updatedAt, payable: null })
+        else if (['invoice_sent', 'order_created', 'locked'].includes(charge.phase)) invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'due', payUrl: charge.invoiceUrl ?? charge.approveUrl ?? null, at: charge.updatedAt, payable })
       }
       return { ...base, role: 'client', with: null, client: { invoices } }
     }
@@ -122,6 +134,21 @@ export class ShareService {
       with: job.client?.displayName ?? null,
       contractor: { clientPayment: { state: captured.length === 0 ? 'waiting' : clearing ? 'clearing' : 'received', clearsAt: clearing?.clearing?.clearsAt ?? null }, payouts },
     }
+  }
+
+  /**
+   * The request a link may pay. The link must have been given the right to pay, the request must be one of this
+   * client's bills on this job, and everything else answers with the same 404 as a bad link: a holder of a link
+   * learns nothing about what they may not touch.
+   */
+  payable(token: string, proposalId: string): { proposalId: string } {
+    const row = this.resolve(token)
+    const gone = () => new Problem(404, 'share.unknown', 'This link is not available', 'It may have expired or been withdrawn. Ask the person who sent it for a new one.')
+    if (row.can_pay !== 1 || row.role !== 'client') throw gone()
+    const job = this.mandate.job(row.job_id)
+    const charge = job.charges.find((item) => item.id === proposalId)
+    if (!charge || charge.payeeId !== row.party_id) throw gone()
+    return { proposalId: charge.id }
   }
 
   private resolve(token: string): ShareRow {
@@ -144,6 +171,6 @@ export class ShareService {
 
   private summary(row: ShareRow): ShareSummary {
     const expired = Date.parse(row.expires_at) <= this.now().getTime()
-    return { id: row.id, jobId: row.job_id, partyId: row.party_id, partyName: this.nameOf(row.party_id), role: row.role as ShareSummary['role'], label: row.label, createdAt: row.created_at, expiresAt: row.expires_at, revokedAt: row.revoked_at, lastSeenAt: row.last_seen_at, views: row.views, active: row.revoked_at === null && !expired }
+    return { id: row.id, jobId: row.job_id, partyId: row.party_id, partyName: this.nameOf(row.party_id), role: row.role as ShareSummary['role'], label: row.label, createdAt: row.created_at, expiresAt: row.expires_at, revokedAt: row.revoked_at, lastSeenAt: row.last_seen_at, views: row.views, active: row.revoked_at === null && !expired, canPay: row.can_pay === 1 }
   }
 }

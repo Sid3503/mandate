@@ -33,6 +33,8 @@ export type ProposalRow = {
   phase: string
   cart_hash: string | null
   order_id: string | null
+  /** How the order was opened: 'card' (paid on our page) or 'checkout' (the buyer is sent to PayPal). */
+  order_kind: string | null
   capture_id: string | null
   refund_id: string | null
   approve_url: string | null
@@ -56,6 +58,8 @@ export type ProposalRow = {
   invoice_id: string | null
   invoice_url: string | null
   invoice_status: string | null
+  /** How this charge is to be paid: 'invoice' (PayPal invoices it) or 'checkout' (the client pays on our page). */
+  pay_instrument: string | null
   /** What PayPal reported actually arrived. Null until a settlement is seen. */
   settled_cents: number | null
   /** settled_cents minus the locked amount. Negative means the client paid less. */
@@ -128,6 +132,8 @@ export type ShareRow = {
   revoked_at: string | null
   last_seen_at: string | null
   views: number
+  /** True when this link may also pay what is due, not only look at it. */
+  can_pay: number
 }
 
 export type AgentRunRow = {
@@ -262,10 +268,10 @@ export type DuplicateKey = {
 }
 
 const PROPOSAL_COLUMNS = `id, warrant_id, warrant_version, kind, parent_capture_id, payee_id, amount_cents, currency,
-  category, description, evidence_url, prompt, gate, clause, detail, phase, cart_hash, order_id, capture_id,
+  category, description, evidence_url, prompt, gate, clause, detail, phase, cart_hash, order_id, order_kind, capture_id,
   refund_id, approve_url, captured_amount_cents, capture_fee_cents, capture_net_cents, reserved_at, job_id, funding_capture_id, payout_batch_id, payout_item_id,
   payout_status, payout_txn_id, payout_fee_cents, deal_id, milestone, lock_sig, lock_key_id, invoice_id, invoice_url,
-  invoice_status, settled_cents, delta_cents, delta_reason, delta_source, created_at, updated_at`
+  invoice_status, pay_instrument, settled_cents, delta_cents, delta_reason, delta_source, created_at, updated_at`
 
 /** How many transactions are open on each database, however many Repo objects look at it. */
 const DEPTH = new WeakMap<DatabaseSync, number>()
@@ -641,6 +647,22 @@ export class Repo {
     return (this.db.prepare(`SELECT invoice_id FROM proposals WHERE phase IN (${INVOICE_WATCH_SQL}) AND invoice_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ invoice_id: string }>).map((row) => row.invoice_id)
   }
 
+  /** Checkout orders the server opened and the buyer has not finished with. A buyer who approved one and closed the
+   *  browser must still leave the request settled, so the server re-reads these. */
+  openOrders(): string[] {
+    return (this.db.prepare(`SELECT order_id FROM proposals WHERE phase = 'order_created' AND order_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ order_id: string }>).map((row) => row.order_id)
+  }
+
+  /** The request an open order belongs to. */
+  proposalByOrder(orderId: string): ProposalRow | null {
+    return (this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE order_id = ?`).get(orderId) as ProposalRow | undefined) ?? null
+  }
+
+  /** How a charge is to be paid: an invoice the client gets, or a card form on our own page. */
+  setPayInstrument(id: string, instrument: 'invoice' | 'checkout', now: string): void {
+    this.db.prepare('UPDATE proposals SET pay_instrument = ?, updated_at = ? WHERE id = ?').run(instrument, now, id)
+  }
+
   /** Payouts and bills a standing rule approved that have not reached PayPal yet. */
   lockedStandingItems(): ProposalRow[] {
     return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE clause IN ('standing.matched', 'standing.billing') AND kind IN ('payment', 'charge') AND phase IN ('locked', 'order_created') AND payout_batch_id IS NULL ORDER BY created_at LIMIT 20`).all() as ProposalRow[]
@@ -957,8 +979,8 @@ export class Repo {
   }
 
   createShare(row: ShareRow): void {
-    this.db.prepare(`INSERT INTO share_links (id, job_id, party_id, role, label, secret_hash, created_at, expires_at, revoked_at, last_seen_at, views)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.job_id, row.party_id, row.role, row.label, row.secret_hash, row.created_at, row.expires_at, row.revoked_at, row.last_seen_at, row.views)
+    this.db.prepare(`INSERT INTO share_links (id, job_id, party_id, role, label, secret_hash, created_at, expires_at, revoked_at, last_seen_at, views, can_pay)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.id, row.job_id, row.party_id, row.role, row.label, row.secret_hash, row.created_at, row.expires_at, row.revoked_at, row.last_seen_at, row.views, row.can_pay)
   }
 
   sharesForJob(jobId: string): ShareRow[] {
@@ -1019,10 +1041,11 @@ export class Repo {
     live.publish({ type: 'changed', scope: 'ledger', what: `phase.${phase}`, id, at: stamp() })
   }
 
-  saveOrder(id: string, orderId: string, approveUrl: string | null, now: string): void {
+  /** Opens the order on the row, and records how it was opened: a card order takes a card, a checkout sends the buyer away. */
+  saveOrder(id: string, orderId: string, approveUrl: string | null, now: string, kind: 'card' | 'checkout' = 'checkout'): void {
     this.db.prepare(
-      `UPDATE proposals SET phase = 'order_created', order_id = ?, approve_url = ?, updated_at = ? WHERE id = ?`,
-    ).run(orderId, approveUrl, now, id)
+      `UPDATE proposals SET phase = 'order_created', order_id = ?, approve_url = ?, order_kind = ?, updated_at = ? WHERE id = ?`,
+    ).run(orderId, approveUrl, kind, now, id)
   }
 
   /**

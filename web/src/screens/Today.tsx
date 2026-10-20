@@ -5,7 +5,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useAsk } from '../components/Ask'
 import { BalanceNote } from '../components/PayPalFeatures'
-import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, ProblemCard } from '../components/ui'
+import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, ProblemCard, Spinner } from '../components/ui'
 import { api } from '../lib/api'
 import { session } from '../lib/session'
 import { useQuery } from '@tanstack/react-query'
@@ -445,7 +445,7 @@ function ItemRow({ item }: { item: TodayItem }) {
         <div className="row gap-s wrap">
           {buttons.map((action) => (
             <button key={action} type="button" className={`btn btn-small ${action === 'settle' || action === 'approve' ? 'btn-ink' : 'btn-ghost'}`} disabled={disabled} onClick={() => act.mutate(action)}>
-              {ACTION[action](item)}
+              {act.isPending && act.variables === action ? <><Spinner />{ACTION[action](item)}</> : ACTION[action](item)}
             </button>
           ))}
           <Link className="link" to={`/p/${item.proposalId}`}>Open receipt →</Link>
@@ -517,9 +517,16 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   const toast = useToast()
   const demo = session.mode() === 'demo'
   const lockPreview = useLockPreview(proposal)
-  const approve = useMutation({ mutationFn: (how: 'auto' | 'demo' | 'passkey') => api.approve(proposal.id, how), onSuccess: (locked) => { onLocked(locked); toast({ title: 'Signed and sent', body: 'Nothing has moved yet.' }); void refresh() } })
+  // How the client will pay a bill: an invoice by email, or a card form on our own page. The owner's choice, made
+  // at the tap, and recorded with the approval.
+  const [instrument, setInstrument] = useState<'invoice' | 'checkout'>('invoice')
+  // The approve response is the locked proposal. Show it right away instead of
+  // waiting for the Today query to refetch, which can take seconds.
+  const [lockedProposal, setLockedProposal] = useState<Proposal | null>(null)
+  const approve = useMutation({ mutationFn: (how: 'auto' | 'demo' | 'passkey') => api.approve(proposal.id, how, proposal.kind === 'charge' ? instrument : null), onSuccess: (locked) => { setLockedProposal(locked); onLocked(locked); toast({ title: 'Signed and sent', body: 'Nothing has moved yet.' }); void refresh() } })
   const reject = useMutation({ mutationFn: () => api.reject(proposal.id), onSuccess: () => { toast({ title: 'Rejected', body: 'Nothing moved.', tone: 'info' }); void refresh() } })
-  const locked = proposal.phase !== 'pending_approval'
+  const shown = lockedProposal ?? proposal
+  const locked = lockedProposal !== null || proposal.phase !== 'pending_approval'
   const kind = KIND[proposal.kind]
   const disabled = !owner || !online || approve.isPending || reject.isPending
 
@@ -549,19 +556,27 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
 
       {locked ? (
         <div className="approval-locked">
-          <div className="row between"><Chip tone="auto">Approved · locked</Chip><Link className="btn btn-ink" to={`/p/${proposal.id}`}>{isPayout(proposal) ? 'Send the payout →' : 'Settle →'}</Link></div>
-          <div className="lock-line"><span className="eyebrow">Lock</span><Hash value={proposal.cartHash} reveal full /></div>
-          <p className="fine">{isPayout(proposal)
-            ? `${dollars(proposal.amountCents)} is locked for ${names(proposal.payeeId)} and not yet paid. Sending it uses PayPal Payouts, which pays ${names(proposal.payeeId)}’s own account.`
-            : `The server can now settle exactly ${dollars(proposal.amountCents)}. Any other amount is refused.`}</p>
+          <div className="row between"><Chip tone="auto">Approved · locked</Chip><Link className="btn btn-ink" to={`/p/${shown.id}`}>{isPayout(shown) ? 'Send the payout →' : 'Settle →'}</Link></div>
+          <div className="lock-line"><span className="eyebrow">Lock</span><Hash value={shown.cartHash} reveal full /></div>
+          <p className="fine">{isPayout(shown)
+            ? `${dollars(shown.amountCents)} is locked for ${names(shown.payeeId)} and not yet paid. Sending it uses PayPal Payouts, which pays ${names(shown.payeeId)}’s own account.`
+            : `The server can now settle exactly ${dollars(shown.amountCents)}. Any other amount is refused.`}</p>
         </div>
       ) : (
         <div className="approval-actions">
+          {proposal.kind === 'charge' ? (
+            <div className="row gap-s wrap instrument" data-testid="instrument">
+              <span className="eyebrow">How will they pay?</span>
+              <label><input type="radio" name={`instrument-${proposal.id}`} checked={instrument === 'invoice'} onChange={() => setInstrument('invoice')} /> PayPal invoice</label>
+              <label><input type="radio" name={`instrument-${proposal.id}`} checked={instrument === 'checkout'} onChange={() => setInstrument('checkout')} /> On our page</label>
+              <span className="fine">{instrument === 'checkout' ? 'They pay with a card on a page of ours, without leaving it.' : 'They get a PayPal invoice by email and pay from their account.'}</span>
+            </div>
+          ) : null}
           <button type="button" className="btn btn-lime btn-big" data-tour="approve" disabled={disabled} onClick={() => approve.mutate(demo ? 'demo' : 'auto')}>
-            {approve.isPending ? 'Locking…' : demo ? 'Demo tap' : <>Approve <span className="money">{dollars(proposal.amountCents, proposal.currency)}</span></>}
+            {approve.isPending ? <><Spinner />Locking…</> : demo ? 'Demo tap' : <>Approve <span className="money">{dollars(proposal.amountCents, proposal.currency)}</span></>}
           </button>
           {demo ? <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => approve.mutate('passkey')}>Try with my passkey</button> : null}
-          <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => reject.mutate()}>{reject.isPending ? 'Rejecting…' : 'Reject'}</button>
+          <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => reject.mutate()}>{reject.isPending ? <><Spinner />Rejecting…</> : 'Reject'}</button>
           {!owner ? <p className="fine">This key can ask and read. Only the owner key can approve.</p> : null}
         </div>
       )}

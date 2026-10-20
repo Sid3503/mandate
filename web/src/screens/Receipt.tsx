@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { BalanceNote } from '../components/PayPalFeatures'
+import { PayCardFields } from '../components/PayCardFields'
 import { Signature } from '../components/Signature'
 import { useToast } from '../components/Toast'
 import { Chip, GateChip, Hash, KV, Loading, Money, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
@@ -207,6 +208,7 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
   const refresh = useRefreshMoney()
   const [claim, setClaim] = useState('')
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
+  const [payingHere, setPayingHere] = useState(false)
   const toast = useToast()
   const settle = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Settled ${dollars(done.amountCents)}`, body: 'PayPal confirmed it. The cents match the lock.' }); else if (done.phase === 'settled_short') toast({ title: `Settled short ${dollars(done.settledCents ?? 0)} of ${dollars(done.amountCents)}`, body: namedAdjustment(done.deltaReason) ? 'PayPal confirmed what arrived and named the difference in its own fields.' : 'PayPal confirmed what arrived and reported only part of the invoice as paid.', tone: 'info' }); else if (done.phase === 'invoice_sent') toast({ title: 'Invoice sent', body: 'It settles when the client pays it.', tone: 'info' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
   const tamper = useMutation({
@@ -245,6 +247,16 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
         {p.kind === 'charge' ? <> from {names(p.payeeId)}</> : <> back to {names(p.payeeId)}</>}.
         The server reads the live PayPal order first and refuses if the amount, currency or reference differ from the lock.
       </p>
+      {p.kind === 'charge' && p.payInstrument === 'checkout' ? (
+        <div className="buyer" data-testid="pay-here-owner">
+          <p><strong>Or pay it with a card on this page.</strong> The amount is the locked one. The card goes straight to PayPal and never reaches this server.</p>
+          {payingHere ? (
+            <PayCardFields proposalId={p.id} amountCents={p.amountCents} currency={p.currency} description={p.description} onPaid={() => { setPayingHere(false); void refresh() }} />
+          ) : (
+            <button type="button" className="btn btn-lime" data-testid="pay-here-owner-button" onClick={() => setPayingHere(true)}>Pay with a card here</button>
+          )}
+        </div>
+      ) : null}
       {returned === 'cancel' && p.phase === 'order_created' ? (
         <div className="still-waiting" role="status"><Chip tone="need">Not approved</Chip><span>You left PayPal without approving, so <strong>nothing was captured and $0 moved</strong>. Open PayPal again when you are ready.</span></div>
       ) : null}
