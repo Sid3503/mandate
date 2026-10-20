@@ -138,6 +138,10 @@ h1, h2, h3 { margin: 0; }
 .pay-fields { display: grid; gap: 10px; }
 .pay-field { min-height: 46px; }
 .pay-field iframe { width: 100% !important; }
+/* The form never grows past its bill: on a phone the expiry and CVV share one line and shrink together. */
+.pay-panel { min-width: 0; max-width: 100%; }
+.pay-fields .row > .pay-field { flex: 1 1 0; min-width: 0; }
+.pay-field > input { width: 100%; min-width: 0; }
 .pay-problem { color: var(--deny, #b3261e); font-weight: 600; }
 .instrument { align-items: center; font-weight: 600; }
 .instrument label { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }

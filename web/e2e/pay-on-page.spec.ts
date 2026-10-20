@@ -160,6 +160,10 @@ test('a mistyped card is named, and what was typed survives the page refreshing'
   await page.goto(`/app/s/${share.token}`)
   const bill = page.locator('li', { hasText: 'Mistyped card bill' })
   await bill.getByRole('button', { name: 'Pay here' }).click()
+  // The form fits the screen it is on: on a phone, a form wider than the bill slid under the next one, out of reach.
+  const panel = await page.getByTestId('pay-panel').boundingBox()
+  const width = page.viewportSize()!.width
+  expect(panel!.x + panel!.width).toBeLessThanOrEqual(width)
   const number = page.locator('[data-paypal-field="number"]')
   await number.fill('4032 0393 1798 4309')
 

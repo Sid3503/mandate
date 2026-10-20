@@ -105,23 +105,24 @@ function Client({ data, token }: { data: ShareView; token: string }) {
               <div className="row gap-s wrap">
                 {invoice.state === 'paid' || (invoice.payable && paidId === invoice.payable.proposalId) ? <Chip tone="auto">Paid</Chip> : <Chip tone="need">Due</Chip>}
                 {invoice.state === 'due' && invoice.payUrl ? <a className="btn btn-lime btn-small" href={invoice.payUrl} target="_blank" rel="noreferrer noopener">Pay on PayPal ↗</a> : null}
-                {invoice.state === 'due' && invoice.payable ? (
-                  paying === invoice.payable.proposalId ? (
-                    <PayCardFields
-                      token={token}
-                      proposalId={invoice.payable.proposalId}
-                      amountCents={invoice.payable.amountCents}
-                      currency={invoice.payable.currency}
-                      description={invoice.payable.description}
-                      onPaid={() => setPaidId(invoice.payable!.proposalId)}
-                    />
-                  ) : (
-                    <button type="button" className="btn btn-lime btn-small" onClick={() => setPaying(invoice.payable!.proposalId)} data-testid="pay-here">
-                      Pay here
-                    </button>
-                  )
+                {invoice.state === 'due' && invoice.payable && paying !== invoice.payable.proposalId ? (
+                  <button type="button" className="btn btn-lime btn-small" onClick={() => setPaying(invoice.payable!.proposalId)} data-testid="pay-here">
+                    Pay here
+                  </button>
                 ) : null}
               </div>
+              {/* The card form is a block of its own, the bill's full width: inside the row of chips it could grow past a
+                  phone's screen and end up under the next bill, where the Pay button cannot be pressed. */}
+              {invoice.state === 'due' && invoice.payable && paying === invoice.payable.proposalId ? (
+                <PayCardFields
+                  token={token}
+                  proposalId={invoice.payable.proposalId}
+                  amountCents={invoice.payable.amountCents}
+                  currency={invoice.payable.currency}
+                  description={invoice.payable.description}
+                  onPaid={() => setPaidId(invoice.payable!.proposalId)}
+                />
+              ) : null}
               {invoice.state === 'due' && !invoice.payUrl && !invoice.payable ? (
                 <p className="fine" data-testid="bill-not-sent">The studio has not sent this bill yet. A way to pay appears here once it does.</p>
               ) : null}
