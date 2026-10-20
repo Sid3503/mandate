@@ -8,6 +8,11 @@ export function Chip({ tone = 'ink', children, title, pop = false }: { tone?: 'd
   return <span className={`chip chip-${tone}${pop ? ' chip-pop' : ''}`} title={title}>{children}</span>
 }
 
+/** A small working indicator for a button that is waiting on the server. */
+export function Spinner() {
+  return <span className="spinner" aria-hidden="true" />
+}
+
 export function GateChip({ gate, past }: { gate: Gate; /** How a finished request's decision reads: approved once money moved, refused once the owner said no. Live requests keep the present tense. */ past?: 'approved' | 'refused' }) {
   if (past === 'approved' && gate === 'NEEDS_APPROVAL') return <Chip tone="muted">Approved</Chip>
   if (past === 'refused' && gate === 'NEEDS_APPROVAL') return <Chip tone="deny">Refused</Chip>

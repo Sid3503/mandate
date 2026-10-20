@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS proposals (
   invoice_id TEXT,
   invoice_url TEXT,
   invoice_status TEXT,
+  pay_instrument TEXT,
+  order_kind TEXT,
   settled_cents INTEGER,
   delta_cents INTEGER,
   delta_reason TEXT,
@@ -235,7 +237,8 @@ CREATE TABLE IF NOT EXISTS share_links (
   expires_at TEXT NOT NULL,
   revoked_at TEXT,
   last_seen_at TEXT,
-  views INTEGER NOT NULL DEFAULT 0
+  views INTEGER NOT NULL DEFAULT 0,
+  can_pay INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS share_links_job ON share_links(job_id);
 
@@ -282,7 +285,7 @@ export function migrate(db: DatabaseSync): void {
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS proposals_invoice ON proposals(invoice_id) WHERE invoice_id IS NOT NULL')
   db.exec('CREATE INDEX IF NOT EXISTS proposals_deal ON proposals(deal_id, milestone)')
-  for (const [name, type] of [['payout_batch_id', 'TEXT'], ['payout_item_id', 'TEXT'], ['payout_status', 'TEXT'], ['payout_txn_id', 'TEXT'], ['payout_fee_cents', 'INTEGER']] as const) {
+  for (const [name, type] of [['payout_batch_id', 'TEXT'], ['payout_item_id', 'TEXT'], ['payout_status', 'TEXT'], ['payout_txn_id', 'TEXT'], ['payout_fee_cents', 'INTEGER'], ['pay_instrument', 'TEXT'], ['order_kind', 'TEXT']] as const) {
     if (!columns.has(name)) db.exec(`ALTER TABLE proposals ADD COLUMN ${name} ${type}`)
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS proposals_payout_batch ON proposals(payout_batch_id) WHERE payout_batch_id IS NOT NULL')
@@ -297,6 +300,9 @@ export function migrate(db: DatabaseSync): void {
   // written through the API (the seed wrote before it existed), so they count as already written.
   const rulesColumns = new Set((db.prepare('PRAGMA table_info(party_rules)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!rulesColumns.has('origin')) db.exec(`ALTER TABLE party_rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'written'`)
+  // A status link may also carry the right to pay what is due, not only to look at it.
+  const shareColumns = new Set((db.prepare('PRAGMA table_info(share_links)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!shareColumns.has('can_pay')) db.exec('ALTER TABLE share_links ADD COLUMN can_pay INTEGER NOT NULL DEFAULT 0')
   applySqlSteps(db, OPS_STEPS, new Date().toISOString(), backupFileDatabase)
   const eventColumns = new Set((db.prepare('PRAGMA table_info(events)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!eventColumns.has('actor_json')) db.exec('ALTER TABLE events ADD COLUMN actor_json TEXT')

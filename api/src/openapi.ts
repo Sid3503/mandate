@@ -69,6 +69,7 @@ const ProposalSchema = z.object({
   invoiceId: z.string().nullable(),
   invoiceUrl: z.string().nullable(),
   invoiceStatus: z.string().nullable(),
+  payInstrument: z.enum(['invoice', 'checkout']).nullable().describe('How this charge is to be paid: a PayPal invoice the client gets, or a card form on our own page.'),
   createdAt: z.string(),
   updatedAt: z.string(),
 }).openapi('Proposal')
@@ -121,7 +122,14 @@ const DealSchema = z.object({
 const SessionSchema = z.object({
   role: z.enum(['owner', 'proposer']),
   side: z.enum(['buyer', 'seller']).nullable(),
-  agents: z.object({ enabled: z.boolean(), model: z.string().nullable() }),
+  agents: z.object({
+    enabled: z.boolean(),
+    model: z.string().nullable(),
+    /** Why the agents are off, when they are: no key at all, or the day's token budget is used up. */
+    reason: z.enum(['no_key', 'daily_budget']).nullable(),
+    /** What the day's model budget looks like, so the console can say how much is left. */
+    budget: z.object({ tokensIn: z.number(), tokensOut: z.number(), cap: z.number(), percent: z.number() }).nullable(),
+  }),
   version: z.string(),
   paypalConfigured: z.boolean(),
   demoReset: z.boolean(),

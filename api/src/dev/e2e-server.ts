@@ -1,6 +1,7 @@
 // A throwaway server for end-to-end tests and demos: in-memory ledger, fake PayPal, the built console.
 // Never use this with real money. Run: node --import tsx src/dev/e2e-server.ts
 import { serve } from '@hono/node-server'
+import { appendFileSync, writeSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../app'
 import { buildServices } from '../services/container'
@@ -11,6 +12,18 @@ import { loadFlags } from '../flags'
 import { demoModel } from './demo-model'
 
 const port = Number(process.env.PORT ?? 8799)
+
+// A test server that dies takes every later test down with "connection refused", which hides the cause. Say why,
+// synchronously (an exiting process can lose buffered output), and to a file as well when E2E_CRASH_LOG names one.
+const crashed = (what: string, error: unknown) => {
+  const line = `[e2e-server ${port}] ${what}: ${error instanceof Error ? error.stack ?? error.message : String(error)}\n`
+  try { writeSync(2, line) } catch { /* stderr is gone */ }
+  if (process.env.E2E_CRASH_LOG) try { appendFileSync(process.env.E2E_CRASH_LOG, line) } catch { /* nowhere to write */ }
+}
+process.on('uncaughtException', (error) => { crashed('uncaughtException', error); process.exit(1) })
+process.on('unhandledRejection', (error) => crashed('unhandledRejection', error))
+process.on('exit', (code) => crashed('exit', `code ${code}`))
+for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(signal, () => { crashed('signal', signal); process.exit(0) })
 const db = openDatabase(':memory:')
 migrate(db)
 seed(db, new Date())

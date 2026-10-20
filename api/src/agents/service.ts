@@ -8,7 +8,7 @@ import { WARRANT_ID } from '../domain/schemas'
 import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
 import { buyerPrincipal, OWNER, STUDIO, type Principal } from '../services/principal'
-import { draftRules, secondReaderOpinion, type DraftStage, type SecondReaderResult } from './drafter'
+import { draftRules, secondReaderOpinion, summaryContradiction, codeSummary, type DraftStage, type SecondReaderResult } from './drafter'
 import type { ServerFlags } from '../flags'
 import { auditPolicy, readAll, type Audit, type Read } from './policyAgents'
 import { applyAudit, countStatuses, firstPass, instructionFor, listChanges, POLICY_MAX_SENTENCES, READ_CHUNK, segmentPolicy, sendable } from './policy'
@@ -52,7 +52,7 @@ export type NegotiationInput = {
 export type NegotiationEvent =
   | { type: 'start'; threadId: string; model: string; maxOffers: number; studio: string; client: string }
   | { type: 'turn_start'; turn: number; side: Side; company: string }
-  | { type: 'turn_tool'; turn: number; side: Side; phase: 'start' | 'call' | 'end'; id: string; tool: string; input?: unknown; ok?: boolean; ms?: number }
+  | { type: 'turn_tool'; turn: number; side: Side; phase: 'start' | 'call' | 'end'; id: string; tool: string; input?: unknown; ok?: boolean; ms?: number; output?: unknown }
   | { type: 'turn'; turn: number; side: Side; runId: string; ms: number; deal: unknown }
   | { type: 'turn_error'; turn: number; side: Side; runId: string; error: string }
   | { type: 'done'; threadId: string; agreed: boolean; dealId: string | null; stopped: boolean }
@@ -87,6 +87,23 @@ export class AgentService {
 
   get enabled(): boolean {
     return this.model !== null && this.budget?.blocked() == null
+  }
+
+  /**
+   * Why the agents are off, in words. There are two reasons and they are not the same: no key at all, or the day's
+   * token budget is used up. Saying "set OLLAMA_API_KEY" when the key is there and the budget is spent is a lie.
+   */
+  get offReason(): 'no_key' | 'daily_budget' | null {
+    if (this.model === null) return 'no_key'
+    if (this.budget?.blocked()) return 'daily_budget'
+    return null
+  }
+
+  /** How much of the day's model budget is gone, so the console can say how much is left. */
+  get budgetUsage(): { tokensIn: number; tokensOut: number; cap: number; percent: number } | null {
+    if (!this.budget) return null
+    const snapshot = this.budget.snapshot()
+    return { tokensIn: snapshot.tokensIn, tokensOut: snapshot.tokensOut, cap: snapshot.cap, percent: snapshot.budgetPercent }
   }
 
   get modelName(): string | null {
@@ -227,7 +244,7 @@ export class AgentService {
     const principal = buyerPrincipal(deal.buyer_id)
     const runId = randomUUID()
     const prompt = 'Decide now with decide_delivery.'
-    const announce = (call: { phase: 'start' | 'call' | 'end'; id: string; tool: string; source: 'code' | 'model'; input?: unknown; ok?: boolean; ms?: number; note?: string }) => live.publish({ type: 'agent', agent: 'reviewer', dealId, milestone, call, at: stamp() })
+    const announce = (call: { phase: 'start' | 'call' | 'end'; id: string; tool: string; source: 'code' | 'model'; input?: unknown; ok?: boolean; ms?: number; note?: string; output?: unknown }) => live.publish({ type: 'agent', agent: 'reviewer', dealId, milestone, call, at: stamp() })
 
     // Step one is plain code: what can be known about the link without opening it. A clear-cut bad link is answered
     // here, with no model asked, and the reason is the code's own.
@@ -247,7 +264,7 @@ export class AgentService {
     const onEvent = (event: AgentEvent) => {
       if (event.type === 'tool_start') announce({ phase: 'start', id: event.id, tool: event.tool, source: 'model' })
       else if (event.type === 'tool_call') announce({ phase: 'call', id: event.id, tool: event.tool, source: 'model', input: event.input })
-      else if (event.type === 'tool_end') announce({ phase: 'end', id: event.id, tool: event.tool, source: 'model', ok: event.ok, ms: event.ms })
+      else if (event.type === 'tool_end') announce({ phase: 'end', id: event.id, tool: event.tool, source: 'model', ok: event.ok, ms: event.ms, output: event.output })
     }
     let run: RunOutput
     let used = model
@@ -341,7 +358,13 @@ export class AgentService {
           prompt: 'secondReader',
         })
       }
-      return { ...draft, runId, readBack: readBackLines, readBackBy, replay, ...(secondReader ? { secondReader } : {}) }
+      // The model's summary is shown last, after the code's list, because only the code can be trusted to be complete.
+      // But it must not contradict the code either: a model that says the cap is "reduced" when it goes up is wrong,
+      // and a wrong sentence about the rules is worse than none. When they disagree, the code's words stand in.
+      const contradiction = summaryContradiction(draft.summary, [...draft.loosens, ...draft.tightens])
+      const summary = contradiction ? codeSummary(draft.loosens, draft.tightens, draft.notes) : draft.summary
+      const summaryBy: 'model' | 'code' = contradiction ? 'code' : 'model'
+      return { ...draft, summary, summaryBy, runId, readBack: readBackLines, readBackBy, replay, ...(secondReader ? { secondReader } : {}) }
     } catch (error) {
       this.record({ id: runId, agent: 'drafter', who, conversationId: runId, model: model.name, input: instruction, output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'error', ms: 0, prompt: 'drafter' })
       throw error
@@ -501,7 +524,7 @@ export class AgentService {
       const onEvent = (event: AgentEvent) => {
         if (event.type === 'tool_start') void emit({ type: 'turn_tool', turn: turn + 1, side, phase: 'start', id: event.id, tool: event.tool })
         else if (event.type === 'tool_call') void emit({ type: 'turn_tool', turn: turn + 1, side, phase: 'call', id: event.id, tool: event.tool, input: event.input })
-        else if (event.type === 'tool_end') void emit({ type: 'turn_tool', turn: turn + 1, side, phase: 'end', id: event.id, tool: event.tool, ok: event.ok, ms: event.ms })
+        else if (event.type === 'tool_end') void emit({ type: 'turn_tool', turn: turn + 1, side, phase: 'end', id: event.id, tool: event.tool, ok: event.ok, ms: event.ms, output: event.output })
       }
       try {
         // A model service can hiccup. One quiet retry (on the fallback model if there is one) saves a live demo.

@@ -8,6 +8,8 @@ type StoredOrder = {
   customId: string
   status: string
   captureId?: string
+  /** True when the order was opened for a card on our own page: no way back to PayPal, so no payer-action link. */
+  cardFlow?: boolean
 }
 
 type StoredPayout = {
@@ -33,6 +35,14 @@ export class FakePayPal implements PayPalPort {
   autoApprove = true
   captureCalls = 0
   refundCalls = 0
+  /** How many browser-safe client tokens have been minted. */
+  clientTokenCalls = 0
+
+  /** A browser-safe token for the JavaScript SDK. The fake one is a fixed string. */
+  async clientToken(): Promise<string> {
+    this.clientTokenCalls += 1
+    return 'FAKE-CLIENT-TOKEN'
+  }
 
   async createOrder(input: {
     proposalId: string
@@ -40,11 +50,13 @@ export class FakePayPal implements PayPalPort {
     currency: string
     description: string
     payeeEmail: string | null
+    kind?: 'card' | 'checkout'
     returnUrl?: string
     cancelUrl?: string
   }) {
     this.lastReturnUrl = input.returnUrl ?? null
-    const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}`
+    // A card order and a checkout order are different orders, as they are on PayPal's side.
+    const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}${input.kind === 'card' ? '-CARD' : ''}`
     const existing = this.orders.get(orderId)
     if (!existing) {
       this.orders.set(orderId, {
@@ -52,13 +64,15 @@ export class FakePayPal implements PayPalPort {
         currency: input.currency,
         customId: input.proposalId,
         status: this.autoApprove ? 'APPROVED' : 'CREATED',
+        // An order opened for a card on our own page has no way back to PayPal, so it carries no payer-action link.
+        cardFlow: !input.returnUrl,
       })
     }
     const order = this.orders.get(orderId)!
     return {
       orderId,
       status: order.status,
-      approveUrl: `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
+      approveUrl: order.cardFlow ? null : `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
       payeeAttached: Boolean(input.payeeEmail),
     }
   }
@@ -77,6 +91,7 @@ export class FakePayPal implements PayPalPort {
       amountCents: order.amountCents,
       currency: order.currency,
       customId: order.customId,
+      // PayPal gives every order a payer-action link, card orders included.
       approveUrl: `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
     }
   }

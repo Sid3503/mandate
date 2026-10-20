@@ -149,11 +149,11 @@ export class ModelBudget {
     this.touch(usage)
   }
 
-  snapshot(): Usage & { budgetPercent: number; killed: boolean; warned: boolean } {
+  snapshot(): Usage & { budgetPercent: number; cap: number; killed: boolean; warned: boolean } {
     const usage = this.usage()
     const cap = Math.min(this.caps.globalDailyTokens, this.caps.workspaceDailyTokens)
     const spent = usage.tokensIn + usage.tokensOut
-    return { ...usage, budgetPercent: cap <= 0 ? 100 : Math.min(100, Math.round((spent / cap) * 100)), killed: this.killed, warned: this.warned }
+    return { ...usage, cap, budgetPercent: cap <= 0 ? 100 : Math.min(100, Math.round((spent / cap) * 100)), killed: this.killed, warned: this.warned }
   }
 
   private usage(): Usage {

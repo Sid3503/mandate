@@ -19,6 +19,34 @@ export function createPayPalClient(options: {
   const baseUrl = options.baseUrl.replace(/\/$/, '')
   let token: Token | null = null
   let scope: string[] = []
+  let clientToken: { value: string; expiresAt: number } | null = null
+
+  /**
+   * A browser-safe token for the JavaScript SDK. It is a different grant from the app's access token: it lets a
+   * browser open a card form, and nothing else. Cached for a few minutes, because the browser needs a fresh one
+   * rarely and the token endpoint is not free.
+   */
+  async function browserClientToken(): Promise<string> {
+    if (clientToken && clientToken.expiresAt > Date.now() + 60_000) return clientToken.value
+    const json = await guard.run(async () => {
+      const made = await fetchImpl(`${baseUrl}/v1/oauth2/token`, {
+        method: 'POST',
+        headers: {
+          authorization: `Basic ${Buffer.from(`${options.clientId}:${options.clientSecret}`).toString('base64')}`,
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        body: 'grant_type=client_credentials&response_type=client_token&intent=sdk_init',
+        signal: AbortSignal.timeout(20_000),
+      })
+      const body = await readJson(made)
+      if (!made.ok || typeof body.access_token !== 'string') throw withRetryAfter(paypalError(made.status, body), made)
+      return body
+    }, { repeatable: true })
+    const value = String(json.access_token)
+    const expiresIn = typeof json.expires_in === 'number' ? json.expires_in : 600
+    clientToken = { value, expiresAt: Date.now() + expiresIn * 1000 }
+    return value
+  }
 
   async function accessToken(): Promise<string> {
     if (token && token.expiresAt > Date.now() + 60_000) return token.value
@@ -43,8 +71,7 @@ export function createPayPalClient(options: {
     return value
   }
 
-  async function call(path: string, init: { method: string; requestId?: string; body?: unknown }): Promise<{ status: number; json: Json }> {
-    // A read, or a write that carries PayPal's own request id (PayPal answers a repeat with the first answer), is safe to
+  async function call(path: string, init: { method: string; requestId?: string; body?: unknown }): Promise<{ status: number; json: Json }> {    // A read, or a write that carries PayPal's own request id (PayPal answers a repeat with the first answer), is safe to
     // try again. Anything else is tried once.
     const repeatable = init.method === 'GET' || Boolean(init.requestId)
     return guard.run(async () => {
@@ -80,6 +107,7 @@ export function createPayPalClient(options: {
     currency: string
     description: string
     payeeEmail: string | null
+    kind?: 'card' | 'checkout'
     returnUrl?: string
     cancelUrl?: string
   }, attachPayee: boolean): Promise<CreatedOrder> {
@@ -92,7 +120,9 @@ export function createPayPalClient(options: {
     if (attachPayee && input.payeeEmail) unit.payee = { email_address: input.payeeEmail }
     const { json } = await call('/v2/checkout/orders', {
       method: 'POST',
-      requestId: paypalRequestId(`${input.proposalId}:create`),
+      // A card order and a checkout order are different orders on PayPal's side, so the request id carries the
+      // instrument. A retry of the same instrument still returns the same order.
+      requestId: paypalRequestId(`${input.proposalId}:create${input.kind === 'card' ? ':card' : ''}`),
       body: {
         intent: 'CAPTURE',
         purchase_units: [unit],
@@ -116,6 +146,7 @@ export function createPayPalClient(options: {
 
   return {
     upstream: () => guard.status(),
+    clientToken: () => browserClientToken(),
     async createOrder(input) {
       const attach = Boolean(input.payeeEmail)
       try {

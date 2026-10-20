@@ -68,6 +68,20 @@ export function unsupportedAmounts(reply: string, evidence: string[]): number[] 
   return amountsIn(reply).filter((cents) => !known.has(cents))
 }
 
+/** Every email address in a piece of text, in the order they appear. */
+export function addressesIn(text: string): string[] {
+  return [...text.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)].map((match) => match[0]!)
+}
+
+/**
+ * Addresses the model used that the person never wrote. An address is where the money goes, so the only source of
+ * one may be the owner: a model may not guess an address, complete one, or correct one to what it thinks is right.
+ */
+export function unsupportedAddresses(text: string, words: string): string[] {
+  const written = words.toLowerCase()
+  return addressesIn(text).filter((address) => !written.includes(address.toLowerCase()))
+}
+
 export function composeReply(modelText: string, outcomes: Outcome[], evidence: string[] = []): { reply: string; guarded: boolean } {
   const facts = outcomes.map(describe).filter((line): line is string => Boolean(line))
   const text = modelText.trim()

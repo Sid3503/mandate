@@ -57,12 +57,22 @@ import type { UpstreamStatus } from './resilience'
 export type PayPalPort = {
   /** How PayPal has been answering lately. Absent on a fake. */
   upstream?(): UpstreamStatus
+  /**
+   * A browser-safe token for the JavaScript SDK, so a card form can be embedded in the console without the browser
+   * ever holding the app's client id. Optional: a server without it simply cannot offer the embedded checkout.
+   */
+  clientToken?(): Promise<string>
   createOrder(input: {
     proposalId: string
     amountCents: number
     currency: string
     description: string
     payeeEmail: string | null
+    /**
+     * Which instrument the order is opened for. A card order (paid on our own page) and a checkout order (the buyer is
+     * sent to PayPal) are different orders on PayPal's side, so the request id is seeded with this too.
+     */
+    kind?: 'card' | 'checkout'
     /** Where PayPal sends the buyer after they approve or cancel. */
     returnUrl?: string
     cancelUrl?: string

@@ -20,21 +20,37 @@ const TYPES: Record<string, string> = {
 /**
  * Content security policy for the owner console. Scripts and connections stay on this origin.
  * Styles allow inline because the data grid injects its theme at runtime.
+ *
+ * One exception, and only one: PayPal's own hosts, so a client can pay a locked bill on our page with a card. The
+ * card fields are PayPal-hosted iframes, so PayPal has to be allowed to run a script, to be framed, and to be talked
+ * to. Those hosts are named exactly, the environment decides which set, and nothing else is let in.
  */
-export const WEB_CSP = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
-  "font-src 'self'",
-  "connect-src 'self'",
-  "manifest-src 'self'",
-  "worker-src 'self'",
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "object-src 'none'",
-].join('; ')
+const PAYPAL_HOSTS = {
+  sandbox: ['https://*.sandbox.paypal.com', 'https://*.paypalobjects.com'],
+  live: ['https://*.paypal.com', 'https://*.paypalobjects.com'],
+} as const
+
+export function webCsp(environment: 'sandbox' | 'live' = 'sandbox'): string {
+  const paypal = PAYPAL_HOSTS[environment].join(' ')
+  return [
+    "default-src 'self'",
+    `script-src 'self' ${paypal}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self'",
+    `connect-src 'self' ${paypal}`,
+    "manifest-src 'self'",
+    "worker-src 'self'",
+    `frame-src 'self' ${paypal}`,
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+  ].join('; ')
+}
+
+/** The policy as it stands for a server that has not said which PayPal it uses. */
+export const WEB_CSP = webCsp('sandbox')
 
 export type WebAsset = { body: Uint8Array; type: string; cache: string; encoding: 'br' | 'gzip' | null }
 

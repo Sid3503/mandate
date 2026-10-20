@@ -648,7 +648,8 @@ Also in Ask:
 `POST /v1/rules/draft` (owner only) takes `{ "instruction": "let Priya be paid automatically from Northwind" }` and returns a **draft**: the new rules, a one-line summary, and `loosens`, `tightens` and `notes`.
 
 - A model gets one tool, `propose_rules`, that takes a small patch in plain units (dollars, percent, names), not the rules. The server merges it into the current rules and validates the result with the **same schema the owner's own edits must pass**. If the merge is invalid (for example, shares that add up to more than 100%), the model is told why and tries again, up to twice.
-- **What a draft loosens is decided by code, not by the model.** A deterministic comparison lists every change that lets more happen without the owner (a higher cap or line, a new payee or client, a standing rule, an autopilot switch, proof or funding no longer required) and every change that narrows it. The model's own summary is shown second, and the test suite includes a hostile draft whose summary says "nothing risky" while the code lists five loosenings.
+- **An address is where the money goes, so it may only come from the owner.** The patch can change where an existing contractor or client is paid (`updatePeople`), and the merge refuses an address that is not in the owner's own words (`rules.draft_unwritten_address`): the model may not guess one, complete one, or correct one to what it thinks is right. The guard is the same one the clerk uses for a figure nobody supplied (`unsupportedAmounts`, `unsupportedAddresses` in `api/src/agents/guard.ts`). A sentence that carries a value right after an instruction to ignore the rules is the payload of that instruction, so it is set aside with it (`splitUntrusted` in `api/src/agents/intent.ts`).
+- **What a draft loosens is decided by code, not by the model.** A deterministic comparison lists every change that lets more happen without the owner (a higher cap or line, a new payee or client, a standing rule, an autopilot switch, proof or funding no longer required) and every change that narrows it. A changed payout or billing address is listed in as many words, because it is where the money goes from now on. The model's own summary is shown second, and the test suite includes a hostile draft whose summary says "nothing risky" while the code lists five loosenings.
 - **It cannot publish.** The draft opens in the editor as a before-and-after; publishing is `PUT /v1/warrant` with the owner key. A test publishes a draft and then shows the gate following it.
 - **Say it, see it, check it, replay it, sign it.** The Rules page walks a change through those five steps:
   1. *Say it*: the owner's words (from the Rules page, or handed over from Ask).
@@ -683,6 +684,27 @@ Also in Ask:
   3. at capture: if the client payment was refunded in the meantime, the payout capture is refused (`funding.exceeds`) and PayPal is not called. Once PayPal already holds the payout batch this check is skipped: the money may already have left, so the only job left is to read its status.
 - **The lock includes the job and the funding capture** (cart v2), so neither can be swapped after the tap.
 - **Job receipt:** `GET /v1/jobs/{jobId}` returns charges (with `fundableCents`), payouts, refunds, and totals: `inCents`, `outCents`, `heldCents`, `keptCents`. For the frozen job that is 15000 / 9000 / 0 / 6000.
+
+### Paying a bill on our own page
+
+A client can pay a locked bill **inside the console**, with a card, without a PayPal account and without leaving the page. This is the Orders path, embedded: the card fields are PayPal-hosted iframes dropped into our own form, so no card number reaches this server, and the buyer never signs in to PayPal.
+
+**The authority does not move.** The order is made by the server *from the lock*, so the amount cannot be changed by the browser. The browser is handed an order id and a browser-safe token (minted server-side with `response_type=client_token&intent=sdk_init`, so the browser never holds the app's client id) and nothing else: it cannot capture, and it cannot approve. The server re-reads the live order and refuses to capture if the amount, the currency or the reference differ — the same check the owner's button uses.
+
+| Route | Who | What |
+| --- | --- | --- |
+| `POST /v1/share/:token/pay/session` | the holder of a link | Opens a checkout: returns the order id, the browser-safe token, the amount, the currency and the description. Creates the order from the lock if there is not one. |
+| `POST /v1/share/:token/pay/capture` | the holder of a link | The server captures, after re-reading the order and checking it against the lock. |
+| `POST /v1/pay/session`, `POST /v1/pay/capture` | the owner | The same two steps, for the owner paying a bill themselves. |
+| `POST /v1/proposals/:id/approve` | the owner | Takes an optional `instrument`: `"invoice"` (PayPal invoices the client) or `"checkout"` (the client pays on our page). The choice is recorded with the approval. |
+
+- **One charge, one instrument.** A charge the owner says to be paid on our page is never invoiced, and a charge PayPal already invoiced is never also payable here (`pay.invoice_open`).
+- **The right to pay is a capability on the status link.** A link is issued with `canPay`, and only a client link may carry it. It is long, random, only its hash is stored, it expires, and the owner can withdraw it. Every way a link can be wrong answers with the same 404.
+- **A link may only be used from this console** (`auth.origin`), it is rate-limited per address, and it may only pay that client's own bills on that job.
+- **The content security policy** names PayPal's hosts for `script-src`, `connect-src` and `frame-src` — and only those, and only the ones for the environment in use — because the card fields are PayPal's iframes. Everything else stays on this origin.
+- **The server finishes it if the browser closes.** An approved order is re-read by the once-a-minute sweep, so a buyer who approved and then closed the tab still settles.
+- **The feature panel** reports whether the app may do this at all ("Pay on your own page (card fields)"). It is a tick on the app — *Advanced Credit and Debit Card Payments* — not a scope, so the only honest answer comes from trying to mint the client token.
+- **In the sandbox**, the card is one PayPal accepts: `4111111111111111` (Visa), or `5555555555554444`, `378282246310005`, `6011111111111117`, `3530111333300000`. Any future expiry, any three-digit CVV. A number that is not valid (it fails the Luhn check) is refused by PayPal's own form before anything is sent, and the page names the field: *"The card number is missing or not valid. Check it and try again. Nothing was charged."*
 
 ### Money out through PayPal Payouts
 

@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Mark } from '../components/Shell'
+import { PayCardFields } from '../components/PayCardFields'
 import { Chip, Loading, Money } from '../components/ui'
 import { api, ApiError } from '../lib/api'
 import { relative } from '../lib/format'
@@ -48,8 +49,8 @@ export function SharedStatus() {
           <section className="panel" role="alert"><h1>Could not load this page</h1><p>Nothing was changed. Try again in a moment.</p></section>
         ) : null}
         {view.data?.role === 'contractor' ? <Contractor data={view.data} /> : null}
-        {view.data?.role === 'client' ? <Client data={view.data} /> : null}
-        {view.data ? <p className="fine">Updated {relative(view.data.asOf)} · refreshes itself · this link expires {new Date(view.data.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}. You can only look; nothing here can move money.</p> : null}
+        {view.data?.role === 'client' ? <Client data={view.data} token={token} /> : null}
+        {view.data ? <p className="fine">Updated {relative(view.data.asOf)} · refreshes itself · this link expires {new Date(view.data.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}. {view.data.canPay ? 'You can pay what is due here, without leaving this page.' : 'You can only look; nothing here can move money.'}</p> : null}
       </main>
     </div>
   )
@@ -85,8 +86,11 @@ function Contractor({ data }: { data: ShareView }) {
   )
 }
 
-function Client({ data }: { data: ShareView }) {
+function Client({ data, token }: { data: ShareView; token: string }) {
   const invoices = data.client!.invoices
+  const [paying, setPaying] = useState<string | null>(null)
+  // A bill paid on this page says so at once, and the page's own refresh keeps the list true after that.
+  const [paidId, setPaidId] = useState<string | null>(null)
   return (
     <section className="share-card" data-testid="share-client">
       <span className="eyebrow">For {data.who}</span>
@@ -94,12 +98,33 @@ function Client({ data }: { data: ShareView }) {
       {invoices.length === 0 ? <p className="muted">There is nothing to pay yet.</p> : (
         <ul className="share-list">
           {invoices.map((invoice, index) => (
-            <li key={`${invoice.at}-${index}`}>
+            // `at` moves whenever the bill does (opening the card form opens an order), and a new key would remount the
+            // card form on the next refresh, wiping what the buyer typed. A bill that can be paid keeps its own id.
+            <li key={invoice.payable?.proposalId ?? `${invoice.at}-${index}`}>
               <div className="row between wrap gap-s"><strong>{invoice.description}</strong><Money cents={invoice.amountCents} size="lg" /></div>
               <div className="row gap-s wrap">
-                {invoice.state === 'paid' ? <Chip tone="auto">Paid</Chip> : <Chip tone="need">Due</Chip>}
+                {invoice.state === 'paid' || (invoice.payable && paidId === invoice.payable.proposalId) ? <Chip tone="auto">Paid</Chip> : <Chip tone="need">Due</Chip>}
                 {invoice.state === 'due' && invoice.payUrl ? <a className="btn btn-lime btn-small" href={invoice.payUrl} target="_blank" rel="noreferrer noopener">Pay on PayPal ↗</a> : null}
+                {invoice.state === 'due' && invoice.payable ? (
+                  paying === invoice.payable.proposalId ? (
+                    <PayCardFields
+                      token={token}
+                      proposalId={invoice.payable.proposalId}
+                      amountCents={invoice.payable.amountCents}
+                      currency={invoice.payable.currency}
+                      description={invoice.payable.description}
+                      onPaid={() => setPaidId(invoice.payable!.proposalId)}
+                    />
+                  ) : (
+                    <button type="button" className="btn btn-lime btn-small" onClick={() => setPaying(invoice.payable!.proposalId)} data-testid="pay-here">
+                      Pay here
+                    </button>
+                  )
+                ) : null}
               </div>
+              {invoice.state === 'due' && !invoice.payUrl && !invoice.payable ? (
+                <p className="fine" data-testid="bill-not-sent">The studio has not sent this bill yet. A way to pay appears here once it does.</p>
+              ) : null}
             </li>
           ))}
         </ul>

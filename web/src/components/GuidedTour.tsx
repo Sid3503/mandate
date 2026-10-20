@@ -58,10 +58,15 @@ export function GuideProvider({ children }: { children: ReactNode }) {
   const [seenVersion, setSeenVersion] = useState(0)
   const isOpen = useRef(false)
   isOpen.current = tour.open
+  const activeRef = useRef<TourId>('welcome')
+  activeRef.current = active
+  const autoOpened = useRef(false)
 
   const start = useCallback((id: TourId) => {
     const usable = TOURS[id].filter((step) => !step.target || findTarget(step.target))
     if (usable.length === 0) return
+    // A tour that was open and is now being replaced has been seen. It must not open by itself again later.
+    if (activeRef.current === 'welcome' || activeRef.current === 'coach') markSeen(activeRef.current)
     setActive(id)
     setSteps(usable)
     open()
@@ -74,14 +79,19 @@ export function GuideProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!me.data) return
+    if (autoOpened.current) return
     if (localStorage.getItem('mandate.tour.welcome') === '1' || localStorage.getItem('mandate.coach.seen') === '1') return
+    // The welcome tour belongs on the console's front door. It must never open by itself over a screen the
+    // person asked for, and while it is open it covers the page, so the Guide button cannot be pressed.
+    if (location.pathname !== '/') return
     const isDemo = session.mode() === 'demo'
     const targetTour: TourId = isDemo ? 'coach' : 'welcome'
+    autoOpened.current = true
     const timer = window.setTimeout(() => {
       if (!isOpen.current) start(targetTour)
     }, 700)
     return () => window.clearTimeout(timer)
-  }, [me.data, start])
+  }, [me.data, start, location.pathname])
 
   const screen = tourFor(location.pathname)
   const value = useMemo<Guide>(

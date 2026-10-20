@@ -61,8 +61,8 @@ function findOpen(calls: ToolCallView[], id: string): number {
 }
 
 /** The reviewer's events arrive on the console's live stream in a slightly different shape. */
-export function fromAgentCall(call: { phase: 'start' | 'call' | 'end'; id: string; tool: string; source: 'code' | 'model'; input?: unknown; ok?: boolean; ms?: number; note?: string }): StreamEvent {
+export function fromAgentCall(call: { phase: 'start' | 'call' | 'end'; id: string; tool: string; source: 'code' | 'model'; input?: unknown; ok?: boolean; ms?: number; note?: string; output?: unknown }): StreamEvent {
   if (call.phase === 'start') return { type: 'tool_start', id: call.id, tool: call.tool, source: call.source }
   if (call.phase === 'call') return { type: 'tool_call', id: call.id, tool: call.tool, input: call.input, source: call.source }
-  return { type: 'tool_end', id: call.id, tool: call.tool, ok: call.ok !== false, ms: call.ms, note: call.note, source: call.source }
+  return { type: 'tool_end', id: call.id, tool: call.tool, ok: call.ok !== false, ms: call.ms, note: call.note, source: call.source, output: call.output }
 }

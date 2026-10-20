@@ -11,7 +11,7 @@ import { DealTermsSchema, type DealTerms } from '../domain/deal'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
 import { NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
-import { PayPalError, type LivePayout, type PayPalPort } from '../paypal/port'
+import { PayPalError, type CreatedOrder, type LivePayout, type PayPalPort } from '../paypal/port'
 import type { LiveDispute, WatchPort } from '../paypal/watch'
 import { assessFeatures } from '../domain/paypalFeatures'
 import { reconcile } from '../domain/reconcile'
@@ -81,9 +81,28 @@ export type ProposalView = {
   invoiceId: string | null
   invoiceUrl: string | null
   invoiceStatus: string | null
+  /** How this charge is to be paid: an invoice the client gets, or a card form on our own page. */
+  payInstrument: 'invoice' | 'checkout' | null
+  /** How the order on this row was opened: a card (paid on our page) or a checkout (the buyer is sent to PayPal). */
+  orderKind: 'card' | 'checkout' | null
   createdAt: string
   updatedAt: string
   links: { self: string; packet: string }
+}
+
+/**
+ * What a browser needs to open a card form against a locked bill: the order to pay, and a browser-safe token.
+ * Nothing here can capture, change an amount, or approve anything.
+ */
+export type PaySession = {
+  proposalId: string
+  orderId: string
+  clientToken: string
+  amountCents: number
+  currency: string
+  description: string
+  /** Which PayPal the browser SDK must talk to. */
+  environment: 'sandbox' | 'live'
 }
 
 export function toView(row: ProposalRow): ProposalView {
@@ -130,6 +149,9 @@ export function toView(row: ProposalRow): ProposalView {
     invoiceId: row.invoice_id,
     invoiceUrl: row.invoice_url,
     invoiceStatus: row.invoice_status,
+    /** How this charge is to be paid: an invoice the client gets, or a card form on our own page. */
+    payInstrument: row.pay_instrument === 'checkout' ? 'checkout' : row.pay_instrument === 'invoice' ? 'invoice' : null,
+    orderKind: row.order_kind === 'card' ? 'card' : row.order_kind === 'checkout' ? 'checkout' : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     links: { self: `/v1/proposals/${row.id}`, packet: `/v1/proposals/${row.id}/packet` },
@@ -191,6 +213,8 @@ export class MandateService {
       payeeBook?: boolean
       newPayeeWaitHours?: number
       onExternalRef?: (kind: string, externalId: string) => void
+      /** Which PayPal the browser SDK must talk to. Sandbox and live are different scripts. */
+      paypalEnvironment?: 'sandbox' | 'live'
     } = {},
   ) {}
 
@@ -376,7 +400,7 @@ export class MandateService {
   }
 
   /** When the server last asked PayPal about money in flight, and how much it looked at. Shown on Today so the automation is visible. */
-  private lastLook: { at: string; payouts: number; invoices: number; reminded: number } | null = null
+  private lastLook: { at: string; payouts: number; invoices: number; orders: number; reminded: number } | null = null
 
   /** How many invoices and payouts are still waiting on PayPal. While there are any, the server looks often. */
   inFlightCount(): number {
@@ -397,16 +421,36 @@ export class MandateService {
    * out. It re-reads PayPal (the same read the Check PayPal button does), so a payout or an invoice settles without
    * anyone pressing anything, and without needing a webhook. One failing item never stops the others.
    */
-  async sweepPending(): Promise<{ payouts: number; invoices: number; reminded: number }> {
+  async sweepPending(): Promise<{ payouts: number; invoices: number; orders: number; reminded: number }> {
     const payouts = this.repo.openPayoutBatches()
     const invoices = this.invoices ? this.repo.openInvoices() : []
+    const orders = this.repo.openOrders()
     for (const batch of payouts) await this.refreshPayoutBatch(batch, 'server').catch(() => undefined)
     for (const invoice of invoices) await this.refreshInvoice(invoice, 'server').catch(() => undefined)
+    // A checkout order the buyer approved, whose capture call never landed: the server finishes it by itself.
+    for (const order of orders) await this.refreshOrder(order, 'server').catch(() => undefined)
     const reminded = await this.remindOverdueInvoices().catch(() => 0)
     // Money that was waiting to clear may have cleared by now. This is idempotent: it only asks for payouts not yet asked for.
     if ((this.repo.latestWarrant()?.body.clearingDays ?? 0) > 0) await this.resumeAutopilot().catch(() => 0)
-    this.lastLook = { at: this.iso(), payouts: payouts.length, invoices: invoices.length, reminded }
-    return { payouts: payouts.length, invoices: invoices.length, reminded }
+    this.lastLook = { at: this.iso(), payouts: payouts.length, invoices: invoices.length, orders: orders.length, reminded }
+    return { payouts: payouts.length, invoices: invoices.length, orders: orders.length, reminded }
+  }
+
+  /**
+   * Re-reads a checkout order the server already opened, and settles it if the buyer approved it. This is the same
+   * lock-checked capture the owner's button uses, so an order that was approved while the browser closed still settles,
+   * and one whose amount no longer matches the lock is still refused.
+   */
+  async refreshOrder(orderId: string, by: 'server' | null = null): Promise<{ refreshed: boolean }> {
+    if (!this.paypal) return { refreshed: false }
+    const row = this.repo.proposalByOrder(orderId)
+    if (!row || !['order_created', 'locked'].includes(row.phase)) return { refreshed: false }
+    const live = await this.paypal.getOrder(orderId)
+    if (live.status !== 'APPROVED' && live.status !== 'COMPLETED') return { refreshed: false }
+    // The capture writes the one settle event, marked as the server's. A refusal (the order no longer matches the lock)
+    // is also a result, so only a bill that is now paid counts as refreshed.
+    const settled = await this.capture(row.id, undefined, by ?? 'server').catch(() => undefined)
+    return { refreshed: Boolean(settled && settled.status === 200 && fullPhase(this.require(row.id).phase)) }
   }
 
   /**
@@ -445,7 +489,7 @@ export class MandateService {
     return cartHash(this.cartFields(row))
   }
 
-  approve(id: string, assertion: unknown = null, stamp: { method: 'passkey' | 'owner-key' | 'demo'; fingerprint?: string | null; publicKey?: { kty: 'EC'; crv: 'P-256'; alg: -7; x: string; y: string } | null; rpId?: string | null; origin?: string | null; challenge?: string | null } | null = null): HttpResult {
+  approve(id: string, assertion: unknown = null, stamp: { method: 'passkey' | 'owner-key' | 'demo'; fingerprint?: string | null; publicKey?: { kty: 'EC'; crv: 'P-256'; alg: -7; x: string; y: string } | null; rpId?: string | null; origin?: string | null; challenge?: string | null } | null = null, instrument: 'invoice' | 'checkout' | null = null): HttpResult {
     const now = this.iso()
     return this.repo.transaction(() => {
       const row = this.require(id)
@@ -495,6 +539,12 @@ export class MandateService {
       if (stamp?.rpId) payload.rpId = stamp.rpId
       if (stamp?.origin) payload.origin = stamp.origin
       if (stamp?.challenge) payload.challenge = stamp.challenge
+      // How this charge is to be paid is the owner's choice, made at the tap: a PayPal invoice the client gets, or a
+      // card form on our own page. It is recorded with the approval, so the receipt can say which it was.
+      if (instrument && row.kind === 'charge') {
+        this.repo.setPayInstrument(row.id, instrument, now)
+        payload.instrument = instrument
+      }
       this.repo.insertEvent(randomUUID(), row.id, 'proposal.approved', row.clause, payload, now)
       return { status: 200, body: toView(this.require(id)) }
     })
@@ -517,15 +567,98 @@ export class MandateService {
     })
   }
 
-  async capture(id: string, claimedAmountCents?: number): Promise<HttpResult> {
+  /**
+   * Opens a checkout for a locked client charge, so a buyer can pay it with a card inside the console.
+   *
+   * The order is made from the lock, so the amount the browser submits against cannot differ from the amount the owner
+   * approved: the server re-reads the order before it captures and refuses on any difference. The browser is given an
+   * order id and a browser-safe token, and nothing else. It cannot capture, and it cannot change a cent.
+   */
+  async paySession(id: string): Promise<PaySession> {
+    if (!this.paypal) throw new Problem(503, 'paypal.unconfigured', 'PayPal is not configured', 'Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET before taking a card.')
+    if (!this.paypal.clientToken) throw new Problem(503, 'pay.card_fields_off', 'Paying on this page is off', 'Turn on Advanced Credit and Debit Card Payments for this app in the PayPal dashboard, then press Check again on the System screen.')
+    const row = this.require(id)
+    if (row.kind !== 'charge') throw new Problem(409, 'proposal.state', 'That is not a bill', 'Only a client charge can be paid on a page.')
+    // One charge, one instrument. A charge PayPal already invoiced is paid through that invoice, never also here.
+    if (row.invoice_id) throw new Problem(409, 'pay.invoice_open', 'This bill is on its way by email', 'PayPal invoiced this client, so they pay that invoice. Cancel the invoice to let them pay on the page instead.')
+    if (!['locked', 'order_created'].includes(row.phase)) {
+      if (fullPhase(row.phase) || paidPhase(row.phase)) throw new Problem(409, 'proposal.state', 'That bill is already paid', 'There is nothing left to pay.')
+      throw new Problem(409, 'proposal.state', 'That bill is not ready to pay', 'The owner has to approve it first.')
+    }
+    // The order must match the instrument: a card is taken on our page, so the order is opened for a card. An order
+    // that was opened as a checkout sends the buyer to PayPal, and a card cannot be taken on it. It was never captured,
+    // so no money moved, and PayPal expires it on its own.
+    const previousOrderId = row.order_id
+    if (row.order_id && row.order_kind !== 'card') {
+      this.repo.insertEvent(randomUUID(), row.id, 'order.replaced', row.clause, {
+        orderId: row.order_id, instrument: 'checkout', why: `opened as a ${row.order_kind ?? 'checkout'}`,
+      }, this.iso())
+      row.order_id = null
+    }
+    const orderId = row.order_id ?? await this.openCheckoutOrder(row, previousOrderId)
+    const clientToken = await this.paypal.clientToken()
+    return {
+      proposalId: row.id,
+      orderId,
+      clientToken,
+      amountCents: row.amount_cents,
+      currency: row.currency,
+      description: row.description,
+      environment: this.options.paypalEnvironment ?? 'sandbox',
+    }
+  }
+
+  /**
+   * Opens the PayPal order for a charge that is to be paid on our own page. It is made from the locked cart, with the
+   * request id as the order's custom id, and with no return URL: the buyer never leaves the console, and PayPal must
+   * not attach a payment source of its own to an order the browser will pay.
+   *
+   * PayPal keeps one open order per bill, and answers a repeated request with the order it already has. So if the bill
+   * already has an order, that order is the one the card is taken on: it was never captured, so no money moved, and
+   * PayPal does not keep a payment source on an order the buyer has not touched.
+   */
+  private async openCheckoutOrder(row: ProposalRow, previousOrderId: string | null): Promise<string> {
+    let created: CreatedOrder
+    try {
+      created = await this.paypal!.createOrder({
+        proposalId: row.id,
+        amountCents: row.amount_cents,
+        currency: row.currency,
+        description: row.description,
+        // The contractor's identity stays on the warrant. The receiver is the studio.
+        payeeEmail: null,
+        kind: 'card',
+      })
+    } catch (error) {
+      if (!previousOrderId) throw error
+      this.repo.insertEvent(randomUUID(), row.id, 'order.reused', row.clause, {
+        orderId: previousOrderId, instrument: 'checkout', why: 'PayPal would not open a second order for this bill',
+      }, this.iso())
+      return previousOrderId
+    }
+    const now = this.iso()
+    this.repo.transaction(() => {
+      this.repo.saveOrder(row.id, created.orderId, created.approveUrl, now, 'card')
+      this.repo.insertEvent(randomUUID(), row.id, 'order.created', row.clause, {
+        orderId: created.orderId,
+        payeeAttached: false,
+        instrument: 'checkout',
+      }, now)
+    })
+    this.options.onExternalRef?.('order', created.orderId)
+    return created.orderId
+  }
+
+  /** `by` is 'server' when nobody asked: the server found the buyer's approval by itself and settled it. */
+  async capture(id: string, claimedAmountCents?: number, by: 'server' | null = null): Promise<HttpResult> {
     const before = this.repo.proposal(id)?.phase
-    const result = await this.captureCore(id, claimedAmountCents)
+    const result = await this.captureCore(id, claimedAmountCents, by)
     // A client payment that has just settled may owe a contractor their share. Only a settling counts, not a re-read.
     if (before && !fullPhase(before)) await this.afterMoney(id).catch(() => undefined)
     return result
   }
 
-  private async captureCore(id: string, claimedAmountCents?: number): Promise<HttpResult> {
+  private async captureCore(id: string, claimedAmountCents?: number, by: 'server' | null = null): Promise<HttpResult> {
     await this.freshenFundingDisputes(id)
     const started = this.repo.transaction(() => this.beginCapture(id, claimedAmountCents))
     if (started.result) return started.result
@@ -539,11 +672,11 @@ export class MandateService {
       const current = this.require(id)
       if (current.kind === 'refund') return await this.settleRefund(current)
       if (current.kind === 'payment') return await this.settlePayout(current)
-      if (current.kind === 'charge' && this.invoices && !current.order_id) {
+      if (current.kind === 'charge' && this.invoices && !current.order_id && current.pay_instrument !== 'checkout') {
         const invoiced = await this.settleInvoice(current)
         if (invoiced) return invoiced
       }
-      return await this.settlePayment(current)
+      return await this.settlePayment(current, by)
     } catch (error) {
       if (this.require(id).phase === 'capture_inflight') this.repo.setPhase(id, resume, this.iso())
       if (error instanceof Problem) throw error
@@ -551,8 +684,11 @@ export class MandateService {
     }
   }
 
-  private async settlePayment(current: ProposalRow): Promise<HttpResult> {
+  private async settlePayment(current: ProposalRow, by: 'server' | null = null): Promise<HttpResult> {
     if (!this.paypal) throw new Problem(503, 'paypal.unconfigured', 'PayPal is not configured', 'Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET before capture.')
+    // A bill paid on our own page is paid by a card in our page, so PayPal must not be given a way to send the buyer
+    // back to PayPal: that checkout is a different instrument, and a card cannot be taken on an order that has one.
+    const onOurPage = current.pay_instrument === 'checkout'
     if (!current.order_id) {
       const created = await this.paypal.createOrder({
         proposalId: current.id,
@@ -561,14 +697,15 @@ export class MandateService {
         description: current.description,
         // Contractor identity stays on the warrant. The placeholder email is not a PayPal account.
         payeeEmail: null,
-        ...(this.options.publicUrl ? {
+        kind: onOurPage ? 'card' : 'checkout',
+        ...(onOurPage ? {} : (this.options.publicUrl ? {
           returnUrl: `${this.options.publicUrl}/app/p/${current.id}?paypal=return`,
           cancelUrl: `${this.options.publicUrl}/app/p/${current.id}?paypal=cancel`,
-        } : {}),
+        } : {})),
       })
       const now = this.iso()
       this.repo.transaction(() => {
-        this.repo.saveOrder(current.id, created.orderId, created.approveUrl, now)
+        this.repo.saveOrder(current.id, created.orderId, created.approveUrl, now, onOurPage ? 'card' : 'checkout')
         this.repo.insertEvent(randomUUID(), current.id, 'order.created', current.clause, {
           orderId: created.orderId,
           payeeAttached: created.payeeAttached,
@@ -600,6 +737,7 @@ export class MandateService {
         orderId: saved.order_id,
         captureId: captured.captureId,
         amountCents: captured.amountCents,
+        ...(by ? { by } : {}),
       }, now)
     })
     return { status: 200, body: toView(this.require(saved.id)) }
@@ -612,7 +750,17 @@ export class MandateService {
   async features(fresh = false) {
     if (!this.paypal) return { configured: false, checkedAt: this.iso(), features: assessFeatures([]) }
     const scopes = await this.paypal.scopes(fresh)
-    return { configured: true, checkedAt: this.iso(), features: assessFeatures(scopes) }
+    // The card-fields feature is a tick on the app, not a scope on the token, so the only honest answer comes from
+    // trying to mint the browser-safe token the SDK needs. Nothing is assumed.
+    let cardFields = false
+    if (this.paypal.clientToken) {
+      try {
+        cardFields = Boolean(await this.paypal.clientToken())
+      } catch {
+        cardFields = false
+      }
+    }
+    return { configured: true, checkedAt: this.iso(), features: assessFeatures(scopes, { card_fields: cardFields }) }
   }
 
   /** What PayPal says the account holds. Advice for the owner, never a gate: the report lags by hours, and PayPal fails a payout it cannot fund. */

@@ -6,7 +6,7 @@
  * on a tick box, instead of letting a 403 surface in the middle of a payment.
  */
 
-export type FeatureId = 'orders' | 'refunds' | 'payouts' | 'invoicing' | 'transactions' | 'disputes' | 'webhooks'
+export type FeatureId = 'orders' | 'refunds' | 'payouts' | 'invoicing' | 'transactions' | 'disputes' | 'webhooks' | 'card_fields'
 
 export type FeatureSpec = {
   id: FeatureId
@@ -21,6 +21,11 @@ export type FeatureSpec = {
   core: boolean
   /** Dashboard feature name to tick. Null for permissions every app has. */
   tick: string | null
+  /**
+   * Some PayPal features are a tick on the app, not a scope on the token, so the only honest way to know is to try
+   * them. This names the probe; the service runs it and the result decides whether the feature is on.
+   */
+  probe?: 'client_token'
 }
 
 export const FEATURES: FeatureSpec[] = [
@@ -31,6 +36,7 @@ export const FEATURES: FeatureSpec[] = [
   { id: 'transactions', label: 'Transaction Search', scope: /reporting\/search\/read/, usedFor: 'Compare the PayPal account with the ledger and flag money that moved without Mandate.', without: 'The PayPal activity view cannot tell you about money that moved outside Mandate.', core: false, tick: 'Transaction search' },
   { id: 'disputes', label: 'Disputes', scope: /disputes\/read-seller/, usedFor: 'Hold back payouts that depend on a client payment the client has disputed.', without: 'A disputed client payment can still fund a payout.', core: false, tick: 'Customer disputes' },
   { id: 'webhooks', label: 'Webhooks', scope: /applications\/webhooks/, usedFor: 'PayPal tells the server when an invoice is paid, a payout finishes or a dispute opens.', without: 'The server learns only when someone presses Check PayPal.', core: false, tick: null },
+  { id: 'card_fields', label: 'Pay on your own page (card fields)', scope: /^$/, usedFor: 'A client pays a locked bill with a card inside the console, without leaving the page and without a PayPal account.', without: 'A client who pays has to leave the console and sign in to PayPal.', core: false, tick: 'Advanced Credit and Debit Card Payments', probe: 'client_token' },
 ]
 
 export const ENABLE_STEPS = (tick: string) => [
@@ -44,10 +50,14 @@ export const ENABLE_STEPS = (tick: string) => [
 
 export type FeatureStatus = FeatureSpec & { enabled: boolean; steps: string[] }
 
-export function assessFeatures(scopes: string[]): FeatureStatus[] {
+/**
+ * What the app may do, read from its token scopes and from the probes that can only be answered by trying.
+ * A probed feature is on when the probe worked, and off when it did not: nothing is assumed.
+ */
+export function assessFeatures(scopes: string[], probed: Partial<Record<FeatureId, boolean>> = {}): FeatureStatus[] {
   return FEATURES.map((feature) => ({
     ...feature,
-    enabled: scopes.some((scope) => feature.scope.test(scope)),
+    enabled: feature.probe ? probed[feature.id] === true : scopes.some((scope) => feature.scope.test(scope)),
     steps: feature.tick ? ENABLE_STEPS(feature.tick) : [],
   }))
 }
