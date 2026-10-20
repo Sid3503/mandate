@@ -1194,3 +1194,63 @@ html { scroll-behavior: smooth; }
 .share-form { align-items: flex-end; margin: 8px 0; }
 .share-owner-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
 .share-owner-list li { padding: 8px 12px; border: 1.5px solid #d8d2c0; background: #fff; }
+
+/* ---- Clarity: who you are, what the rules did, where the job stands ---- */
+:root { --client-wash: #e3ecff; --client-ink: #1d3f8f; }
+
+/* Who is at the keyboard, on every screen. */
+.you-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border: 1.5px solid var(--ink); background: var(--lime); font: 600 13px/1.2 var(--body); white-space: nowrap; }
+.you-chip b { font-weight: 800; }
+.ai-badge { display: inline-flex; align-items: center; padding: 4px 10px; border: 1.5px dashed var(--ink); font: 600 12px/1.2 var(--mono); white-space: nowrap; }
+/* On a phone the bar is for controls; the AI boundary is said on the guide and in the rail instead. */
+@media (max-width: 860px) { .ai-badge { display: none; } }
+@media (max-width: 560px) { .you-chip { font-size: 12px; padding: 3px 8px; } }
+
+/* The first job as a story: five steps, one protagonist. */
+.story-rail { display: grid; gap: 12px; margin: 0 0 20px; border: 2px solid var(--ink); background: var(--sheet); box-shadow: var(--shadow-s); }
+.story-cast { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; font-size: 14px; }
+.story-cast span { white-space: nowrap; }
+.story-cast span:first-child { background: var(--lime); padding: 0 6px; }
+.story-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.story-steps li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 10px; border: 1.5px solid transparent; }
+.story-steps li.is-done { color: var(--mute); }
+.story-steps li.is-done strong { text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.story-steps li.is-here { border-color: var(--ink); background: var(--surface); }
+.story-mark { display: grid; place-items: center; width: 26px; height: 26px; border: 2px solid var(--ink); font: 800 14px/1 var(--display); }
+.story-steps li.is-done .story-mark { background: var(--ink); color: var(--paper); }
+.story-steps li.is-here .story-mark { background: var(--lime); }
+.story-now { display: grid; gap: 6px; margin-top: 6px; }
+.story-now p { margin: 0; font-size: 14px; }
+.story-now .eyebrow { display: inline-block; min-width: 38px; }
+.story-now .btn { justify-self: start; }
+
+/* What Mandate did for you, in the month strip. */
+.month-value { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; padding-top: 12px; border-top: 1.5px solid var(--line); }
+.month-value div { display: grid; gap: 2px; min-width: 0; }
+.month-value dt { font: 600 12px/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.04em; color: var(--mute); }
+.month-value dd { margin: 0; font: 800 26px/1 var(--display); }
+.month-value dd small { font: 600 13px var(--body); color: var(--mute); }
+.month-value .is-stopped dd { text-decoration: underline; text-decoration-color: var(--ink); }
+@media (max-width: 560px) { .month-value { grid-template-columns: 1fr; } .month-value dd { font-size: 22px; } }
+
+/* The client's number, as the studio sees it. */
+.seat-bar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1.5px solid var(--ink); background: var(--surface); }
+.seat-bar p { margin: 0; flex: 1 1 280px; font-size: 14px; }
+.seat-bar.is-playing { background: var(--client-wash); border-color: var(--client-ink); }
+.sheet-sealed { background: repeating-linear-gradient(135deg, var(--surface), var(--surface) 10px, var(--paper) 10px, var(--paper) 20px); }
+.sheet-sealed p { margin: 0; }
+.sealed-number span { font-family: var(--mono); }
+
+/* The rules before any way to change them. */
+.rules-glance { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0 0 20px; border: 2px solid var(--ink); background: var(--sheet); }
+.glance-col { display: grid; align-content: start; gap: 6px; padding: 14px 16px; min-width: 0; }
+.glance-col + .glance-col { border-left: 1.5px solid var(--ink); }
+.glance-col p { margin: 0; font-size: 14px; }
+.glance-auto .eyebrow { background: var(--lime); padding: 0 6px; justify-self: start; }
+.glance-never .eyebrow { background: var(--ink); color: var(--paper); padding: 0 6px; justify-self: start; }
+.glance-count { color: var(--mute); }
+.glance-count b { color: var(--ink); font: 800 20px/1 var(--display); }
+@media (max-width: 760px) { .rules-glance { grid-template-columns: 1fr; } .glance-col + .glance-col { border-left: 0; border-top: 1.5px solid var(--ink); } }
+
+/* Who moves each stage of a job forward. */
+.track-who { color: var(--mute); font-style: italic; }

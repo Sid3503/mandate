@@ -8,10 +8,18 @@ test('welcome headline, one line of proof, three doors, and trust strip', async 
   mkdirSync(shots, { recursive: true })
   await page.goto('/app/welcome')
 
-  // Headline
+  // Headline: the owner's problem first. The old line is still on the page, as the tagline under the doors.
   const h1 = page.getByRole('heading', { level: 1 })
-  await expect(h1).toContainText('Agents can ask.')
-  await expect(h1).toContainText('Only you can pay.')
+  await expect(h1).toContainText('Stop being the approval button')
+  const tagline = page.getByTestId('tagline')
+  await expect(tagline).toContainText('Agents can ask.')
+  await expect(tagline).toContainText('Only you can pay.')
+
+  // The product playing itself, beside the headline, with a caption a visitor can read.
+  const theatre = page.getByTestId('theatre')
+  await expect(theatre).toBeVisible()
+  await expect(page.getByTestId('theatre-caption')).toContainText('Northwind')
+  await expect(page.getByTestId('theatre-chapter-5')).toBeVisible()
 
   // Three doors container
   const doors = page.getByTestId('three-doors')

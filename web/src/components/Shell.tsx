@@ -15,6 +15,7 @@ import { AskProvider, useAsk } from './Ask'
 import { session } from '../lib/session'
 import { GuideButton, GuideProvider, useGuide } from './GuidedTour'
 import { Chip } from './ui'
+import { useStudioName } from './StoryRail'
 
 type NavItem = { to: string; label: string; tour: string; icon: string; end?: boolean; also?: string[] }
 
@@ -152,6 +153,7 @@ function ShellFrame() {
     return () => window.removeEventListener('keydown', onKey)
   }, [toggleRail])
   const waiting = Array.isArray(today.data?.waiting) ? today.data.waiting.length : 0
+  const studio = useStudioName()
   const live = useLive()
   const paused = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 15_000, retry: false }).data?.paused ?? null
   const location = useLocation()
@@ -240,6 +242,13 @@ function ShellFrame() {
         <header className="topbar">
           <div className="brand brand-mobile"><Mark size={24} /><span>Mandate</span></div>
           <div className="topbar-status">
+            {/* Who the person at the keyboard is, in every screen: the studio. Everyone else has their own link or key. */}
+            {me.data?.role === 'owner' ? (
+              <span className="you-chip" data-testid="you-are" title="You run the studio. Your client and your contractors each get their own link and see only their part. Agents get keys that can ask, never pay.">
+                You · <b>{studio ?? 'the studio'}</b> owner
+              </span>
+            ) : null}
+            <span className="ai-badge hide-phone" data-testid="ai-boundary" title="AI agents here can draft, ask and negotiate. None of them has a way to approve or move money: only your rules and your tap can.">AI asks · never pays</span>
             <button type="button" className="btn btn-ghost btn-small ask-top" onClick={() => ask.open()} disabled={!me.data?.agents.enabled} title="Ask the clerk (Cmd or Ctrl + K)">Ask <kbd aria-hidden="true">⌘K</kbd></button>
             <GuideButton />
             <PauseButton paused={Boolean(paused)} />

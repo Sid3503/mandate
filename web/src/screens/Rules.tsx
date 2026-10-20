@@ -8,7 +8,7 @@ import { StageTrail, type StageView } from '../components/ToolTrail'
 import { TryRules } from '../components/TryRules'
 import { useToast } from '../components/Toast'
 import { when } from '../lib/format'
-import { useAgentsOn, useIsOwner, useOnline, useSession, useVersions } from '../lib/hooks'
+import { useAgentsOn, useIsOwner, useOnline, useSession, useToday, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { Party, PolicyResult, PolicySentence, Replay, RulesDraft, SentenceStatus, Warrant } from '../lib/types'
 import { wip, type RulesWip } from '../lib/wip'
@@ -25,6 +25,44 @@ const automationWords = (a: Body['automation'] | undefined) => {
 }
 
 const nameOf = (b: Body, id: string) => [...b.payees, ...(b.clients ?? [])].find((party) => party.id === id)?.displayName ?? id
+
+/**
+ * The rules before any way to change them: the three things they decide, each with what it did lately. Read from the
+ * live version and the ledger only; nothing here is a model's opinion.
+ */
+function RulesAtAGlance({ warrant }: { warrant: Warrant }) {
+  const today = useToday()
+  const stats = today.data?.stats.last30Days
+  const stopped = today.data?.stopped
+  const standing = warrant.standing?.length ?? 0
+  const never = [
+    `paying anyone but ${warrant.payees.map((party) => party.displayName).join(', ') || 'the people on your list'}`,
+    `any single payment over ${dollars(warrant.perPaymentCeilingCents)}`,
+    `work outside ${warrant.categories.join(', ')}`,
+    warrant.fundingRequired ? 'paying a contractor before the client’s money has arrived' : null,
+    `contractor payouts past ${dollars(warrant.monthlyCapCents)} a month`,
+    warrant.evidenceRequired ? 'a request with no link to the work' : null,
+  ].filter((line): line is string => Boolean(line))
+  return (
+    <section className="rules-glance" aria-label="Your rules at a glance" data-testid="rules-glance">
+      <div className="glance-col glance-auto">
+        <span className="eyebrow">No tap needed</span>
+        <p>Under {dollars(warrant.autoSettleUnderCents)}{standing > 0 ? `, and anything your ${standing === 1 ? 'standing rule covers' : `${standing} standing rules cover`}` : ''}.</p>
+        {stats ? <p className="glance-count"><b>{stats.automatic}</b> in the last 30 days</p> : null}
+      </div>
+      <div className="glance-col glance-tap">
+        <span className="eyebrow">Your tap</span>
+        <p>{dollars(warrant.autoSettleUnderCents)} and above, unless a standing rule covers it. One tap seals the amount.</p>
+        {stats ? <p className="glance-count"><b>{stats.tapped}</b> in the last 30 days</p> : null}
+      </div>
+      <div className="glance-col glance-never">
+        <span className="eyebrow">Never, whoever asks</span>
+        <p>{never.join('; ')}.</p>
+        {stopped ? <p className="glance-count"><b>{stopped.count}</b> refused{stopped.cents > 0 ? `, ${dollars(stopped.cents)} kept safe` : ''}</p> : null}
+      </div>
+    </section>
+  )
+}
 
 function body(warrant: Warrant): Body {
   const { id: _id, version: _version, createdAt: _createdAt, ...rest } = warrant
@@ -113,6 +151,8 @@ export function Rules() {
           </div>
         </div>
       ) : null}
+
+      {!editing ? <RulesAtAGlance warrant={current} /> : null}
 
       {owner && !editing ? (
         <DraftBox

@@ -800,7 +800,10 @@ test('the control room shows the ledger in AG Studio, follows it live, keeps a s
 test('a visitor with no key sees what Mandate is first, and can reach the unlock', async ({ page }) => {
   await page.goto('/app/')
   await expect(page).toHaveURL(/\/app\/welcome/)
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Agents can ask.')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Stop being the approval button')
+  await expect(page.getByTestId('tagline')).toContainText('Only you can pay.')
+  await expect(page.getByTestId('theatre')).toBeVisible()
+  await expect(page.getByTestId('whos-who')).toContainText('You are the studio.')
   await expect(page.getByRole('heading', { level: 2, name: /Ask\. Check\. Tap\. Pay\. Prove\./ })).toBeVisible()
   await expect(page.locator('.land-table tbody tr')).toHaveCount(6)
   await expect(page.locator('.land-tools li')).toHaveCount(7)
@@ -1241,6 +1244,14 @@ test('the owner sets each company’s price limit, and the band follows', async 
   const bar = page.locator('[data-tour="keep-bar"]')
   const sheets = page.locator('[data-tour="price-sheets"]')
   await expect(sheets.getByText('What each company will accept')).toBeVisible()
+  // The owner is the studio: Northwind's ceiling is Northwind's, so it is sealed, and the band shows only the studio's side.
+  await expect(page.getByTestId('seat-bar')).toContainText('You are Line Studio.')
+  await expect(page.locator('[data-tour="price-buyer"]')).toHaveCount(0)
+  await expect(page.locator('[data-tour="price-buyer-sealed"]')).toContainText('sealed')
+  await expect(page.locator('[data-tour="deal-band"]')).not.toContainText('$400.00')
+  // This demo has no real Northwind, so the owner plays it, openly.
+  await page.getByTestId('seat-toggle').click()
+  await expect(page.getByTestId('seat-bar')).toContainText('You are playing Northwind for this demo.')
   // On a fresh box the numbers are starting examples, not anyone's choice: the band says so, negotiation waits,
   // and one click keeps them as the next version of each sheet. (Skipped when an earlier test already kept.)
   if (await bar.count() > 0) {
@@ -1282,6 +1293,9 @@ test('the owner sets each company’s price limit, and the band follows', async 
   await seller.locator('input[inputmode="decimal"]').fill('250')
   await seller.getByRole('button', { name: 'Save this limit' }).click()
   await expect(page.locator('[data-tour="deal-band"]')).toContainText('$250.00 to $400.00')
+  // Back in the studio's own seat, the client's number is sealed again.
+  await page.getByTestId('seat-toggle').click()
+  await expect(page.locator('[data-tour="price-buyer"]')).toHaveCount(0)
 })
 
 test('a client key writes only its own ceiling, and never sees the studio’s floor', async ({ page }) => {

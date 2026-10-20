@@ -12,6 +12,7 @@ import { useQuery } from '@tanstack/react-query'
 import { relative } from '../lib/format'
 import { reviewKey, useLive, type ReviewState } from '../lib/live'
 import { BreakIt } from '../components/BreakIt'
+import { StoryRail } from '../components/StoryRail'
 import { EmailNotice } from '../components/EmailNotice'
 import { ToolTrail } from '../components/ToolTrail'
 import { dollars } from '../lib/money'
@@ -87,6 +88,7 @@ export function Today() {
           <span><strong>Automation stopped.</strong> Mandate is paused{status.data.paused.reason ? ` (${status.data.paused.reason})` : ''}. Automatic billing and payouts are halted.</span>
         </div>
       ) : null}
+      <StoryRail />
       {data?.next ? <NextForJob next={data.next} /> : null}
 
       {data ? <MonthStrip data={data} /> : null}
@@ -200,6 +202,11 @@ function MonthStrip({ data }: { data: TodayData }) {
         <div className="month-num out"><span className="eyebrow">Out</span><Money cents={month.outCents} size="xl" currency={month.currency} /></div>
         <div className="month-num kept"><span className="eyebrow">Kept</span><Money cents={month.keptCents} size="xl" currency={month.currency} /></div>
       </div>
+      <dl className="month-value" data-testid="month-value" aria-label="What Mandate did for you in the last 30 days">
+        <div><dt>Handled with no tap</dt><dd>{stats.automatic}</dd></div>
+        <div><dt>Your taps</dt><dd>{stats.tapped}</dd></div>
+        <div className={data.stopped.count > 0 ? 'is-stopped' : undefined}><dt>Stopped by your rules</dt><dd>{data.stopped.count}{data.stopped.cents > 0 ? <small> · {dollars(data.stopped.cents)} kept safe</small> : null}</dd></div>
+      </dl>
       <div className="month-facts">
         <p className="fine"><strong>Contractor cap:</strong> {dollars(month.reservedCents)} of {dollars(month.capCents)} used</p>
         <div className="cap-bar" role="img" aria-label={`${used}% of the monthly contractor cap is used`}><span style={{ width: `${used}%` }} /></div>
