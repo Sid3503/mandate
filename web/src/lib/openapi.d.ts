@@ -4860,7 +4860,7 @@ export interface paths {
                 content: {
                     "application/json": {
                         buyer: string;
-                        terms: {
+                        terms?: {
                             jobId?: string;
                             scope: string;
                             category: string;
@@ -4878,6 +4878,8 @@ export interface paths {
                                 days: number;
                             };
                         };
+                        totalCents?: number;
+                        milestoneCount?: number;
                         /** @enum {string} */
                         as?: "buyer" | "seller";
                         /** Format: uuid */
