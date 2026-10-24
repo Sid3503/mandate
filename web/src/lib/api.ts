@@ -1,5 +1,6 @@
-import { session } from './session'
-import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
+import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
+import { session, workspaceFromKey } from './session'
+import type { NegotiationView, ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -31,21 +32,38 @@ export class ApiError extends Error {
 
 type Options = { method?: string; body?: unknown; idempotencyKey?: string; key?: string; headers?: Record<string, string> }
 
+/** Prefix tenant routes only. Public doors (/demo/start, /workspaces, /join) stay on the outer server. */
+function scopePath(path: string, bearer?: string | null): { path: string; credentials: RequestCredentials; client: boolean } {
+  // A client or agent key names its studio. That wins over a tab that has not chosen a workspace yet.
+  const embedded = bearer ? workspaceFromKey(bearer) : null
+  // The default studio is not a studio: it is the server itself. Its requests are never prefixed, so a server with
+  // workspaces switched off (which answers /w/... with 404) still serves a console that remembered `ws_default`.
+  const chosen = embedded || session.workspace()
+  const workspace = chosen && chosen !== 'ws_default' ? chosen : null
+  const tenant = Boolean(workspace) && (path.startsWith('/v1/') || path.startsWith('/auth/') || path.startsWith('/mcp'))
+  // A chosen workspace, the default one included, still marks the request as the console's own (a cookie session
+  // may only write when it does), whatever the path.
+  return { path: tenant && workspace ? `/w/${workspace}${path}` : path, credentials: chosen ? 'include' : 'same-origin', client: Boolean(chosen) }
+}
+
 async function request<T>(path: string, options: Options = {}): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' }
   const key = options.key ?? session.get()
   if (key) headers.authorization = `Bearer ${key}`
+  const scoped = scopePath(path, options.key === '' ? null : key)
+  if (scoped.client) headers['x-mandate-client'] = 'web'
   if (options.body !== undefined) headers['content-type'] = 'application/json'
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey
   if (options.headers) Object.assign(headers, options.headers)
   let response: Response
   try {
     // A server that does not answer in 30 seconds is treated as not answering, not waited on forever.
-    response = await fetch(path, {
+    response = await fetch(scoped.path, {
       method: options.method ?? 'GET',
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       cache: 'no-store',
+      credentials: scoped.credentials,
       signal: AbortSignal.timeout(30_000),
     })
   } catch (error) {
@@ -85,6 +103,7 @@ export type DraftStage =
   | { stage: 'checking' }
   | { stage: 'replaying' }
   | { stage: 'reading_back' }
+  | { stage: 'second_reading'; model: string }
   | { stage: 'reading_policy'; sentences: number; parts: number }
   | { stage: 'classified'; rules: number; setAside: number }
   | { stage: 'auditing'; sentences: number; changes: number }
@@ -92,27 +111,34 @@ export type PolicyStreamEvent = ({ type: 'stage' } & DraftStage) | { type: 'done
 export type DraftStreamEvent = ({ type: 'stage' } & DraftStage) | { type: 'done'; draft: RulesDraft } | { type: 'error'; code: string; title: string; message: string }
 
 export type NegotiationEvent =
-  | { type: 'start'; threadId: string; model: string; maxOffers: number; studio: string; client: string }
+  | { type: 'start'; threadId: string; model: string; maxOffers: number; offersPerSide: number; studio: string; client: string; scope: string; currency: string; seats: { seller: 'agent' | 'client'; buyer: 'agent' | 'client' } }
   | { type: 'turn_start'; turn: number; side: 'buyer' | 'seller'; company: string }
-  | { type: 'turn_tool'; turn: number; side: 'buyer' | 'seller'; phase: 'start' | 'call' | 'end'; id: string; tool: string; input?: unknown; ok?: boolean; ms?: number }
-  | { type: 'turn'; turn: number; side: 'buyer' | 'seller'; runId: string; ms: number; deal: import('./types').Deal }
-  | { type: 'turn_error'; turn: number; side: 'buyer' | 'seller'; runId: string; error: string }
-  | { type: 'done'; threadId: string; agreed: boolean; dealId: string | null; stopped: boolean }
+  | { type: 'turn_tool'; turn: number; side: 'buyer' | 'seller'; phase: 'start' | 'call' | 'end'; id: string; tool: string; input?: unknown; ok?: boolean; ms?: number; output?: unknown }
+  | { type: 'turn'; turn: number; side: 'buyer' | 'seller'; runId: string; ms: number; action: 'offer' | 'accept' | 'walk_away'; deal: import('./types').Deal | null; message: string | null; final: boolean; assessment: string | null; by: 'agent' }
+  | { type: 'turn_error'; turn: number; side: 'buyer' | 'seller'; runId: string; error: string; detail: string | null }
+  | { type: 'waiting'; side: 'buyer' | 'seller'; company: string }
+  | { type: 'debrief'; side: 'buyer' | 'seller'; debrief: import('./types').NegotiationDebrief }
+  | { type: 'done'; threadId: string; agreed: boolean; dealId: string | null; stopped: boolean; status: import('./types').NegotiationView['status']; ending: string | null; failed: string | null; negotiation: import('./types').NegotiationView }
   | { type: 'error'; code: string; message: string }
+
+/** What the owner asks of a negotiation: the job, how it is paid, the deadline both sides know, and a brief for the studio's negotiator. */
+export type NegotiationRequest = { buyer?: string; task?: string; milestones?: string[]; offersPerSide?: number; sellerBrief?: string; buyerBrief?: string; threadId?: string }
 
 /**
  * Watches a negotiation as it happens (server-sent events over a POST, because an EventSource cannot carry the key).
  * Resolves when the stream ends. Pressing Stop aborts the request, which also cancels the model call on the server.
  */
-async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, signal: AbortSignal): Promise<void> {
+async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, signal: AbortSignal, body: NegotiationRequest = {}): Promise<void> {
   const key = session.get()
+  const scoped = scopePath('/v1/negotiations/stream', key)
   let response: Response
   try {
-    response = await fetch('/v1/negotiations/stream', {
+    response = await fetch(scoped.path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(key ? { authorization: `Bearer ${key}` } : {}) },
-      body: '{}',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(scoped.client ? { 'x-mandate-client': 'web' } : {}), ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      body: JSON.stringify(body),
       cache: 'no-store',
+      credentials: scoped.credentials,
       signal,
     })
   } catch (error) {
@@ -152,13 +178,15 @@ async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, sig
  */
 async function postStream<E>(path: string, body: unknown, onEvent: (event: E) => void, signal?: AbortSignal): Promise<void> {
   const key = session.get()
+  const scoped = scopePath(path, key)
   let response: Response
   try {
-    response = await fetch(path, {
+    response = await fetch(scoped.path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(scoped.client ? { 'x-mandate-client': 'web' } : {}), ...(key ? { authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify(body),
       cache: 'no-store',
+      credentials: scoped.credentials,
       signal,
     })
   } catch {
@@ -188,13 +216,54 @@ async function postStream<E>(path: string, body: unknown, onEvent: (event: E) =>
   }
 }
 
+/** Same hash the server uses for a step-up grant: sha256(`mandate/step/${kind}\n${payload}`) as hex. */
+async function stepBindingHex(kind: string, payload: string): Promise<string> {
+  const bytes = new TextEncoder().encode(`mandate/step/${kind}\n${payload}`)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Asks for a passkey, then retries the call with the grant.
+ * The binding is sent as well as the action, so a server that has not been restarted still accepts it.
+ */
+async function signStep<T>(kind: string, payload: string, optionsBody: Record<string, unknown>, again: (grant: string) => Promise<T>): Promise<T> {
+  const binding = await stepBindingHex(kind, payload)
+  const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { ...optionsBody, kind, binding } })
+  let signed: unknown
+  try {
+    signed = await startAuthentication({ optionsJSON: started.options as never })
+  } catch (error) {
+    const name = (error as { name?: string })?.name ?? ''
+    if (name === 'NotAllowedError') throw new ApiError(0, 'auth/stepup-cancelled', 'Passkey was not used', 'The signature was cancelled. Press the button again.', {})
+    if (name === 'SecurityError') throw new ApiError(0, 'auth/stepup-failed', 'Passkey was not accepted', 'Open the console on localhost, not on an IP address, and try again.', {})
+    throw new ApiError(0, 'auth/stepup-failed', 'Passkey was not accepted', 'The passkey could not be used in this browser.', {})
+  }
+  const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+  return again(verified.grant)
+}
+
 /** The clerk, told as it works: each tool call as it starts and ends, the words as they are written, then the whole reply. */
-const streamClerk = (body: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string } }, onEvent: (event: ClerkStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/clerk/stream', body, onEvent, signal)
+const streamClerk = (body: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } }, onEvent: (event: ClerkStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/clerk/stream', body, onEvent, signal)
 
 /** A draft of new rules, told as it is made: each stage is a real step the server took. */
 const streamDraft = (instruction: string, onEvent: (event: DraftStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/rules/draft/stream', { instruction }, onEvent, signal)
 
 const streamPolicy = (text: string, onEvent: (event: PolicyStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/rules/policy/stream', { text }, onEvent, signal)
+
+async function approveWithPasskey(id: string, body?: unknown): Promise<Proposal> {
+  const optionsFor = () => request<{ challengeId: string; options: { allowCredentials?: unknown[] } }>('/auth/stepup/options', { method: 'POST', body: { kind: 'approve', proposalId: id } })
+  let started = await optionsFor()
+  if (!started.options.allowCredentials || started.options.allowCredentials.length === 0) {
+    const reg = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/register/options', { method: 'POST', body: {} })
+    const registered = await startRegistration({ optionsJSON: reg.options as never })
+    await request('/auth/register/verify', { method: 'POST', body: { challengeId: reg.challengeId, response: registered } })
+    started = await optionsFor()
+  }
+  const signed = await startAuthentication({ optionsJSON: started.options as never })
+  const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+  return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant }, body })
+}
 
 export const api = {
   streamNegotiation,
@@ -206,45 +275,202 @@ export const api = {
   safety: () => request<Safety>('/v1/safety'),
   suggestions: () => request<Suggestions>('/v1/suggestions'),
   guarantees: () => request<Guarantees>('/v1/guarantees'),
+  demoStart: () => request<{ workspaceId: string; expiresAt: string; role: string; mode: string }>('/demo/start', { method: 'POST', body: {} }),
+  createStudio: (name: string) => request<{ workspaceId: string; memberId: string; challengeId: string; options: Record<string, unknown>; paypal: 'fake' | 'sandbox' }>('/workspaces', { method: 'POST', body: { name } }),
+  /** Closes this studio. Money already sent stays in PayPal. The ledger on this server is deleted. */
+  closeStudio: async (name: string) => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'studio.close' } })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+    return request<{ ok: boolean }>('/v1/studio/close', { method: 'POST', body: { name }, headers: { 'x-mandate-stepup': verified.grant } })
+  },
+  /** The rules in the owner's own words. Kept on the server until they become rules. */
+  ruleWords: () => request<{ words: { body: string; at: string } | null }>('/v1/rules/words'),
+  saveRuleWords: (text: string) => request<{ words: { body: string; at: string } }>('/v1/rules/words', { method: 'POST', body: { text } }),
+  clearRuleWords: () => request<{ words: null }>('/v1/rules/words', { method: 'DELETE' }),
+  passkeyRegisterVerify: (body: { challengeId: string; response: unknown }) => request<{ credentialId: string; fingerprint: string }>('/auth/register/verify', { method: 'POST', body }),
+  passkeyLoginOptions: () => request<{ challengeId: string; options: Record<string, unknown> }>('/auth/login/options', { method: 'POST', body: {} }),
+  passkeyLoginVerify: (body: { challengeId: string; response: unknown }) => request<{ workspaceId: string; role: string; displayName: string }>('/auth/login/verify', { method: 'POST', body }),
+  paypalLoginStart: () => request<{ url: string; state: string }>('/auth/paypal/start'),
+  paypalLoginCallback: (code: string, state?: string) => request<{ workspaceId: string; role: string; displayName: string }>('/auth/paypal/callback', { method: 'POST', body: { code, state } }),
+  signInWithPasskey: async () => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/login/options', { method: 'POST', body: {} })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    return request<{ workspaceId: string; role: string; displayName: string }>('/auth/login/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+  },
+  authMe: () => request<{ memberId: string; workspaceId: string; role: string; displayName: string; method: string }>('/auth/me'),
+  sessions: () => request<{ sessions: Array<{ publicId: string; at: string; lastSeen: string; method: string; revoked: boolean; current: boolean }> }>('/auth/sessions'),
+  authEvents: () => request<{ events: Array<{ at: string; event: string; result: string }> }>('/auth/events'),
+  revokeSession: (publicId: string) => request<{ ok: boolean }>('/auth/sessions/revoke', { method: 'POST', body: { publicId } }),
+  revokeOtherSessions: () => request<{ ended: number }>('/auth/sessions/revoke-others', { method: 'POST', body: {} }),
+  credentials: () => request<{ credentials: Array<{ id: string; fingerprint: string; revoked: boolean }> }>('/auth/credentials'),
+  revokeCredential: (id: string) => request<{ ok: boolean }>('/auth/credentials/revoke', { method: 'POST', body: { id } }),
+  addCredential: async () => {
+    const reg = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/register/options', { method: 'POST', body: {} })
+    const registered = await startRegistration({ optionsJSON: reg.options as never })
+    return request<{ credentialId: string; fingerprint: string }>('/auth/register/verify', { method: 'POST', body: { challengeId: reg.challengeId, response: registered } })
+  },
+  issueRecovery: () => request<{ codes: string[]; saved: boolean }>('/auth/recovery/issue', { method: 'POST', body: {} }),
+  ackRecovery: () => request<{ saved: boolean }>('/auth/recovery/ack', { method: 'POST', body: { saved: true } }),
+  regenerateRecovery: async () => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'recovery' } })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+    return request<{ codes: string[]; saved: boolean }>('/auth/recovery/regenerate', { method: 'POST', body: {}, headers: { 'x-mandate-stepup': verified.grant } })
+  },
+  joinPreview: (token: string) => request<{ workspaceId: string; name: string; role: string; inviter: string | null }>('/join/preview', { method: 'POST', body: { token } }),
+  createInvite: async (role: 'approver' | 'proposer' | 'viewer' | 'payee') => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'invite', role, label: null } })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+    return request<{ token: string; join: string }>('/v1/invites', { method: 'POST', body: { role, label: null }, headers: { 'x-mandate-stepup': verified.grant } })
+  },
+  revokeInvite: (token: string) => request<{ ok: boolean }>('/v1/invites/revoke', { method: 'POST', body: { token } }),
+  members: () => request<{ members: Array<{ id: string; name: string; role: string; status: string; expiresAt?: string | null }> }>('/v1/members'),
+  setMemberRole: async (id: string, role: string, expiresAt?: string | null) => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'member-role', memberId: id, role } })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+    return request<{ ok: boolean; role: string; expiresAt?: string | null }>(`/v1/members/${encodeURIComponent(id)}/role`, { method: 'POST', body: { role, expiresAt }, headers: { 'x-mandate-stepup': verified.grant } })
+  },
+  revokeMember: async (id: string) => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'member-revoke', memberId: id } })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+    return request<{ ok: boolean; openRequests: string[] }>(`/v1/members/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: {}, headers: { 'x-mandate-stepup': verified.grant } })
+  },
+  join: (workspaceId: string, token: string, name: string) => request<{ memberId: string; role: string; workspaceId: string }>(workspaceId === 'ws_default' ? '/join' : `/w/${workspaceId}/join`, { method: 'POST', body: { token, name } }),
   tryRequest: (requestBody: Record<string, unknown>, rules?: unknown) => request<TryOne>('/v1/rules/try', { method: 'POST', body: { request: requestBody, ...(rules ? { rules } : {}) } }),
   tryCases: (rules?: unknown) => request<TryCases>('/v1/rules/cases', { method: 'POST', body: rules ? { rules } : {} }),
   pause: (reason: string) => request<Safety>('/v1/safety/pause', { method: 'POST', body: { reason } }),
-  resume: () => request<Safety>('/v1/safety/resume', { method: 'POST' }),
+  resume: async () => {
+    const send = (grant?: string) => request<Safety>('/v1/safety/resume', { method: 'POST', headers: grant ? { 'x-mandate-stepup': grant } : undefined })
+    try {
+      return await send()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return signStep('resume', 'safety.resume', {}, send)
+    }
+  },
   clientErrors: () => request<{ data: ClientErrorRow[] }>('/v1/client-errors'),
-  ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
+  ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
   replayRules: (rules: unknown) => request<Replay>('/v1/rules/replay', { method: 'POST', body: rules }),
+  replayHistory: (rules?: unknown) => request<Replay>('/v1/replay', { method: 'POST', body: rules ?? {} }),
   agents: () => request<AgentRow[]>('/v1/agents'),
-  createAgent: (input: { name: string; scopes: AgentScope[]; limits?: { proposalsPerHour?: number; centsPerHour?: number } }) => request<{ agent: AgentRow; apiKey: string }>('/v1/agents', { method: 'POST', body: input }),
-  revokeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/revoke`, { method: 'POST' }),
+  createAgent: async (input: { name: string; scopes: AgentScope[]; limits?: { proposalsPerHour?: number; centsPerHour?: number }; expiryDays?: number | null }) => {
+    try {
+      return await request<{ agent: AgentRow; apiKey: string }>('/v1/agents', { method: 'POST', body: input })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'agent.issue', input } })
+      const signed = await startAuthentication({ optionsJSON: started.options as never })
+      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+      return request<{ agent: AgentRow; apiKey: string }>('/v1/agents', { method: 'POST', body: input, headers: { 'x-mandate-stepup': verified.grant } })
+    }
+  },
+  revokeAgent: async (id: string) => {
+    const send = (grant?: string) => request<AgentRow>(`/v1/agents/${encodeURIComponent(id)}/revoke`, { method: 'POST', headers: grant ? { 'x-mandate-stepup': grant } : undefined })
+    try {
+      return await send()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return signStep('agent.revoke', id, { id }, send)
+    }
+  },
   resumeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/resume`, { method: 'POST' }),
+  agentScorecard: (id: string) => request<AgentScorecard>(`/v1/agents/${id}/scorecard`),
   /** Asks the MCP door which tools a key may use. The console is served by the same server, so this needs no CORS. */
   mcpTools: async (key: string) => {
     const answer = await request<{ result?: { tools?: Array<{ name: string }> } }>('/mcp', { method: 'POST', key, body: { jsonrpc: '2.0', id: 1, method: 'tools/list' }, headers: { accept: 'application/json, text/event-stream' } })
     return (answer.result?.tools ?? []).map((tool) => tool.name)
   },
   shares: (jobId: string) => request<{ data: ShareSummary[] }>(`/v1/jobs/${encodeURIComponent(jobId)}/shares`),
-  createShare: (jobId: string, input: { partyId: string; ttlDays?: number; label?: string }) => request<{ share: ShareSummary; token: string; url: string }>(`/v1/jobs/${encodeURIComponent(jobId)}/shares`, { method: 'POST', body: input }),
+  createShare: (jobId: string, input: { partyId: string; ttlDays?: number; label?: string; canPay?: boolean }) => request<{ share: ShareSummary; token: string; url: string }>(`/v1/jobs/${encodeURIComponent(jobId)}/shares`, { method: 'POST', body: input }),
   revokeShare: (id: string) => request<ShareSummary>(`/v1/shares/${encodeURIComponent(id)}/revoke`, { method: 'POST' }),
   /** Opened by someone who holds a link and no key. It sends no key even if this browser has one. */
   shareView: (token: string) => request<ShareView>(`/v1/share/${encodeURIComponent(token)}`, { key: '' }),
+  /**
+   * Opens a card form for a locked bill on our own page. The link is the only proof a buyer has, so it sends no key.
+   */
+  paySession: (token: string, proposalId: string) => request<PaySession>(`/v1/share/${encodeURIComponent(token)}/pay/session`, { method: 'POST', body: { proposalId }, key: '' }),
+  /** The server captures the order it made from the lock, after re-reading it and checking it still matches. */
+  payCapture: (token: string, proposalId: string) => request<Proposal>(`/v1/share/${encodeURIComponent(token)}/pay/capture`, { method: 'POST', body: { proposalId }, key: '' }),
+  /** The same two steps for the owner, who may pay a bill themselves. */
+  paySessionOwner: (proposalId: string) => request<PaySession>('/v1/pay/session', { method: 'POST', body: { proposalId } }),
+  payCaptureOwner: (proposalId: string) => request<Proposal>('/v1/pay/capture', { method: 'POST', body: { proposalId } }),
   notify: () => request<{ enabled: boolean; lastSentAt: string | null; lastError: string | null; sent: number }>('/v1/notify'),
   notifyTest: () => request<{ enabled: boolean; lastSentAt: string | null; lastError: string | null; sent: number }>('/v1/notify/test', { method: 'POST' }),
   resetDemo: () => request<{ reset: true }>('/v1/demo/reset', { method: 'POST', body: { confirm: 'reset the demo' } }),
+  switchDemoRole: (role: 'owner' | 'approver' | 'proposer' | 'viewer' | 'payee') => request<{ role: string }>('/v1/demo/switch', { method: 'POST', body: { role } }),
+  liveProof: () => request<{ files: Array<{ name: string; content: unknown }> }>('/v1/live-proof'),
   clientKeys: () => request<ClientKeyRow[]>('/v1/client-keys'),
-  createClientKey: (input: { name: string; partyId: string }) => request<{ key: ClientKeyRow; apiKey: string }>('/v1/client-keys', { method: 'POST', body: input }),
-  revokeClientKey: (id: string) => request<ClientKeyRow>(`/v1/client-keys/${id}/revoke`, { method: 'POST' }),
-  rotateClientKey: (id: string) => request<{ key: ClientKeyRow; apiKey: string }>(`/v1/client-keys/${id}/rotate`, { method: 'POST' }),
+  createClientKey: async (input: { name: string; partyId: string }) => {
+    const body = { name: input.name.trim(), partyId: input.partyId.trim() }
+    const send = (grant?: string) => request<{ key: ClientKeyRow; apiKey: string }>('/v1/client-keys', { method: 'POST', body, headers: grant ? { 'x-mandate-stepup': grant } : undefined })
+    try {
+      return await send()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return signStep('client-key.issue', JSON.stringify(body), { input: body }, send)
+    }
+  },
+  revokeClientKey: async (id: string) => {
+    const send = (grant?: string) => request<ClientKeyRow>(`/v1/client-keys/${encodeURIComponent(id)}/revoke`, { method: 'POST', headers: grant ? { 'x-mandate-stepup': grant } : undefined })
+    try {
+      return await send()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return signStep('client-key.revoke', id, { id }, send)
+    }
+  },
+  rotateClientKey: async (id: string) => {
+    const send = (grant?: string) => request<{ key: ClientKeyRow; apiKey: string }>(`/v1/client-keys/${encodeURIComponent(id)}/rotate`, { method: 'POST', headers: grant ? { 'x-mandate-stepup': grant } : undefined })
+    try {
+      return await send()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return signStep('client-key.rotate', id, { id }, send)
+    }
+  },
   health: () => request<Health>('/health'),
   ready: () => request<Health>('/ready'),
   session: (key?: string) => request<Session>('/v1/session', { key }),
+  flags: () => request<ServerFlags>('/v1/flags'),
   warrant: () => request<Warrant>('/v1/warrant'),
   warrantVersions: () => request<{ data: Warrant[] }>('/v1/warrant/versions'),
-  publishWarrant: (body: unknown, expectedVersion?: number) => request<Warrant>('/v1/warrant', { method: 'PUT', body, headers: expectedVersion === undefined ? undefined : { 'x-expected-version': String(expectedVersion) } }),
+  publishWarrant: async (body: unknown, expectedVersion?: number) => {
+    try {
+      return await request<Warrant>('/v1/warrant', { method: 'PUT', body, headers: expectedVersion === undefined ? undefined : { 'x-expected-version': String(expectedVersion) } })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'rules', rules: body } })
+      const signed = await startAuthentication({ optionsJSON: started.options as never })
+      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+      return request<Warrant>('/v1/warrant', {
+        method: 'PUT',
+        body,
+        headers: {
+          ...(expectedVersion === undefined ? {} : { 'x-expected-version': String(expectedVersion) }),
+          'x-mandate-stepup': verified.grant,
+        },
+      })
+    }
+  },
   proposals: (cursor?: string | null) => request<Page<Proposal>>(`/v1/proposals?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
   proposal: (id: string) => request<Proposal>(`/v1/proposals/${id}`),
   packet: (id: string) => request<Packet>(`/v1/proposals/${id}/packet`),
   propose: (input: ProposalInput, idempotencyKey: string) => request<Proposal>('/v1/proposals', { method: 'POST', body: input, idempotencyKey }),
-  approve: (id: string) => request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST' }),
+  approve: async (id: string, how: 'auto' | 'demo' | 'passkey' = 'auto', instrument: 'invoice' | 'checkout' | null = null) => {
+    const body = instrument ? { instrument } : undefined
+    if (how === 'demo') return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-demo-tap': '1' }, body })
+    if (how === 'passkey') return approveWithPasskey(id, body)
+    try {
+      return await request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', body })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return approveWithPasskey(id, body)
+    }
+  },
   reject: (id: string) => request<Proposal>(`/v1/proposals/${id}/reject`, { method: 'POST' }),
   cancelPayout: (id: string) => request<Proposal>(`/v1/proposals/${id}/cancel-payout`, { method: 'POST' }),
   remindInvoice: (id: string) => request<Proposal>(`/v1/proposals/${id}/remind-invoice`, { method: 'POST' }),
@@ -265,8 +491,13 @@ export const api = {
   signingKeys: () => request<{ data: SigningKey[] }>('/.well-known/mandate-keys.json'),
   deals: () => request<{ data: Deal[] }>('/v1/deals?limit=50'),
   verifyDeal: (id: string) => request<DealCheck>(`/v1/deals/${id}/verify`),
-  offerDeal: (body: { buyer: string; as?: 'buyer' | 'seller'; threadId?: string; prompt?: string; terms: Record<string, unknown> }, idempotencyKey: string) =>
+  offerDeal: (body: { buyer: string; as?: 'buyer' | 'seller'; threadId?: string; prompt?: string; final?: boolean; offersPerSide?: number; terms?: Record<string, unknown>; totalCents?: number; milestoneCount?: number }, idempotencyKey: string) =>
     request<Deal>('/v1/deals/offers', { method: 'POST', body, idempotencyKey }),
+  acceptDeal: (id: string, body: { message?: string } = {}) => request<Deal>(`/v1/deals/${id}/accept`, { method: 'POST', body }),
+  negotiations: () => request<{ data: NegotiationView[] }>('/v1/negotiations'),
+  negotiation: (id: string) => request<NegotiationView>(`/v1/negotiations/${id}`),
+  walkAway: (id: string, body: { reason?: string } = {}) => request<NegotiationView>(`/v1/negotiations/${id}/walk-away`, { method: 'POST', body }),
+  agentMove: (id: string) => request<NegotiationView>(`/v1/negotiations/${id}/agent-move`, { method: 'POST' }),
   billMilestone: (dealId: string, milestone: number, evidenceUrl: string) =>
     request<Proposal>(`/v1/deals/${dealId}/milestones/${milestone}/bill`, { method: 'POST', body: { evidenceUrl } }),
   deliverMilestone: (dealId: string, milestone: number, evidenceUrl: string) =>
@@ -279,8 +510,34 @@ export const api = {
   // Write one company's sheet. Only the price fields are sent; everything else about the company is kept.
   putPartyRules: (partyId: string, body: Record<string, unknown>) => request<PartyRulesView>(`/v1/party-rules/${encodeURIComponent(partyId)}`, { method: 'PUT', body }),
   negotiate: (body: { buyerBrief?: string; sellerBrief?: string } = {}) => request<Negotiation>('/v1/negotiations', { method: 'POST', body }),
-  clerk: (message: string, conversationId?: string) => request<ClerkReply>('/v1/clerk/messages', { method: 'POST', body: { message, conversationId } }),
+  clerk: (message: string, conversationId?: string, context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string }) => request<ClerkReply>('/v1/clerk/messages', { method: 'POST', body: { message, conversationId, context } }),
   agentRuns: () => request<{ data: Array<{ id: string; agent: string; status: string; model: string; input: string; ms: number; createdAt: string }> }>('/v1/agent-runs'),
   agentRun: (id: string) => request<AgentRun>(`/v1/agent-runs/${id}`),
   ledger: (cursor?: string | null) => request<Page<LedgerEvent>>(`/v1/ledger?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
+  payees: () => request<{ payees: PayeeBookEntry[] }>('/v1/payees'),
+  payee: (id: string) => request<{ payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}`),
+  changePayee: (id: string, email: string) => request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/change`, { method: 'POST', body: { email } }),
+  confirmPayeeChange: async (id: string) => {
+    try {
+      return await request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/confirm-change`, { method: 'POST' })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'payee.change', payeeId: id } })
+      const signed = await startAuthentication({ optionsJSON: started.options as never })
+      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+      return request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/confirm-change`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant } })
+    }
+  },
+  cancelPayeeChange: (id: string) => request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/cancel-change`, { method: 'POST' }),
+  attestPayee: async (id: string) => {
+    try {
+      return await request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/attest`, { method: 'POST' })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'payee.attest', payeeId: id } })
+      const signed = await startAuthentication({ optionsJSON: started.options as never })
+      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+      return request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/attest`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant } })
+    }
+  },
 }

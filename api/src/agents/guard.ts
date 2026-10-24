@@ -2,6 +2,7 @@
  * Output guards. The model's prose is commentary; the tool results are the facts. These keep a confident but wrong
  * sentence from ever reaching a person as if it were the rules' answer.
  */
+import { paidPhase } from '../domain/phases'
 
 const CLAIMS_MONEY_MOVED = [
   /\b(i['’]?ve|i have|we['’]?ve|we have|has been|have been|was|were|is now|are now|successfully)\s+(paid|sent|transferred|released|processed|settled|approved|refunded|completed)\b/i,
@@ -67,10 +68,24 @@ export function unsupportedAmounts(reply: string, evidence: string[]): number[] 
   return amountsIn(reply).filter((cents) => !known.has(cents))
 }
 
+/** Every email address in a piece of text, in the order they appear. */
+export function addressesIn(text: string): string[] {
+  return [...text.matchAll(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g)].map((match) => match[0]!)
+}
+
+/**
+ * Addresses the model used that the person never wrote. An address is where the money goes, so the only source of
+ * one may be the owner: a model may not guess an address, complete one, or correct one to what it thinks is right.
+ */
+export function unsupportedAddresses(text: string, words: string): string[] {
+  const written = words.toLowerCase()
+  return addressesIn(text).filter((address) => !written.includes(address.toLowerCase()))
+}
+
 export function composeReply(modelText: string, outcomes: Outcome[], evidence: string[] = []): { reply: string; guarded: boolean } {
   const facts = outcomes.map(describe).filter((line): line is string => Boolean(line))
   const text = modelText.trim()
-  const moved = outcomes.some((outcome) => outcome.ok && (outcome.data.phase === 'captured' || outcome.data.phase === 'refunded'))
+  const moved = outcomes.some((outcome) => outcome.ok && paidPhase(outcome.data.phase as string))
   // Checked only when there is evidence to check against: a reply with no tool results has no figures to vouch for.
   const invented = evidence.length > 0 ? unsupportedAmounts(text, evidence) : []
   if (invented.length > 0) {

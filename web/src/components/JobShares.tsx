@@ -19,11 +19,13 @@ export function JobShares({ job }: { job: Job }) {
   ]
   const [partyId, setPartyId] = useState('')
   const [days, setDays] = useState('30')
+  const [canPay, setCanPay] = useState(false)
   const [made, setMade] = useState<{ url: string; name: string } | null>(null)
   const [copied, setCopied] = useState(false)
   const chosen = partyId || people[0]?.id || ''
+  const isClient = chosen === job.client?.id
   const create = useMutation({
-    mutationFn: () => api.createShare(job.jobId, { partyId: chosen, ttlDays: Number(days) }),
+    mutationFn: () => api.createShare(job.jobId, { partyId: chosen, ttlDays: Number(days), canPay: canPay && isClient }),
     onSuccess: (result) => {
       setMade({ url: result.url, name: result.share.partyName })
       setCopied(false)
@@ -59,8 +61,14 @@ export function JobShares({ job }: { job: Job }) {
             <option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option>
           </select>
         </label>
+        <label className="field check"><input type="checkbox" checked={canPay && isClient} disabled={!isClient} onChange={(event) => setCanPay(event.target.checked)} data-testid="share-can-pay" />
+          <span>May pay what is due</span>
+        </label>
         <button type="button" className="btn btn-ink" disabled={!chosen || create.isPending} onClick={() => create.mutate()}>Create link</button>
       </div>
+      {isClient ? (
+        <p className="fine">A client link may also carry the right to pay: the bill is paid on this page, with a card, and the amount cannot change. Only a client is ever asked to pay.</p>
+      ) : null}
       {made ? (
         <div className="draft-added" role="status" data-testid="share-made">
           <strong>Copy this link for {made.name}. It is shown once.</strong>
@@ -75,6 +83,7 @@ export function JobShares({ job }: { job: Job }) {
             <li key={share.id} className="row between wrap gap-s">
               <span><strong>{share.partyName}</strong> <span className="muted small">· {share.role} · {share.views} view{share.views === 1 ? '' : 's'} · expires {new Date(share.expiresAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span></span>
               <span className="row gap-s">
+                {share.canPay ? <Chip tone="auto" title="This link may pay what is due, on the page">May pay</Chip> : null}
                 <Chip tone={share.active ? 'auto' : 'muted'}>{share.revokedAt ? 'withdrawn' : share.active ? 'active' : 'expired'}</Chip>
                 {share.active ? <button type="button" className="btn btn-ghost btn-small" onClick={() => revoke.mutate(share.id)} disabled={revoke.isPending}>Withdraw</button> : null}
               </span>

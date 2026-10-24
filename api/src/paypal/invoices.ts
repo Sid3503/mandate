@@ -1,4 +1,4 @@
-import { centsToPayPal, payPalToCents } from '../domain/money'
+import { centsToPayPal, moneyCents, payPalToCents } from '../domain/money'
 import { PayPalError } from './port'
 import { createToolkit, type Json } from './toolkit'
 
@@ -13,6 +13,10 @@ export type InvoiceRequest = {
   note: string
   recipientEmail: string
   recipientName: string
+  /** Whether the client may pay this invoice in part. The owner's rules decide; PayPal honours it only where PayPal offers it. */
+  allowPartialPayment: boolean
+  /** A conditional discount from the deal: pay by `dueDate` and PayPal takes `percentBps` off. Null when the deal carries none. */
+  earlyPaymentDiscount: { percentBps: number; dueDate: string } | null
 }
 
 export type LiveInvoice = {
@@ -28,6 +32,16 @@ export type LiveInvoice = {
   transactionId: string | null
   reference: string | null
   payerUrl: string | null
+  /**
+   * PayPal's own adjustment fields, so a difference between the invoice and the lock can be attributed to
+   * something PayPal reported rather than guessed at. Null means PayPal did not report that field, which is not
+   * the same as zero. `amount.breakdown.discount`: an invoice-level discount, when PayPal states it as an amount.
+   */
+  discountCents: number | null
+  /** `early_payment_discount`: present only when PayPal says the rule was applied. */
+  earlyDiscountCents: number | null
+  /** A fee PayPal reported on the payment. PayPal does not always report one on an invoice. */
+  feeCents: number | null
 }
 
 /** Billing a client with a PayPal invoice. Only ever called by the server, after the owner's tap. */
@@ -44,6 +58,14 @@ export type InvoicePort = {
 }
 
 export const invoiceNumberFor = (proposalId: string) => `MND-${proposalId.replaceAll('-', '').slice(0, 16).toUpperCase()}`
+
+/** Basis points as PayPal's fixed-point percentage: 200 is "2", 250 is "2.5", 205 is "2.05". */
+export const percentString = (percentBps: number): string => {
+  const whole = Math.floor(percentBps / 100)
+  const fraction = percentBps % 100
+  if (fraction === 0) return String(whole)
+  return `${whole}.${String(fraction).padStart(2, '0').replace(/0$/, '')}`
+}
 
 /**
  * PayPal's own Agent Toolkit, run inside our server, for everything about billing a client by invoice.
@@ -65,8 +87,9 @@ export function createToolkitInvoices(options: { clientId: string; clientSecret:
         reference: input.proposalId,
         note: input.note.slice(0, 4000),
         primary_recipients: [{ billing_info: { email_address: input.recipientEmail, name: { given_name: given || 'Client', surname: rest.join(' ') || undefined }, business_name: input.recipientName.slice(0, 300) } }],
-        items: [{ name: input.title.slice(0, 200), description: input.description.slice(0, 1000), quantity: '1', unit_amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents) } }],
-        allow_partial_payment: false,
+        items: [{ name: input.title.slice(0, 200), description: input.description.slice(0, 1000), quantity: '1', unit_amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) } }],
+        allow_partial_payment: input.allowPartialPayment,
+        ...(input.earlyPaymentDiscount ? { early_payment_discount: { percent: percentString(input.earlyPaymentDiscount.percentBps), due_date: input.earlyPaymentDiscount.dueDate } } : {}),
       })
       const id = idFrom(result)
       if (!id) throw new PayPalError(502, 'paypal_malformed', null, 'create_invoice returned no id')
@@ -122,6 +145,7 @@ export function parseInvoice(invoice: Json, fallbackId: string): LiveInvoice {
   const paid = paidThroughPayPal.reduce((sum, item) => sum + paid1(item), 0)
   const first = paidThroughPayPal.find((item) => typeof item.payment_id === 'string')
   const value = (amount.value ?? ((amount.breakdown ?? {}) as Json).value) as string | undefined
+  const early = (invoice.early_payment_discount ?? null) as Json | null
   return {
     invoiceId: typeof invoice.id === 'string' ? invoice.id : fallbackId,
     number: typeof detail.invoice_number === 'string' ? detail.invoice_number : null,
@@ -132,7 +156,24 @@ export function parseInvoice(invoice: Json, fallbackId: string): LiveInvoice {
     transactionId: typeof first?.payment_id === 'string' ? first.payment_id : null,
     reference: typeof detail.reference === 'string' ? detail.reference : null,
     payerUrl: typeof metadata.recipient_view_url === 'string' ? metadata.recipient_view_url : null,
+    discountCents: moneyCents(((amount.breakdown ?? {}) as Json).discount),
+    // `is_applied` is the field that says the conditional rule was actually taken. Without it the amount is the
+    // offer, not a fact, and it must not be used to explain money that arrived.
+    earlyDiscountCents: early && early.is_applied === true ? moneyCents(early) : null,
+    feeCents: feeCents(transactions),
   }
+}
+
+/** The seller's fee PayPal reported on a payment, when it reports one at all. Absent means unknown, never zero. */
+function feeCents(transactions: Json[]): number | null {
+  for (const transaction of transactions) {
+    const direct = moneyCents(transaction.fee_amount)
+    if (direct !== null) return direct
+    const breakdown = (transaction.seller_receivable_breakdown ?? {}) as Json
+    const reported = moneyCents(breakdown.paypal_fee)
+    if (reported !== null) return reported
+  }
+  return null
 }
 
 function paid1(transaction: Json): number {

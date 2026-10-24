@@ -27,6 +27,8 @@ export type ToolCall<S extends z.ZodType> = {
   attempts?: number
   timeoutMs?: number
   onRetry?: (attempt: number, reason: string) => void
+  /** How hard a reasoning model thinks before it answers. Left out, the model's own default. */
+  reasoning?: 'low' | 'medium' | 'high'
 }
 
 export type ToolResult<S extends z.ZodType> = {
@@ -55,6 +57,7 @@ export async function callTool<S extends z.ZodType>(input: ToolCall<S>): Promise
         tools: { [input.name]: tool({ description: input.description, inputSchema: input.schema }) },
         temperature: 0,
         maxRetries: 1,
+        ...(input.reasoning ? { reasoning: input.reasoning } : {}),
         toolChoice: { type: 'tool', toolName: input.name },
         stopWhen: [hasToolCall(input.name), stepCountIs(3)],
         abortSignal: AbortSignal.any([...(input.signal ? [input.signal] : []), AbortSignal.timeout(input.timeoutMs ?? 60_000)]),

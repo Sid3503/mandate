@@ -27,6 +27,26 @@ export const TOOL_WORDS: Record<string, string> = {
 /** A tool with one of these names could move money. The door never offers one; the connection check says so if it ever did. */
 export const FORBIDDEN_TOOLS = ['approve', 'reject', 'capture', 'pay', 'send_payout', 'refund', 'publish_rules', 'cancel', 'settle']
 
+/** What a key can and cannot do given its scopes. */
+export function canAndCannotFor(scopes: AgentScope[]): { can: string[]; cannot: string[] } {
+  const can: string[] = []
+  if (scopes.includes('mcp')) can.push('Connect through the Model Context Protocol (MCP) door')
+  if (scopes.includes('read')) can.push('Read company rules, open jobs, and ledger history')
+  if (scopes.includes('propose')) can.push('Ask Mandate to pay vendors or bill clients through standing rules')
+  if (scopes.includes('deals')) can.push('Offer and negotiate deal terms with client agents')
+  if (scopes.includes('stream')) can.push('Subscribe to live ledger and delivery event streams')
+
+  const cannot: string[] = [
+    'Approve or capture any payment (only the studio owner can approve)',
+    'Change, publish, or delete studio rules',
+    'Emergency pause or resume the system',
+    'Access raw PayPal tokens or payment secrets',
+    'Modify vendor payout details or add unverified payees',
+  ]
+
+  return { can, cannot }
+}
+
 /** The ready-to-paste connection details for one key. The key lives only in the page's memory and is shown once. */
 export function commandsFor(url: string, key: string) {
   return {

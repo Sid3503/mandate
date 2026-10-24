@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import type { TourStep } from '../components/ui/product-tour'
 
-export type TourId = 'welcome' | 'inbox' | 'proof' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk' | 'control-room'
+export type TourId = 'welcome' | 'coach' | 'inbox' | 'proof' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk' | 'control-room'
 
 const p = (children: ReactNode) => <p>{children}</p>
 
 export const TOUR_LABEL: Record<TourId, string> = {
   welcome: 'the console',
+  coach: 'Quick tour',
   inbox: 'Today',
   proof: 'Proof',
   new: 'New request',
@@ -37,7 +38,7 @@ export function tourFor(pathname: string): TourId {
   return 'inbox'
 }
 
-const FLOW: TourStep = {
+export const FLOW: TourStep = {
   title: 'How one payment moves',
   placement: 'center',
   content: (
@@ -132,6 +133,30 @@ export const TOURS: Record<TourId, TourStep[]> = {
           {p('That is the tour. Try New request next: ask for a lunch and see the rules say no.')}
         </>
       ),
+    },
+  ],
+
+  coach: [
+    {
+      target: '[data-tour="nav-waiting"]',
+      title: 'What needs you',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: p('Where you land. Requests waiting for your approval appear here. Only your tap or signed standing rules move money.'),
+    },
+    {
+      target: '[data-tour="nav-clerk"]',
+      title: 'Agents can ask',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: p('Staff and AI agents can ask in plain words. They never hold the PayPal key and can never approve.'),
+    },
+    {
+      target: '[data-tour="nav-rules"]',
+      title: 'Rules guard every dollar',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: p('Limits, payee rules, and client-money ceilings judge every request in code before anything reaches PayPal.'),
     },
   ],
 
@@ -518,49 +543,49 @@ export const TOURS: Record<TourId, TourStep[]> = {
       target: '[data-tour="page-head"]',
       title: 'Deals come before money',
       placement: 'bottom',
-      content: p('The client’s agent and the studio’s agent agree a price and milestones here. The terms must fit both companies’ rules. Agents can say anything to each other; the rules decide what stands.'),
+      content: p('You and your client agree a price and milestones here, before any money exists. A deal exists only when one side accepts the other’s exact offer, inside both companies’ own limits.'),
     },
     {
       target: '[data-tour="deal-negotiate"]',
-      title: 'Let the agents negotiate',
+      title: 'Let the negotiators negotiate',
       placement: 'bottom',
-      content: p('Two AI agents, one per company, trade offers, and you watch it happen. Each is told only its own limits. A refusal tells an agent which way to move, never the other side’s number. You can press Stop at any time.'),
+      content: p('Name the job, its milestones and the deadline (how many offers each side may make). Your negotiator opens and concedes on its own judgement inside your walk-away. A client that speaks for itself answers from its own console; one that delegated has its own negotiator. You can press Stop at any time.'),
     },
     {
       target: '[data-tour="deal-story"]',
       title: 'The live stage',
       placement: 'auto',
-      content: p('Each agent takes a seat and shows when it is thinking. Every offer lands as a pin on the price line, studio above and client below, next to the green zone where a deal can exist. A refusal names the rule and which way to move. The agents chose the offers; the rules decided every verdict.'),
+      content: p('Each negotiator shows when it is thinking. Every move appears with what it said, and your side’s private note. The chart shows both sides’ offers closing in. At the end: how it ended, how good the price was for you, and your negotiator’s debrief.'),
     },
     {
       target: '[data-tour="deal-band"]',
       title: 'Where a deal can exist',
       placement: 'auto',
-      content: p('The client’s most and the studio’s least, drawn on one line. The green overlap is the only place a deal can be agreed. Only you see this picture; the agents never see each other’s limit.'),
+      content: p('Your floor, and the client’s ceiling if you may see it (a demo you play from both chairs). A client that set its own number with its own key is sealed: you see only that a limit is set.'),
     },
     {
       target: '[data-tour="deal-agreed"]',
       title: 'An agreed deal',
       placement: 'auto',
-      content: p('Signed by the server. Its job now accepts charges only for its own milestones, for exactly the agreed amounts.'),
+      content: p('Accepted by one side and signed by the server. Its job now accepts charges only for its own milestones, for exactly the agreed amounts.'),
     },
     {
       target: '[data-tour="deal-milestones"]',
       title: 'Bill one milestone at a time',
       placement: 'auto',
-      content: p('Add a link to the delivered work and bill the next milestone. That creates a client charge for exactly that amount, which you still approve on the Waiting page.'),
+      content: p('Add a link to the delivered work and bill the next milestone. That creates a client charge for exactly that amount, which you still approve on Today.'),
     },
     {
       target: '[data-tour="deal-offer"]',
-      title: 'Try it yourself',
+      title: 'Make the opening offer yourself',
       placement: 'top',
-      content: p('Offer $450 (over the client’s limit), then $200 (under the studio’s minimum), then $300. The reasons are shown, with a hint of which way to move.'),
+      content: p('Your offer must be inside your own walk-away. It then stands until the client accepts it, counters it or walks away.'),
     },
     {
       target: '[data-tour="empty"]',
       title: 'No deals yet',
       placement: 'bottom',
-      content: p('Press “Let the agents negotiate” to watch a deal form, or make an offer below.'),
+      content: p('Let the negotiators negotiate, or make the opening offer yourself below.'),
     },
   ],
 
@@ -583,7 +608,7 @@ export const TOURS: Record<TourId, TourStep[]> = {
       title: 'What it can and cannot do',
       placement: 'left',
       mobilePlacement: 'top',
-      content: p('It can read and ask. It cannot approve, pay or change rules. Anything it asks for that needs your tap shows up on the Waiting page.'),
+      content: p('It can read and ask. It cannot approve, pay or change rules. Anything it asks for that needs your tap shows up on Today.'),
     },
   ],
 

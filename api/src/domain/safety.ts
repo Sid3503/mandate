@@ -16,11 +16,15 @@ export type PauseState = {
   by: 'owner' | 'breaker' | null
   /** Counts resumes. A request asked on behalf of the autopilot carries it, so a refusal while paused is not replayed forever. */
   epoch: number
+  autopilotPaused?: boolean
 }
 
-export const NOT_PAUSED: PauseState = { paused: false, reason: null, since: null, by: null, epoch: 0 }
+export const NOT_PAUSED: PauseState = { paused: false, reason: null, since: null, by: null, epoch: 0, autopilotPaused: false }
 
 export function applyPause(decision: Decision, pause: PauseState, actor: string): Decision {
+  if (pause.autopilotPaused && actor === 'autopilot' && decision.gate !== 'DENY') {
+    return { gate: 'DENY', clause: Clause.systemPaused, detail: 'Autopilot is paused: automatic billing and payouts are stopped until resumed' }
+  }
   if (!pause.paused || decision.gate === 'DENY') return decision
   const why = pause.reason ? ` (${pause.reason})` : ''
   if (actor !== 'owner') {

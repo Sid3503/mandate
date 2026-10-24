@@ -1,6 +1,6 @@
 # Mandate — knowledge transfer: history of an early Orders design
 
-> This file is the history of an early Orders design: $25 captures, a $60 cap, the clerk not built, and the payee not sent to PayPal. The cap, the clerk, the payout receiver, and the console have moved. The current cap is 18000 cents on `LINE_STUDIO_WARRANT` in `api/src/domain/schemas.ts`. Current `settlePayout` in `api/src/services/mandate.ts` sends `receiverEmail: payee.email`. The sections below are that history. The sandbox account table is a past local database, not the seed. The product story is in [README.md](README.md), with the long version in [docs/REFERENCE.md](docs/REFERENCE.md). How to call the API is in [api/README.md](api/README.md).
+> This file is the history of an early Orders design: $25 captures, a $60 cap, the clerk not built, and the payee not sent to PayPal. The cap, the clerk, the payout receiver, and the console have moved. The current cap is 18000 cents on `LINE_STUDIO_WARRANT` in `api/src/domain/schemas.ts`. Current `settlePayout` in `api/src/services/mandate.ts` sends `receiverEmail: payee.email`. The sections below are that history. The sandbox account table is a past local database, not the seed. The product story is in [README.md](README.md), with the long version in [docs/REFERENCE.md](docs/REFERENCE.md). How to call the API is in [api/README.md](api/README.md). The **"Create your studio" door** — what a studio owns, the flags and secrets it needs, and the traps that cost a day — is in [docs/KT-STUDIO.md](docs/KT-STUDIO.md).
 
 ## What this repo is
 

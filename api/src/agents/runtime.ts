@@ -1,6 +1,6 @@
 import { createMCPClient } from '@ai-sdk/mcp'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { hasToolCall, stepCountIs, streamText, type ModelMessage } from 'ai'
+import { stepCountIs, streamText, type ModelMessage } from 'ai'
 import { createMandateMcpServer } from '../mcp/server'
 import { Problem } from '../http/problem'
 import type { Services } from '../services/container'
@@ -36,10 +36,18 @@ export type RunInput = {
   /** Requests the agent may make through propose and offer_deal in this run. */
   asks?: number
   timeoutMs?: number
-  /** End the run as soon as this tool has been called, instead of waiting for the model to summarise. */
-  stopAfter?: string
+  /** End the run as soon as one of these tools has been called successfully, instead of waiting for the model to summarise. */
+  stopAfter?: string | string[]
+  /** The only MCP tools this run may see. An agent with one job gets that job's tools and nothing else. */
+  onlyTools?: string[]
+  /** Sampling temperature. 0 by default, so a message gets a repeatable answer; null leaves the model card's own default. */
+  temperature?: number | null
+  /** How hard a reasoning model thinks before it answers. Left out, the model's own default. */
+  reasoning?: 'low' | 'medium' | 'high'
   /** The person's words. Lets the door check that a request names who the person named. */
   requestText?: string
+  /** The client this negotiation is with. offer_deal may name only that client. */
+  dealClientId?: string
   /** Cancels the model call, for a person who pressed Stop. */
   signal?: AbortSignal
   /** Told as each model step finishes, so a screen can show the rules' answer before the model's words. */
@@ -62,7 +70,12 @@ export type RunOutput = {
   turns: number
 }
 
-const WRITE_TOOLS = new Set(['propose', 'offer_deal'])
+const WRITE_TOOLS = new Set(['propose', 'offer_deal', 'accept_offer', 'walk_away'])
+
+/** True when the step called one of these tools and the tool did not answer with an error. */
+function succeeded(step: { toolResults: Array<{ toolName: string; output: unknown }> } | undefined, tools: string[]): boolean {
+  return Boolean(step?.toolResults.some((item) => tools.includes(item.toolName) && unpack(item.output).ok))
+}
 
 /**
  * One agent run, end to end.
@@ -74,7 +87,7 @@ const WRITE_TOOLS = new Set(['propose', 'offer_deal'])
  */
 export async function runAgent(input: RunInput): Promise<RunOutput> {
   const started = Date.now()
-  const server = createMandateMcpServer({ services: input.services, principal: input.principal, runId: input.runId, budget: { asks: input.asks ?? 3 }, requestText: input.requestText })
+  const server = createMandateMcpServer({ services: input.services, principal: input.principal, runId: input.runId, budget: { asks: input.asks ?? 3 }, requestText: input.requestText, dealClientId: input.dealClientId, onlyTools: input.onlyTools, hosted: true })
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
   await server.connect(serverSide)
   const mcp = await createMCPClient({ transport: clientSide as never })
@@ -90,8 +103,9 @@ export async function runAgent(input: RunInput): Promise<RunOutput> {
         messages: input.messages,
         tools,
         toolChoice: input.toolChoice ?? 'auto',
-        temperature: 0,
-        maxRetries: 2,
+        ...(input.temperature === null ? {} : { temperature: input.temperature ?? 0 }),
+        // Retries are owned by this loop and by the caller's model fallback, not stacked inside the SDK as well.
+        maxRetries: 0,
         abortSignal: input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(input.timeoutMs ?? 60_000)]) : AbortSignal.timeout(input.timeoutMs ?? 60_000),
         onError: () => undefined,
         onStepFinish: input.onStep ? (step) => input.onStep!({
@@ -99,7 +113,10 @@ export async function runAgent(input: RunInput): Promise<RunOutput> {
           toolCalls: step.toolCalls.map((call) => ({ tool: call.toolName, input: call.input })),
           toolResults: step.toolResults.map((item) => { const unpacked = unpack(item.output); return { tool: item.toolName, ok: unpacked.ok, output: unpacked.data } }),
         }) : undefined,
-        stopWhen: input.stopAfter ? [stepCountIs(input.maxSteps ?? 8), hasToolCall(input.stopAfter)] : stepCountIs(input.maxSteps ?? 8),
+        ...(input.reasoning ? { reasoning: input.reasoning } : {}),
+        // A tool that answered with an error does not end the run: the model is shown the error and may correct itself
+        // on its next step. Only a tool that succeeded ends it.
+        stopWhen: input.stopAfter ? [stepCountIs(input.maxSteps ?? 8), ({ steps }) => succeeded(steps.at(-1), [input.stopAfter!].flat())] : stepCountIs(input.maxSteps ?? 8),
       })
       // Read the stream to the end. A failure arrives as an `error` part, not as an exception, so it is kept and thrown after.
       let streamError: unknown = null
@@ -177,23 +194,36 @@ export async function runAgent(input: RunInput): Promise<RunOutput> {
     if (name === 'AI_ToolChoiceViolationError' || /tool choice was required/i.test((error as Error)?.message ?? '')) {
       throw new Problem(422, 'agent.no_tool_call', 'The agent did not act', 'The model answered in words instead of making the one call it was asked to make. Nothing was sent to PayPal.')
     }
-    // The SDK itself enforces `toolChoice: required`: a model that answers in words instead of calling the tool is a
-    // distinct, named outcome, not a crash.
-    if (name === 'AI_ToolChoiceViolationError' || /tool choice was required/i.test((error as Error)?.message ?? '')) {
-      throw new Problem(422, 'agent.no_tool_call', 'The agent did not act', 'The model answered in words instead of making the one call it was asked to make. Nothing was sent to PayPal.')
-    }
     if (input.signal?.aborted) throw new Problem(499, 'agent.stopped', 'Stopped', 'The run was stopped before it finished. Nothing was sent to PayPal.')
-    if (name === 'TimeoutError' || name === 'AbortError') {
+    if (isTimeout(error)) {
       throw new Problem(504, 'agent.timeout', 'The agent took too long', 'The model did not finish in time. Nothing was sent to PayPal.')
     }
-    if ((error as { statusCode?: number })?.statusCode === 429) {
-      throw new Problem(429, 'agent.rate_limited', 'The model is busy', 'The language model is rate limiting us. Nothing was sent to PayPal. Try again in a moment.')
+    if (isRateLimitedOrRefused(error)) {
+      throw new Problem(429, 'agent.rate_limited', 'The model is busy', 'The language model provider refused usage or reached its rate limit. Nothing was sent to PayPal. Try again in a moment.')
     }
     throw new Problem(502, 'agent.model_error', 'The model could not be reached', 'The language model failed. Nothing was sent to PayPal. Try again.')
   } finally {
     await mcp.close().catch(() => undefined)
     await server.close().catch(() => undefined)
   }
+}
+
+function isTimeout(error: unknown): boolean {
+  if (!error) return false
+  const e = error as any
+  if (e.name === 'TimeoutError' || e.name === 'AbortError') return true
+  if (/timeout|aborted/i.test(e.message ?? '')) return true
+  if (e.cause && isTimeout(e.cause)) return true
+  return false
+}
+
+function isRateLimitedOrRefused(error: unknown): boolean {
+  if (!error) return false
+  const e = error as any
+  if (e.statusCode === 429 || e.statusCode === 402 || e.status === 429 || e.status === 402) return true
+  if (/quota|usage refusal|insufficient_quota|model usage refused|rate limit/i.test(e.message ?? '')) return true
+  if (e.cause && isRateLimitedOrRefused(e.cause)) return true
+  return false
 }
 
 /** An MCP tool result, as the AI SDK hands it back, reduced to "did it work" and the structured answer. */
@@ -216,6 +246,7 @@ function unpack(output: unknown): { ok: boolean; data: Record<string, unknown> }
 function isTransient(error: unknown): boolean {
   const e = error as { name?: string; statusCode?: number; isRetryable?: boolean; message?: string } | null
   if (!e) return false
+  if (/quota|refusal|credit|balance/i.test(e.message ?? '')) return false
   if (e.name === 'AI_StreamProviderError' || /server had an error|overloaded|temporarily unavailable|ECONNRESET|socket hang up/i.test(e.message ?? '')) return true
   if (typeof e.statusCode === 'number') return e.statusCode >= 500 || e.statusCode === 429
   return e.isRetryable === true

@@ -26,10 +26,12 @@ describe('the demo model (the scripted stand-in used by npm run demo)', () => {
     expect(q.json.outcomes).toEqual([])
   })
 
-  it('negotiates $450, $200, $300', async () => {
+  it('plays the reference moves to $300: 400, 200, 350, 265, 300, accepted', async () => {
     const { app } = harness({ model: demoModel() })
     await confirmPrices(app)
     const run = await call(app, 'POST', '/v1/negotiations', { body: {} })
-    expect(run.json.turns.map((t: { deal: { terms: { totalCents: number } } }) => t.deal.terms.totalCents)).toEqual([45_000, 20_000, 30_000])
+    expect(run.json.negotiation.moves.map((move: { action: string; totalCents: number }) => `${move.action}:${move.totalCents}`)).toEqual(['offer:40000', 'offer:20000', 'offer:35000', 'offer:26500', 'offer:30000', 'accept:30000'])
+    expect(run.json).toMatchObject({ agreed: true, status: 'agreed' })
+    expect(run.json.negotiation.seats.seller.debrief).toMatchObject({ satisfaction: 'acceptable' })
   })
 })

@@ -11,10 +11,12 @@ import { PauseButton } from './PauseButton'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../lib/api'
 import { useOnline, useSession, useToday } from '../lib/hooks'
+
 import { AskProvider, useAsk } from './Ask'
 import { session } from '../lib/session'
 import { GuideButton, GuideProvider, useGuide } from './GuidedTour'
 import { Chip } from './ui'
+import { useStudioName } from './StoryRail'
 
 type NavItem = { to: string; label: string; tour: string; icon: string; end?: boolean; also?: string[] }
 
@@ -29,12 +31,41 @@ const NAV: NavItem[] = [
 /** Quiet shortcuts on the desktop rail. On a phone they live inside Jobs and Today. */
 const MORE: NavItem[] = [
   { to: '/deals', label: 'Deals', tour: 'nav-deals', icon: 'M3 12h7 M14 12h7 M9 7l3 5-3 5 M15 7l-3 5 3 5' },
+  { to: '/payees', label: 'Payees', tour: 'nav-payees', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75' },
   { to: '/new', label: 'Request form', tour: 'nav-new', icon: 'M12 5v14 M5 12h14' },
   { to: '/clerk', label: 'Ask Mandate', tour: 'nav-clerk', icon: 'M4 5h16v11H9l-5 4z M8 9h8 M8 12h5' },
   { to: '/system#h-connect', label: 'Connect an agent', tour: 'nav-connect', icon: 'M8 12h8 M5 8v8 M19 8v8 M3 10v4 M21 10v4' },
 ]
 
 /** Everything the desktop rail shows. */
+
+const ROLE_WORD: Record<string, string> = {
+  owner: 'Owner',
+  approver: 'Approver',
+  proposer: 'Proposer',
+  viewer: 'Viewer',
+  payee: 'Payee',
+}
+
+const ROLE_CHIP: Record<string, string> = {
+  approver: 'Approver · the queue, not the rules',
+  proposer: 'Proposer · can ask, not approve',
+  viewer: 'Viewer · can look',
+  payee: 'Payee · your payments',
+}
+
+/** The chip says which PayPal this server actually uses. A simulated demo is not a missing account. */
+function paypalChip(mode: string | undefined): { text: string; tone: 'auto' | 'muted'; title: string } {
+  if (mode === 'live') return { text: 'PayPal live', tone: 'auto', title: 'Every studio on this server settles through one live PayPal account.' }
+  if (mode === 'sandbox') return { text: 'PayPal sandbox', tone: 'auto', title: 'Every studio on this server settles through one PayPal sandbox. Invoices and payouts still go to this studio.' }
+  if (mode === 'fake') return { text: 'Simulated PayPal', tone: 'muted', title: 'No real money. This demo uses a stand-in for PayPal.' }
+  return { text: 'PayPal not connected', tone: 'muted', title: 'Nothing on this server can be charged until PayPal is connected.' }
+}
+/** A client key sees only its own price. The rest of the studio is not its console. */
+const CLIENT_NAV: NavItem[] = [
+  { to: '/deals', label: 'Deals', tour: 'nav-deals', icon: 'M3 12h7 M14 12h7 M9 7l3 5-3 5 M15 7l-3 5 3 5', end: true },
+]
+
 const RAIL: NavItem[] = [...NAV, ...MORE]
 
 /**
@@ -151,6 +182,7 @@ function ShellFrame() {
     return () => window.removeEventListener('keydown', onKey)
   }, [toggleRail])
   const waiting = Array.isArray(today.data?.waiting) ? today.data.waiting.length : 0
+  const studio = useStudioName()
   const live = useLive()
   const paused = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 15_000, retry: false }).data?.paused ?? null
   const location = useLocation()
@@ -161,6 +193,33 @@ function ShellFrame() {
     toast({ title: 'Locked', body: 'The key is gone from this tab.', tone: 'info', key: 'lock' })
     navigate('/unlock', { replace: true })
   }
+
+  const onSwitchDemoRole = async (role: 'owner' | 'approver' | 'proposer' | 'viewer' | 'payee') => {
+    try {
+      await api.switchDemoRole(role)
+      await client.invalidateQueries()
+      toast({ title: `Switched to ${role}`, body: `You are now browsing as ${role}.`, tone: 'info', key: 'demo-role' })
+      const landing = role === 'proposer' ? '/clerk' : role === 'viewer' ? '/proof' : role === 'payee' ? '/payments' : '/'
+      navigate(landing)
+    } catch {
+      toast({ title: 'Could not switch role', body: 'The demo role switch failed.', tone: 'warn', key: 'demo-role-error' })
+    }
+  }
+
+  const onResetDemo = async () => {
+    try {
+      await api.resetDemo()
+      await client.invalidateQueries()
+      toast({ title: 'Demo reset', body: 'The ledger and rules are back to a fresh Line Studio.', tone: 'info', key: 'demo-reset' })
+      navigate('/')
+    } catch {
+      toast({ title: 'Could not reset demo', body: 'Reset failed.', tone: 'warn', key: 'demo-reset-error' })
+    }
+  }
+  const buyer = me.data?.side === 'buyer'
+  const nav = buyer ? CLIENT_NAV : NAV
+  const more = buyer ? [] : MORE
+  const rail = buyer ? CLIENT_NAV : RAIL
   return (
     <div className="shell" data-collapsed={collapsed ? 'true' : 'false'}>
       <a className="skip" href="#main">Skip to content</a>
@@ -180,17 +239,20 @@ function ShellFrame() {
           <span className="brand-word">Mandate</span>
         </div>
         <nav className="rail-nav" aria-label="Sections">
-          {NAV.map((item) => (
-            <RailLink key={item.to} item={item} collapsed={collapsed} here={isHere(item, location.pathname, RAIL)} badge={item.to === '/' ? waiting : 0} />
+          {nav.map((item) => (
+            <RailLink key={item.to} item={item} collapsed={collapsed} here={isHere(item, location.pathname, rail)} badge={item.to === '/' ? waiting : 0} />
           ))}
+          {more.length > 0 ? (
           <div className="rail-more" role="group" aria-label="More">
             <span className="rail-more-title rail-label">More</span>
-            {MORE.map((item) => (
-              <RailLink key={item.to} item={item} collapsed={collapsed} here={isHere(item, location.pathname, RAIL)} badge={0} small />
+            {more.map((item) => (
+              <RailLink key={item.to} item={item} collapsed={collapsed} here={isHere(item, location.pathname, rail)} badge={0} small />
             ))}
           </div>
+          ) : null}
         </nav>
         <div className="rail-foot">
+          {buyer ? null : (
           <NavLink to="/system" className="rail-link small" title={collapsed ? 'System' : undefined}>
             {({ isActive }) => (
               <>
@@ -200,9 +262,10 @@ function ShellFrame() {
               </>
             )}
           </NavLink>
-          <button type="button" className="link rail-tour" onClick={() => guide.start('welcome')} title={collapsed ? 'Full tour' : undefined}><span className="rail-label">Full tour</span></button>
+          )}
+          {buyer ? null : <button type="button" className="link rail-tour" onClick={() => guide.start('welcome')} title={collapsed ? 'Full tour' : undefined}><span className="rail-label">Full tour</span></button>}
           <div className="who" data-tour="keys">
-            <span className="mono rail-label">{me.data?.role === 'owner' ? 'Owner key' : me.data?.role === 'proposer' ? 'Proposer key' : '…'}</span>
+            <span className="mono rail-label">{buyer ? 'Client' : (ROLE_WORD[me.data?.role ?? ''] ?? 'Signed in')}</span>
             <button type="button" className="link lock-btn" onClick={lock} title={collapsed ? 'Lock' : undefined} aria-label="Lock">
               <Lock size={18} aria-hidden="true" className="rail-foot-icon" />
               <span className="rail-label">Lock</span>
@@ -216,15 +279,59 @@ function ShellFrame() {
         <header className="topbar">
           <div className="brand brand-mobile"><Mark size={24} /><span>Mandate</span></div>
           <div className="topbar-status">
-            <button type="button" className="btn btn-ghost btn-small ask-top" onClick={() => ask.open()} disabled={!me.data?.agents.enabled} title="Ask the clerk (Cmd or Ctrl + K)">Ask <kbd aria-hidden="true">⌘K</kbd></button>
-            <GuideButton />
-            <PauseButton paused={Boolean(paused)} />
-            {me.data?.role === 'proposer' ? <Chip tone="need">Proposer · can ask, not approve</Chip> : null}
-            <Chip tone={live.connected ? 'auto' : 'muted'}><span title={live.connected ? 'Updates arrive the moment they happen' : 'Reconnecting. The page still refreshes every few seconds.'}>{live.connected ? 'Live' : 'Reconnecting'}</span></Chip>
-            {me.data ? <Chip tone={me.data.paypalConfigured ? 'auto' : 'muted'}>{me.data.paypalConfigured ? 'PayPal sandbox' : 'PayPal not set'}</Chip> : null}
-            <NavLink to="/system" className="topbar-sys" aria-label="System">v{me.data?.version ?? '—'}</NavLink>
+            {/* Who the person at the keyboard is, in every screen: the studio. Everyone else has their own link or key. */}
+            {buyer ? (
+              <span className="you-chip" data-testid="you-are" title="You set only what this client will pay. The studio never sees that number.">
+                You · client of <b>{me.data?.studioName ?? studio ?? 'this studio'}</b>
+              </span>
+            ) : me.data?.role === 'owner' ? (
+              <span className="you-chip" data-testid="you-are" title="You run the studio. Your client and your contractors each get their own link and see only their part. Agents get keys that can ask, never pay.">
+                You · <b>{studio ?? 'the studio'}</b> owner
+              </span>
+            ) : null}
+            <span className="ai-badge hide-phone" data-testid="ai-boundary" title="AI agents here can draft, ask and negotiate. None of them has a way to approve or move money: only your rules and your tap can.">AI asks · never pays</span>
+            {buyer ? null : <button type="button" className="btn btn-ghost btn-small ask-top" onClick={() => ask.open()} disabled={!me.data?.agents.enabled} title="Ask the clerk (Cmd or Ctrl + K)">Ask <kbd aria-hidden="true">⌘K</kbd></button>}
+            {buyer ? null : <GuideButton />}
+            {buyer ? null : <PauseButton paused={Boolean(paused)} />}
+            {buyer ? <Chip tone="need">Client · your ceiling only</Chip> : me.data && ROLE_CHIP[me.data.role] ? <Chip tone={me.data.role === 'approver' ? 'ink' : 'need'}>{ROLE_CHIP[me.data.role]}</Chip> : null}
+            {buyer ? null : <Chip tone={live.connected ? 'auto' : 'muted'}><span title={live.connected ? 'Updates arrive the moment they happen' : 'Reconnecting. The page still refreshes every few seconds.'}>{live.connected ? 'Live' : 'Reconnecting'}</span></Chip>}
+            {me.data ? <Chip tone={paypalChip(me.data.paypalMode).tone}><span title={paypalChip(me.data.paypalMode).title}>{paypalChip(me.data.paypalMode).text}</span></Chip> : null}
+            {buyer ? <span className="topbar-sys">v{me.data?.version ?? '—'}</span> : <NavLink to="/system" className="topbar-sys" aria-label="System">v{me.data?.version ?? '—'}</NavLink>}
           </div>
         </header>
+        {me.data?.workspaceMode === 'demo' ? (
+          <div className="demo-banner" role="status" data-testid="demo-banner">
+            <div className="row between align-center wrap gap-s">
+              <div>
+                Simulated PayPal. No real money. Your demo ends in 24 hours.{' '}
+                <Link to="/live-proof" className="link small" data-testid="live-proof-link" style={{ marginLeft: 6 }}>Live proof ↗</Link>
+              </div>
+              <div className="row gap-xs align-center demo-controls" data-testid="demo-role-switcher">
+                <span className="small muted">Role:</span>
+                {(['owner', 'approver', 'proposer', 'viewer', 'payee'] as const).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    className={`btn btn-small ${me.data?.role === r ? 'btn-ink' : 'btn-ghost'}`}
+                    data-testid={`demo-role-${r}`}
+                    onClick={() => void onSwitchDemoRole(r)}
+                  >
+                    {r}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-small"
+                  data-testid="demo-reset-btn"
+                  onClick={() => void onResetDemo()}
+                  title="Reset the demo to start clean"
+                >
+                  Reset
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {!online ? (
           <div className="offline" role="status">
             <strong>Offline</strong> Reading what was already loaded. Nothing that moves money can be sent until you are back online.
@@ -239,10 +346,10 @@ function ShellFrame() {
       </div>
 
       <nav className="tabbar" aria-label="Main">
-        {NAV.map((item) => (
-          <NavLink key={item.to} to={item.to} end={item.end} className={isHere(item, location.pathname, NAV) ? 'tab active' : 'tab'} data-tour={item.tour}>
+        {nav.map((item) => (
+          <NavLink key={item.to} to={item.to} end={item.end} className={isHere(item, location.pathname, nav) ? 'tab active' : 'tab'} data-tour={item.tour}>
             <>
-              {isHere(item, location.pathname, NAV) ? <motion.span layoutId="tab-pill" className="pill" transition={{ type: 'spring', stiffness: 520, damping: 40 }} /> : null}
+              {isHere(item, location.pathname, nav) ? <motion.span layoutId="tab-pill" className="pill" transition={{ type: 'spring', stiffness: 520, damping: 40 }} /> : null}
               <Icon path={item.icon} />
               <span>{item.label}</span>
               {item.to === '/' && waiting > 0 ? <span className="badge">{waiting}</span> : null}

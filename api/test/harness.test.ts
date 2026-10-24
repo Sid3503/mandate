@@ -70,7 +70,7 @@ describe('prompts are versioned, fenced and stable', () => {
     expect(promptVersion('reviewer')).toBe(`reviewer@v${PROMPT_VERSIONS.reviewer}`)
     expect(clerkSystem(warrant, '2026-10-07')).toMatchSnapshot('clerk')
     expect(reviewerSystem({ company: 'Northwind', studio: 'Line Studio', scope: 'Spring logo', milestone: 0, title: 'Concepts', amount: '$150.00', proofUrl: EVIDENCE, dealId: '11111111-1111-1111-1111-111111111111', proofFacts: 'a specific design item on figma.com' })).toMatchSnapshot('reviewer')
-    expect(negotiatorSystem({ side: 'buyer', company: 'Northwind', counterparty: 'Line Studio', task: 'a logo', brief: 'Open low.', threadId: '22222222-2222-2222-2222-222222222222', rules: { displayName: 'Northwind', currency: 'USD', categories: ['design'], maxMilestones: 4, requireProof: true, maxTotalCents: 30_000, maxMilestoneCents: 20_000 } as never })).toMatchSnapshot('negotiator')
+    expect(negotiatorSystem({ side: 'buyer', company: 'Northwind', counterparty: 'Line Studio', scope: 'a logo', milestones: ['Concepts', 'Final files'], currency: 'USD', brief: 'Open low.', reservationCents: 30_000, targetCents: 20_000, targetChosen: true, style: 'balanced', offersPerSide: 4, rules: { role: 'buyer', displayName: 'Northwind', currency: 'USD', categories: ['design'], maxMilestones: 4, requireProof: true, maxTotalCents: 30_000, maxMilestoneCents: 20_000 } as never })).toMatchSnapshot('negotiator')
     expect(policyReaderSystem(warrant)).toMatchSnapshot('policyReader')
     expect(policyAuditorSystem()).toMatchSnapshot('policyAuditor')
     expect(rulesExplainerSystem()).toMatchSnapshot('rulesExplainer')

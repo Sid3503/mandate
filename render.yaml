@@ -1,17 +1,22 @@
 # Render blueprint: one web service serves the API and the owner console at /app/.
-# Free tier: the disk is ephemeral, so the ledger is reseeded on each boot.
+# A Starter instance with a 1 GB disk, so the ledger survives a restart. Render does not attach a disk to a free
+# instance: on the free plan, delete the `disk:` block and the DATABASE_PATH override, and the ledger is ephemeral.
 services:
   - type: web
     name: mandate
     runtime: node
-    plan: free
+    plan: starter
     buildCommand: npm run setup && npm run build
     startCommand: npm start
     healthCheckPath: /ready
+    disk:
+      name: mandate-data
+      mountPath: /var/data
+      sizeGB: 1
     # Deploy a commit only after its GitHub checks (the CI workflow) have passed. For the judging window set this to
     # `off` and deploy by hand, so the ledger is never wiped under a judge.
     autoDeployTrigger: checksPass
-    # A redeploy restarts the free instance and wipes its ledger, so a push that touches only these does not deploy.
+    # A redeploy restarts the instance, so a push that touches only these does not deploy.
     # scripts/ci/deploy-needed.mjs reads this list too, so the post-deploy check agrees with Render about what counts.
     buildFilter:
       ignoredPaths:
@@ -34,7 +39,7 @@ services:
       - key: HOST
         value: 0.0.0.0
       - key: DATABASE_PATH
-        value: /tmp/mandate.sqlite
+        value: /var/data/mandate.sqlite
       - key: API_KEY
         generateValue: true
       - key: PROPOSER_KEY
@@ -43,7 +48,7 @@ services:
         generateValue: true
       # Ed25519 private key (PKCS8 PEM) that signs locks and deals. Generate once:
       #   node -e "console.log(require('crypto').generateKeyPairSync('ed25519').privateKey.export({type:'pkcs8',format:'pem'}))"
-      # The free disk is wiped on restart, so keep this stable or old receipts stop verifying.
+      # The disk keeps this across restarts. Keep it stable or old receipts stop verifying.
       - key: SIGNING_KEY
         sync: false
       # Turns the clerk, the negotiating agents, the client's reviewer and the rules drafter on (Ollama Cloud,

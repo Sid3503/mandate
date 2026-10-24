@@ -50,6 +50,14 @@ export function onError(error: Error, c: Context): Response {
   if (error instanceof HTTPException) {
     return sendProblem(c, new Problem(error.status, 'request.invalid', 'Request is invalid', error.message))
   }
+  const msg = error.message ?? ''
+  const code = (error as { code?: string }).code
+  if (code === 'SQLITE_BUSY' || /database is locked|sqlite_busy/i.test(msg)) {
+    return sendProblem(c, new Problem(503, 'db.locked', 'Database is busy', 'The database is locked by another operation. Please retry.'))
+  }
+  if (code === 'SQLITE_FULL' || code === 'ENOSPC' || /disk is full|sqlite_full|enospc/i.test(msg)) {
+    return sendProblem(c, new Problem(507, 'db.disk_full', 'Database storage full', 'The database or disk has run out of space. No changes were made.'))
+  }
   const requestId = c.get('requestId') as string | undefined
   console.error(JSON.stringify({ level: 'error', requestId, name: error.name, message: process.env.LOG_ERRORS ? error.message : undefined }))
   return sendProblem(c, new Problem(500, 'internal', 'Internal error', 'The request failed.'))

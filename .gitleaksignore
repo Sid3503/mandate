@@ -1,0 +1,4 @@
+# Gitleaks ignore fingerprints for test fixtures
+e5913da06ed4bd71ee4277f11babd4b0b728e223:web/src/lib/passkey-vector.json:generic-api-key:9
+9306be5e89ccf5be70751339c4e208c9bad2da52:api/test/ops-cleanup-scheduler.test.ts:generic-api-key:336
+0fa31c3e747fe7178f0f02b3faaeb73cad117478:api/test/ops-readyz-secret.test.ts:private-key:14

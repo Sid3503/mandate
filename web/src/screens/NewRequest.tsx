@@ -3,12 +3,12 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Chip, GateChip, Loading, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
 import { useToast } from '../components/Toast'
-import { api } from '../lib/api'
+import { ApiError, api } from '../lib/api'
 import { newKey } from '../lib/format'
 import { useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useWarrant } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { Kind, Proposal, ProposalInput } from '../lib/types'
-import { explain, KIND } from '../lib/words'
+import { explain, fundedPhase, KIND } from '../lib/words'
 
 const OTHER = '__other__'
 const UNFUNDED = '__none__'
@@ -35,9 +35,13 @@ export function NewRequest() {
   const [funding, setFunding] = useState(params.get('funding') ?? '')
   const [parent, setParent] = useState(params.get('parent') ?? '')
 
+  const missingRules = warrant.isError && warrant.error instanceof ApiError && warrant.error.code === 'warrant.missing'
   const rows = proposals.data?.data ?? []
+  // The words in the placeholders are this studio's own people, not the sample studio's.
+  const clientName = warrant.data?.clients?.[0]?.displayName ?? 'the client'
+  const payeeName = warrant.data?.payees?.[0]?.displayName ?? 'the contractor'
   // Only PayPal captures can be refunded or fund a payout. A paid payout has a Payouts id, not a capture id.
-  const captured = rows.filter((row) => row.phase === 'captured' && Boolean(row.captureId) && (row.kind === 'charge' || row.kind === 'payment'))
+  const captured = rows.filter((row) => fundedPhase(row.phase) && Boolean(row.captureId) && (row.kind === 'charge' || row.kind === 'payment'))
   const charges = captured.filter((row) => row.kind === 'charge')
   const jobIds = [...new Set(rows.map((row) => row.jobId).filter((id): id is string => Boolean(id)))]
   const fundingJobs = [...new Set(charges.map((row) => row.jobId).filter((id): id is string => Boolean(id)))]
@@ -99,7 +103,7 @@ export function NewRequest() {
   const send = useMutation({
     mutationFn: (body: ProposalInput) => api.propose(body, idem),
     onSuccess: (made) => {
-      toast(made.gate === 'DENY' ? { title: 'Refused by the rules', body: `${made.clause}. Nothing moved.`, tone: 'info' } : made.gate === 'AUTO' ? { title: 'Filed. No tap needed', body: 'It is inside your rules and goes through by itself.' } : { title: 'Filed. Waiting for your tap', body: 'Approve it on Today.', tone: 'warn' })
+      toast(made.gate === 'DENY' ? { title: 'Refused by the rules', body: `${made.clause}. Nothing moved.`, tone: 'info' } : made.gate === 'AUTO' ? { title: 'Filed. No tap needed', body: 'It is inside your rules and goes through by itself.' } : { title: owner ? 'Filed. Waiting for your tap' : 'Filed. Waiting for the owner', body: owner ? 'Approve it on Today.' : 'The owner approves it. You can follow it on its receipt.', tone: 'warn' })
       void refresh()
     },
   })
@@ -117,6 +121,18 @@ export function NewRequest() {
   }
 
   if (warrant.isLoading) return <div className="page"><Loading /></div>
+  if (missingRules) {
+    return (
+      <div className="page">
+        <PageHead eyebrow="Ask the rules" title="New request" />
+        <section className="panel panel-lime" data-testid="request-needs-rules">
+          <h2 className="panel-title">Rules come first</h2>
+          <p>Nothing can be asked for until the rules exist. They name who can be billed, who can be paid, and what is allowed.</p>
+          <Link className="btn btn-ink" to="/rules">Write your rules</Link>
+        </section>
+      </div>
+    )
+  }
 
   return (
     <div className="page">
@@ -153,7 +169,7 @@ export function NewRequest() {
             </label>
           )}
           {stranger !== null && kind !== 'refund' ? (
-            <label className="field"><span>Their name or account</span><input value={stranger} onChange={(event) => setStranger(event.target.value)} placeholder="P. Shah (new account)" required /><small>The rules refuse anyone not listed. Try it.</small></label>
+            <label className="field"><span>Their name or account</span><input value={stranger} onChange={(event) => setStranger(event.target.value)} placeholder="Someone not on the rules" required /><small>The rules refuse anyone not listed. Try it.</small></label>
           ) : null}
 
           {kind === 'payment' ? (
@@ -163,7 +179,7 @@ export function NewRequest() {
                 <option value="">Choose a settled client payment</option>
                 {charges.map((row) => (
                   <option key={row.id} value={row.captureId ?? ''}>
-                    {names(row.payeeId)} · {dollars(row.capturedAmountCents)} · {row.jobId} · can fund {fundable.has(row.captureId ?? '') ? dollars(fundable.get(row.captureId ?? '')) : '…'}
+                    {names(row.payeeId)} · {dollars(row.settledCents ?? row.capturedAmountCents)} · {row.jobId} · can fund {fundable.has(row.captureId ?? '') ? dollars(fundable.get(row.captureId ?? '')) : '…'}
                   </option>
                 ))}
                 <option value={UNFUNDED}>Nothing yet · the client has not paid</option>
@@ -175,8 +191,8 @@ export function NewRequest() {
           <div className="field-row">
             <label className="field" data-tour="new-amount">
               <span>Amount</span>
-              <span className="dollar-input big"><span>$</span><input inputMode="decimal" autoComplete="off" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="90.00" required /></span>
-              <small className="mono">{cents === null ? 'Dollars and cents' : `= ${cents} cents`}</small>
+              <span className="dollar-input big"><span>{warrant.data?.currency ?? 'USD'}</span><input inputMode="decimal" autoComplete="off" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required aria-label={`Amount in ${warrant.data?.currency ?? 'USD'}`} /></span>
+              <small className="mono">{cents === null ? 'The amount, with cents' : `= ${cents} hundredths`}</small>
             </label>
             <label className="field" data-tour="new-work">
               <span>Kind of work</span>
@@ -184,20 +200,20 @@ export function NewRequest() {
                 {(warrant.data?.categories ?? []).map((item) => <option key={item} value={item}>{item}</option>)}
                 <option value={OTHER}>Something else…</option>
               </select>
-              {category === OTHER ? <input value={otherCategory} onChange={(event) => setOtherCategory(event.target.value)} placeholder="lunch" aria-label="Other kind of work" /> : null}
+              {category === OTHER ? <input value={otherCategory} onChange={(event) => setOtherCategory(event.target.value)} placeholder="Name the kind of work" aria-label="Other kind of work" /> : null}
             </label>
           </div>
 
-          <label className="field"><span>What it is for</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === 'charge' ? 'Northwind logo milestone 1 invoice' : 'Northwind logo milestone 1'} required maxLength={500} /></label>
-          <label className="field" data-tour="new-proof"><span>Link to the work</span><input type="url" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} placeholder="https://www.figma.com/file/northwind-logo" /><small>The rules need an https link.</small></label>
+          <label className="field"><span>What it is for</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === 'charge' ? `What ${clientName} is billed for` : 'What this payment is for'} required maxLength={500} /></label>
+          <label className="field" data-tour="new-proof"><span>Link to the work</span><input type="url" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} placeholder="https://example.com/the-work" /><small>The rules need an https link.</small></label>
           {kind !== 'payment' ? (
             <label className="field">
               <span>Job</span>
-              <input list="jobs" value={jobId} onChange={(event) => setJobId(event.target.value)} placeholder="job_northwind_logo" pattern="[a-z0-9][a-z0-9_-]{0,63}" readOnly={kind === 'refund' && Boolean(parentRow)} />
+              <input list="jobs" value={jobId} onChange={(event) => setJobId(event.target.value)} placeholder="e.g. job_spring-launch" title="Lowercase letters, numbers, - and _" pattern="[a-z0-9][a-z0-9_-]{0,63}" readOnly={kind === 'refund' && Boolean(parentRow)} />
               <datalist id="jobs">{jobIds.map((id) => <option key={id} value={id} />)}</datalist>
             </label>
           ) : jobId ? <p className="fine">Job <span className="mono">{jobId}</span>, taken from the client payment.</p> : null}
-          <label className="field" data-tour="new-prompt"><span>How it was asked, in words</span><textarea rows={2} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Pay Priya her $90 share for Northwind milestone 1" maxLength={4000} /></label>
+          <label className="field" data-tour="new-prompt"><span>How it was asked, in words</span><textarea rows={2} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={`Pay ${payeeName} their share of what ${clientName} paid`} maxLength={4000} /></label>
 
           <div className="row between wrap gap-s">
             <span className="fine">{missing.length > 0 ? `To ask the rules: add ${missing.join(', ')}.` : 'Double-press safe: sending the same request twice asks once.'}</span>
