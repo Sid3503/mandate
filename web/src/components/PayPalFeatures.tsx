@@ -94,6 +94,7 @@ const TIER_LABEL = { read: 'Read', propose: 'Propose only', out_of_scope: 'Not u
 export function ToolTiers() {
   const owner = useIsOwner()
   const tools = useQuery({ queryKey: ['paypal-tools'], queryFn: api.tools, staleTime: 300_000, enabled: owner })
+  const flags = useQuery({ queryKey: ['flags'], queryFn: api.flags })
   if (!owner) return null
   const data = tools.data
   return (
@@ -102,12 +103,13 @@ export function ToolTiers() {
       {tools.isLoading ? <Loading /> : null}
       {data ? (
         <>
-          <p className="payout-lead"><strong>PayPal’s Agent Toolkit has {data.total} tools. Mandate’s server uses {data.usedByMandate}. The AI can call {data.agentCanCallDirectly === 0 ? 'none' : data.agentCanCallDirectly} of them to move money.</strong> An agent can only ask Mandate, and the rules answer.</p>
+          <p className="payout-lead"><strong>PayPal’s Agent Toolkit has {data.total} tools. Mandate’s server uses {data.usedByMandate}. The AI can call {data.agentCanCallDirectly === 0 ? 'none' : data.agentCanCallDirectly} of them to move money.</strong> An agent can only ask Mandate, and the rules answer.{flags.data?.mcpExposeReadTools ? ' Read tools are exposed to connected agents.' : ''}</p>
           <div className="kvs">
             <KV label="Read only">{data.read} tools: cannot change anything at PayPal</KV>
             <KV label="Propose only">{data.propose} tools: change state or move money, so only the rules and the owner can cause them</KV>
             <KV label="Not used">{data.outOfScope} tools: unrelated to billing a job</KV>
             <KV label="Called by the server">{data.usedByMandate} tools, from a locked cart or from PayPal itself. The server refuses any other.</KV>
+            {flags.data?.mcpExposeReadTools ? <KV label="MCP read tools">Exposed to agents (MCP_EXPOSE_READ_TOOLS is on)</KV> : null}
           </div>
           <details>
             <summary>Every tool and why</summary>

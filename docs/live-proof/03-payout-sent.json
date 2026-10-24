@@ -1,0 +1,10 @@
+{
+  "step": "contractor_payout_sent",
+  "description": "Contractor payout sent via real PayPal Payouts v1 API funded by verified capture",
+  "proposalId": "2d465d38-61c1-4a1f-b3a3-d4e7d8898a24",
+  "fundingCaptureId": "6GX18294LL7579630",
+  "batchId": "D9RZNWUWD2F3A",
+  "payoutStatus": "PENDING",
+  "amount": "$85.00 USD",
+  "phase": "payout_sent"
+}

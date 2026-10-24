@@ -20,8 +20,14 @@ export default defineConfig({
         name: 'Mandate — owner console',
         short_name: 'Mandate',
         description: 'Approve, settle and audit every dollar your agents and staff ask to move.',
+        id: '/app/',
         start_url: '/app/',
         scope: '/app/',
+        shortcuts: [
+          { name: 'Today', short_name: 'Today', url: '/app/' },
+          { name: 'Ask', short_name: 'Ask', url: '/app/clerk' },
+          { name: 'Rules', short_name: 'Rules', url: '/app/rules' },
+        ],
         display: 'standalone',
         orientation: 'portrait',
         background_color: '#f3efe6',
@@ -35,11 +41,11 @@ export default defineConfig({
       workbox: {
         // Only the app shell is cached. Money calls (/v1/*) are never cached and never queued.
         globPatterns: ['**/*.{js,css,html,svg,png,woff2,webmanifest}'],
-        // The landing page's screenshots are for first-time visitors, not for working offline.
-        // The control room (AG Studio) is 4.6 MB: it is fetched when opened, not cached with the shell.
-        globIgnores: ['landing/**', '**/ControlRoom-*.js'],
+        // The control room (AG Studio) and Ledger (AG Grid) are split: fetched when opened, not cached with shell.
+        globIgnores: ['landing/**', '**/ControlRoom-*.js', '**/Ledger-*.js', '**/index.esm-*.js', '**/vendor-ag-*.js'],
         navigateFallback: '/app/index.html',
         navigateFallbackAllowlist: [/^\/app\//],
+        navigateFallbackDenylist: [/^\/v1\//, /^\/auth\//, /^\/w\//, /^\/mcp\//],
         cleanupOutdatedCaches: true,
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
@@ -56,5 +62,21 @@ export default defineConfig({
     },
   },
   // assetsInlineLimit 0: fonts stay files, so the strict CSP (font-src 'self') holds.
-  build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1600, assetsInlineLimit: 0 },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 1000,
+    assetsInlineLimit: 0,
+    modulePreload: {
+      resolveDependencies(_filename, deps) {
+        return deps.filter(
+          (dep) =>
+            !dep.includes('vendor-ag-') &&
+            !dep.includes('Ledger-') &&
+            !dep.includes('ControlRoom-') &&
+            !dep.includes('index.esm-'),
+        )
+      },
+    },
+  },
 })

@@ -1,4 +1,4 @@
-import { centsToPayPal, payPalToCents } from '../domain/money'
+import { centsToPayPal, moneyCents, payPalToCents } from '../domain/money'
 import { paypalRequestId } from '../domain/hash'
 import { arr, obj, str } from './toolkit'
 import { UpstreamGuard, type GuardOptions } from './resilience'
@@ -19,6 +19,34 @@ export function createPayPalClient(options: {
   const baseUrl = options.baseUrl.replace(/\/$/, '')
   let token: Token | null = null
   let scope: string[] = []
+  let clientToken: { value: string; expiresAt: number } | null = null
+
+  /**
+   * A browser-safe token for the JavaScript SDK. It is a different grant from the app's access token: it lets a
+   * browser open a card form, and nothing else. Cached for a few minutes, because the browser needs a fresh one
+   * rarely and the token endpoint is not free.
+   */
+  async function browserClientToken(): Promise<string> {
+    if (clientToken && clientToken.expiresAt > Date.now() + 60_000) return clientToken.value
+    const json = await guard.run(async () => {
+      const made = await fetchImpl(`${baseUrl}/v1/oauth2/token`, {
+        method: 'POST',
+        headers: {
+          authorization: `Basic ${Buffer.from(`${options.clientId}:${options.clientSecret}`).toString('base64')}`,
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        body: 'grant_type=client_credentials&response_type=client_token&intent=sdk_init',
+        signal: AbortSignal.timeout(20_000),
+      })
+      const body = await readJson(made)
+      if (!made.ok || typeof body.access_token !== 'string') throw withRetryAfter(paypalError(made.status, body), made)
+      return body
+    }, { repeatable: true })
+    const value = String(json.access_token)
+    const expiresIn = typeof json.expires_in === 'number' ? json.expires_in : 600
+    clientToken = { value, expiresAt: Date.now() + expiresIn * 1000 }
+    return value
+  }
 
   async function accessToken(): Promise<string> {
     if (token && token.expiresAt > Date.now() + 60_000) return token.value
@@ -43,8 +71,7 @@ export function createPayPalClient(options: {
     return value
   }
 
-  async function call(path: string, init: { method: string; requestId?: string; body?: unknown }): Promise<{ status: number; json: Json }> {
-    // A read, or a write that carries PayPal's own request id (PayPal answers a repeat with the first answer), is safe to
+  async function call(path: string, init: { method: string; requestId?: string; body?: unknown }): Promise<{ status: number; json: Json }> {    // A read, or a write that carries PayPal's own request id (PayPal answers a repeat with the first answer), is safe to
     // try again. Anything else is tried once.
     const repeatable = init.method === 'GET' || Boolean(init.requestId)
     return guard.run(async () => {
@@ -80,6 +107,7 @@ export function createPayPalClient(options: {
     currency: string
     description: string
     payeeEmail: string | null
+    kind?: 'card' | 'checkout'
     returnUrl?: string
     cancelUrl?: string
   }, attachPayee: boolean): Promise<CreatedOrder> {
@@ -87,17 +115,25 @@ export function createPayPalClient(options: {
       custom_id: input.proposalId,
       invoice_id: input.proposalId,
       description: input.description.slice(0, 127),
-      amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents) },
+      amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) },
     }
     if (attachPayee && input.payeeEmail) unit.payee = { email_address: input.payeeEmail }
     const { json } = await call('/v2/checkout/orders', {
       method: 'POST',
-      requestId: paypalRequestId(`${input.proposalId}:create`),
+      // A card order and a checkout order are different orders on PayPal's side, so the request id carries the
+      // instrument. A retry of the same instrument still returns the same order.
+      requestId: paypalRequestId(`${input.proposalId}:create${input.kind === 'card' ? ':card' : ''}`),
       body: {
         intent: 'CAPTURE',
         purchase_units: [unit],
+        // A card paid on our own page asks the card's bank to confirm the cardholder wherever the law requires it
+        // (3-D Secure: PSD2 in Europe, the RBI's additional factor in India). PayPal's card form runs the check.
+        ...(input.kind === 'card' ? { payment_source: { card: {
+          attributes: { verification: { method: 'SCA_WHEN_REQUIRED' } },
+          ...(input.returnUrl ? { experience_context: { return_url: input.returnUrl, cancel_url: input.cancelUrl ?? input.returnUrl } } : {}),
+        } } } : {}),
         // With a return URL the buyer lands back on the receipt after approving, instead of being stranded on PayPal.
-        ...(input.returnUrl ? { payment_source: { paypal: { experience_context: {
+        ...(input.returnUrl && input.kind !== 'card' ? { payment_source: { paypal: { experience_context: {
           return_url: input.returnUrl,
           cancel_url: input.cancelUrl ?? input.returnUrl,
           user_action: 'PAY_NOW',
@@ -116,6 +152,7 @@ export function createPayPalClient(options: {
 
   return {
     upstream: () => guard.status(),
+    clientToken: () => browserClientToken(),
     async createOrder(input) {
       const attach = Boolean(input.payeeEmail)
       try {
@@ -140,6 +177,20 @@ export function createPayPalClient(options: {
         approveUrl: link(json, ['payer-action', 'approve']),
       }
     },
+    async cardResult(orderId) {
+      // Only `fields=payment_source` carries the 3-D Secure answer, and it carries nothing else, so it is its own read.
+      const { json } = await call(`/v2/checkout/orders/${encodeURIComponent(orderId)}?fields=payment_source`, { method: 'GET' })
+      const card = asJson(asJson(json.payment_source)?.card)
+      if (!card) return null
+      const result = asJson(card.authentication_result)
+      const secure = asJson(result?.three_d_secure)
+      const text = (value: unknown) => (typeof value === 'string' && value ? value : null)
+      return {
+        brand: text(card.brand),
+        lastDigits: text(card.last_digits),
+        authentication: result ? { liabilityShift: text(result.liability_shift), enrollment: text(secure?.enrollment_status), status: text(secure?.authentication_status) } : null,
+      }
+    },
     async captureOrder(orderId, proposalId) {
       const { json } = await call(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
         method: 'POST',
@@ -148,18 +199,23 @@ export function createPayPalClient(options: {
       })
       const capture = firstCapture(json)
       const amount = capture?.amount
+      const breakdown = asJson(capture?.seller_receivable_breakdown) ?? {}
       return {
         captureId: stringField(capture, 'id'),
         status: stringField(capture, 'status'),
         amountCents: payPalToCents(stringField(asJson(amount), 'value')),
         currency: stringField(asJson(amount), 'currency_code'),
+        // PayPal states the fee it took and the net that reached the seller only on a capture that is complete. An
+        // absent field is null, never zero: zero would claim a fact PayPal did not state.
+        feeCents: moneyCents(breakdown.paypal_fee),
+        netCents: moneyCents(breakdown.net_amount),
       } satisfies CapturedPayment
     },
     async refundCapture(input) {
       const { json } = await call(`/v2/payments/captures/${encodeURIComponent(input.captureId)}/refund`, {
         method: 'POST',
         requestId: paypalRequestId(`${input.proposalId}:refund`),
-        body: { amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents) } },
+        body: { amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) } },
       })
       return { refundId: stringField(json, 'id'), status: stringField(json, 'status') } satisfies RefundedPayment
     },
@@ -178,7 +234,7 @@ export function createPayPalClient(options: {
           items: [{
             recipient_type: 'EMAIL',
             receiver: input.receiverEmail,
-            amount: { currency: input.currency, value: centsToPayPal(input.amountCents) },
+            amount: { currency: input.currency, value: centsToPayPal(input.amountCents, input.currency) },
             note: input.note.slice(0, 160),
             sender_item_id: input.proposalId,
           }],

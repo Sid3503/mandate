@@ -24,24 +24,24 @@ async function connect(app: App, key: string, runId: string = crypto.randomUUID(
 const payout = { kind: 'payment', payee: 'Priya', amountCents: 9000, currency: 'USD', category: 'design', description: 'Northwind milestone 1', evidenceUrl: EVIDENCE }
 
 describe('the MCP door', () => {
-  it('offers a studio agent six tools and not one of them can pay', async () => {
+  it('offers a studio agent nine tools and not one of them can pay', async () => {
     const { app } = harness()
     const { client } = await connect(app, STUDIO_KEY)
     const tools = (await client.listTools()).tools
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['explain', 'get_jobs', 'get_rules', 'list_ledger', 'offer_deal', 'propose'])
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'walk_away'])
     for (const name of ['approve', 'capture', 'reject', 'refund', 'send_payout', 'publish_rules', 'pay']) {
       expect(tools.map((tool) => tool.name)).not.toContain(name)
     }
     const readOnly = tools.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name).sort()
-    expect(readOnly).toEqual(['explain', 'get_jobs', 'get_rules', 'list_ledger'])
+    expect(readOnly).toEqual(['explain', 'get_jobs', 'get_negotiation', 'get_rules', 'list_ledger'])
     for (const tool of tools) expect(tool.description!.length, tool.name).toBeGreaterThan(60)
     await client.close()
   })
 
-  it('offers a client\'s agent five tools, none of which can pay, and only its own rules', async () => {
+  it('offers a client\'s agent eight tools, none of which can pay, and only its own rules', async () => {
     const { app } = harness()
     const { client, use } = await connect(app, BUYER_KEY)
-    expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(['decide_delivery', 'explain', 'get_deliveries', 'get_rules', 'offer_deal'])
+    expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(['accept_offer', 'decide_delivery', 'explain', 'get_deliveries', 'get_negotiation', 'get_rules', 'offer_deal', 'walk_away'])
     const rules = await use('get_rules')
     expect(rules.data.yourDealRules).toMatchObject({ role: 'buyer', partyId: 'client_northwind' })
     expect(JSON.stringify(rules.data)).not.toContain('minTotalCents')
@@ -109,7 +109,7 @@ describe('the MCP door', () => {
     await call(app, 'PUT', '/v1/warrant', { body: { ...body, standing: [{ id: 'priya_from_northwind', payeeId: 'payee_priya', clientIds: ['client_northwind'], requireDeal: true }] } })
     const { client, use } = await connect(app, STUDIO_KEY)
     // Still no tool that can pay: the agent asks, exactly as before.
-    expect((await client.listTools()).tools).toHaveLength(6)
+    expect((await client.listTools()).tools).toHaveLength(9)
     const asked = await use('propose', { ...payout, jobId: JOB, fundingCaptureId: captureId, prompt: 'pay Priya her share for Northwind milestone 1' })
     expect(asked.data).toMatchObject({ decision: 'AUTO', ruleCode: 'standing.matched', phase: 'captured', moneyMoved: '$90.00' })
     expect(asked.data.inPlainWords).toContain('standing rule')
@@ -148,31 +148,38 @@ describe('the MCP door', () => {
     expect(noId.data.error.code).toBe('not_found')
   })
 
-  it('lets two agents negotiate the frozen deal through tools: $450 no, $200 no, $300 yes', async () => {
+  it('lets two agents negotiate through tools: offers stand until the other side accepts, and nothing leaks', async () => {
     const { app } = harness()
     await confirmPrices(app)
     const seller = await connect(app, STUDIO_KEY)
     const buyer = await connect(app, BUYER_KEY)
-    const terms300 = (total: number) => terms(total)
 
-    const high = await seller.use('offer_deal', { buyer: 'Northwind', terms: terms300(45_000) })
-    expect(high.data).toMatchObject({ result: 'REFUSED' })
-    expect(high.data.violations[0]).toMatchObject({ ruleCode: 'deal.over_buyer_limit', whoseRule: 'buyer', hint: 'Lower the total.' })
+    const high = await seller.use('offer_deal', { buyer: 'Northwind', terms: terms(45_000), prompt: 'Our opening price.' })
+    expect(high.data).toMatchObject({ result: 'OFFERED', status: 'open', turn: 'buyer' })
     expect(JSON.stringify(high.data)).not.toMatch(/\$400|400\.00|40000/)
     const threadId = high.data.threadId
 
-    const low = await buyer.use('offer_deal', { buyer: 'Northwind', threadId, terms: terms300(20_000) })
-    expect(low.data.violations[0]).toMatchObject({ ruleCode: 'deal.under_seller_minimum', whoseRule: 'seller', hint: 'Raise the total.' })
+    // $450 is past the client's own ceiling, so its agent cannot accept: it is told in its own numbers.
+    const cannot = await buyer.use('accept_offer', { dealId: high.data.dealId })
+    expect(cannot.error).toBe(true)
+    expect(cannot.data.error.code).toBe('deal.outside_your_rules')
+    // It counters with just a price: the server writes the terms and splits the milestones.
+    const low = await buyer.use('offer_deal', { buyer: 'Northwind', threadId, totalCents: 20_000, prompt: 'We can do this.' })
+    expect(low.data).toMatchObject({ result: 'OFFERED', standingOffer: { by: 'buyer', totalCents: 20_000 } })
     expect(JSON.stringify(low.data)).not.toMatch(/\$250|250\.00|25000/)
 
-    const fair = await seller.use('offer_deal', { buyer: 'Northwind', threadId, terms: terms300(30_000) })
-    expect(fair.data).toMatchObject({ result: 'AGREED', threadId })
+    const fairOffer = await seller.use('offer_deal', { buyer: 'Northwind', threadId, totalCents: 30_000 })
+    expect(fairOffer.data.moves.map((move: { by: string; totalCents: number }) => `${move.by}:${move.totalCents}`)).toEqual(['seller:45000', 'buyer:20000', 'seller:30000'])
+    const fair = await buyer.use('accept_offer', { dealId: fairOffer.data.dealId, prompt: 'Agreed.' })
+    expect(fair.data).toMatchObject({ result: 'AGREED', status: 'agreed', negotiationId: threadId, total: '$300.00' })
     expect(fair.data.jobId).toMatch(/^job_northwind_/)
-    expect(fair.data.nextStep).toContain('Stop negotiating')
 
-    const late = await buyer.use('offer_deal', { buyer: 'Northwind', threadId, terms: terms300(31_000) })
+    const late = await buyer.use('offer_deal', { buyer: 'Northwind', threadId, totalCents: 31_000 })
     expect(late.error).toBe(true)
     expect(late.data.error.code).toBe('deal.thread_closed')
+
+    const read = await seller.use('get_negotiation', { threadId })
+    expect(read.data).toMatchObject({ status: 'agreed', dealId: fairOffer.data.dealId })
 
     const seen = await buyer.use('explain', { id: fair.data.dealId })
     expect(seen.data).toMatchObject({ kind: 'deal', status: 'agreed', total: '$300.00' })
@@ -222,8 +229,9 @@ describe('finding the client payment that can still fund a payout', () => {
     const b = await agree(app, { jobId: 'job_b_open' })
     const paidB = await collect(app, b.id, 0)
     // The newest thing to happen is a refused attempt on job A, which is what used to mislead the clerk.
+    // A different amount, so it is a new ask rather than a repeat of the one already locked.
     const { use } = await connect(app, STUDIO_KEY)
-    const refused = await use('propose', { ...payout, jobId: 'job_a_exhausted', fundingCaptureId: paidA.captureId })
+    const refused = await use('propose', { ...payout, amountCents: 1_000, jobId: 'job_a_exhausted', fundingCaptureId: paidA.captureId })
     expect(refused.data).toMatchObject({ decision: 'DENY', ruleCode: 'funding.exceeds' })
 
     const jobs = await use('get_jobs', {})
@@ -236,3 +244,50 @@ describe('finding the client payment that can still fund a payout', () => {
     expect(narrowed.data.payoutsPossibleFrom[0]).toMatchObject({ jobId: 'job_b_open' })
   })
 })
+
+describe('MCP_EXPOSE_READ_TOOLS wiring (P11.T3)', () => {
+  it('disables read tools when exposeReadTools is false and keeps them when true', async () => {
+    const { services } = harness()
+    const { createMandateMcpServer } = await import('../src/mcp/server')
+
+    const hidden = createMandateMcpServer({
+      services,
+      principal: { role: 'proposer', side: 'studio' } as never,
+      runId: 'r-hidden',
+      budget: { asks: 1 },
+      exposeReadTools: false,
+    })
+    const hiddenTools = Object.entries((hidden as any)._registeredTools)
+      .filter(([, t]: any) => t.enabled !== false)
+      .map(([name]) => name)
+      .sort()
+    expect(hiddenTools).toEqual(['accept_offer', 'offer_deal', 'propose', 'walk_away'])
+
+    const exposed = createMandateMcpServer({
+      services,
+      principal: { role: 'proposer', side: 'studio' } as never,
+      runId: 'r-exposed',
+      budget: { asks: 1 },
+      exposeReadTools: true,
+    })
+    const exposedTools = Object.entries((exposed as any)._registeredTools)
+      .filter(([, t]: any) => t.enabled !== false)
+      .map(([name]) => name)
+      .sort()
+    expect(exposedTools).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'walk_away'])
+  })
+
+  it('drops read tools over HTTP when x-mandate-expose-read is 0', async () => {
+    const { app } = harness()
+    const transport = new StreamableHTTPClientTransport(new URL('http://mandate.test/mcp'), {
+      fetch: (input, init) => Promise.resolve(app.fetch(new Request(input as string, init))),
+      requestInit: { headers: { authorization: `Bearer ${STUDIO_KEY}`, 'x-mandate-run': crypto.randomUUID(), 'x-mandate-expose-read': '0' } },
+    })
+    const client = new Client({ name: 'test-agent', version: '1.0.0' })
+    await client.connect(transport)
+    const tools = (await client.listTools()).tools
+    expect(tools.map((t) => t.name).sort()).toEqual(['accept_offer', 'offer_deal', 'propose', 'walk_away'])
+    await client.close()
+  })
+})
+

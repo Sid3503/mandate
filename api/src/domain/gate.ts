@@ -1,3 +1,5 @@
+import { payableIn } from './money'
+import { fundedPhase } from './phases'
 import type { WarrantBody } from './schemas'
 
 export const Clause = {
@@ -28,6 +30,7 @@ export const Clause = {
   dealMilestoneUnknown: 'deal.milestone_unknown',
   dealMilestoneMismatch: 'deal.milestone_mismatch',
   dealMilestoneBilled: 'deal.milestone_billed',
+  duplicateOpen: 'duplicate.open',
   systemPaused: 'system.paused',
 } as const
 
@@ -49,7 +52,7 @@ export type ParentPayment = {
   phase: string
 }
 
-/** A captured client charge that a contractor payout cites as its source of money. */
+/** A settled client charge that a contractor payout cites as its source of money. */
 export type FundingCharge = {
   kind: string
   phase: string
@@ -81,6 +84,15 @@ export type DealContext = {
   accepted?: boolean
 }
 
+export type GateSafety = {
+  paused: boolean
+  reason?: string | null
+  since?: string | null
+  by?: 'owner' | 'breaker' | null
+  epoch?: number
+  autopilotPaused?: boolean
+}
+
 export type GateProposal = {
   kind: 'payment' | 'charge' | 'refund'
   payeeId: string | null
@@ -95,12 +107,28 @@ export type GateProposal = {
   dealId?: string | null
   milestone?: number | null
   deal?: DealContext | null
+  /** An open request that already asks for this same money, resolved by the service from the database. */
+  openDuplicate?: { id: string } | null
+  safety?: GateSafety | null
+  actor?: string
 }
 
-/** Cents a captured client charge can still fund for contractors under the share rule. */
+/** Cents a settled client charge can still fund for contractors under the share rule. */
 export function fundableCents(warrant: WarrantBody, funding: FundingCharge): number {
   const net = Math.max(0, funding.capturedCents - funding.refundHeldCents)
   return Math.max(0, Math.floor((net * warrant.contractorShareBps) / 10_000) - funding.payoutHeldCents)
+}
+
+/**
+ * The arithmetic behind a `funding.exceeds` refusal, in one sentence, so the gate, the page and the receipt all
+ * say the numbers the same way. The share is taken of what PayPal reported arrived, not of what was invoiced: a
+ * client who paid less can fund less, and a client who paid in full can fund the whole share.
+ */
+export function fundingArithmetic(warrant: WarrantBody, funding: FundingCharge, captureId: string | null, askedCents: number): string {
+  const net = Math.max(0, funding.capturedCents - funding.refundHeldCents)
+  const shareOf = Math.max(0, Math.floor((net * warrant.contractorShareBps) / 10_000))
+  const left = Math.max(0, shareOf - funding.payoutHeldCents)
+  return `client payment ${captureId ?? 'none'} settled ${net} cents; at a ${warrant.contractorShareBps / 100}% contractor share that is ${shareOf} cents, of which ${funding.payoutHeldCents} is already committed, so ${left} more cents is left; ${askedCents} cents was asked`
 }
 
 export type GateContext = {
@@ -139,7 +167,7 @@ function httpsUrl(value: string): boolean {
   }
 }
 
-export function decide(warrant: WarrantBody, proposal: GateProposal, context: GateContext): Decision {
+function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context: GateContext): Decision {
   if (!Number.isInteger(proposal.amountCents) || proposal.amountCents <= 0) {
     return deny(Clause.shapeInvalid, 'amount must be a positive integer number of cents')
   }
@@ -152,10 +180,13 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
   if (proposal.currency !== warrant.currency) {
     return deny(Clause.currencyMismatch, `currency must be ${warrant.currency}`)
   }
+  if (!payableIn(proposal.amountCents, proposal.currency)) {
+    return deny(Clause.currencyMismatch, `${proposal.currency} is paid in whole units only, with no decimals`)
+  }
   if (proposal.kind === 'refund') {
     const parent = proposal.parent
-    if (!parent || parent.phase !== 'captured' || parent.payeeId !== proposal.payeeId || parent.currency !== proposal.currency) {
-      return deny(Clause.refundUnlinked, 'refund must cite a captured payment for the same payee')
+    if (!parent || !fundedPhase(parent.phase) || parent.payeeId !== proposal.payeeId || parent.currency !== proposal.currency) {
+      return deny(Clause.refundUnlinked, 'refund must cite a client payment that has settled, for the same payee')
     }
     if (parent.category !== proposal.category) {
       return deny(Clause.categoryMissing, 'refund category must match the captured payment')
@@ -183,10 +214,16 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
       return deny(Clause.dealRequired, 'this job has an agreed deal, so charges on it must bill one of its milestones')
     }
   }
+  // Deliberately after the validity and identity checks, and before the money rules. An open ask has already
+  // reserved its share (`funding.exceeds`) and its month (`cap.monthly`), so checked any later this would
+  // surface as an arithmetic refusal instead of "you already asked for this".
+  if (proposal.openDuplicate) {
+    return deny(Clause.duplicateOpen, `a ${proposal.kind} of ${proposal.amountCents} ${proposal.currency} cents was already asked for by proposal ${proposal.openDuplicate.id}, which is still open`)
+  }
   if (proposal.kind === 'payment' && warrant.fundingRequired) {
     const funding = proposal.funding ?? null
-    if (!proposal.fundingCaptureId || !funding || funding.kind !== 'charge' || funding.phase !== 'captured') {
-      return deny(Clause.fundingMissing, 'a contractor payout must cite a captured client payment')
+    if (!proposal.fundingCaptureId || !funding || funding.kind !== 'charge' || !fundedPhase(funding.phase)) {
+      return deny(Clause.fundingMissing, 'a contractor payout must cite a client payment that has settled')
     }
     if (!proposal.jobId || funding.jobId !== proposal.jobId) {
       return deny(Clause.fundingJobMismatch, `the cited client payment belongs to job ${funding.jobId ?? 'none'}`)
@@ -199,10 +236,7 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
     }
     const available = fundableCents(warrant, funding)
     if (proposal.amountCents > available) {
-      return deny(
-        Clause.fundingExceeds,
-        `client payment ${proposal.fundingCaptureId} can fund ${available} more cents at a ${warrant.contractorShareBps / 100}% contractor share`,
-      )
+      return deny(Clause.fundingExceeds, fundingArithmetic(warrant, funding, proposal.fundingCaptureId ?? null, proposal.amountCents))
     }
   }
   if (warrant.evidenceRequired && (!proposal.evidenceUrl || !httpsUrl(proposal.evidenceUrl))) {
@@ -255,6 +289,36 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
     clause: Clause.amountNeedsApproval,
     detail: `at or above ${warrant.autoSettleUnderCents} cents, so the owner has to tap`,
   }
+}
+
+export function decide(warrant: WarrantBody, proposal: GateProposal, context: GateContext): Decision {
+  const result = evaluateProposal(warrant, proposal, context)
+  if (proposal.safety?.autopilotPaused && (proposal.actor ?? 'proposer') === 'autopilot' && result.gate !== 'DENY') {
+    return {
+      gate: 'DENY',
+      clause: Clause.systemPaused,
+      detail: 'Autopilot is paused: automatic billing and payouts are stopped until resumed',
+    }
+  }
+  if (proposal.safety?.paused && result.gate !== 'DENY') {
+    const why = proposal.safety.reason ? ` (${proposal.safety.reason})` : ''
+    const actor = proposal.actor ?? 'proposer'
+    if (actor !== 'owner') {
+      return {
+        gate: 'DENY',
+        clause: Clause.systemPaused,
+        detail: `Mandate is paused${why}, so nothing automatic runs and no agent is served until the owner resumes it`,
+      }
+    }
+    if (result.gate === 'AUTO') {
+      return {
+        gate: 'NEEDS_APPROVAL',
+        clause: Clause.systemPaused,
+        detail: `Mandate is paused${why}: nothing goes without the owner's tap`,
+      }
+    }
+  }
+  return result
 }
 
 /** The standing rule that covers this payout, or null. The other checks have already passed by the time this is asked. */

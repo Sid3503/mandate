@@ -1,19 +1,27 @@
 import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { DEMO_BUYER_RULES, DEMO_SELLER_RULES, PartyRulesSchema } from '../domain/deal'
 import { LINE_STUDIO_WARRANT, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
+import { applySqlSteps, OPS_STEPS } from './sql-migrations'
 
 /** Northwind, the demo client. Its deal rules are keyed by the client id on the warrant. */
 export const BUYER_PARTY_ID = 'client_northwind'
 
-const SCHEMA = `
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS warrants (
   id TEXT NOT NULL,
   version INTEGER NOT NULL,
   body_json TEXT NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (id, version)
+);
+
+-- The rules in the owner's own words, kept until they become rules. One row per studio: the last thing they wrote.
+CREATE TABLE IF NOT EXISTS rule_words (
+  id TEXT PRIMARY KEY,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS proposals (
@@ -39,6 +47,8 @@ CREATE TABLE IF NOT EXISTS proposals (
   refund_id TEXT,
   approve_url TEXT,
   captured_amount_cents INTEGER,
+  capture_fee_cents INTEGER,
+  capture_net_cents INTEGER,
   reserved_at TEXT,
   job_id TEXT,
   funding_capture_id TEXT,
@@ -54,6 +64,12 @@ CREATE TABLE IF NOT EXISTS proposals (
   invoice_id TEXT,
   invoice_url TEXT,
   invoice_status TEXT,
+  pay_instrument TEXT,
+  order_kind TEXT,
+  settled_cents INTEGER,
+  delta_cents INTEGER,
+  delta_reason TEXT,
+  delta_source TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -105,6 +121,50 @@ CREATE TABLE IF NOT EXISTS deals (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS deals_thread ON deals(thread_id, created_at);
+
+-- A negotiation: one table, two seats, a deadline both sides know. Offers are rows of deals; every move (an offer,
+-- an acceptance, a walk-away) is a row of negotiation_moves, so the whole exchange can be replayed in order.
+CREATE TABLE IF NOT EXISTS negotiations (
+  id TEXT PRIMARY KEY,
+  buyer_id TEXT NOT NULL,
+  seller_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  category TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  milestones_json TEXT NOT NULL,
+  offers_per_side INTEGER NOT NULL,
+  started_by TEXT NOT NULL,
+  ended_reason TEXT,
+  ended_by TEXT,
+  agreed_deal_id TEXT,
+  -- Each side's own reading of how it went, written by its negotiator after the end. Private to that side.
+  debrief_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS negotiations_created ON negotiations(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS negotiation_moves (
+  id TEXT PRIMARY KEY,
+  negotiation_id TEXT NOT NULL REFERENCES negotiations(id),
+  seq INTEGER NOT NULL,
+  side TEXT NOT NULL,
+  action TEXT NOT NULL,
+  deal_id TEXT,
+  total_cents INTEGER,
+  final INTEGER NOT NULL DEFAULT 0,
+  message TEXT,
+  -- The mover's own reasoning: what it believes about the other side and why it moved. Private to the mover's side.
+  assessment TEXT,
+  actor TEXT NOT NULL,
+  by TEXT NOT NULL,
+  run_id TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (negotiation_id, seq)
+);
 CREATE INDEX IF NOT EXISTS deals_created ON deals(created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS deliveries (
@@ -172,7 +232,9 @@ CREATE TABLE IF NOT EXISTS safety_state (
   reason TEXT,
   since TEXT,
   by TEXT,
-  epoch INTEGER NOT NULL DEFAULT 0
+  epoch INTEGER NOT NULL DEFAULT 0,
+  autopilot_paused INTEGER NOT NULL DEFAULT 0,
+  config_json TEXT
 );
 INSERT OR IGNORE INTO safety_state (id, paused, epoch) VALUES (1, 0, 0);
 
@@ -195,8 +257,10 @@ CREATE TABLE IF NOT EXISTS agents (
   limits_json TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
   key_hash TEXT NOT NULL UNIQUE,
+  key_prefix TEXT,
   created_at TEXT NOT NULL,
-  last_seen_at TEXT
+  last_seen_at TEXT,
+  expires_at TEXT
 );
 CREATE INDEX IF NOT EXISTS agents_status ON agents(status);
 
@@ -206,8 +270,10 @@ CREATE TABLE IF NOT EXISTS client_keys (
   party_id TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
   key_hash TEXT NOT NULL UNIQUE,
+  key_prefix TEXT,
   created_at TEXT NOT NULL,
-  last_seen_at TEXT
+  last_seen_at TEXT,
+  expires_at TEXT
 );
 CREATE INDEX IF NOT EXISTS client_keys_status ON client_keys(status);
 
@@ -222,7 +288,8 @@ CREATE TABLE IF NOT EXISTS share_links (
   expires_at TEXT NOT NULL,
   revoked_at TEXT,
   last_seen_at TEXT,
-  views INTEGER NOT NULL DEFAULT 0
+  views INTEGER NOT NULL DEFAULT 0,
+  can_pay INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS share_links_job ON share_links(job_id);
 
@@ -259,17 +326,17 @@ export function openDatabase(path: string): DatabaseSync {
   return db
 }
 
-export function migrate(db: DatabaseSync): void {
+export function migrate(db: DatabaseSync, options: { backup?: boolean } = {}): void {
   db.exec(SCHEMA)
   const columns = new Set((db.prepare('PRAGMA table_info(proposals)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!columns.has('job_id')) db.exec('ALTER TABLE proposals ADD COLUMN job_id TEXT')
   if (!columns.has('funding_capture_id')) db.exec('ALTER TABLE proposals ADD COLUMN funding_capture_id TEXT')
-  for (const [name, type] of [['deal_id', 'TEXT'], ['milestone', 'INTEGER'], ['lock_sig', 'TEXT'], ['lock_key_id', 'TEXT'], ['invoice_id', 'TEXT'], ['invoice_url', 'TEXT'], ['invoice_status', 'TEXT']] as const) {
+  for (const [name, type] of [['deal_id', 'TEXT'], ['milestone', 'INTEGER'], ['lock_sig', 'TEXT'], ['lock_key_id', 'TEXT'], ['invoice_id', 'TEXT'], ['invoice_url', 'TEXT'], ['invoice_status', 'TEXT'], ['settled_cents', 'INTEGER'], ['delta_cents', 'INTEGER'], ['delta_reason', 'TEXT'], ['delta_source', 'TEXT'], ['capture_fee_cents', 'INTEGER'], ['capture_net_cents', 'INTEGER']] as const) {
     if (!columns.has(name)) db.exec(`ALTER TABLE proposals ADD COLUMN ${name} ${type}`)
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS proposals_invoice ON proposals(invoice_id) WHERE invoice_id IS NOT NULL')
   db.exec('CREATE INDEX IF NOT EXISTS proposals_deal ON proposals(deal_id, milestone)')
-  for (const [name, type] of [['payout_batch_id', 'TEXT'], ['payout_item_id', 'TEXT'], ['payout_status', 'TEXT'], ['payout_txn_id', 'TEXT'], ['payout_fee_cents', 'INTEGER']] as const) {
+  for (const [name, type] of [['payout_batch_id', 'TEXT'], ['payout_item_id', 'TEXT'], ['payout_status', 'TEXT'], ['payout_txn_id', 'TEXT'], ['payout_fee_cents', 'INTEGER'], ['pay_instrument', 'TEXT'], ['order_kind', 'TEXT']] as const) {
     if (!columns.has(name)) db.exec(`ALTER TABLE proposals ADD COLUMN ${name} ${type}`)
   }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS proposals_payout_batch ON proposals(payout_batch_id) WHERE payout_batch_id IS NOT NULL')
@@ -284,6 +351,35 @@ export function migrate(db: DatabaseSync): void {
   // written through the API (the seed wrote before it existed), so they count as already written.
   const rulesColumns = new Set((db.prepare('PRAGMA table_info(party_rules)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!rulesColumns.has('origin')) db.exec(`ALTER TABLE party_rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'written'`)
+  // Who wrote a sheet: the studio's owner, or the company itself with its own key. A client that wrote its own number
+  // has claimed its seat, and from then on the studio can neither read nor overwrite it.
+  if (!rulesColumns.has('written_by')) db.exec(`ALTER TABLE party_rules ADD COLUMN written_by TEXT`)
+  // A status link may also carry the right to pay what is due, not only to look at it.
+  const shareColumns = new Set((db.prepare('PRAGMA table_info(share_links)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!shareColumns.has('can_pay')) db.exec('ALTER TABLE share_links ADD COLUMN can_pay INTEGER NOT NULL DEFAULT 0')
+  applySqlSteps(db, OPS_STEPS, new Date().toISOString(), options.backup === false ? undefined : backupFileDatabase)
+  const eventColumns = new Set((db.prepare('PRAGMA table_info(events)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!eventColumns.has('actor_json')) db.exec('ALTER TABLE events ADD COLUMN actor_json TEXT')
+  const agentColumns = new Set((db.prepare('PRAGMA table_info(agents)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!agentColumns.has('expires_at')) db.exec('ALTER TABLE agents ADD COLUMN expires_at TEXT')
+  if (!agentColumns.has('key_prefix')) db.exec('ALTER TABLE agents ADD COLUMN key_prefix TEXT')
+  const clientKeyColumns = new Set((db.prepare('PRAGMA table_info(client_keys)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!clientKeyColumns.has('key_prefix')) db.exec('ALTER TABLE client_keys ADD COLUMN key_prefix TEXT')
+  if (!clientKeyColumns.has('expires_at')) db.exec('ALTER TABLE client_keys ADD COLUMN expires_at TEXT')
+  const safetyColumns = new Set((db.prepare('PRAGMA table_info(safety_state)').all() as Array<{ name: string }>).map((column) => column.name))
+  if (!safetyColumns.has('autopilot_paused')) db.exec('ALTER TABLE safety_state ADD COLUMN autopilot_paused INTEGER NOT NULL DEFAULT 0')
+  if (!safetyColumns.has('config_json')) db.exec('ALTER TABLE safety_state ADD COLUMN config_json TEXT')
+}
+
+/** Copies a file database aside before a new checksum step. Memory databases are skipped. */
+export function backupFileDatabase(db: DatabaseSync): void {
+  const rows = db.prepare('PRAGMA database_list').all() as Array<{ file: string }>
+  const file = rows.find((row) => row.file)?.file
+  if (!file) return
+  const destDir = join(dirname(file), 'backups')
+  mkdirSync(destDir, { recursive: true })
+  const dest = join(destDir, `mandate-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`)
+  db.exec(`VACUUM INTO '${dest.replaceAll("'", "''")}'`)
 }
 
 export function seed(db: DatabaseSync, now: Date): void {
@@ -295,6 +391,11 @@ export function seed(db: DatabaseSync, now: Date): void {
       JSON.stringify(body),
       now.toISOString(),
     )
+  }
+  const payeeCount = db.prepare('SELECT COUNT(*) AS n FROM payees').get() as { n: number }
+  if (payeeCount.n === 0) {
+    const insert = db.prepare('INSERT INTO payees (id, email, status, verified_method, first_seen, total_paid_cents) VALUES (?, ?, ?, ?, ?, 0)')
+    for (const payee of LINE_STUDIO_WARRANT.payees) insert.run(payee.id, payee.email, 'active', 'owner_attested', now.toISOString())
   }
   // Each company's deal rules are versioned data too. Seeded once per party, never overwritten. The seed's rows
   // are marked as examples: they work only once a person has looked at them and kept them (or written better ones).
@@ -321,7 +422,7 @@ export function resetDemo(db: DatabaseSync, now: Date): void {
   db.exec('BEGIN')
   try {
     // Children before parents, because events point at proposals and deliveries at deals.
-    for (const table of ['events', 'deliveries', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
+    for (const table of ['events', 'deliveries', 'negotiation_moves', 'negotiations', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
       db.exec(`DELETE FROM ${table}`)
     }
     db.exec("UPDATE safety_state SET paused = 0, reason = NULL, since = NULL, by = NULL WHERE id = 1")

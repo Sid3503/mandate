@@ -1,6 +1,6 @@
 import type { InvoicePort, InvoiceRequest, LiveInvoice } from './invoices'
 import type { LiveDispute, LiveTransaction, WatchPort } from './watch'
-import { PayPalError, type LivePayout, type PayPalPort } from './port'
+import { PayPalError, type CardOnOrder, type LivePayout, type PayPalPort } from './port'
 
 type StoredOrder = {
   amountCents: number
@@ -8,6 +8,8 @@ type StoredOrder = {
   customId: string
   status: string
   captureId?: string
+  /** True when the order was opened for a card on our own page: no way back to PayPal, so no payer-action link. */
+  cardFlow?: boolean
 }
 
 type StoredPayout = {
@@ -30,9 +32,19 @@ export class FakePayPal implements PayPalPort {
   lastReturnUrl: string | null = null
 
   readonly orders = new Map<string, StoredOrder>()
+  /** The card each order was paid with and the issuer's 3-D Secure answer, as a test sets them. */
+  readonly cards = new Map<string, CardOnOrder>()
   autoApprove = true
   captureCalls = 0
   refundCalls = 0
+  /** How many browser-safe client tokens have been minted. */
+  clientTokenCalls = 0
+
+  /** A browser-safe token for the JavaScript SDK. The fake one is a fixed string. */
+  async clientToken(): Promise<string> {
+    this.clientTokenCalls += 1
+    return 'FAKE-CLIENT-TOKEN'
+  }
 
   async createOrder(input: {
     proposalId: string
@@ -40,11 +52,13 @@ export class FakePayPal implements PayPalPort {
     currency: string
     description: string
     payeeEmail: string | null
+    kind?: 'card' | 'checkout'
     returnUrl?: string
     cancelUrl?: string
   }) {
     this.lastReturnUrl = input.returnUrl ?? null
-    const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}`
+    // A card order and a checkout order are different orders, as they are on PayPal's side.
+    const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}${input.kind === 'card' ? '-CARD' : ''}`
     const existing = this.orders.get(orderId)
     if (!existing) {
       this.orders.set(orderId, {
@@ -52,13 +66,15 @@ export class FakePayPal implements PayPalPort {
         currency: input.currency,
         customId: input.proposalId,
         status: this.autoApprove ? 'APPROVED' : 'CREATED',
+        // An order opened for a card on our own page has no way back to PayPal, so it carries no payer-action link.
+        cardFlow: !input.returnUrl,
       })
     }
     const order = this.orders.get(orderId)!
     return {
       orderId,
       status: order.status,
-      approveUrl: `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
+      approveUrl: order.cardFlow ? null : `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
       payeeAttached: Boolean(input.payeeEmail),
     }
   }
@@ -77,8 +93,13 @@ export class FakePayPal implements PayPalPort {
       amountCents: order.amountCents,
       currency: order.currency,
       customId: order.customId,
+      // PayPal gives every order a payer-action link, card orders included.
       approveUrl: `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
     }
+  }
+
+  async cardResult(orderId: string): Promise<CardOnOrder | null> {
+    return this.cards.get(orderId) ?? null
   }
 
   async captureOrder(orderId: string) {
@@ -90,7 +111,10 @@ export class FakePayPal implements PayPalPort {
     }
     order.status = 'COMPLETED'
     order.captureId ??= `CAP-${orderId.slice(6, 18)}`
-    return { captureId: order.captureId, amountCents: order.amountCents, currency: order.currency, status: 'COMPLETED' }
+    // PayPal states the fee it took on a completed capture. The fake stands in with PayPal's published US rate
+    // (2.9% + $0.30) so the receipt has a fee to show; the product reads the number, it never computes one.
+    const feeCents = Math.round((order.amountCents * 29) / 1000) + 30
+    return { captureId: order.captureId, amountCents: order.amountCents, currency: order.currency, status: 'COMPLETED', feeCents, netCents: order.amountCents - feeCents }
   }
 
   async refundCapture(input: { proposalId: string; captureId: string; amountCents: number; currency: string }) {
@@ -199,7 +223,24 @@ export class FakePayPal implements PayPalPort {
 }
 
 export class FakeInvoices implements InvoicePort {
-  readonly invoices = new Map<string, { number: string; proposalId: string; totalCents: number; currency: string; status: string; reference: string; transactionId: string | null; paidCents: number; email: string }>()
+  readonly invoices = new Map<string, {
+    number: string
+    proposalId: string
+    totalCents: number
+    currency: string
+    status: string
+    reference: string
+    transactionId: string | null
+    paidCents: number
+    email: string
+    discountCents: number | null
+    earlyDiscountCents: number | null
+    feeCents: number | null
+    allowPartialPayment: boolean
+    earlyPaymentDiscount: { percentBps: number; dueDate: string } | null
+  }>()
+  /** The last draft this server asked for, so a test can read exactly what was sent to PayPal. */
+  lastCreate: InvoiceRequest | null = null
   createCalls = 0
   sendCalls = 0
   /** When set, creating fails the way an app without Invoicing permission does. */
@@ -210,10 +251,26 @@ export class FakeInvoices implements InvoicePort {
   async createDraft(input: InvoiceRequest) {
     if (this.unauthorised) throw new PayPalError(403, 'PAYPAL_API_HTTP_ERROR', null, 'Authorization failed due to insufficient permissions.')
     this.createCalls += 1
+    this.lastCreate = input
     const existing = [...this.invoices.entries()].find(([, item]) => item.number === input.invoiceNumber)
     if (existing) throw new PayPalError(422, 'DUPLICATE_INVOICE_NUMBER', null, 'invoice number')
     const invoiceId = `INV2-${input.proposalId.replaceAll('-', '').slice(0, 12).toUpperCase()}`
-    this.invoices.set(invoiceId, { number: input.invoiceNumber, proposalId: input.proposalId, totalCents: input.amountCents, currency: input.currency, status: 'DRAFT', reference: input.proposalId, transactionId: null, paidCents: 0, email: input.recipientEmail })
+    this.invoices.set(invoiceId, {
+      number: input.invoiceNumber,
+      proposalId: input.proposalId,
+      totalCents: input.amountCents,
+      currency: input.currency,
+      status: 'DRAFT',
+      reference: input.proposalId,
+      transactionId: null,
+      paidCents: 0,
+      email: input.recipientEmail,
+      discountCents: null,
+      earlyDiscountCents: null,
+      feeCents: null,
+      allowPartialPayment: input.allowPartialPayment,
+      earlyPaymentDiscount: input.earlyPaymentDiscount,
+    })
     return { invoiceId }
   }
 
@@ -239,6 +296,9 @@ export class FakeInvoices implements InvoicePort {
       transactionId: invoice.transactionId,
       reference: invoice.reference,
       payerUrl: `https://www.sandbox.paypal.com/invoice/p/#${invoiceId}`,
+      discountCents: invoice.discountCents,
+      earlyDiscountCents: invoice.earlyDiscountCents,
+      feeCents: invoice.feeCents,
     }
   }
 
@@ -273,6 +333,20 @@ export class FakeInvoices implements InvoicePort {
 
   setStatus(invoiceId: string, status: string) {
     this.invoices.get(invoiceId)!.status = status
+  }
+
+  /**
+   * The client pays part of the invoice. The amount PayPal reports accumulates, and any adjustment field PayPal
+   * would carry is set here, so a test decides exactly what the reason can be read from rather than inferring it.
+   */
+  payPartial(invoiceId: string, cents: number, adjustments: { discountCents?: number; earlyDiscountCents?: number; feeCents?: number } = {}) {
+    const invoice = this.invoices.get(invoiceId)!
+    invoice.paidCents += cents
+    if (adjustments.discountCents !== undefined) invoice.discountCents = adjustments.discountCents
+    if (adjustments.earlyDiscountCents !== undefined) invoice.earlyDiscountCents = adjustments.earlyDiscountCents
+    if (adjustments.feeCents !== undefined) invoice.feeCents = adjustments.feeCents
+    invoice.transactionId ??= `CAP-INV-${invoiceId.slice(5, 17)}`
+    invoice.status = invoice.paidCents >= invoice.totalCents ? 'PAID' : 'PARTIALLY_PAID'
   }
 
   /** Simulates PayPal reporting a different total than the one we asked for. */

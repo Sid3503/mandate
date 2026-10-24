@@ -27,14 +27,16 @@ export function TryRules({ rules }: { rules?: Rules }) {
   const [work, setWork] = useState('')
   const [withProof, setWithProof] = useState(true)
   const [cite, setCite] = useState(true)
-  const people = warrant.data?.payees ?? []
+  // The people of the rules being tried: a draft's own list before version 1 exists, the live rules' after.
+  const people = rules?.payees ?? warrant.data?.payees ?? []
+  const currency = rules?.currency ?? warrant.data?.currency ?? 'USD'
   const kinds = rules?.categories ?? warrant.data?.categories ?? []
   const funding = cases.data?.funding ?? null
   const cents = parseCents(amount)
   const run = useMutation({
     mutationFn: () => api.tryRequest({
-      kind: 'payment', payee: payee || people[0]?.displayName || 'Priya', amountCents: cents ?? 0, currency: warrant.data?.currency ?? 'USD', category: work || kinds[0] || 'design',
-      description: 'Try-it request', ...(withProof ? { evidenceUrl: 'https://www.figma.com/file/try-it' } : {}),
+      kind: 'payment', payee: payee || people[0]?.displayName || 'A. Stranger', amountCents: cents ?? 0, currency, category: work || kinds[0] || 'unlisted',
+      description: 'Try-it request', ...(withProof ? { evidenceUrl: 'https://example.com/the-work' } : {}),
       ...(cite && funding ? { fundingCaptureId: funding.captureId, ...(funding.jobId ? { jobId: funding.jobId } : {}) } : {}),
     }, rules),
   })
@@ -49,7 +51,7 @@ export function TryRules({ rules }: { rules?: Rules }) {
             <option value="A. Stranger">A stranger (not on the rules)</option>
           </select>
         </label>
-        <label className="field"><span>Amount</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} /></span></label>
+        <label className="field"><span>Amount</span><span className="dollar-input"><span>{currency}</span><input inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} aria-label={`Amount in ${currency}`} /></span></label>
         <label className="field"><span>Kind of work</span>
           <select value={work} onChange={(event) => setWork(event.target.value)}>
             {kinds.map((kind) => <option key={kind} value={kind}>{kind}</option>)}
@@ -57,15 +59,20 @@ export function TryRules({ rules }: { rules?: Rules }) {
           </select>
         </label>
         <label className="check"><input type="checkbox" checked={withProof} onChange={(event) => setWithProof(event.target.checked)} /> With a link to the work</label>
-        <label className="check"><input type="checkbox" checked={cite && funding !== null} disabled={funding === null} onChange={(event) => setCite(event.target.checked)} /> {funding ? `Cite a settled client payment (${dollars(funding.canStillFundCents)} left to pay out)` : 'No settled client payment yet to cite'}</label>
+        <label className="check"><input type="checkbox" checked={cite && funding !== null} disabled={funding === null} onChange={(event) => setCite(event.target.checked)} /> {funding ? `Cite a settled client payment (${dollars(funding.canStillFundCents, currency)} left to pay out)` : 'No settled client payment yet to cite'}</label>
         <button type="submit" className="btn btn-ink btn-small" disabled={!online || !cents || run.isPending}>{run.isPending ? 'Asking the rules…' : 'Try it'}</button>
       </form>
       <ProblemCard error={run.error} />
       {run.data ? (
         <div className="try-result" role="status" data-testid="try-result">
-          <div className="row gap-s wrap"><GateChip gate={run.data.live.gate} /><code>{run.data.live.clause}</code><span>under the live rules</span></div>
-          <p className="fine">{explain(run.data.live.clause, { amountCents: cents ?? undefined, payeeId: people.find((person) => person.displayName === (payee || people[0]?.displayName))?.id }, warrant.data, (id) => people.find((person) => person.id === id)?.displayName ?? 'That party') || run.data.live.detail}</p>
+          {run.data.live ? (
+            <div className="row gap-s wrap"><GateChip gate={run.data.live.gate} /><code>{run.data.live.clause}</code><span>under the live rules</span></div>
+          ) : null}
+          {run.data.live ? (
+            <p className="fine">{explain(run.data.live.clause, { amountCents: cents ?? undefined, payeeId: people.find((person) => person.displayName === (payee || people[0]?.displayName))?.id }, warrant.data, (id) => people.find((person) => person.id === id)?.displayName ?? 'That party') || run.data.live.detail}</p>
+          ) : null}
           {run.data.draft ? <div className="row gap-s wrap"><GateChip gate={run.data.draft.gate} /><code>{run.data.draft.clause}</code><span>under this draft{same(run.data.live, run.data.draft) ? ' (the same)' : ' (different)'}</span></div> : null}
+          {run.data.draft ? <p className="fine">{run.data.draft.detail}</p> : null}
           <p className="fine">Nothing was filed and PayPal was not called.</p>
         </div>
       ) : null}
@@ -80,7 +87,7 @@ export function TryRules({ rules }: { rules?: Rules }) {
             {cases.data.cases.map((item) => (
               <tr key={item.id} className={rules && !same(item.live, item.draft) ? 'try-changed' : ''}>
                 <th scope="row">{item.label}</th>
-                <td><Chip tone={GATE[item.live.gate].tone}>{GATE[item.live.gate].label}</Chip> <code>{item.live.clause}</code></td>
+                <td>{item.live ? <><Chip tone={GATE[item.live.gate].tone}>{GATE[item.live.gate].label}</Chip> <code>{item.live.clause}</code></> : '—'}</td>
                 {rules ? <td>{item.draft ? <><Chip tone={GATE[item.draft.gate].tone}>{GATE[item.draft.gate].label}</Chip> <code>{item.draft.clause}</code></> : '—'}</td> : null}
               </tr>
             ))}

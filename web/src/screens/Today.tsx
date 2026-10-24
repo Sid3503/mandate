@@ -2,21 +2,24 @@ import { useMutation } from '@tanstack/react-query'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useToast } from '../components/Toast'
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useAsk } from '../components/Ask'
 import { BalanceNote } from '../components/PayPalFeatures'
-import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, ProblemCard } from '../components/ui'
+import { Chip, Empty, Hash, Loading, Money, NoMoneyMoved, PageHead, ProblemCard, Spinner } from '../components/ui'
 import { api } from '../lib/api'
+import { session } from '../lib/session'
 import { useQuery } from '@tanstack/react-query'
 import { relative } from '../lib/format'
 import { reviewKey, useLive, type ReviewState } from '../lib/live'
 import { BreakIt } from '../components/BreakIt'
+import { StoryRail } from '../components/StoryRail'
 import { EmailNotice } from '../components/EmailNotice'
 import { ToolTrail } from '../components/ToolTrail'
 import { dollars } from '../lib/money'
-import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useToday, useWarrant } from '../lib/hooks'
+import { useAgentsOn, useCaptures, useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useSession, useToday, useWarrant } from '../lib/hooks'
 import type { Delivery, Proposal, Today as TodayData, TodayAction, TodayItem } from '../lib/types'
-import { explain, isPayout, KIND, type Names } from '../lib/words'
+import { canonicalCart } from '../lib/verify'
+import { explain, isPayout, KIND, paidPhase, type Names } from '../lib/words'
 
 const HOW: Record<NonNullable<TodayItem['how']>, { label: string; tone: 'auto' | 'ink' }> = {
   tap: { label: 'Your tap', tone: 'ink' },
@@ -40,8 +43,20 @@ const KIND_LABEL: Record<TodayItem['kind'], { label: string; tone: 'deny' | 'nee
 }
 
 export function Today() {
+  const me = useSession()
+  const navigate = useNavigate()
+
+  useEffect(() => {
+    const role = me.data?.role
+    if (me.data?.side === 'buyer') navigate('/deals', { replace: true })
+    else if (role === 'proposer') navigate('/clerk', { replace: true })
+    else if (role === 'viewer') navigate('/proof', { replace: true })
+    else if (role === 'payee') navigate('/payments', { replace: true })
+  }, [me.data?.role, me.data?.side, navigate])
+
   const proposals = useProposals()
   const today = useToday()
+  const status = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 15_000, retry: false })
   const names = useNames()
   const warrant = useWarrant()
   const captures = useCaptures(proposals.data?.data)
@@ -52,6 +67,8 @@ export function Today() {
   const data = today.data
   const attention = (data?.waiting ?? []).filter((item) => item.kind !== 'approval')
   const open = waiting.filter((row) => !settledHere[row.id]).length + attention.length
+  const owner = me.data?.role === 'owner'
+  const approver = me.data?.role === 'approver'
 
   return (
     <div className="page today">
@@ -59,24 +76,45 @@ export function Today() {
         eyebrow={new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         title={<>Today <span className="count" aria-label={`${open} waiting for you`}>{open}</span></>}
       >
-        <AskButton />
-        <Link className="btn btn-ghost hide-phone" to="/new">New request</Link>
+        {owner ? <AskButton /> : null}
+        {owner ? <Link className="btn btn-ghost hide-phone" to="/new">New request</Link> : null}
       </PageHead>
+      {approver ? <p className="fine" data-testid="approver-today">You approve what is waiting. The rules, and sending the money, stay with the owner.</p> : null}
 
       {proposals.isLoading || today.isLoading ? <Loading /> : null}
       <ProblemCard error={proposals.error ?? today.error} />
-      <EmailNotice />
-      {data?.next ? <NextForJob next={data.next} /> : null}
+      {owner ? <EmailNotice /> : null}
+      {status.data?.paused ? (
+        <div className="paused-card" data-testid="today-stopped-card" role="status">
+          <Chip tone="deny">Stopped</Chip>
+          <span><strong>Automation stopped.</strong> Mandate is paused{status.data.paused.reason ? ` (${status.data.paused.reason})` : ''}. Automatic billing and payouts are halted.</span>
+        </div>
+      ) : null}
+      {owner ? <StoryRail /> : null}
+      {owner ? <CoolingNote /> : null}
+      {owner && data?.next ? <NextForJob next={data.next} /> : null}
 
       {data ? <MonthStrip data={data} /> : null}
       {data ? <WaitingOnClient data={data} /> : null}
-      <TapToRule />
-      {data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length < 4 ? <Setup data={data} /> : null}
+      {owner ? <TapToRule /> : null}
+      {owner && data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length < 4 ? <Setup data={data} /> : null}
 
       <section className="section" data-tour="today-waiting" aria-labelledby="h-waiting">
         <h2 className="section-title" id="h-waiting">Waiting for you</h2>
         {proposals.data && today.data && waiting.length === 0 && attention.length === 0 ? (
-          <div data-tour="empty"><Empty title="Nothing needs you">Requests at or above the automatic line land here, and so does anything that needs a decision, such as a payout on hold or an invoice that is overdue. Everything else is settled or refused by the rules on its own.</Empty></div>
+          <div data-tour="empty">
+            {!warrant.data ? (
+              owner || !me.data ? (
+                <Empty title="Your studio is empty">Nothing can be asked for until the rules exist. Write them, name who you bill and who you pay, and the requests that need you land here.</Empty>
+              ) : (
+                <Empty title="Nothing is waiting">The owner has not published rules yet, so there is nothing to approve.</Empty>
+              )
+            ) : rows.length === 0 ? (
+              <Empty title="No requests yet">When you bill a client, or someone asks to pay a contractor, it shows up here if it needs your tap. Anything inside your rules is settled or refused on its own.</Empty>
+            ) : (
+              <Empty title="Nothing needs you">Requests at or above the automatic line land here, and so does anything that needs a decision, such as a payout on hold or an invoice that is overdue. Everything else is settled or refused by the rules on its own.</Empty>
+            )}
+          </div>
         ) : null}
         <div className="approvals">
           {waiting.map((row) => (
@@ -95,7 +133,7 @@ export function Today() {
 
       <BreakIt />
 
-      {data && data.readyToBill.some((item) => item.delivery?.status !== 'awaiting') ? <ReadyToBill data={data} /> : null}
+      {owner && data && data.readyToBill.some((item) => item.delivery?.status !== 'awaiting') ? <ReadyToBill data={data} /> : null}
 
       {data && data.inFlight.length > 0 ? (
         <section className="section" data-tour="ready" aria-labelledby="h-flight">
@@ -106,10 +144,10 @@ export function Today() {
       ) : null}
 
       {data ? <Done data={data} /> : null}
-      {data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length >= 4 ? <Setup data={data} /> : null}
+      {owner && data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length >= 4 ? <Setup data={data} /> : null}
 
       {refused.length > 0 || (data?.stopped.count ?? 0) > 0 ? (
-        <section className="section" data-tour="refused" aria-labelledby="h-stopped">
+        <section className="section" data-tour="refused" aria-labelledby="h-stopped" data-testid="today-stopped">
           <h2 className="section-title" id="h-stopped">Stopped by the rules{data && data.stopped.count > 0 ? <span className="section-note"> · {data.stopped.count} in 30 days, {dollars(data.stopped.cents)} kept safe</span> : null}</h2>
           <div className="refusals">
             {refused.map((row) => (
@@ -133,11 +171,26 @@ export function Today() {
   )
 }
 
+/** A payee the owner has just named cannot be paid until they attest them, or until the wait is over. */
+function CoolingNote() {
+  const owner = useIsOwner()
+  const book = useQuery({ queryKey: ['payees'], queryFn: api.payees, enabled: owner, staleTime: 30_000, retry: false })
+  const cooling = (book.data?.payees ?? []).filter((row) => row.cooling)
+  if (cooling.length === 0) return null
+  const names = cooling.map((row) => row.name).join(', ')
+  return (
+    <section className="panel wip-note" data-testid="payee-cooling">
+      <p><strong>{names}</strong> {cooling.length === 1 ? 'is a new payee' : 'are new payees'}. A payout to them waits 24 hours, or you can attest them with your passkey now.</p>
+      <Link className="btn btn-ink btn-small" to="/payees">Attest on Payees</Link>
+    </section>
+  )
+}
+
 function AskButton() {
   const ask = useAsk()
   const agents = useAgentsOn()
   return (
-    <button type="button" className="btn btn-ink ask-button" data-tour="today-ask" onClick={() => ask.open()} disabled={!agents} title={agents ? 'Ask the clerk anything' : 'The clerk needs OLLAMA_API_KEY'}>
+    <button type="button" className="btn btn-ink ask-button" data-tour="today-ask" onClick={() => ask.open()} disabled={!agents} title={agents ? 'Ask the clerk anything' : 'The AI clerk is off on this server'}>
       Ask Mandate <kbd aria-hidden="true">⌘K</kbd>
     </button>
   )
@@ -157,7 +210,7 @@ function TapToRule() {
       <div>
         <span className="eyebrow">You keep saying yes</span>
         <p>You have approved {first.payeeName}'s payouts from {first.clientName}'s money {first.approved} times ({dollars(first.totalCents)} in all, the largest {dollars(first.largestCents)}) and never said no.
-          {taps && taps.thisMonth > 0 ? <> That is {taps.thisMonth} {taps.thisMonth === 1 ? 'tap' : 'taps'} this month.</> : null}</p>
+          {taps && typeof taps.thisMonth === 'number' ? <> That is {taps.thisMonth} {taps.thisMonth === 1 ? 'tap' : 'taps'} this month.</> : null}</p>
         <p className="fine">Make it a rule and these payouts need no tap. You will see exactly what it allows before you sign anything.</p>
       </div>
       <Link className="btn btn-ink btn-small" to="/rules" state={{ draft: first.draft }}>Draft this rule</Link>
@@ -179,6 +232,11 @@ function MonthStrip({ data }: { data: TodayData }) {
         <div className="month-num out"><span className="eyebrow">Out</span><Money cents={month.outCents} size="xl" currency={month.currency} /></div>
         <div className="month-num kept"><span className="eyebrow">Kept</span><Money cents={month.keptCents} size="xl" currency={month.currency} /></div>
       </div>
+      <dl className="month-value" data-testid="month-value" aria-label="What Mandate did for you in the last 30 days">
+        <div><dt>Handled with no tap</dt><dd>{stats.automatic}</dd></div>
+        <div><dt>Your taps</dt><dd>{stats.tapped}</dd></div>
+        <div className={data.stopped.count > 0 ? 'is-stopped' : undefined}><dt>Stopped by your rules</dt><dd>{data.stopped.count}{data.stopped.cents > 0 ? <small> · {dollars(data.stopped.cents)} kept safe</small> : null}</dd></div>
+      </dl>
       <div className="month-facts">
         <p className="fine"><strong>Contractor cap:</strong> {dollars(month.reservedCents)} of {dollars(month.capCents)} used</p>
         <div className="cap-bar" role="img" aria-label={`${used}% of the monthly contractor cap is used`}><span style={{ width: `${used}%` }} /></div>
@@ -192,13 +250,13 @@ function MonthStrip({ data }: { data: TodayData }) {
   )
 }
 
-/** The server's one next step for the frozen Northwind job. The bill control stays on Ready to bill. */
+/** The server's one next step. The bill control stays on Ready to bill. */
 function NextForJob({ next }: { next: TodayData['next'] }) {
   if (!next.step && !next.rules) return null
   const rules = next.rules
   const at = rules ? rules.indexOf('Rules') : -1
   return (
-    <section className="panel panel-lime wip-note" aria-label="Next on the Northwind job" data-testid="today-next">
+    <section className="panel panel-lime wip-note" aria-label="The next step" data-testid="today-next">
       <div>
         <span className="eyebrow">Next</span>
         {next.step ? <p>{next.step}</p> : null}
@@ -273,7 +331,7 @@ function BillRow({ item, auto, accept, hosted = false }: { item: TodayData['read
       const charge = made.charge
       toast(charge.gate === 'DENY'
         ? { title: 'Refused', body: `${charge.clause}. Nothing was billed.`, tone: 'bad' }
-        : charge.phase === 'invoice_sent' || charge.phase === 'captured'
+        : charge.phase === 'invoice_sent' || paidPhase(charge.phase)
           ? { title: `Invoice sent to ${item.buyerName}`, body: `${dollars(item.amountCents)} for ${item.title}. It settles only when PayPal says it was paid.` }
           : { title: 'Billed', body: 'It is waiting for your tap.', tone: 'info' })
     },
@@ -302,7 +360,7 @@ function BillRow({ item, auto, accept, hosted = false }: { item: TodayData['read
           <p className="fine"><Chip tone="need">Waiting for {item.buyerName} to accept</Chip> Delivered with <a href={delivery.proofUrl} target="_blank" rel="noreferrer noopener">{delivery.proofUrl.replace(/^https:\/\/(www\.)?/, '')}</a>. Nothing is billed until the client’s own agent accepts it, and then the invoice goes out by itself.</p>
           <div className="row gap-s wrap">
             <ReviewProgress buyer={item.buyerName} delivery={delivery} hosted={hosted} />
-            <button type="button" className="btn btn-ink btn-small" disabled={!owner || !online || !agents || review.isPending} onClick={() => review.mutate()} title={agents ? undefined : 'The client’s agent needs OLLAMA_API_KEY'}>{review.isPending ? `Asking ${item.buyerName}’s agent…` : hosted ? 'Nudge now' : `Ask ${item.buyerName}’s agent to review`}</button>
+            <button type="button" className="btn btn-ink btn-small" disabled={!owner || !online || !agents || review.isPending} onClick={() => review.mutate()} title={agents ? undefined : 'The AI agents are off on this server'}>{review.isPending ? `Asking ${item.buyerName}’s agent…` : hosted ? 'Nudge now' : `Ask ${item.buyerName}’s agent to review`}</button>
             <span className="fine">In production the client’s own agent calls <code>decide_delivery</code> on its own key. This runs the hosted stand-in.</span>
           </div>
           <ProblemCard error={review.error} />
@@ -375,10 +433,12 @@ function Done({ data }: { data: TodayData }) {
   )
 }
 
-/** One thing that needs attention, is in flight, or is done: words, the amount, and the buttons that act on it. */
+/** One thing that needs attention, is in flight, or is done: words and the buttons that act on it. The sentence already names the amount, so the row does not print it a second time. */
 function ItemRow({ item }: { item: TodayItem }) {
   const reduce = useReducedMotion()
-  const owner = useIsOwner()
+  const role = useSession().data?.role
+  const owner = role === 'owner'
+  const canAct = (action: TodayAction) => owner || (role === 'approver' && (action === 'approve' || action === 'reject'))
   const online = useOnline()
   const refresh = useRefreshMoney()
   const toast = useToast()
@@ -387,13 +447,14 @@ function ItemRow({ item }: { item: TodayItem }) {
       if (action === 'settle' || action === 'check') return api.capture(item.proposalId)
       if (action === 'remind') return api.remindInvoice(item.proposalId)
       if (action === 'cancel_payout') return api.cancelPayout(item.proposalId)
-      if (action === 'approve') return api.approve(item.proposalId)
+      if (action === 'approve') return api.approve(item.proposalId, session.mode() === 'demo' ? 'demo' : 'auto')
       if (action === 'reject') return api.reject(item.proposalId)
       return Promise.resolve(null)
     },
     onSuccess: (result, action) => {
       if (action === 'remind') toast({ title: 'Reminder sent', body: 'PayPal emailed the client about the invoice.', tone: 'info' })
       else if (action === 'cancel_payout') toast({ title: 'Payout cancelled', body: 'PayPal returned the money.', tone: 'info' })
+      else if (result && 'phase' in result && result.phase === 'settled_short') toast({ title: `Part paid ${dollars(result.settledCents ?? 0)} of ${dollars(result.amountCents)}`, body: 'PayPal confirmed what arrived. The rest is still owed.', tone: 'info' })
       else if (result && 'phase' in result && result.phase === 'captured') toast({ title: `Settled ${dollars(result.amountCents)}`, body: 'PayPal confirmed it.' })
       else if (action === 'settle' || action === 'check') toast({ title: 'Checked with PayPal', body: 'Not settled yet. Nothing is counted as paid until PayPal says so.', tone: 'info' })
     },
@@ -402,7 +463,7 @@ function ItemRow({ item }: { item: TodayItem }) {
   const label = KIND_LABEL[item.kind]
   const how = item.how ? HOW[item.how] : null
   const buttons = item.actions.filter((action) => action !== 'open')
-  const disabled = !owner || !online || act.isPending
+  const disabled = !online || act.isPending
   return (
     <motion.li
       layout={!reduce}
@@ -415,21 +476,22 @@ function ItemRow({ item }: { item: TodayItem }) {
       <div className="item-main">
         {how ? <Chip tone={how.tone}>{how.label}</Chip> : <Chip tone={label.tone}>{label.label}</Chip>}
         <Link to={`/p/${item.proposalId}`} className="item-title">{item.title}</Link>
-        <Money cents={item.amountCents} currency={item.currency} />
+        {item.title.includes(dollars(item.amountCents, item.currency)) ? null : <Money cents={item.amountCents} currency={item.currency} />}
         <span className="muted small">{relative(item.at)}</span>
       </div>
       <p className="fine">{item.detail}</p>
       {buttons.length > 0 ? (
         <div className="row gap-s wrap">
           {buttons.map((action) => (
-            <button key={action} type="button" className={`btn btn-small ${action === 'settle' || action === 'approve' ? 'btn-ink' : 'btn-ghost'}`} disabled={disabled} onClick={() => act.mutate(action)}>
-              {ACTION[action](item)}
+            <button key={action} type="button" className={`btn btn-small ${action === 'settle' || action === 'approve' ? 'btn-ink' : 'btn-ghost'}`} disabled={disabled || !canAct(action)} onClick={() => act.mutate(action)}>
+              {act.isPending && act.variables === action ? <><Spinner />{ACTION[action](item)}</> : ACTION[action](item)}
             </button>
           ))}
           <Link className="link" to={`/p/${item.proposalId}`}>Open receipt →</Link>
         </div>
       ) : null}
-      {!owner && buttons.length > 0 ? <p className="fine">This key can ask and read. Only the owner key can act on a request.</p> : null}
+      {role === 'approver' && buttons.some((action) => action !== 'approve' && action !== 'reject') ? <p className="fine">You can approve or reject. Sending the money stays with the owner.</p> : null}
+      {role && role !== 'owner' && role !== 'approver' && buttons.length > 0 ? <p className="fine">This key can ask and read. Only the owner can act on a request.</p> : null}
       <ProblemCard error={act.error} />
     </motion.li>
   )
@@ -444,6 +506,44 @@ const ACTION: Record<Exclude<TodayAction, 'open'>, (item: TodayItem) => string> 
   cancel_payout: () => 'Cancel and return the money',
 }
 
+/** The cart hash the tap will lock. A locked row already has it. A waiting row is hashed the same way the server hashes it. */
+function useLockPreview(proposal: Proposal): string | null {
+  const [preview, setPreview] = useState<string | null>(proposal.cartHash)
+  useEffect(() => {
+    if (proposal.cartHash) {
+      setPreview(proposal.cartHash)
+      return
+    }
+    if (!proposal.payeeId || !proposal.category || !proposal.evidenceUrl) {
+      setPreview(null)
+      return
+    }
+    let cancel = false
+    const text = canonicalCart({
+      id: proposal.id,
+      warrantId: proposal.warrantId,
+      warrantVersion: proposal.warrantVersion,
+      payeeId: proposal.payeeId,
+      amountCents: proposal.amountCents,
+      currency: proposal.currency,
+      category: proposal.category,
+      evidenceUrl: proposal.evidenceUrl,
+      kind: proposal.kind,
+      parentCaptureId: proposal.parentCaptureId,
+      jobId: proposal.jobId,
+      fundingCaptureId: proposal.fundingCaptureId,
+      dealId: proposal.dealId,
+      milestone: proposal.milestone,
+    })
+    void crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)).then((buf) => {
+      if (cancel) return
+      setPreview([...new Uint8Array(buf)].map((byte) => byte.toString(16).padStart(2, '0')).join(''))
+    })
+    return () => { cancel = true }
+  }, [proposal])
+  return preview
+}
+
 function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   proposal: Proposal
   names: Names
@@ -451,15 +551,26 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   why: string
   onLocked: (proposal: Proposal) => void
 }) {
-  const owner = useIsOwner()
+  const role = useSession().data?.role
+  const owner = role === 'owner'
+  const canDecide = owner || role === 'approver'
   const online = useOnline()
   const refresh = useRefreshMoney()
   const toast = useToast()
-  const approve = useMutation({ mutationFn: () => api.approve(proposal.id), onSuccess: (locked) => { onLocked(locked); toast({ title: `Approved ${dollars(locked.amountCents)}`, body: 'Locked and signed. Nothing has moved yet.' }); void refresh() } })
+  const demo = session.mode() === 'demo'
+  const lockPreview = useLockPreview(proposal)
+  // How the client will pay a bill: an invoice by email, or a card form on our own page. The owner's choice, made
+  // at the tap, and recorded with the approval.
+  const [instrument, setInstrument] = useState<'invoice' | 'checkout'>('invoice')
+  // The approve response is the locked proposal. Show it right away instead of
+  // waiting for the Today query to refetch, which can take seconds.
+  const [lockedProposal, setLockedProposal] = useState<Proposal | null>(null)
+  const approve = useMutation({ mutationFn: (how: 'auto' | 'demo' | 'passkey') => api.approve(proposal.id, how, proposal.kind === 'charge' ? instrument : null), onSuccess: (locked) => { setLockedProposal(locked); onLocked(locked); toast({ title: 'Signed and sent', body: 'Nothing has moved yet.' }); void refresh() } })
   const reject = useMutation({ mutationFn: () => api.reject(proposal.id), onSuccess: () => { toast({ title: 'Rejected', body: 'Nothing moved.', tone: 'info' }); void refresh() } })
-  const locked = proposal.phase !== 'pending_approval'
+  const shown = lockedProposal ?? proposal
+  const locked = lockedProposal !== null || proposal.phase !== 'pending_approval'
   const kind = KIND[proposal.kind]
-  const disabled = !owner || !online || approve.isPending || reject.isPending
+  const disabled = !canDecide || !online || approve.isPending || reject.isPending
 
   return (
     <article className={`approval${locked ? ' is-locked' : ''}`} aria-live="polite" data-tour="approval">
@@ -479,25 +590,37 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
           <div><dt>Funded by</dt><dd>{funding ? <>{names(funding.payeeId)} <Money cents={funding.capturedAmountCents} size="sm" /> settled ✓</> : <span className="mono">{proposal.fundingCaptureId ?? 'none'}</span>}</dd></div>
         ) : null}
         {proposal.jobId ? <div className="opt"><dt>Job</dt><dd><Link to={`/jobs/${proposal.jobId}`} className="mono">{proposal.jobId}</Link></dd></div> : null}
+        <div><dt>Hash</dt><dd><Hash value={lockPreview} /></dd></div>
+        <div><dt>Clause</dt><dd className="mono">{proposal.clause}</dd></div>
         <div data-tour="approval-why"><dt>Why you?</dt><dd>{why}</dd></div>
         {proposal.prompt ? <div className="opt"><dt>Asked as</dt><dd className="quote">“{proposal.prompt}”</dd></div> : null}
       </dl>
 
       {locked ? (
         <div className="approval-locked">
-          <div className="row between"><Chip tone="auto">Approved · locked</Chip><Link className="btn btn-ink" to={`/p/${proposal.id}`}>{isPayout(proposal) ? 'Send the payout →' : 'Settle →'}</Link></div>
-          <div className="lock-line"><span className="eyebrow">Lock</span><Hash value={proposal.cartHash} reveal full /></div>
-          <p className="fine">{isPayout(proposal)
-            ? `${dollars(proposal.amountCents)} is locked for ${names(proposal.payeeId)} and not yet paid. Sending it uses PayPal Payouts, which pays ${names(proposal.payeeId)}’s own account.`
-            : `The server can now settle exactly ${dollars(proposal.amountCents)}. Any other amount is refused.`}</p>
+          <div className="row between"><Chip tone="auto">Approved · locked</Chip><Link className="btn btn-ink" to={`/p/${shown.id}`}>{isPayout(shown) ? 'Send the payout →' : 'Settle →'}</Link></div>
+          <div className="lock-line"><span className="eyebrow">Lock</span><Hash value={shown.cartHash} reveal full /></div>
+          <p className="fine">{isPayout(shown)
+            ? `${dollars(shown.amountCents)} is locked for ${names(shown.payeeId)} and not yet paid. Sending it uses PayPal Payouts, which pays ${names(shown.payeeId)}’s own account.`
+            : `The server can now settle exactly ${dollars(shown.amountCents)}. Any other amount is refused.`}</p>
         </div>
       ) : (
         <div className="approval-actions">
-          <button type="button" className="btn btn-lime btn-big" data-tour="approve" disabled={disabled} onClick={() => approve.mutate()}>
-            {approve.isPending ? 'Locking…' : <>Approve <span className="money">{dollars(proposal.amountCents, proposal.currency)}</span></>}
+          {proposal.kind === 'charge' ? (
+            <div className="row gap-s wrap instrument" data-testid="instrument">
+              <span className="eyebrow">How will they pay?</span>
+              <label><input type="radio" name={`instrument-${proposal.id}`} checked={instrument === 'invoice'} onChange={() => setInstrument('invoice')} /> PayPal invoice</label>
+              <label><input type="radio" name={`instrument-${proposal.id}`} checked={instrument === 'checkout'} onChange={() => setInstrument('checkout')} /> On our page</label>
+              <span className="fine">{instrument === 'checkout' ? 'They pay with a card on a page of ours, without leaving it.' : 'They get a PayPal invoice by email and pay from their account.'}</span>
+            </div>
+          ) : null}
+          <button type="button" className="btn btn-lime btn-big" data-tour="approve" disabled={disabled} onClick={() => approve.mutate(demo ? 'demo' : 'auto')}>
+            {approve.isPending ? <><Spinner />Locking…</> : demo ? 'Demo tap' : <>Approve <span className="money">{dollars(proposal.amountCents, proposal.currency)}</span></>}
           </button>
-          <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => reject.mutate()}>{reject.isPending ? 'Rejecting…' : 'Reject'}</button>
-          {!owner ? <p className="fine">This key can ask and read. Only the owner key can approve.</p> : null}
+          {demo ? <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => approve.mutate('passkey')}>Try with my passkey</button> : null}
+          <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => reject.mutate()}>{reject.isPending ? <><Spinner />Rejecting…</> : 'Reject'}</button>
+          {role === 'approver' ? <p className="fine">You can approve or reject, up to your limit. Sending the money stays with the owner.</p> : null}
+          {role && role !== 'owner' && role !== 'approver' ? <p className="fine">This key can ask and read. Only the owner can approve.</p> : null}
         </div>
       )}
       <ProblemCard error={approve.error ?? reject.error} />

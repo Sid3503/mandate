@@ -86,6 +86,11 @@ h1, h2, h3 { margin: 0; }
 .chip-ink { background: var(--ink); color: var(--paper); }
 .chip-muted { border-color: var(--rule); color: var(--mute); background: transparent; }
 .chip-build { border-style: dashed; color: var(--mute); background: transparent; }
+.proof-line { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 12px 0 0; padding: 8px 10px; border: 1.5px solid var(--ink); font: 600 13px/1.4 var(--mono); }
+.proof-red { background: var(--ink); color: var(--lime); }
+.proof-amber { background: #f0c36a; }
+.proof-grey { color: var(--mute); border-color: var(--rule); background: transparent; }
+.proof-ink { background: var(--surface); }
 
 .kind { font: 700 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 7px; border: 1.5px solid var(--ink); white-space: nowrap; }
 .kind-charge { background: var(--surface); }
@@ -94,6 +99,8 @@ h1, h2, h3 { margin: 0; }
 
 /* ---------- buttons, fields ---------- */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 44px; padding: 10px 18px; border: 2px solid var(--ink); font: 700 15px/1 var(--body); text-decoration: none; cursor: pointer; background: var(--surface); transition: transform 0.08s ease, box-shadow 0.08s ease, background 0.15s ease; user-select: none; }
+.spinner { display: inline-block; width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid currentColor; border-top-color: transparent; border-radius: 999px; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .btn:hover:not(:disabled) { transform: translate(-1px, -1px); box-shadow: var(--shadow-s); }
 .btn:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: none; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -125,6 +132,21 @@ h1, h2, h3 { margin: 0; }
 .dollar-input.big > span { font-size: 28px; }
 .check { display: flex; gap: 10px; align-items: center; font-weight: 600; padding-top: 22px; }
 .check input { width: 20px; height: 20px; accent-color: var(--ink); }
+
+/* Paying on our own page. The card fields are PayPal's iframes; everything around them is ours. */
+.pay-panel { display: grid; gap: 10px; padding: 14px; margin-top: 10px; border: 2px solid var(--ink); background: var(--surface); }
+.pay-fields { display: grid; gap: 10px; }
+.pay-field { min-height: 46px; }
+.pay-field iframe { width: 100% !important; }
+/* The form never grows past its bill: on a phone the expiry and CVV share one line and shrink together. */
+.pay-panel { min-width: 0; max-width: 100%; }
+.pay-fields .row > .pay-field { flex: 1 1 0; min-width: 0; }
+.pay-field > input { width: 100%; min-width: 0; }
+.pay-problem { color: var(--deny, #b3261e); font-weight: 600; }
+.instrument { align-items: center; font-weight: 600; }
+.instrument label { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+.instrument input { width: 18px; height: 18px; accent-color: var(--ink); }
+.instrument .eyebrow { color: var(--mute); }
 
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; border: 2px solid var(--ink); padding: 0; margin: 0; background: var(--surface); }
 .segmented label, .segmented button { display: grid; place-items: center; min-height: 48px; padding: 8px 12px; cursor: pointer; font: 700 14px/1.1 var(--body); border: 0; border-right: 2px solid var(--ink); background: transparent; text-align: center; }
@@ -233,6 +255,7 @@ h1, h2, h3 { margin: 0; }
 .brand-mobile { display: none; }
 .topbar-status { display: flex; gap: 8px; align-items: center; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 .topbar-sys { font: 600 12px var(--mono); color: var(--mute); text-decoration: none; }
+.demo-banner { background: #f6e7a8; color: var(--ink); padding: 10px 40px; font-size: 14px; border-bottom: 2px solid var(--ink); }
 .offline { background: var(--ink); color: var(--paper); padding: 10px 40px; font-size: 14px; }
 .offline strong { color: var(--lime); text-transform: uppercase; font-family: var(--mono); margin-right: 8px; }
 .main { padding: 36px 40px 64px; max-width: 1280px; width: 100%; outline: none; }
@@ -267,6 +290,9 @@ h1, h2, h3 { margin: 0; }
 .approval-facts .one-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .approval-actions { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
 .approval-actions .fine { grid-column: 1 / -1; }
+/* How the client will pay sits on its own line above the buttons, so the choice is read, not squeezed. */
+.approval-actions .instrument { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 12px; border: 2px solid var(--ink); background: var(--surface); }
+.approval-actions .instrument .fine { flex: 1 1 100%; margin: 0; }
 .approval-locked { display: grid; gap: 10px; border-top: 2px solid var(--ink); padding-top: 14px; }
 .lock-line { display: grid; gap: 4px; }
 
@@ -1022,6 +1048,7 @@ html { scroll-behavior: smooth; }
 .paused .muted { color: var(--stone); }
 .paused .btn-ink { background: var(--lime); color: var(--ink); border-color: var(--lime); }
 .pause-wrap { position: relative; }
+.paused-card { border: 2px solid var(--ink); background: var(--sheet); padding: 10px 14px; margin: 0 0 16px; display: flex; gap: 10px; align-items: center; font-size: 14px; }
 .pause-panel { position: absolute; right: 0; top: calc(100% + 8px); width: min(360px, 90vw); background: var(--sheet); border: 2px solid var(--ink); box-shadow: var(--shadow); padding: 14px; display: grid; gap: 10px; z-index: 60; }
 .pause-panel ul { margin: 0; padding-left: 18px; }
 .pause-confirm { background: var(--ink); }
@@ -1036,10 +1063,9 @@ html { scroll-behavior: smooth; }
 .try-cases th[scope='row'] { text-align: left; font-weight: 500; }
 .try-cases td, .try-cases th { padding: 8px 10px; vertical-align: top; }
 .try-changed { background: var(--lime-soft); }
-.try-details { border: 1.5px solid var(--ink); background: var(--sheet); margin-bottom: 14px; }
-.try-details > summary { padding: 12px 16px; cursor: pointer; font-weight: 700; }
-.try-details[open] > summary { border-bottom: 1px dashed var(--rule); }
-.try-details .try { border: 0; }
+/* The dry run sits in a panel of its own now, so the rules page says what it is for before the form appears. */
+.rules-why { margin: 10px 0 14px; padding-left: 18px; display: grid; gap: 6px; }
+.rules-why b { font-weight: 700; }
 
 .tap-to-rule { display: flex; gap: 16px; align-items: center; justify-content: space-between; border: 1.5px solid var(--ink); background: var(--lime-soft); padding: 14px 16px; }
 .tap-to-rule p { margin: 4px 0 0; }
@@ -1149,6 +1175,10 @@ html { scroll-behavior: smooth; }
 .connect-reveal .row.gap-s { margin-top: 6px; }
 .snippet { margin: 10px 0; border: 2px solid var(--ink); background: #fffdf6; padding: 8px 12px; }
 .snippet pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.connect-preview { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; padding: 12px 14px; border: 1.5px solid var(--ink); background: var(--surface); }
+.connect-preview-col { display: grid; gap: 6px; }
+.connect-preview-col h4 { margin: 0; font: 700 13px/1.2 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.connect-preview-col ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.4; color: var(--ink-2); }
 
 /* A status link: one person's read-only view of one job. */
 .share-page { min-height: 100vh; background: var(--paper); color: var(--ink); }
@@ -1163,3 +1193,126 @@ html { scroll-behavior: smooth; }
 .share-form { align-items: flex-end; margin: 8px 0; }
 .share-owner-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 8px; }
 .share-owner-list li { padding: 8px 12px; border: 1.5px solid #d8d2c0; background: #fff; }
+
+/* ---- Clarity: who you are, what the rules did, where the job stands ---- */
+:root { --client-wash: #e3ecff; --client-ink: #1d3f8f; }
+
+/* Who is at the keyboard, on every screen. */
+.you-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border: 1.5px solid var(--ink); background: var(--lime); font: 600 13px/1.2 var(--body); white-space: nowrap; }
+.you-chip b { font-weight: 800; }
+.ai-badge { display: inline-flex; align-items: center; padding: 4px 10px; border: 1.5px dashed var(--ink); font: 600 12px/1.2 var(--mono); white-space: nowrap; }
+/* On a phone the bar is for controls; the AI boundary is said on the guide and in the rail instead. */
+@media (max-width: 860px) { .ai-badge { display: none; } }
+@media (max-width: 560px) { .you-chip { font-size: 12px; padding: 3px 8px; } }
+
+/* The first job as a story: five steps, one protagonist. */
+.story-rail { display: grid; gap: 12px; margin: 0 0 20px; border: 2px solid var(--ink); background: var(--sheet); box-shadow: var(--shadow-s); }
+.story-cast { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; font-size: 14px; }
+.story-cast span { white-space: nowrap; }
+.story-cast span:first-child { background: var(--lime); padding: 0 6px; }
+.story-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.story-steps li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 10px; border: 1.5px solid transparent; }
+.story-steps li.is-done { color: var(--mute); }
+.story-steps li.is-done strong { text-decoration: line-through; text-decoration-thickness: 1.5px; }
+.story-steps li.is-here { border-color: var(--ink); background: var(--surface); }
+.story-mark { display: grid; place-items: center; width: 26px; height: 26px; border: 2px solid var(--ink); font: 800 14px/1 var(--display); }
+.story-steps li.is-done .story-mark { background: var(--ink); color: var(--paper); }
+.story-steps li.is-here .story-mark { background: var(--lime); }
+.story-now { display: grid; gap: 6px; margin-top: 6px; }
+.story-now p { margin: 0; font-size: 14px; }
+.story-now .eyebrow { display: inline-block; min-width: 38px; }
+.story-now .btn { justify-self: start; }
+
+/* What Mandate did for you, in the month strip. */
+.month-value { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; padding-top: 12px; border-top: 1.5px solid var(--line); }
+.month-value div { display: grid; gap: 2px; min-width: 0; }
+.month-value dt { font: 600 12px/1.2 var(--mono); text-transform: uppercase; letter-spacing: 0.04em; color: var(--mute); }
+.month-value dd { margin: 0; font: 800 26px/1 var(--display); }
+.month-value dd small { font: 600 13px var(--body); color: var(--mute); }
+.month-value .is-stopped dd { text-decoration: underline; text-decoration-color: var(--ink); }
+@media (max-width: 560px) { .month-value { grid-template-columns: 1fr; } .month-value dd { font-size: 22px; } }
+
+/* The client's number, as the studio sees it. */
+.seat-bar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1.5px solid var(--ink); background: var(--surface); }
+.seat-bar p { margin: 0; flex: 1 1 280px; font-size: 14px; }
+.seat-bar.is-playing { background: var(--client-wash); border-color: var(--client-ink); }
+.sheet-sealed { background: repeating-linear-gradient(135deg, var(--surface), var(--surface) 10px, var(--paper) 10px, var(--paper) 20px); }
+.sheet-sealed p { margin: 0; }
+.sealed-number span { font-family: var(--mono); }
+
+/* The rules before any way to change them. */
+.rules-glance { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0 0 20px; border: 2px solid var(--ink); background: var(--sheet); }
+.glance-col { display: grid; align-content: start; gap: 6px; padding: 14px 16px; min-width: 0; }
+.glance-col + .glance-col { border-left: 1.5px solid var(--ink); }
+.glance-col p { margin: 0; font-size: 14px; }
+.glance-auto .eyebrow { background: var(--lime); padding: 0 6px; justify-self: start; }
+.glance-never .eyebrow { background: var(--ink); color: var(--paper); padding: 0 6px; justify-self: start; }
+.glance-count { color: var(--mute); }
+.glance-count b { color: var(--ink); font: 800 20px/1 var(--display); }
+@media (max-width: 760px) { .rules-glance { grid-template-columns: 1fr; } .glance-col + .glance-col { border-left: 0; border-top: 1.5px solid var(--ink); } }
+
+/* Who moves each stage of a job forward. */
+.track-who { color: var(--mute); font-style: italic; }
+
+/* ---------- negotiations: the dance, the moves, how it ended ---------- */
+.stage-scope { margin: -8px 0 0; }
+.dance { margin: 0; display: grid; gap: 6px; }
+.dance svg { width: 100%; height: auto; max-height: 260px; overflow: visible; }
+.dance-zone { fill: var(--lime-soft); stroke: var(--lime); stroke-width: 1.5; }
+.dance-limit { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.dance-axis { stroke: var(--line); stroke-width: 1.5; }
+.dance-tick { font: 600 11px/1 var(--mono); fill: var(--mute); }
+.dance-line { fill: none; stroke-width: 3; stroke-linejoin: round; }
+.dance-line.dance-seller { stroke: var(--ink); }
+.dance-line.dance-buyer { stroke: var(--mute); stroke-dasharray: 7 5; }
+.dance-point circle { stroke: var(--ink); stroke-width: 2; }
+.dance-point.dance-seller circle { fill: var(--surface); }
+.dance-point.dance-buyer circle { fill: var(--stone); }
+.dance-point.is-accepted circle { fill: var(--lime); stroke-width: 3; }
+.dance-point text { font: 700 12px/1 var(--mono); fill: var(--ink); }
+.dance-legend { display: flex; gap: 16px; flex-wrap: wrap; font: 600 11px/1.2 var(--mono); color: var(--mute); }
+.dance-legend .key { display: inline-block; width: 18px; height: 0; border-top: 3px solid var(--ink); vertical-align: middle; margin-right: 4px; }
+.dance-legend .key-buyer { border-top: 3px dashed var(--mute); }
+.dance-legend .key-zone { height: 10px; border: 1.5px solid var(--lime); background: var(--lime-soft); }
+.dance-legend .key-limit { border-top: 2px dashed var(--ink); }
+.negotiation-end { display: grid; gap: 14px; width: 100%; }
+.negotiation-end .ending { margin: 0; max-width: 72ch; }
+.seat-results { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.seat-result { border: 1.5px solid var(--ink); background: var(--surface); padding: 12px 14px; display: grid; gap: 8px; align-content: start; }
+.seat-result.is-sealed { background: transparent; border-style: dashed; }
+.seat-result p { margin: 0; }
+.toward { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font: 600 11px/1.2 var(--mono); color: var(--mute); }
+.toward-bar { height: 10px; border: 1.5px solid var(--ink); background: var(--paper); position: relative; }
+.toward-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--lime); border-right: 1.5px solid var(--ink); }
+.debrief { border-top: 1px solid var(--line); padding-top: 8px; display: grid; gap: 6px; }
+.ratings { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 14px; margin: 0; justify-content: start; }
+.ratings div { display: grid; gap: 2px; }
+.ratings dt { font: 700 10px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--mute); }
+.ratings dd { margin: 0; letter-spacing: 2px; font-size: 12px; }
+.ratings dd .muted { opacity: 0.22; }
+.private-note { color: var(--mute); }
+.your-move { border: 2px solid var(--ink); background: var(--lime-soft); padding: 14px; display: grid; gap: 10px; }
+.your-move .reference { margin: 0; }
+.your-move .counter .dollar-input input { width: 130px; }
+.check { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; }
+.offers.moves li { grid-template-columns: 70px 110px 1fr; align-items: start; }
+.offers.moves q { quotes: '“' '”'; }
+.offers.moves details summary { cursor: pointer; font: 600 11px/1.6 var(--mono); letter-spacing: 0.04em; }
+.offers.moves details[open] summary { margin-bottom: 4px; }
+.negotiate-form { margin: 0 0 22px; }
+.stage-foot .negotiation-end .seat-result { background: var(--surface); }
+@media (max-width: 720px) {
+  .seat-results { grid-template-columns: 1fr; }
+  .ratings { grid-template-columns: repeat(2, auto); }
+  .toward { grid-template-columns: 1fr; }
+  .offers.moves li { grid-template-columns: auto 1fr; }
+  .offers.moves li > span:last-child { grid-column: 1 / -1; }
+  .your-move .row > * { flex: 1 1 auto; }
+}
+
+.draft-second { border: 1.5px solid var(--ink); padding: 10px 12px; display: grid; gap: 6px; }
+.draft-second ul { margin: 0; padding-left: 18px; }
+.draft-second-agreed { background: var(--lime-soft); }
+.draft-second-concerns { border-width: 2px; border-style: dashed; }
+.draft-second-unavailable { background: transparent; border-style: dotted; }
+.finish-bar { border: 1.5px dashed var(--ink); padding: 10px 12px; background: var(--lime-soft); }

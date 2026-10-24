@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { FakeWatch } from '../src/paypal/fake'
+import { FakeInvoices, FakeWatch } from '../src/paypal/fake'
 import { agree, call, closeAll, collect, EVIDENCE, harness, idem, JOB, NOW, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
@@ -26,6 +26,20 @@ async function worked() {
   return { ...h, deal, one, two, tapped: payout.json.id as string, auto: auto.json.id as string }
 }
 
+/** The frozen job's first milestone, billed as a PayPal invoice and paid 750 short by an early-payment discount. */
+async function shortSettled() {
+  const invoices = new FakeInvoices()
+  const h = harness({ invoices })
+  const deal = await agree(h.app)
+  const bill = await call(h.app, 'POST', `/v1/deals/${deal.id}/milestones/0/bill`, { body: { evidenceUrl: EVIDENCE } })
+  await call(h.app, 'POST', `/v1/proposals/${bill.json.id}/approve`)
+  const id = bill.json.id as string
+  const sent = await call(h.app, 'POST', `/v1/proposals/${id}/capture`)
+  invoices.payPartial(sent.json.invoiceId, 14_250, { earlyDiscountCents: 750 })
+  await call(h.app, 'POST', `/v1/proposals/${id}/capture`)
+  return { ...h, id, invoices }
+}
+
 describe('the audit', () => {
   it('is for the owner only, and passes on an empty ledger', async () => {
     const h = harness()
@@ -45,6 +59,39 @@ describe('the audit', () => {
     expect(Object.fromEntries(report.checks.map((check: { id: string; checked: number }) => [check.id, check.checked]))).toMatchObject({ 'locks.valid': 4, 'moved.authorised': 4, 'amounts.match': 4, 'deals.signed': 3 })
   })
 
+  it('turns a missing passkey signature red and leaves owner-key, demo, and legacy grey or amber', async () => {
+    const h = await worked()
+    const tapped = await call(h.app, 'GET', `/v1/proposals/${h.tapped}/packet`)
+    expect(tapped.json.approvalProof).toMatchObject({ method: 'owner-key', tone: 'amber', how: 'owner key' })
+    const standing = await call(h.app, 'GET', `/v1/proposals/${h.auto}/packet`)
+    expect(standing.json.approvalProof).toMatchObject({ method: 'rule', tone: 'grey' })
+    expect(standing.json.approvalProof.how).toContain('Rules v')
+    expect(standing.json.approvalProof.how).toContain('has no signature')
+    const proof = (await audit(h.app)).checks.find((check: { id: string }) => check.id === 'approval.proof')
+    expect(proof.status).toBe('pass')
+    expect(proof.note).toContain('owner-key (amber)')
+    expect(proof.note).toContain('legacy (grey)')
+
+    const stored = JSON.parse((h.db.prepare(`SELECT payload_json FROM events WHERE proposal_id = ? AND type = 'proposal.approved'`).get(h.tapped) as { payload_json: string }).payload_json) as { cartHash: string }
+    h.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: stored.cartHash, method: 'passkey' }), h.tapped)
+    const red = await audit(h.app)
+    expect(failing(red)).toContain('approval.proof')
+    expect(red.checks.find((check: { id: string }) => check.id === 'approval.proof').failures[0]).toMatchObject({ proposalId: h.tapped, detail: 'passkey approval is missing its signature' })
+    expect((await call(h.app, 'GET', `/v1/proposals/${h.tapped}/packet`)).json.approvalProof.tone).toBe('red')
+
+    const h2 = await worked()
+    const kept = JSON.parse((h2.db.prepare(`SELECT payload_json FROM events WHERE proposal_id = ? AND type = 'proposal.approved'`).get(h2.tapped) as { payload_json: string }).payload_json) as { cartHash: string }
+    h2.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: kept.cartHash }), h2.tapped)
+    const legacy = await audit(h2.app)
+    expect(failing(legacy)).not.toContain('approval.proof')
+    expect((await call(h2.app, 'GET', `/v1/proposals/${h2.tapped}/packet`)).json.approvalProof).toMatchObject({ method: 'legacy', tone: 'grey', how: 'legacy' })
+    h2.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: kept.cartHash, method: 'demo' }), h2.tapped)
+    const demo = await audit(h2.app)
+    expect(failing(demo)).not.toContain('approval.proof')
+    expect(demo.checks.find((check: { id: string }) => check.id === 'approval.proof').note).toContain('demo (amber)')
+    expect((await call(h2.app, 'GET', `/v1/proposals/${h2.tapped}/packet`)).json.approvalProof).toMatchObject({ method: 'demo', tone: 'amber' })
+  })
+
   it('catches an amount changed after approval', async () => {
     const h = await worked()
     h.db.prepare('UPDATE proposals SET amount_cents = 90000 WHERE id = ?').run(h.tapped)
@@ -58,6 +105,24 @@ describe('the audit', () => {
     const h = await worked()
     h.db.prepare('UPDATE proposals SET captured_amount_cents = 9100 WHERE id = ?').run(h.auto)
     expect(failing(await audit(h.app))).toEqual(['amounts.match', 'jobs.in_covers_out'].filter((id) => id === 'amounts.match'))
+  })
+
+  it('catches a short settlement whose reason no PayPal field stands behind', async () => {
+    const h = await shortSettled()
+    // Green as it was settled: the reason names the field PayPal reported, and the row records which one.
+    expect(failing(await audit(h.app))).not.toContain('amounts.explained')
+    const green = await audit(h.app)
+    expect(green.checks.find((check: { id: string }) => check.id === 'amounts.explained')).toMatchObject({ status: 'pass', checked: 1 })
+    // A reason nothing arrived for is exactly what this check exists to refuse.
+    h.db.prepare(`UPDATE proposals SET delta_reason = 'unexplained' WHERE id = ?`).run(h.id)
+    const unexplained = await audit(h.app)
+    expect(failing(unexplained)).toContain('amounts.explained')
+    expect(unexplained.checks.find((check: { id: string }) => check.id === 'amounts.explained').failures[0]).toMatchObject({ proposalId: h.id })
+    // A reason with no field beside it is a number with no source, which is the same failure.
+    h.db.prepare(`UPDATE proposals SET delta_reason = 'early_discount', delta_source = NULL WHERE id = ?`).run(h.id)
+    const unsourced = await audit(h.app)
+    expect(failing(unsourced)).toContain('amounts.explained')
+    expect(unsourced.checks.find((check: { id: string }) => check.id === 'amounts.explained').failures[0].detail).toContain('records no field')
   })
 
   it('catches money that moved with no yes: a deleted approval, or a signature removed', async () => {
@@ -110,4 +175,58 @@ describe('the audit', () => {
     watch.transactions = [{ id: paid.captureId, date: NOW.toISOString(), cents: 15_000, currency: 'USD', status: 'S', eventCode: 'T0006', subject: null, counterparty: null, referenceId: null, invoiceId: null, customId: paid.proposalId }]
     expect((await audit(h.app, '?paypal=1')).checks.find((check: { id: string }) => check.id === 'paypal.agrees')).toMatchObject({ status: 'pass', checked: 1 })
   })
+
+  it('verifies proof lines for members, assertions, signed rules, safety events, and key fingerprints', async () => {
+    const h = await worked()
+    const report = await audit(h.app)
+    const checkIds = report.checks.map((c: { id: string }) => c.id)
+    expect(checkIds).toEqual(expect.arrayContaining([
+      'members.valid',
+      'assertions.valid',
+      'rules.signed',
+      'safety.events',
+      'keys.fingerprint',
+    ]))
+    expect(report.checks.find((c: { id: string }) => c.id === 'members.valid')).toMatchObject({ status: 'pass' })
+    expect(report.checks.find((c: { id: string }) => c.id === 'assertions.valid')).toMatchObject({ status: 'pass' })
+    expect(report.checks.find((c: { id: string }) => c.id === 'rules.signed')).toMatchObject({ status: 'pass' })
+    expect(report.checks.find((c: { id: string }) => c.id === 'safety.events')).toMatchObject({ status: 'pass' })
+    expect(report.checks.find((c: { id: string }) => c.id === 'keys.fingerprint')).toMatchObject({ status: 'pass' })
+  })
+
+  it('fails rules.signed when a warrant body is corrupt or signature is malformed', async () => {
+    const h = await worked()
+    h.db.prepare('UPDATE warrants SET body_json = ? WHERE version = 1').run('{"corrupted": true}')
+    const report = await audit(h.app)
+    expect(failing(report)).toContain('rules.signed')
+  })
+
+  it('fails safety.events when a safety event signature is invalid', async () => {
+    const h = await worked()
+    h.services.safety.pause('owner', 'Maintenance test')
+    const okReport = await audit(h.app)
+    expect(okReport.checks.find((c: { id: string }) => c.id === 'safety.events')).toMatchObject({ status: 'pass', checked: 1 })
+
+    h.db.prepare("UPDATE safety_events SET sig = 'tampered-signature'").run()
+    const badReport = await audit(h.app)
+    expect(failing(badReport)).toContain('safety.events')
+  })
+
+  it('fails assertions.valid when a passkey assertion has user verification off or missing signature', async () => {
+    const h = await worked()
+    h.db.prepare("UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'").run(
+      JSON.stringify({ actor: 'owner', method: 'passkey', assertion: { userVerified: false } }),
+      h.tapped,
+    )
+    const report = await audit(h.app)
+    expect(failing(report)).toContain('assertions.valid')
+  })
+
+  it('fails keys.fingerprint when a signing key PEM is corrupt', async () => {
+    const h = await worked()
+    h.db.prepare("UPDATE signing_keys SET public_pem = 'invalid-pem-data'").run()
+    const report = await audit(h.app)
+    expect(failing(report)).toContain('keys.fingerprint')
+  })
 })
+
