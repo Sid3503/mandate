@@ -63,9 +63,14 @@ export function TryRules({ rules }: { rules?: Rules }) {
       <ProblemCard error={run.error} />
       {run.data ? (
         <div className="try-result" role="status" data-testid="try-result">
-          <div className="row gap-s wrap"><GateChip gate={run.data.live.gate} /><code>{run.data.live.clause}</code><span>under the live rules</span></div>
-          <p className="fine">{explain(run.data.live.clause, { amountCents: cents ?? undefined, payeeId: people.find((person) => person.displayName === (payee || people[0]?.displayName))?.id }, warrant.data, (id) => people.find((person) => person.id === id)?.displayName ?? 'That party') || run.data.live.detail}</p>
+          {run.data.live ? (
+            <div className="row gap-s wrap"><GateChip gate={run.data.live.gate} /><code>{run.data.live.clause}</code><span>under the live rules</span></div>
+          ) : null}
+          {run.data.live ? (
+            <p className="fine">{explain(run.data.live.clause, { amountCents: cents ?? undefined, payeeId: people.find((person) => person.displayName === (payee || people[0]?.displayName))?.id }, warrant.data, (id) => people.find((person) => person.id === id)?.displayName ?? 'That party') || run.data.live.detail}</p>
+          ) : null}
           {run.data.draft ? <div className="row gap-s wrap"><GateChip gate={run.data.draft.gate} /><code>{run.data.draft.clause}</code><span>under this draft{same(run.data.live, run.data.draft) ? ' (the same)' : ' (different)'}</span></div> : null}
+          {run.data.draft ? <p className="fine">{run.data.draft.detail}</p> : null}
           <p className="fine">Nothing was filed and PayPal was not called.</p>
         </div>
       ) : null}
@@ -80,7 +85,7 @@ export function TryRules({ rules }: { rules?: Rules }) {
             {cases.data.cases.map((item) => (
               <tr key={item.id} className={rules && !same(item.live, item.draft) ? 'try-changed' : ''}>
                 <th scope="row">{item.label}</th>
-                <td><Chip tone={GATE[item.live.gate].tone}>{GATE[item.live.gate].label}</Chip> <code>{item.live.clause}</code></td>
+                <td>{item.live ? <><Chip tone={GATE[item.live.gate].tone}>{GATE[item.live.gate].label}</Chip> <code>{item.live.clause}</code></> : '—'}</td>
                 {rules ? <td>{item.draft ? <><Chip tone={GATE[item.draft.gate].tone}>{GATE[item.draft.gate].label}</Chip> <code>{item.draft.clause}</code></> : '—'}</td> : null}
               </tr>
             ))}

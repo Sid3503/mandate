@@ -1063,10 +1063,9 @@ html { scroll-behavior: smooth; }
 .try-cases th[scope='row'] { text-align: left; font-weight: 500; }
 .try-cases td, .try-cases th { padding: 8px 10px; vertical-align: top; }
 .try-changed { background: var(--lime-soft); }
-.try-details { border: 1.5px solid var(--ink); background: var(--sheet); margin-bottom: 14px; }
-.try-details > summary { padding: 12px 16px; cursor: pointer; font-weight: 700; }
-.try-details[open] > summary { border-bottom: 1px dashed var(--rule); }
-.try-details .try { border: 0; }
+/* The dry run sits in a panel of its own now, so the rules page says what it is for before the form appears. */
+.rules-why { margin: 10px 0 14px; padding-left: 18px; display: grid; gap: 6px; }
+.rules-why b { font-weight: 700; }
 
 .tap-to-rule { display: flex; gap: 16px; align-items: center; justify-content: space-between; border: 1.5px solid var(--ink); background: var(--lime-soft); padding: 14px 16px; }
 .tap-to-rule p { margin: 4px 0 0; }
@@ -1254,3 +1253,65 @@ html { scroll-behavior: smooth; }
 
 /* Who moves each stage of a job forward. */
 .track-who { color: var(--mute); font-style: italic; }
+
+/* ---------- negotiations: the dance, the moves, how it ended ---------- */
+.stage-scope { margin: -8px 0 0; }
+.dance { margin: 0; display: grid; gap: 6px; }
+.dance svg { width: 100%; height: auto; max-height: 260px; overflow: visible; }
+.dance-zone { fill: var(--lime-soft); stroke: var(--lime); stroke-width: 1.5; }
+.dance-limit { stroke: var(--ink); stroke-width: 1.5; stroke-dasharray: 6 5; }
+.dance-axis { stroke: var(--line); stroke-width: 1.5; }
+.dance-tick { font: 600 11px/1 var(--mono); fill: var(--mute); }
+.dance-line { fill: none; stroke-width: 3; stroke-linejoin: round; }
+.dance-line.dance-seller { stroke: var(--ink); }
+.dance-line.dance-buyer { stroke: var(--mute); stroke-dasharray: 7 5; }
+.dance-point circle { stroke: var(--ink); stroke-width: 2; }
+.dance-point.dance-seller circle { fill: var(--surface); }
+.dance-point.dance-buyer circle { fill: var(--stone); }
+.dance-point.is-accepted circle { fill: var(--lime); stroke-width: 3; }
+.dance-point text { font: 700 12px/1 var(--mono); fill: var(--ink); }
+.dance-legend { display: flex; gap: 16px; flex-wrap: wrap; font: 600 11px/1.2 var(--mono); color: var(--mute); }
+.dance-legend .key { display: inline-block; width: 18px; height: 0; border-top: 3px solid var(--ink); vertical-align: middle; margin-right: 4px; }
+.dance-legend .key-buyer { border-top: 3px dashed var(--mute); }
+.dance-legend .key-zone { height: 10px; border: 1.5px solid var(--lime); background: var(--lime-soft); }
+.dance-legend .key-limit { border-top: 2px dashed var(--ink); }
+.negotiation-end { display: grid; gap: 14px; width: 100%; }
+.negotiation-end .ending { margin: 0; max-width: 72ch; }
+.seat-results { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.seat-result { border: 1.5px solid var(--ink); background: var(--surface); padding: 12px 14px; display: grid; gap: 8px; align-content: start; }
+.seat-result.is-sealed { background: transparent; border-style: dashed; }
+.seat-result p { margin: 0; }
+.toward { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; font: 600 11px/1.2 var(--mono); color: var(--mute); }
+.toward-bar { height: 10px; border: 1.5px solid var(--ink); background: var(--paper); position: relative; }
+.toward-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--lime); border-right: 1.5px solid var(--ink); }
+.debrief { border-top: 1px solid var(--line); padding-top: 8px; display: grid; gap: 6px; }
+.ratings { display: grid; grid-template-columns: repeat(4, auto); gap: 4px 14px; margin: 0; justify-content: start; }
+.ratings div { display: grid; gap: 2px; }
+.ratings dt { font: 700 10px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--mute); }
+.ratings dd { margin: 0; letter-spacing: 2px; font-size: 12px; }
+.ratings dd .muted { opacity: 0.22; }
+.private-note { color: var(--mute); }
+.your-move { border: 2px solid var(--ink); background: var(--lime-soft); padding: 14px; display: grid; gap: 10px; }
+.your-move .reference { margin: 0; }
+.your-move .counter .dollar-input input { width: 130px; }
+.check { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; }
+.offers.moves li { grid-template-columns: 70px 110px 1fr; align-items: start; }
+.offers.moves q { quotes: '“' '”'; }
+.offers.moves details summary { cursor: pointer; font: 600 11px/1.6 var(--mono); letter-spacing: 0.04em; }
+.offers.moves details[open] summary { margin-bottom: 4px; }
+.negotiate-form { margin: 0 0 22px; }
+.stage-foot .negotiation-end .seat-result { background: var(--surface); }
+@media (max-width: 720px) {
+  .seat-results { grid-template-columns: 1fr; }
+  .ratings { grid-template-columns: repeat(2, auto); }
+  .toward { grid-template-columns: 1fr; }
+  .offers.moves li { grid-template-columns: auto 1fr; }
+  .offers.moves li > span:last-child { grid-column: 1 / -1; }
+  .your-move .row > * { flex: 1 1 auto; }
+}
+
+.draft-second { border: 1.5px solid var(--ink); padding: 10px 12px; display: grid; gap: 6px; }
+.draft-second ul { margin: 0; padding-left: 18px; }
+.draft-second-agreed { background: var(--lime-soft); }
+.draft-second-concerns { border-width: 2px; border-style: dashed; }
+.draft-second-unavailable { background: transparent; border-style: dotted; }

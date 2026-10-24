@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useToast } from '../components/Toast'
 import { emptyStream, fromAgentCall, reduceStream, type StreamState } from './agentStream'
-import { session } from './session'
+import { session, workspaceFromKey } from './session'
 
 /** What the server said about the client's agent reviewing a delivery, as it happened. */
 export type ReviewState = {
@@ -30,11 +30,12 @@ type ServerEvent =
   | { type: 'hello' }
 
 const KEYS: Record<string, string[][]> = {
-  ledger: [['proposals'], ['today'], ['packet'], ['job'], ['ledger'], ['deals'], ['audit']],
+  // An agent's request moves its scorecard, and the breaker can suspend it: both show the moment they happen.
+  ledger: [['proposals'], ['today'], ['packet'], ['job'], ['ledger'], ['deals'], ['audit'], ['agent-keys']],
   delivery: [['today'], ['deals'], ['proposals'], ['job']],
   deal: [['today'], ['deals'], ['job']],
   rules: [['warrant'], ['versions'], ['today'], ['party-rules']],
-  safety: [['status'], ['safety'], ['today'], ['proposals'], ['audit'], ['deals']],
+  safety: [['status'], ['safety'], ['today'], ['proposals'], ['audit'], ['deals'], ['agent-keys']],
 }
 
 /**
@@ -106,7 +107,10 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       let wait = 1000
       while (!abort.signal.aborted) {
         try {
-          const response = await fetch('/v1/stream', { headers: { accept: 'text/event-stream', authorization: `Bearer ${key}` }, cache: 'no-store', signal: abort.signal })
+          const workspace = workspaceFromKey(key) ?? session.workspace()
+          // The default studio is the server itself: never under /w/, which a server without workspaces refuses.
+          const streamPath = workspace && workspace !== 'ws_default' ? `/w/${workspace}/v1/stream` : '/v1/stream'
+          const response = await fetch(streamPath, { headers: { accept: 'text/event-stream', authorization: `Bearer ${key}`, ...(workspace ? { 'x-mandate-client': 'web' } : {}) }, cache: 'no-store', credentials: workspace ? 'include' : 'same-origin', signal: abort.signal })
           if (response.status === 401 || response.status === 403) return
           if (!response.ok || !response.body) throw new Error(String(response.status))
           if (wasUp.current === false) toastRef.current({ title: 'Live again', body: 'Updates are arriving the moment they happen.', key: 'live', ms: 3200 })

@@ -74,12 +74,34 @@ export const PartyRulesSchema = z.object({
   minTotalCents: z.number().int().positive().max(100_000_000).optional(),
   /** Seller: the least a single milestone may be. */
   minMilestoneCents: z.number().int().positive().max(100_000_000).optional(),
+  /**
+   * What the company hopes for: above its floor for the studio, under its ceiling for the client. Private like the
+   * limit. A negotiator opens near it and concedes towards the limit; without one it hopes for 25% better.
+   */
+  targetTotalCents: z.number().int().positive().max(100_000_000).optional(),
+  /** How the company's negotiator concedes: `firm` holds and gives late, `flexible` gives early. */
+  style: z.enum(['firm', 'balanced', 'flexible']).optional(),
+  /**
+   * A client that set its own numbers may let Mandate's hosted negotiator speak for it inside them. Without this, a
+   * client that has claimed its seat answers offers itself (in its console, or with its own agent).
+   */
+  delegate: z.boolean().optional(),
+  /** The company's standing instructions to its negotiator, in its own words ("we value a fast start over price"). Private. */
+  brief: z.string().trim().max(600).optional(),
 }).strict().superRefine((rules, ctx) => {
   if (rules.role === 'buyer' && rules.maxTotalCents === undefined) {
     ctx.addIssue({ code: 'custom', path: ['maxTotalCents'], message: 'a buyer must set the most a job may cost' })
   }
   if (rules.role === 'seller' && rules.minTotalCents === undefined) {
     ctx.addIssue({ code: 'custom', path: ['minTotalCents'], message: 'a seller must set the least a job may cost' })
+  }
+  if (rules.targetTotalCents !== undefined) {
+    if (rules.role === 'seller' && rules.minTotalCents !== undefined && rules.targetTotalCents < rules.minTotalCents) {
+      ctx.addIssue({ code: 'custom', path: ['targetTotalCents'], message: 'the target must be at or above the least the job may cost' })
+    }
+    if (rules.role === 'buyer' && rules.maxTotalCents !== undefined && rules.targetTotalCents > rules.maxTotalCents) {
+      ctx.addIssue({ code: 'custom', path: ['targetTotalCents'], message: 'the target must be at or under the most the job may cost' })
+    }
   }
 })
 
@@ -141,9 +163,9 @@ export function checkDeal(terms: DealTerms, buyer: PartyRules, seller: PartyRule
   if (terms.milestones.length > seller.maxMilestones) {
     add(DealClause.tooManyMilestones, 'seller', `${terms.milestones.length} milestones is more than the seller offers (${seller.maxMilestones})`, 'Use fewer milestones.')
   }
-  if (!terms.proofRequired && (buyer.requireProof || seller.requireProof)) {
-    const side: Side = buyer.requireProof ? 'buyer' : 'seller'
-    add(DealClause.proofRequired, side, `the ${side} requires proof of delivery at each milestone`, 'Require a proof link at each milestone.')
+  // Each side that asks for proof is its own violation, so an offerer is told when its OWN rules require it.
+  for (const [side, rules] of [['buyer', buyer], ['seller', seller]] as const) {
+    if (!terms.proofRequired && rules.requireProof) add(DealClause.proofRequired, side, `the ${side} requires proof of delivery at each milestone`, 'Require a proof link at each milestone.')
   }
   if (terms.dueDate && terms.dueDate < today) {
     add(DealClause.dueDatePast, 'terms', `the due date ${terms.dueDate} has already passed`, 'Choose a date in the future.')
@@ -181,14 +203,42 @@ export function verdictFor(verdict: DealVerdict, as: Side | null): AgentVerdict 
 
 export const DealOfferSchema = z.object({
   buyer: z.string().trim().min(1).max(200),
-  terms: DealTermsSchema,
+  /** Full terms. Required to open a negotiation; a counter-offer may send only `totalCents` instead. */
+  terms: DealTermsSchema.optional(),
+  /** A counter-offer's price for the whole job. The server writes the terms from the negotiation and splits the milestones. */
+  totalCents: z.number().int().positive().max(100_000_000).optional(),
+  milestoneCount: z.number().int().min(1).max(12).optional(),
   /** Which party is making the offer. An agent must say; the owner may leave it out. */
   as: z.enum(['buyer', 'seller']).optional(),
   threadId: z.uuid().optional(),
+  /** What the offerer says to the other side. Shown to them, with the offerer's private numbers removed. */
   prompt: z.string().trim().max(4000).optional(),
+  /** The offerer's own reasoning, kept for its own company. Never shown to the other side. */
+  assessment: z.string().trim().max(1000).optional(),
+  /** "Best and final": the offerer will make no further offer in this negotiation. */
+  final: z.boolean().optional(),
+  /** The deadline both sides know, for a new negotiation: the most offers each side may make. */
+  offersPerSide: z.number().int().min(2).max(8).optional(),
+}).strict().refine((offer) => offer.terms !== undefined || (offer.threadId !== undefined && offer.totalCents !== undefined), {
+  message: 'Send full terms to open a negotiation, or threadId and totalCents to counter in one.',
+  path: ['terms'],
+})
+
+/** Accepting the other side's standing offer. */
+export const DealAcceptSchema = z.object({
+  message: z.string().trim().max(1000).optional(),
+  assessment: z.string().trim().max(1000).optional(),
+}).strict()
+
+/** Ending a negotiation with no deal. */
+export const WalkAwaySchema = z.object({
+  reason: z.string().trim().max(500).optional(),
+  assessment: z.string().trim().max(1000).optional(),
 }).strict()
 
 export type DealOffer = z.infer<typeof DealOfferSchema>
+/** An offer whose terms have been written out. */
+export type DealOfferWithTerms = DealOffer & { terms: DealTerms }
 
 export const BillMilestoneSchema = z.object({
   evidenceUrl: z.string().trim().max(2000),
@@ -208,6 +258,8 @@ export const DEMO_BUYER_RULES: PartyRules = {
   maxMilestones: 4,
   requireProof: true,
   maxTotalCents: 40_000,
+  targetTotalCents: 20_000,
+  style: 'balanced',
 }
 
 export const DEMO_SELLER_RULES: PartyRules = {
@@ -218,17 +270,21 @@ export const DEMO_SELLER_RULES: PartyRules = {
   maxMilestones: 4,
   requireProof: true,
   minTotalCents: 25_000,
+  targetTotalCents: 40_000,
+  style: 'balanced',
 }
 
 /** Every number in a company's rules that the other side must never learn, in cents. */
 export function secretsOf(rules: PartyRules): number[] {
-  return [rules.maxTotalCents, rules.maxMilestoneCents, rules.minTotalCents, rules.minMilestoneCents].filter((value): value is number => value !== undefined)
+  return [rules.maxTotalCents, rules.maxMilestoneCents, rules.minTotalCents, rules.minMilestoneCents, rules.targetTotalCents].filter((value): value is number => value !== undefined)
 }
 
 /** Removes a company's private numbers from a sentence it is about to say to the other side. */
-export function scrubNote(note: string, secretCents: number[]): string {
+export function scrubNote(note: string, secretCents: number[], onTheTable: number[] = []): string {
   let out = note
-  for (const cents of secretCents) {
+  // A price already on the table is public: the offer being made, or one either side made before. Hiding it would
+  // blank the one number the sentence is about, and would reveal that it happens to equal a private one.
+  for (const cents of secretCents.filter((value) => !onTheTable.includes(value))) {
     const dollars = cents / 100
     const forms = new Set([
       String(cents),

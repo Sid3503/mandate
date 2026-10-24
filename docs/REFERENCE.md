@@ -87,7 +87,7 @@ Every number in the code, the seed data, the tests, the Postman collection, the 
 
 | Step | What happens | Who decides | PayPal | Status |
 | --- | --- | --- | --- | --- |
-| 1. Deal | Northwind's agent and the studio's agent agree $300 in two $150 milestones. $450 and $200 are refused. | A pure function: the terms must fit **both** sides' rules. | none | planned |
+| 1. Deal | Northwind's negotiator and the studio's trade offers until one accepts the other's: $300 in two $150 milestones. | Each move is the negotiator's; an offer must fit its own side's rules, an acceptance both sides'. | none | **built** ([NEGOTIATION.md](NEGOTIATION.md)) |
 | 2. Money in | The studio bills milestone 1. Meera approves the charge. Northwind pays $150. | Studio rules + Meera's tap + the PayPal buyer | Orders v2 | **built** |
 | 3. Delivery | Priya posts the Figma link. | Code checks an `https` link exists. | none | **built** (evidence check) |
 | 4. Money out | The captured $150 funds Priya's $90. $90 ≥ $20, so Meera taps once. The server sends exactly the locked cents to Priya's own PayPal account and only says *paid* when PayPal does. | Studio rules + funding rule + Meera's tap | **Payouts v1** | **built, live in sandbox** |
@@ -109,7 +109,7 @@ One sentence: **the client's money coming in releases the contractor's money goi
 | Northwind is refunded after Meera approved Priya | The payout capture is refused: `funding.exceeds`. | **built** |
 | An agent's key tries to approve, settle or change the rules | `403 auth.forbidden`. | **built** |
 | A third $90 payout this month | `DENY cap.monthly`, citing the earlier capture ids. | **built** |
-| The studio agent pushes the deal to $450 | Outside Northwind's rules. | planned (deal check) |
+| The studio's negotiator offers $450 | A legal offer that Northwind cannot accept (`deal.outside_your_rules` on its side); it counters or walks away. | **built** |
 | Change Priya's payout account | Owner approval plus a cooling period. | planned |
 
 ---
@@ -738,16 +738,17 @@ Four pieces sit on top of the money loop. Each is small on purpose, and none of 
 
 ### Deals: the deal check
 
-Before any money exists, two companies agree terms. Each company has its own **deal rules**, versioned data like the studio's warrant (Northwind: design work, at most $400, up to 4 milestones, proof at each; Line Studio: at least $250). `checkDeal()` in `api/src/domain/deal.ts` is a pure function that answers one question: do these terms fit **both** rule sets?
+Before any money exists, two companies agree terms. Each company has its own **deal rules**, versioned data like the studio's warrant (Northwind: design work, at most $400, hopes for $200, up to 4 milestones, proof at each; Line Studio: at least $250, hopes for $400). They negotiate by alternating offers: an offer must fit the offerer's own rules, and a deal exists only when the other side **accepts** that exact offer, at which moment `checkDeal()` (a pure function in `api/src/domain/deal.ts`) checks the terms against **both** rule sets before the deal is signed. The protocol, endings, satisfaction and the AI's role are in [NEGOTIATION.md](NEGOTIATION.md).
 
-| Offer | Verdict |
+| Move | Result |
 | --- | --- |
-| $450 in two milestones | Refused. `deal.over_buyer_limit` |
-| $200 in two milestones | Refused. `deal.under_seller_minimum` |
-| $300 in two $150 milestones | Agreed |
+| The studio offers $450 | Stands. Northwind cannot accept it (`deal.outside_your_rules`, in Northwind's own numbers) |
+| Northwind offers $200 | Stands. The studio cannot accept it |
+| The studio offers $240 | Refused at once: under its own floor (`deal.under_seller_minimum`), and never shown to Northwind |
+| The studio offers $300; Northwind accepts | Agreed and signed |
 
 - **Early-payment discount.** Terms may carry `earlyPaymentDiscount: { percentBps, days }` (optional). When a charge on that deal is billed as a PayPal invoice, the server asks PayPal for an early-payment discount of that percentage, due that many days after the server's clock, and PayPal reports back whether it was applied. Only the amount PayPal says it applied is ever used to explain a shortfall; a percentage on its own is not a number of cents.
-- **Privacy of limits.** An agent is told which of *its own* rules it broke, with the number. For the other side it is told only that their rules do not allow the terms, and which way to move (*Lower the total*). Notes an agent writes to the other side are scrubbed of its own private numbers before they are stored or shown.
+- **Privacy of limits.** An agent is told which of *its own* rules it broke, with the number, and nothing at all about the other side's: it learns their position only from their offers. Notes an agent writes to the other side are scrubbed of its own private numbers (a price already on the table excepted) before they are stored or shown. A client that set its own numbers with its own key is sealed from the studio on the server: the studio's owner sees that a limit is set, never the number, and cannot change it or answer for the client.
 - **Who can speak for whom.** A key is bound to one side. The studio key speaks for the studio; a client key speaks for one client and can call only the deal routes and `/mcp`. The first client key is `BUYER_AGENT_KEY`; the rest are issued per client from the System page and rotate or revoke there. Pretending to be the other side is `403 deal.wrong_side`.
 - **Client keys.** `GET /v1/client-keys`, `POST /v1/client-keys` (`{name, partyId}`, owner only; the party must be a client on the rules), `POST /v1/client-keys/:id/revoke` and `POST /v1/client-keys/:id/rotate` (the old key dies as the new one is issued; shown once, hashed afterwards). A revoked key is refused with `403 client-key.revoked`.
 - **Agreed deals are signed and bind billing.** An agreed deal names its job. From then on a client charge on that job must cite the deal and a milestone, for exactly the agreed cents, once (`deal.required`, `deal.milestone_mismatch`, `deal.milestone_billed`). A freelance invoice on a dealt job is refused.
@@ -1099,7 +1100,7 @@ cd web && npm run typecheck && npm run e2e     # 112 Playwright runs (56 tests o
 - **Roles:** the proposer gets 403 on approve, reject, capture and rule changes.
 - **Rules history.**
 - **Console serving:** CSP, immutable assets, client-route fallback, path traversal refused.
-- **Deals:** $450 / $200 / $300 end to end, limits that stay private (checked in what each agent is shown), keys bound to one side, thread closing, idempotent replay, rules versioning. Each company writes its own price sheet (`PUT /v1/party-rules/mine`; partial bodies keep the rest, a new sheet starts from the warrant, the other side's is refused); sheets that came with the sample studio are examples until kept, and the server refuses offers and negotiations until they are (`409 deal.rules_unconfirmed`). The Deals screen carries the writer and the Keep bar, and negotiation and offers wait until both numbers exist and are kept.
+- **Deals:** offers that stand until accepted, counter-offers, walk-aways, the deadline and stalemate endings, no taking back a concession, sealed client seats, limits that stay private (checked in what each agent is shown), keys bound to one side, thread closing, idempotent replay, rules versioning. Each company writes its own price sheet (`PUT /v1/party-rules/mine`; partial bodies keep the rest, a new sheet starts from the warrant, the other side's is refused); sheets that came with the sample studio are examples until kept, and the server refuses offers and negotiations until they are (`409 deal.rules_unconfirmed`). The Deals screen carries the writer and the Keep bar, and negotiation and offers wait until both numbers exist and are kept.
 - **Deals bind billing:** a charge on a dealt job must bill a milestone at its exact amount, once; the whole $150 in / $90 out / $60 kept loop runs through a deal.
 - **Signed locks:** signing on tap and on auto, a forged row with a recomputed hash is refused at capture, boot-time signing of old locks only if intact, key rotation, tampered deals.
 - **MCP:** the exact tool lists per key, no tool can pay, the owner key is downgraded, a fooled agent is refused, replay, request budget, bad input returned as a tool error, two agents negotiating through tools. **Issued agent keys through the door** (`mcp-agent-keys.test.ts`, with the official MCP client): which tools each scope combination gets, a read-only key can never ask, a key with an empty door is refused, hourly count and value limits, the per-agent breaker (suspend, resume, others unaffected), revoke and wrong key, the 60-second retry window, one payout under a standing rule even when asked twice, `405` on GET and DELETE, a client that sends no `Accept`, bad JSON, protocol versions.

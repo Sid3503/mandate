@@ -87,7 +87,8 @@ const DealSchema = z.object({
   buyerName: z.string(),
   sellerId: z.string(),
   offeredBy: z.string(),
-  status: z.enum(['agreed', 'refused']),
+  /** open: a standing offer awaiting the other side. countered: answered with a counter-offer. agreed: accepted and signed. refused: broke the offerer's own rules and never stood. withdrawn, expired: open when the negotiation ended with no deal. */
+  status: z.enum(['open', 'countered', 'agreed', 'refused', 'withdrawn', 'expired']),
   jobId: z.string().nullable(),
   terms: z.object({
     scope: z.string(),
@@ -132,6 +133,14 @@ const SessionSchema = z.object({
   }),
   version: z.string(),
   paypalConfigured: z.boolean(),
+  /** The PayPal this studio really moves money on: a stand-in, a real sandbox account, or none at all. */
+  paypalMode: z.enum(['none', 'fake', 'sandbox', 'live']),
+  /** The name the owner gave this studio. Null for the default studio. */
+  studioName: z.string().nullable(),
+  /** Which studio the caller's session belongs to. A browser in a new tab finds its studio here. */
+  workspaceId: z.string(),
+  /** What kind of workspace this is: the owner's own, a studio they opened, or the hosted demo. */
+  workspaceMode: z.enum(['default', 'demo', 'studio', 'live']),
   demoReset: z.boolean(),
 }).openapi('Session')
 
@@ -508,7 +517,7 @@ export function buildOpenApi(publicUrl: string) {
     path: '/v1/party-rules/{partyId}',
     tags: ['deals'],
     security: bearer,
-    summary: 'Write the next version of one company\'s price limits. `mine` is your own party: the owner may write either sheet, a client key its own ceiling, the studio key its own floor, an agent none. Another company\'s sheet is refused. Send only what changes: the rest is kept from the current sheet, or taken from the warrant for a company that never had one. The price itself is never defaulted. Sheets that came with the sample studio count only once a key keeps them: until then offers and negotiations are refused with 409.',
+    summary: 'Write the next version of one company\'s price limits (its walk-away, and optionally its target, negotiating style, standing brief and whether Mandate\'s negotiator may speak for it). `mine` is your own party: the owner may write the studio\'s sheet and a client\'s until that client writes its own (then it is sealed from the owner), a client key its own ceiling, the studio key its own floor, an agent none. Another company\'s sheet is refused. Send only what changes: the rest is kept from the current sheet, or taken from the warrant for a company that never had one. The price itself is never defaulted. Sheets that came with the sample studio count only once a key keeps them: until then offers and negotiations are refused with 409.',
     request: { params: z.object({ partyId: z.string() }), body: { content: { 'application/json': { schema: PartyRulesSchema } }, required: true } },
     responses: { 201: { description: 'New version' }, 401: problem, 403: problem, 404: problem, 422: problem },
   })
@@ -526,8 +535,53 @@ export function buildOpenApi(publicUrl: string) {
     path: '/v1/negotiations',
     tags: ['agents'],
     security: bearer,
-    summary: 'Owner only. Two agents, one per company, trade offers until the terms fit both companies\' rules or they run out of turns.',
-    responses: { 200: { description: 'The turns, each with the deal check\'s verdict' }, 401: problem, 403: problem, 503: problem },
+    summary: 'Owner only. Mandate\'s hosted negotiators play the table move by move (alternating offers: offer, accept the standing offer, or walk away) until one side accepts, a side walks away, the deadline passes, the sides stall, or a client that speaks for itself must answer. Each move is the model\'s decision; the server holds the walk-away, the turn order and the deadline. Each side\'s negotiator then writes its own company a debrief.',
+    request: { body: { content: { 'application/json': { schema: z.object({ buyer: z.string().optional(), task: z.string().optional(), milestones: z.array(z.string()).optional(), category: z.string().optional(), sellerBrief: z.string().optional(), buyerBrief: z.string().optional(), offersPerSide: z.number().int().min(2).max(8).optional(), threadId: z.uuid().optional() }) } } } },
+    responses: { 200: { description: 'How it ended, every move, and the negotiation as the caller may see it' }, 401: problem, 403: problem, 409: problem, 503: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/negotiations',
+    tags: ['deals'],
+    security: bearer,
+    summary: 'The latest negotiations the caller is a party to. Moves are public to both sides; each side\'s private numbers, reasoning, outcome and debrief appear only for that side.',
+    responses: { 200: { description: 'Negotiations' }, 401: problem, 403: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/negotiations/{id}',
+    tags: ['deals'],
+    security: bearer,
+    summary: 'One negotiation: every move, whose turn it is, the standing offer, the deadline, how it ended, and the caller\'s own seat (its walk-away, target, a reference next move, its outcome and its negotiator\'s debrief).',
+    request: { params: idParam },
+    responses: { 200: { description: 'Negotiation' }, 401: problem, 403: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/deals/{id}/accept',
+    tags: ['deals'],
+    security: bearer,
+    summary: 'Accept the other side\'s standing offer, exactly as it stands. The only way a deal is made: both companies\' current rules are checked, and the deal is signed and given its job. Repeating it returns the same deal.',
+    request: { params: idParam, body: { content: { 'application/json': { schema: z.object({ message: z.string().max(1000).optional(), assessment: z.string().max(1000).optional() }) } } } },
+    responses: { 200: { description: 'The agreed, signed deal', content: { 'application/json': { schema: DealSchema } } }, 401: problem, 403: problem, 404: problem, 409: problem, 422: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/negotiations/{id}/walk-away',
+    tags: ['deals'],
+    security: bearer,
+    summary: 'End a negotiation with no deal. Either side may, at any time.',
+    request: { params: idParam, body: { content: { 'application/json': { schema: z.object({ reason: z.string().max(500).optional(), assessment: z.string().max(1000).optional() }) } } } },
+    responses: { 200: { description: 'The ended negotiation' }, 401: problem, 403: problem, 404: problem, 409: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/negotiations/{id}/agent-move',
+    tags: ['agents'],
+    security: bearer,
+    summary: 'One move by Mandate\'s hosted negotiator for the seat whose turn it is, if the caller may let it speak for that seat (the studio always; a client only if it delegated).',
+    request: { params: idParam },
+    responses: { 200: { description: 'The negotiation after the move' }, 401: problem, 403: problem, 409: problem, 422: problem, 503: problem },
   })
   registry.registerPath({
     method: 'get',
@@ -543,7 +597,7 @@ export function buildOpenApi(publicUrl: string) {
     path: '/mcp',
     tags: ['agents'],
     security: bearer,
-    summary: 'Model Context Protocol server (Streamable HTTP, stateless). A studio key gets get_rules, get_jobs, propose, list_ledger, offer_deal and explain; a client agent key gets get_rules, offer_deal and explain. No tool can approve, capture, send or change rules.',
+    summary: 'Model Context Protocol server (Streamable HTTP, stateless). A studio key gets get_rules, get_jobs, propose, list_ledger, explain and the negotiation tools (offer_deal, accept_offer, walk_away, get_negotiation); a client agent key gets get_rules, explain, get_deliveries, decide_delivery and the negotiation tools. No tool can approve, capture, send or change rules.',
     responses: { 200: { description: 'JSON-RPC response' }, 401: problem },
   })
   registry.registerPath({

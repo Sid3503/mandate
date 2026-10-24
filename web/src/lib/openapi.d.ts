@@ -4883,6 +4883,9 @@ export interface paths {
                         /** Format: uuid */
                         threadId?: string;
                         prompt?: string;
+                        assessment?: string;
+                        final?: boolean;
+                        offersPerSide?: number;
                     };
                 };
             };
@@ -5238,7 +5241,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Write the next version of one company's price limits. `mine` is your own party: the owner may write either sheet, a client key its own ceiling, the studio key its own floor, an agent none. Another company's sheet is refused. Send only what changes: the rest is kept from the current sheet, or taken from the warrant for a company that never had one. The price itself is never defaulted. Sheets that came with the sample studio count only once a key keeps them: until then offers and negotiations are refused with 409. */
+        /** Write the next version of one company's price limits (its walk-away, and optionally its target, negotiating style, standing brief and whether Mandate's negotiator may speak for it). `mine` is your own party: the owner may write the studio's sheet and a client's until that client writes its own (then it is sealed from the owner), a client key its own ceiling, the studio key its own floor, an agent none. Another company's sheet is refused. Send only what changes: the rest is kept from the current sheet, or taken from the warrant for a company that never had one. The price itself is never defaulted. Sheets that came with the sample studio count only once a key keeps them: until then offers and negotiations are refused with 409. */
         put: {
             parameters: {
                 query?: never;
@@ -5262,6 +5265,11 @@ export interface paths {
                         maxMilestoneCents?: number;
                         minTotalCents?: number;
                         minMilestoneCents?: number;
+                        targetTotalCents?: number;
+                        /** @enum {string} */
+                        style?: "firm" | "balanced" | "flexible";
+                        delegate?: boolean;
+                        brief?: string;
                     };
                 };
             };
@@ -5421,10 +5429,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        /** Owner only. Two agents, one per company, trade offers until the terms fit both companies' rules or they run out of turns. */
-        post: {
+        /** The latest negotiations the caller is a party to. Moves are public to both sides; each side's private numbers, reasoning, outcome and debrief appear only for that side. */
+        get: {
             parameters: {
                 query?: never;
                 header?: never;
@@ -5433,7 +5439,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The turns, each with the deal check's verdict */
+                /** @description Negotiations */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -5451,6 +5457,380 @@ export interface paths {
                 };
                 /** @description Problem details (RFC 9457) */
                 403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Owner only. Mandate's hosted negotiators play the table move by move (alternating offers: offer, accept the standing offer, or walk away) until one side accepts, a side walks away, the deadline passes, the sides stall, or a client that speaks for itself must answer. Each move is the model's decision; the server holds the walk-away, the turn order and the deadline. Each side's negotiator then writes its own company a debrief. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        buyer?: string;
+                        task?: string;
+                        milestones?: string[];
+                        category?: string;
+                        sellerBrief?: string;
+                        buyerBrief?: string;
+                        offersPerSide?: number;
+                        /** Format: uuid */
+                        threadId?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description How it ended, every move, and the negotiation as the caller may see it */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Problem details (RFC 9457) */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/negotiations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One negotiation: every move, whose turn it is, the standing offer, the deadline, how it ended, and the caller's own seat (its walk-away, target, a reference next move, its outcome and its negotiator's debrief). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Negotiation */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Problem details (RFC 9457) */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/deals/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept the other side's standing offer, exactly as it stands. The only way a deal is made: both companies' current rules are checked, and the deal is signed and given its job. Repeating it returns the same deal. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        message?: string;
+                        assessment?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description The agreed, signed deal */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Deal"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/negotiations/{id}/walk-away": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** End a negotiation with no deal. Either side may, at any time. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        reason?: string;
+                        assessment?: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description The ended negotiation */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Problem details (RFC 9457) */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/negotiations/{id}/agent-move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** One move by Mandate's hosted negotiator for the seat whose turn it is, if the caller may let it speak for that seat (the studio always; a client only if it delegated). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The negotiation after the move */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Problem details (RFC 9457) */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                422: {
                     headers: {
                         [name: string]: unknown;
                     };
@@ -5547,7 +5927,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Model Context Protocol server (Streamable HTTP, stateless). A studio key gets get_rules, get_jobs, propose, list_ledger, offer_deal and explain; a client agent key gets get_rules, offer_deal and explain. No tool can approve, capture, send or change rules. */
+        /** Model Context Protocol server (Streamable HTTP, stateless). A studio key gets get_rules, get_jobs, propose, list_ledger, explain and the negotiation tools (offer_deal, accept_offer, walk_away, get_negotiation); a client agent key gets get_rules, explain, get_deliveries, decide_delivery and the negotiation tools. No tool can approve, capture, send or change rules. */
         post: {
             parameters: {
                 query?: never;
@@ -5797,6 +6177,12 @@ export interface components {
             };
             version: string;
             paypalConfigured: boolean;
+            /** @enum {string} */
+            paypalMode: "none" | "fake" | "sandbox" | "live";
+            studioName: string | null;
+            workspaceId: string;
+            /** @enum {string} */
+            workspaceMode: "default" | "demo" | "studio" | "live";
             demoReset: boolean;
         };
         Proposal: {
@@ -5869,7 +6255,7 @@ export interface components {
             sellerId: string;
             offeredBy: string;
             /** @enum {string} */
-            status: "agreed" | "refused";
+            status: "open" | "countered" | "agreed" | "refused" | "withdrawn" | "expired";
             jobId: string | null;
             terms: {
                 scope: string;

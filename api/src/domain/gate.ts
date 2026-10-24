@@ -1,3 +1,4 @@
+import { payableIn } from './money'
 import { fundedPhase } from './phases'
 import type { WarrantBody } from './schemas'
 
@@ -178,6 +179,9 @@ function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context:
   }
   if (proposal.currency !== warrant.currency) {
     return deny(Clause.currencyMismatch, `currency must be ${warrant.currency}`)
+  }
+  if (!payableIn(proposal.amountCents, proposal.currency)) {
+    return deny(Clause.currencyMismatch, `${proposal.currency} is paid in whole units only, with no decimals`)
   }
   if (proposal.kind === 'refund') {
     const parent = proposal.parent

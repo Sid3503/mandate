@@ -208,7 +208,7 @@ describe('Q3.5 tenant routing: public keys, MCP under /w, and webhook external_r
     await client.connect(transport)
 
     const tools = (await client.listTools()).tools
-    expect(tools.map((t) => t.name).sort()).toEqual(['explain', 'get_jobs', 'get_rules', 'list_ledger', 'offer_deal', 'propose'])
+    expect(tools.map((t) => t.name).sort()).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'walk_away'])
 
     // Call a tool on tenant MCP
     const callResult = await client.callTool({ name: 'get_rules', arguments: {} })

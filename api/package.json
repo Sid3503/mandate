@@ -15,6 +15,7 @@
     "mcp": "tsx src/mcp/stdio.ts",
     "check:mcp": "tsx scripts/check-mcp.ts",
     "smoke": "tsx scripts/smoke.ts",
+    "studio:e2e": "tsx scripts/studio-e2e.ts",
     "webhook:register": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/register-webhook.ts",
     "eval:drafter": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-drafter.ts",
     "eval:policy": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-policy.ts"

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Chip, GateChip, Loading, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
 import { useToast } from '../components/Toast'
-import { api } from '../lib/api'
+import { ApiError, api } from '../lib/api'
 import { newKey } from '../lib/format'
 import { useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useWarrant } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
@@ -35,7 +35,11 @@ export function NewRequest() {
   const [funding, setFunding] = useState(params.get('funding') ?? '')
   const [parent, setParent] = useState(params.get('parent') ?? '')
 
+  const missingRules = warrant.isError && warrant.error instanceof ApiError && warrant.error.code === 'warrant.missing'
   const rows = proposals.data?.data ?? []
+  // The words in the placeholders are this studio's own people, not the sample studio's.
+  const clientName = warrant.data?.clients?.[0]?.displayName ?? 'the client'
+  const payeeName = warrant.data?.payees?.[0]?.displayName ?? 'the contractor'
   // Only PayPal captures can be refunded or fund a payout. A paid payout has a Payouts id, not a capture id.
   const captured = rows.filter((row) => fundedPhase(row.phase) && Boolean(row.captureId) && (row.kind === 'charge' || row.kind === 'payment'))
   const charges = captured.filter((row) => row.kind === 'charge')
@@ -117,6 +121,18 @@ export function NewRequest() {
   }
 
   if (warrant.isLoading) return <div className="page"><Loading /></div>
+  if (missingRules) {
+    return (
+      <div className="page">
+        <PageHead eyebrow="Ask the rules" title="New request" />
+        <section className="panel panel-lime" data-testid="request-needs-rules">
+          <h2 className="panel-title">Rules come first</h2>
+          <p>Nothing can be asked for until the rules exist. They name who can be billed, who can be paid, and what is allowed.</p>
+          <Link className="btn btn-ink" to="/rules">Write your rules</Link>
+        </section>
+      </div>
+    )
+  }
 
   return (
     <div className="page">
@@ -153,7 +169,7 @@ export function NewRequest() {
             </label>
           )}
           {stranger !== null && kind !== 'refund' ? (
-            <label className="field"><span>Their name or account</span><input value={stranger} onChange={(event) => setStranger(event.target.value)} placeholder="P. Shah (new account)" required /><small>The rules refuse anyone not listed. Try it.</small></label>
+            <label className="field"><span>Their name or account</span><input value={stranger} onChange={(event) => setStranger(event.target.value)} placeholder="Someone not on the rules" required /><small>The rules refuse anyone not listed. Try it.</small></label>
           ) : null}
 
           {kind === 'payment' ? (
@@ -188,16 +204,16 @@ export function NewRequest() {
             </label>
           </div>
 
-          <label className="field"><span>What it is for</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === 'charge' ? 'Northwind logo milestone 1 invoice' : 'Northwind logo milestone 1'} required maxLength={500} /></label>
-          <label className="field" data-tour="new-proof"><span>Link to the work</span><input type="url" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} placeholder="https://www.figma.com/file/northwind-logo" /><small>The rules need an https link.</small></label>
+          <label className="field"><span>What it is for</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === 'charge' ? `${clientName} logo milestone 1 invoice` : `${clientName} logo milestone 1`} required maxLength={500} /></label>
+          <label className="field" data-tour="new-proof"><span>Link to the work</span><input type="url" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} placeholder="https://example.com/the-work" /><small>The rules need an https link.</small></label>
           {kind !== 'payment' ? (
             <label className="field">
               <span>Job</span>
-              <input list="jobs" value={jobId} onChange={(event) => setJobId(event.target.value)} placeholder="job_northwind_logo" pattern="[a-z0-9][a-z0-9_-]{0,63}" readOnly={kind === 'refund' && Boolean(parentRow)} />
+              <input list="jobs" value={jobId} onChange={(event) => setJobId(event.target.value)} placeholder="job_first" pattern="[a-z0-9][a-z0-9_-]{0,63}" readOnly={kind === 'refund' && Boolean(parentRow)} />
               <datalist id="jobs">{jobIds.map((id) => <option key={id} value={id} />)}</datalist>
             </label>
           ) : jobId ? <p className="fine">Job <span className="mono">{jobId}</span>, taken from the client payment.</p> : null}
-          <label className="field" data-tour="new-prompt"><span>How it was asked, in words</span><textarea rows={2} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Pay Priya her $90 share for Northwind milestone 1" maxLength={4000} /></label>
+          <label className="field" data-tour="new-prompt"><span>How it was asked, in words</span><textarea rows={2} value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={`Pay ${payeeName} their share of what ${clientName} paid`} maxLength={4000} /></label>
 
           <div className="row between wrap gap-s">
             <span className="fine">{missing.length > 0 ? `To ask the rules: add ${missing.join(', ')}.` : 'Double-press safe: sending the same request twice asks once.'}</span>

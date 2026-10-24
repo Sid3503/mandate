@@ -83,7 +83,10 @@ export function PayCardFields({ token, proposalId, amountCents, currency, descri
       // reason in words the buyer can fix, so a throw here means PayPal itself could not be reached.
       let result: Awaited<ReturnType<CardFields['submit']>>
       try {
-        result = await fields.submit(session.orderId, { billingAddress: { countryCode: 'US' } })
+        // The payer's country, from their own browser. A wrong country fails the bank's address check, so when it
+        // cannot be told, none is sent and PayPal asks the card itself.
+        const country = payerCountry()
+        result = await fields.submit(session.orderId, country ? { billingAddress: { countryCode: country } } : undefined)
       } catch {
         setProblem('PayPal could not be reached. Nothing was charged.')
         return
@@ -103,6 +106,17 @@ export function PayCardFields({ token, proposalId, amountCents, currency, descri
         if (token) await api.payCapture(token, proposalId)
         else await api.payCaptureOwner(proposalId)
       } catch (error) {
+        // The server's own sweep is already settling this same payment: it went through, and the page will say so.
+        if (error instanceof ApiError && error.code === 'capture.inflight') {
+          setDone(true)
+          onPaid()
+          return
+        }
+        // The card's bank refused, or did not finish, its check: nothing was charged, and the buyer can try again.
+        if (error instanceof ApiError && (error.code === 'pay.card_not_verified' || error.code === 'pay.card_check_incomplete')) {
+          setProblem(error.message)
+          return
+        }
         setProblem(error instanceof ApiError
           ? error.message
           : 'PayPal accepted the card, but its answer did not reach us. Do not pay again: this page updates by itself once the payment settles.')
@@ -128,7 +142,7 @@ export function PayCardFields({ token, proposalId, amountCents, currency, descri
     <div className="pay-panel" data-testid="pay-panel">
       <div className="row between wrap gap-s">
         <strong>{description}</strong>
-        <Money cents={amountCents} size="lg" />
+        <Money cents={amountCents} currency={currency} size="lg" />
       </div>
       <p className="fine">This amount is locked. It will not change while you pay.</p>
       {problem ? <p className="pay-problem" role="alert">{problem}</p> : null}
@@ -140,11 +154,21 @@ export function PayCardFields({ token, proposalId, amountCents, currency, descri
             <div className="pay-field" ref={cvvRef} data-testid="pay-field-cvv" />
           </div>
           <button type="button" className="btn btn-lime" onClick={() => void pay()} disabled={busy} data-testid="pay-submit">
-            {busy ? 'Paying…' : `Pay ${new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amountCents / 100)}`}
+            {busy ? 'Paying…' : `Pay ${new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(amountCents / 100)}`}
           </button>
           <p className="fine">Your card details go straight to PayPal. They never reach this server, and the amount is the one shown above.</p>
         </div>
       ) : problem ? null : <p className="fine">Opening the payment form…</p>}
     </div>
   )
+}
+
+/** The country of the person paying, from their browser's language tag (en-IN → IN). Null when it cannot be told. */
+function payerCountry(): string | null {
+  try {
+    const region = new Intl.Locale(navigator.language).maximize().region
+    return region && /^[A-Z]{2}$/.test(region) ? region : null
+  } catch {
+    return null
+  }
 }

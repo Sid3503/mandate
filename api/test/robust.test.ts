@@ -15,8 +15,11 @@ describe('what Mandate says about itself', () => {
     }
   })
 
-  it('keeps a client\'s agent away from the status page, like everything else that is not its door', async () => {
-    expect((await call(harness().app, 'GET', '/v1/status', { key: BUYER_KEY })).status).toBe(403)
+  it('lets a client read the status banner and nothing else about the studio', async () => {
+    const h = harness()
+    expect((await call(h.app, 'GET', '/v1/status', { key: BUYER_KEY })).status).toBe(200)
+    expect((await call(h.app, 'GET', '/v1/today', { key: BUYER_KEY })).status).toBe(403)
+    expect((await call(h.app, 'GET', '/v1/warrant', { key: BUYER_KEY })).status).toBe(403)
   })
 
   it('says it is draining while shutting down, so traffic moves away', async () => {

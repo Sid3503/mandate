@@ -16,6 +16,8 @@
     "gates": "npm run gates:fast && npm run build && npm --prefix web run e2e",
     "ci": "npm run check && npm run build && npm --prefix web run e2e",
     "smoke": "node scripts/smoke.mjs",
+    "studio:e2e": "npm --prefix api run studio:e2e --",
+    "studio:browser": "node web/scripts/studio-browser.mjs",
     "render:env": "node scripts/render-env.mjs",
     "preflight": "node scripts/preflight.mjs",
     "db:backup": "node scripts/db-backup.mjs",

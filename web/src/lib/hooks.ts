@@ -9,7 +9,8 @@ export function useSession() {
 }
 
 export function useWarrant() {
-  return useQuery({ queryKey: ['warrant'], queryFn: api.warrant, staleTime: 30_000 })
+  // A studio with no rules yet answers 404. That is an answer, not a fault, so it is not tried again.
+  return useQuery({ queryKey: ['warrant'], queryFn: api.warrant, staleTime: 30_000, retry: false })
 }
 
 export function useVersions() {

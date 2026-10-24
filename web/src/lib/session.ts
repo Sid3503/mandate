@@ -1,3 +1,11 @@
+/** A client or agent key names its studio. `ws_default` is not a studio: older keys were stamped with it by mistake. */
+export function workspaceFromKey(key: string): string | null {
+  const match = /^mnd_(?:cl|ag)_(ws_(?:default|[a-z2-7]{20}))_/.exec(key.trim())
+  const id = match?.[1]
+  if (!id || id === 'ws_default') return null
+  return id
+}
+
 const KEY = 'mandate.apiKey'
 const WORKSPACE = 'mandate.workspace'
 const MODE = 'mandate.workspaceMode'
@@ -45,6 +53,11 @@ export const session = {
   },
   setWorkspace(id: string): void {
     sessionStorage.setItem(WORKSPACE, id)
+  },
+  /** Drop the workspace this tab thinks it is in. The session cookie is left as it is. */
+  clearWorkspace(): void {
+    sessionStorage.removeItem(WORKSPACE)
+    sessionStorage.removeItem(MODE)
   },
   mode(): string | null {
     try {

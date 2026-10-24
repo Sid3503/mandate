@@ -218,16 +218,17 @@ describe('second reader behind FLAG_SECOND_READER (P8.T6)', () => {
     expect(made.json.secondReader).toBeUndefined()
   })
 
-  it('runs the second reader when FLAG_SECOND_READER is on', async () => {
+  const reader = (second: (user: string) => ScriptedStep) => scriptedModel(({ system, user }): ScriptedStep => {
+    if (system.includes('second reader of a draft')) return second(user)
+    if (system.includes('You say a DRAFT')) return { tool: 'read_back', input: { lines: [], notes: [] } }
+    return { tool: 'propose_rules', input: { summary: 'The line drops to $15 and the cap rises to $900.', autoSettleUnderDollars: 15, monthlyCapDollars: 900 } }
+  })
+
+  it('runs the second reader when FLAG_SECOND_READER is on, against the exact list of changes', async () => {
     const flags = loadFlags({ FLAG_SECOND_READER: '1' })
     expect(flags.secondReader).toBe(true)
-    const model = scriptedModel(({ system }): ScriptedStep => {
-      if (system.includes('second reader for Mandate')) {
-        return { text: JSON.stringify({ agreed: true, verdict: 'Faithful draft of instruction' }) }
-      }
-      if (system.includes('You say a DRAFT')) return { tool: 'read_back', input: { lines: [], notes: [] } }
-      return { tool: 'propose_rules', input: { summary: 'The line drops to $15.', autoSettleUnderDollars: 15 } }
-    })
+    let shown = ''
+    const model = reader((user) => { shown = user; return { tool: 'second_reading', input: { agreed: false, concerns: [{ change: 1, why: 'The owner asked only about the automatic line, not the monthly cap.' }] } } })
     const { app } = harness({ model, flags })
     const res = await app.request('http://mandate.test/v1/rules/draft/stream', {
       method: 'POST',
@@ -238,15 +239,32 @@ describe('second reader behind FLAG_SECOND_READER (P8.T6)', () => {
     const body = await res.text()
     expect(body).toContain('"stage":"second_reading"')
     expect(body).toContain('"secondReader"')
-    expect(body).toContain('Faithful draft of instruction')
-
-    // Also direct /v1/rules/draft endpoint
+    // It was shown the owner's words, fenced, and every change code found, numbered.
+    expect(shown).toContain('<untrusted label="owner_words">')
+    expect(shown).toMatch(/1\. \[loosens\]/)
     const direct = await draft(app, 'Anything under $15 can go without approval')
-    expect(direct.status).toBe(200)
-    expect(direct.json.secondReader).toMatchObject({
-      agreed: true,
-      verdict: 'Faithful draft of instruction',
-    })
+    expect(direct.json.secondReader).toMatchObject({ status: 'concerns', agreed: false, concerns: [{ change: 1, why: expect.stringContaining('monthly cap') }] })
+    expect(direct.json.secondReader.concerns[0].text).toBeTruthy()
+  })
+
+  it('sends back a concern about a change it was never shown', async () => {
+    const flags = loadFlags({ FLAG_SECOND_READER: '1' })
+    let tries = 0
+    const model = reader(() => { tries += 1; return tries === 1 ? { tool: 'second_reading', input: { agreed: false, concerns: [{ change: 9, why: 'An invented change.' }] } } : { tool: 'second_reading', input: { agreed: true, concerns: [] } } })
+    const { app } = harness({ model, flags })
+    const made = await draft(app, 'Anything under $15 can go without approval, and a $900 cap')
+    expect(tries).toBe(2)
+    expect(made.json.secondReader).toMatchObject({ status: 'agreed', agreed: true, concerns: [] })
+  })
+
+  it('never reads as a pass when it could not run', async () => {
+    const flags = loadFlags({ FLAG_SECOND_READER: '1' })
+    const model = reader(() => ({ fail: true }))
+    const { app } = harness({ model, flags })
+    const made = await draft(app, 'Anything under $15 can go without approval')
+    expect(made.status).toBe(200)
+    expect(made.json.secondReader).toMatchObject({ status: 'unavailable', agreed: null })
+    expect(made.json.secondReader.verdict).toContain('NOT had a second reading')
   })
 })
 

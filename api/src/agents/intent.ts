@@ -36,9 +36,16 @@ export function quantitiesIn(words: string): Quantity[] {
     const key = `${quantity.kind}:${quantity.value}:${quantity.phrase}`
     if (!seen.has(key)) { seen.add(key); out.push(quantity) }
   }
-  for (const match of words.matchAll(/\$\s?([\d,]+(?:\.\d+)?)\s?(k\b)?/gi)) {
-    const value = Number(match[1]!.replaceAll(',', '')) * (match[2] ? 1000 : 1)
-    if (Number.isFinite(value)) add({ kind: 'money', value: Math.round(value * 100), phrase: match[0].trim() })
+  // Money as people write it anywhere: a symbol or a currency code before the number ($500, €500, ₹50,000, EUR 500),
+  // or a code or a currency's name after it (500 EUR, 500 euros, 50,000 rupees). Indian digit grouping (1,00,000)
+  // reads the same, because the commas are only grouping.
+  const MONEY_BEFORE = /(?:[$€£₹¥]|\b(?:USD|EUR|GBP|INR|JPY|AUD|CAD|SGD|HKD|CHF|NZD|SEK|NOK|DKK|PLN|MXN|BRL)\s?)\s?(\d[\d,]*(?:\.\d+)?)\s?(k\b)?/gi
+  const MONEY_AFTER = /(\d[\d,]*(?:\.\d+)?)\s?(k\b)?\s?(?:USD|EUR|GBP|INR|JPY|AUD|CAD|SGD|HKD|CHF|NZD|SEK|NOK|DKK|PLN|MXN|BRL|dollars?|euros?|pounds?|rupees?|yen)\b/gi
+  for (const pattern of [MONEY_BEFORE, MONEY_AFTER]) {
+    for (const match of words.matchAll(pattern)) {
+      const value = Number(match[1]!.replaceAll(',', '')) * (match[2] ? 1000 : 1)
+      if (Number.isFinite(value)) add({ kind: 'money', value: Math.round(value * 100), phrase: match[0].trim() })
+    }
   }
   for (const match of words.matchAll(/(\d+(?:\.\d+)?)\s?(?:%|percent\b)/gi)) add({ kind: 'percent', value: Number(match[1]), phrase: match[0].trim() })
   for (const match of words.matchAll(/(\d+|one|two|three|four|five|six|seven|ten|fourteen|thirty)\s*(?:-\s*)?(days?|weeks?)\b/gi)) {

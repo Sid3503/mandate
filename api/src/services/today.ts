@@ -17,7 +17,8 @@ import type { MandateService } from './mandate'
  *   inFlight  nobody needs to do anything: an invoice out, a payout processing, Mandate sending it
  *   done      settled in the last week, and how: a tap, a standing rule, autopilot, or under the automatic line
  *   stopped   refused by the rules
- *   next      the one next step of the frozen Northwind job, and nothing else
+ *   next      one next step. The seeded Line Studio job keeps its own script. A studio the owner
+ *             just opened is told about its own rules, its own people and its own deals.
  *
  * Words are composed here, in one place, so the page and the tests agree on what is said.
  */
@@ -202,10 +203,10 @@ export class TodayService {
         ]
       : []
     const steps = [
-      { id: 'paypal', label: 'Connect PayPal', hint: 'Add the sandbox app credentials to the server, then check System.', href: '/system', done: this.paypalConfigured() },
+      { id: 'paypal', label: 'PayPal', hint: 'PayPal is not connected on this server, so nothing can be charged. That connection belongs to the server. System shows whether it is on.', href: '/system', done: this.paypalConfigured() },
       { id: 'people', label: 'Add the people you bill and pay', hint: 'A client and a contractor on the rules.', href: '/rules', done: Boolean(body && body.payees.length > 0 && body.clients.length > 0) },
-      { id: 'price', label: 'Set what each company will accept', hint: 'The least the studio takes and the most each client pays. Each company writes its own, on Deals.', href: '/deals', done: this.deals.priceLimitsSet() },
-      { id: 'deal', label: 'Agree a deal with a client', hint: 'Let the two agents negotiate, or offer terms yourself.', href: '/deals', done: this.repo.countAgreedDeals() > 0 },
+      { id: 'price', label: 'Set what each company will accept', hint: 'You set the least your studio takes, on Deals. Each client sets the most they pay, with their own key. Until both exist a deal waits, and you can still bill a client who is on your rules.', href: '/deals', done: this.deals.priceLimitsSet() },
+      { id: 'deal', label: 'Agree a deal with a client', hint: 'Optional. A deal is how both companies agree a price before an invoice. You can also bill a client from Jobs without one.', href: '/deals', done: this.repo.countAgreedDeals() > 0 },
       ...later,
       { id: 'first', label: 'Get the first client payment through', hint: 'Bill a milestone and have the client pay it.', href: '/jobs', done: this.repo.settledProposals('1970-01-01T00:00:00.000Z', 500).some((row) => row.kind === 'charge') },
       { id: 'paid', label: 'Pay a contractor from settled money', hint: 'A payout funded by a client payment PayPal confirmed. Money in releases money out.', href: '/jobs', done: this.repo.settledProposals('1970-01-01T00:00:00.000Z', 500).some((row) => row.kind === 'payment') },
@@ -213,10 +214,63 @@ export class TodayService {
     return { complete: steps.every((step) => step.done), steps }
   }
 
-  /** Milestone 0 of the frozen job has a client charge that settled in full. */
+  /** A client has actually paid. Standing rules and autopilot are worth offering only after that, on any job. */
   private milestoneCaptured(): boolean {
-    const deal = this.repo.agreedDealByJob(DEMO_JOB_ID)
-    return Boolean(deal && fullPhase(this.repo.chargeForMilestone(deal.id, 0)?.phase ?? ''))
+    return this.repo.settledProposals('1970-01-01T00:00:00.000Z', 500).some((row) => row.kind === 'charge')
+  }
+
+  /**
+   * The seeded Line Studio ledger, not a studio the owner just opened. Seed rows stay in history after the owner
+   * keeps the sample numbers, so the frozen job's sentences stay the ones the demo was built around.
+   */
+  private sampleLedger(): boolean {
+    if (this.repo.agreedDealByJob(DEMO_JOB_ID)) return true
+    const seeded = (id: string) => this.repo.partyRulesVersions(id).some((row) => row.origin === 'seed')
+    return seeded(WARRANT_ID) || seeded(BUYER_PARTY_ID)
+  }
+
+  /** What a studio with no sample job should do next. Amounts come from its own rules and its own deals. */
+  private studioNext(body: WarrantBody): { step: string | null; rules: string | null } {
+    if (body.clients.length === 0 || body.payees.length === 0) {
+      const missing = [body.clients.length === 0 ? 'who you bill' : null, body.payees.length === 0 ? 'who you pay' : null].filter((item): item is string => Boolean(item))
+      return { step: `Add ${missing.join(' and ')} on Rules. Nothing can be invoiced or paid until ${missing.length === 2 ? 'both are' : 'they are'} named there.`, rules: null }
+    }
+    const seller = this.repo.partyRules(WARRANT_ID)
+    if (seller?.origin !== 'written' || seller.body.minTotalCents === undefined) {
+      const studio = seller?.body.displayName || 'your studio'
+      return { step: `Set the least ${studio} will take for a job, on Deals. That number is yours. Each client sets the most they will pay with their own key.`, rules: null }
+    }
+    const open = this.openDealStep(body)
+    if (open) return open
+    const waiting = body.clients.filter((client) => {
+      const sheet = this.repo.partyRules(client.id)
+      return sheet?.origin !== 'written' || sheet.body.maxTotalCents === undefined
+    })
+    if (waiting.length > 0) {
+      const names = waiting.map((client) => client.displayName).join(' and ')
+      return { step: `${names} ${waiting.length === 1 ? 'has' : 'have'} no ceiling yet. They set the most they will pay with their own key, on Deals. You can still bill them for a job without a deal.`, rules: null }
+    }
+    const client = body.clients[0]?.displayName ?? 'your client'
+    return { step: `Bill ${client} for a job. A deal on Deals is optional: use one when both companies must agree the price before you invoice.`, rules: null }
+  }
+
+  /** The oldest agreed deal that still has a milestone to bill. A charge already filed is Today’s waiting list. */
+  private openDealStep(body: WarrantBody): { step: string | null; rules: string | null } | null {
+    for (const deal of this.repo.agreedDeals()) {
+      const terms = JSON.parse(deal.terms_json) as DealTerms
+      const index = terms.milestones.findIndex((_, at) => {
+        const charge = this.repo.chargeForMilestone(deal.id, at)
+        return !charge || !fullPhase(charge.phase)
+      })
+      if (index < 0) continue
+      const charge = this.repo.chargeForMilestone(deal.id, index)
+      if (charge) return null
+      const client = body.clients.find((item) => item.id === deal.buyer_id)?.displayName ?? body.clients[0]?.displayName ?? 'your client'
+      const milestone = terms.milestones[index]
+      if (!milestone) return null
+      return { step: `Bill milestone ${index} (${dollars(milestone.amountCents)}) of the deal with ${client}, with an https proof link.`, rules: null }
+    }
+    return null
   }
 
   /**
@@ -224,12 +278,18 @@ export class TodayService {
    * proposal's warrant version; before a lock exists, the latest warrant is the one that would be used.
    */
   private frozenNext(body: WarrantBody | null): { step: string | null; rules: string | null } {
+    // A studio with no rules yet has nothing to run. The rules come first, and the sentence says so.
+    if (!body) {
+      return { step: 'Your studio has no rules yet. Write them in your own words: what pays without your tap, what waits for you, and what never happens at all.', rules: null }
+    }
     const sheets = this.unconfirmedSheets()
     if (sheets.length > 0) {
       const verb = sheets.length === 1 ? 'shows' : 'show'
       return { step: `Keep the price sheets on Deals. ${sheets.join(' and ')} still ${verb} the sample numbers that came with the studio.`, rules: null }
     }
-    const clientName = body?.clients.find((client) => client.id === BUYER_PARTY_ID)?.displayName ?? 'Northwind'
+    // A studio that was not given the sample job is not told to offer that job's $300.
+    if (!this.sampleLedger()) return this.studioNext(body)
+    const clientName = body.clients.find((client) => client.id === BUYER_PARTY_ID)?.displayName ?? body.clients[0]?.displayName ?? 'your client'
     const deal = this.repo.agreedDealByJob(DEMO_JOB_ID)
     if (!deal) return { step: `No deal with ${clientName} is agreed. Negotiate one, or offer ${dollars(30_000)} as two ${dollars(15_000)} milestones.`, rules: null }
     const terms = JSON.parse(deal.terms_json) as DealTerms
@@ -263,8 +323,10 @@ export class TodayService {
     const seller = this.repo.partyRules(WARRANT_ID)
     const buyer = this.repo.partyRules(BUYER_PARTY_ID)
     const names: string[] = []
-    if (!seller || seller.origin === 'seed') names.push(seller?.body.displayName ?? 'Line Studio')
-    if (!buyer || buyer.origin === 'seed') names.push(buyer?.body.displayName ?? 'Northwind')
+    // Only a sheet that exists and still holds the example numbers needs keeping. A studio with no sheet at all has
+    // not been given example numbers: it has simply not written its own yet.
+    if (seller && seller.origin === 'seed') names.push(seller.body.displayName)
+    if (buyer && buyer.origin === 'seed') names.push(buyer.body.displayName)
     return names
   }
 

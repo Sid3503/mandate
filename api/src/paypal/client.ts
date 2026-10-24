@@ -115,7 +115,7 @@ export function createPayPalClient(options: {
       custom_id: input.proposalId,
       invoice_id: input.proposalId,
       description: input.description.slice(0, 127),
-      amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents) },
+      amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) },
     }
     if (attachPayee && input.payeeEmail) unit.payee = { email_address: input.payeeEmail }
     const { json } = await call('/v2/checkout/orders', {
@@ -126,8 +126,14 @@ export function createPayPalClient(options: {
       body: {
         intent: 'CAPTURE',
         purchase_units: [unit],
+        // A card paid on our own page asks the card's bank to confirm the cardholder wherever the law requires it
+        // (3-D Secure: PSD2 in Europe, the RBI's additional factor in India). PayPal's card form runs the check.
+        ...(input.kind === 'card' ? { payment_source: { card: {
+          attributes: { verification: { method: 'SCA_WHEN_REQUIRED' } },
+          ...(input.returnUrl ? { experience_context: { return_url: input.returnUrl, cancel_url: input.cancelUrl ?? input.returnUrl } } : {}),
+        } } } : {}),
         // With a return URL the buyer lands back on the receipt after approving, instead of being stranded on PayPal.
-        ...(input.returnUrl ? { payment_source: { paypal: { experience_context: {
+        ...(input.returnUrl && input.kind !== 'card' ? { payment_source: { paypal: { experience_context: {
           return_url: input.returnUrl,
           cancel_url: input.cancelUrl ?? input.returnUrl,
           user_action: 'PAY_NOW',
@@ -171,6 +177,20 @@ export function createPayPalClient(options: {
         approveUrl: link(json, ['payer-action', 'approve']),
       }
     },
+    async cardResult(orderId) {
+      // Only `fields=payment_source` carries the 3-D Secure answer, and it carries nothing else, so it is its own read.
+      const { json } = await call(`/v2/checkout/orders/${encodeURIComponent(orderId)}?fields=payment_source`, { method: 'GET' })
+      const card = asJson(asJson(json.payment_source)?.card)
+      if (!card) return null
+      const result = asJson(card.authentication_result)
+      const secure = asJson(result?.three_d_secure)
+      const text = (value: unknown) => (typeof value === 'string' && value ? value : null)
+      return {
+        brand: text(card.brand),
+        lastDigits: text(card.last_digits),
+        authentication: result ? { liabilityShift: text(result.liability_shift), enrollment: text(secure?.enrollment_status), status: text(secure?.authentication_status) } : null,
+      }
+    },
     async captureOrder(orderId, proposalId) {
       const { json } = await call(`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, {
         method: 'POST',
@@ -195,7 +215,7 @@ export function createPayPalClient(options: {
       const { json } = await call(`/v2/payments/captures/${encodeURIComponent(input.captureId)}/refund`, {
         method: 'POST',
         requestId: paypalRequestId(`${input.proposalId}:refund`),
-        body: { amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents) } },
+        body: { amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) } },
       })
       return { refundId: stringField(json, 'id'), status: stringField(json, 'status') } satisfies RefundedPayment
     },
@@ -214,7 +234,7 @@ export function createPayPalClient(options: {
           items: [{
             recipient_type: 'EMAIL',
             receiver: input.receiverEmail,
-            amount: { currency: input.currency, value: centsToPayPal(input.amountCents) },
+            amount: { currency: input.currency, value: centsToPayPal(input.amountCents, input.currency) },
             note: input.note.slice(0, 160),
             sender_item_id: input.proposalId,
           }],

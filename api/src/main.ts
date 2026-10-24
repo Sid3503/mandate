@@ -7,7 +7,7 @@ import { buildServices } from './services/container'
 import { AgentService } from './agents/service'
 import { loadConfig } from './config'
 import { loadFlags } from './flags'
-import { openProduct } from './boot'
+import { openProduct, type StudioPayPal } from './boot'
 import { migrate, openDatabase, seed } from './db/database'
 import { loadSigner } from './domain/signing'
 import { buildModels } from './agents/model'
@@ -35,6 +35,15 @@ const sandbox = config.paypal ? (() => { try { return new URL(config.paypal.base
 const paypal = config.paypal ? createPayPalClient(config.paypal) : null
 const invoices = config.invoices && config.paypal ? createToolkitInvoices({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
 const watch = config.paypal ? createToolkitWatch({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
+// A studio that owns money gets the server's own PayPal account, with its own client and its own token. One factory,
+// one code path: a studio never quietly falls back to a stand-in.
+const paypalFactory: (() => StudioPayPal | null) | undefined = config.paypal ? () => ({
+  paypal: createPayPalClient(config.paypal!),
+  invoices: config.invoices ? createToolkitInvoices({ clientId: config.paypal!.clientId, clientSecret: config.paypal!.clientSecret, sandbox }) : null,
+  watch: createToolkitWatch({ clientId: config.paypal!.clientId, clientSecret: config.paypal!.clientSecret, sandbox }),
+  environment: sandbox ? 'sandbox' : 'live',
+}) : undefined
+const paypalMode = config.paypal ? (sandbox ? 'sandbox' : 'live') : 'none'
 const flags = loadFlags(process.env)
 const services = buildServices({
   db, paypal, invoices, watch, publicUrl: config.publicUrl, now: () => new Date(), signer,
@@ -61,6 +70,7 @@ const product = openProduct({
   nodeEnv: config.nodeEnv,
   model,
   drafterModel,
+  paypalFactory,
 })
 const agents = new AgentService(services, model, () => new Date(), drafterModel, fallbackModel, product.budget, flags)
 
@@ -91,6 +101,7 @@ const app = createApp({
     webDist,
     rateLimitPerMinute: config.rateLimitPerMinute,
     paypalConfigured: config.paypal !== null,
+    paypalMode,
     log: config.log,
     publicUrl: config.publicUrl,
     commit: config.commit,

@@ -212,6 +212,11 @@ export class ControlStore {
     return this.db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as WorkspaceRow | undefined ?? null
   }
 
+  /** Studio and demo files, not the default ledger. Used to find a key that was stamped with the wrong studio id. */
+  studioFiles(): Array<{ id: string; db_path: string }> {
+    return this.db.prepare(`SELECT id, db_path FROM workspaces WHERE status = 'active' AND mode IN ('studio', 'demo') AND id != 'ws_default'`).all() as Array<{ id: string; db_path: string }>
+  }
+
   insertWorkspace(row: Omit<WorkspaceRow, 'passkey_for_money'> & { passkey_for_money?: number }): void {
     const on = row.passkey_for_money ?? passkeyForMoneyDefault(row.mode)
     this.db.prepare(`INSERT INTO workspaces (id, slug, name, mode, paypal_mode, db_path, status, created_at, expires_at, last_active_at, signing_key_sealed, passkey_for_money)
@@ -246,8 +251,17 @@ export class ControlStore {
 
   /** Deletes a demo workspace only. Any other mode is left untouched, even if the caller passes an old timestamp. */
   deleteDemo(id: string): boolean {
+    return this.deleteWorkspace(id, 'demo')
+  }
+
+  /** Deletes a studio the owner closed. A demo, the default studio, and a live workspace are left untouched. */
+  deleteStudio(id: string): boolean {
+    return this.deleteWorkspace(id, 'studio')
+  }
+
+  private deleteWorkspace(id: string, mode: 'demo' | 'studio'): boolean {
     const row = this.workspace(id)
-    if (!row || row.mode !== 'demo') return false
+    if (!row || row.mode !== mode) return false
     const members = this.db.prepare('SELECT id FROM members WHERE workspace_id = ?').all(id) as Array<{ id: string }>
     for (const member of members) {
       this.db.prepare('DELETE FROM credentials WHERE member_id = ?').run(member.id)
@@ -258,7 +272,9 @@ export class ControlStore {
     this.db.prepare('DELETE FROM invites WHERE workspace_id = ?').run(id)
     this.db.prepare('DELETE FROM external_refs WHERE workspace_id = ?').run(id)
     this.db.prepare('DELETE FROM sessions WHERE workspace_id = ?').run(id)
-    this.db.prepare('DELETE FROM workspaces WHERE id = ? AND mode = ?').run(id, 'demo')
+    this.db.prepare('DELETE FROM webauthn_challenges WHERE workspace_id = ?').run(id)
+    this.db.prepare('DELETE FROM stepup_grants WHERE workspace_id = ?').run(id)
+    this.db.prepare('DELETE FROM workspaces WHERE id = ? AND mode = ?').run(id, mode)
     return true
   }
 

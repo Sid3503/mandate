@@ -47,12 +47,11 @@ export function Today() {
   const navigate = useNavigate()
 
   useEffect(() => {
-    if (session.mode() !== 'demo') return
     const role = me.data?.role
-    if (role === 'proposer') navigate('/clerk', { replace: true })
+    if (me.data?.side === 'buyer') navigate('/deals', { replace: true })
+    else if (role === 'proposer') navigate('/clerk', { replace: true })
     else if (role === 'viewer') navigate('/proof', { replace: true })
     else if (role === 'payee') navigate('/payments', { replace: true })
-    else if (me.data?.side === 'buyer') navigate('/deals', { replace: true })
   }, [me.data?.role, me.data?.side, navigate])
 
   const proposals = useProposals()
@@ -68,6 +67,8 @@ export function Today() {
   const data = today.data
   const attention = (data?.waiting ?? []).filter((item) => item.kind !== 'approval')
   const open = waiting.filter((row) => !settledHere[row.id]).length + attention.length
+  const owner = me.data?.role === 'owner'
+  const approver = me.data?.role === 'approver'
 
   return (
     <div className="page today">
@@ -75,31 +76,45 @@ export function Today() {
         eyebrow={new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         title={<>Today <span className="count" aria-label={`${open} waiting for you`}>{open}</span></>}
       >
-        <AskButton />
-        <Link className="btn btn-ghost hide-phone" to="/new">New request</Link>
+        {owner ? <AskButton /> : null}
+        {owner ? <Link className="btn btn-ghost hide-phone" to="/new">New request</Link> : null}
       </PageHead>
+      {approver ? <p className="fine" data-testid="approver-today">You approve what is waiting. The rules, and sending the money, stay with the owner.</p> : null}
 
       {proposals.isLoading || today.isLoading ? <Loading /> : null}
       <ProblemCard error={proposals.error ?? today.error} />
-      <EmailNotice />
+      {owner ? <EmailNotice /> : null}
       {status.data?.paused ? (
         <div className="paused-card" data-testid="today-stopped-card" role="status">
           <Chip tone="deny">Stopped</Chip>
           <span><strong>Automation stopped.</strong> Mandate is paused{status.data.paused.reason ? ` (${status.data.paused.reason})` : ''}. Automatic billing and payouts are halted.</span>
         </div>
       ) : null}
-      <StoryRail />
-      {data?.next ? <NextForJob next={data.next} /> : null}
+      {owner ? <StoryRail /> : null}
+      {owner ? <CoolingNote /> : null}
+      {owner && data?.next ? <NextForJob next={data.next} /> : null}
 
       {data ? <MonthStrip data={data} /> : null}
       {data ? <WaitingOnClient data={data} /> : null}
-      <TapToRule />
-      {data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length < 4 ? <Setup data={data} /> : null}
+      {owner ? <TapToRule /> : null}
+      {owner && data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length < 4 ? <Setup data={data} /> : null}
 
       <section className="section" data-tour="today-waiting" aria-labelledby="h-waiting">
         <h2 className="section-title" id="h-waiting">Waiting for you</h2>
         {proposals.data && today.data && waiting.length === 0 && attention.length === 0 ? (
-          <div data-tour="empty"><Empty title="Nothing needs you">Requests at or above the automatic line land here, and so does anything that needs a decision, such as a payout on hold or an invoice that is overdue. Everything else is settled or refused by the rules on its own.</Empty></div>
+          <div data-tour="empty">
+            {!warrant.data ? (
+              owner || !me.data ? (
+                <Empty title="Your studio is empty">Nothing can be asked for until the rules exist. Write them, name who you bill and who you pay, and the requests that need you land here.</Empty>
+              ) : (
+                <Empty title="Nothing is waiting">The owner has not published rules yet, so there is nothing to approve.</Empty>
+              )
+            ) : rows.length === 0 ? (
+              <Empty title="No requests yet">When you bill a client, or someone asks to pay a contractor, it shows up here if it needs your tap. Anything inside your rules is settled or refused on its own.</Empty>
+            ) : (
+              <Empty title="Nothing needs you">Requests at or above the automatic line land here, and so does anything that needs a decision, such as a payout on hold or an invoice that is overdue. Everything else is settled or refused by the rules on its own.</Empty>
+            )}
+          </div>
         ) : null}
         <div className="approvals">
           {waiting.map((row) => (
@@ -118,7 +133,7 @@ export function Today() {
 
       <BreakIt />
 
-      {data && data.readyToBill.some((item) => item.delivery?.status !== 'awaiting') ? <ReadyToBill data={data} /> : null}
+      {owner && data && data.readyToBill.some((item) => item.delivery?.status !== 'awaiting') ? <ReadyToBill data={data} /> : null}
 
       {data && data.inFlight.length > 0 ? (
         <section className="section" data-tour="ready" aria-labelledby="h-flight">
@@ -129,7 +144,7 @@ export function Today() {
       ) : null}
 
       {data ? <Done data={data} /> : null}
-      {data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length >= 4 ? <Setup data={data} /> : null}
+      {owner && data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length >= 4 ? <Setup data={data} /> : null}
 
       {refused.length > 0 || (data?.stopped.count ?? 0) > 0 ? (
         <section className="section" data-tour="refused" aria-labelledby="h-stopped" data-testid="today-stopped">
@@ -153,6 +168,21 @@ export function Today() {
         </section>
       ) : null}
     </div>
+  )
+}
+
+/** A payee the owner has just named cannot be paid until they attest them, or until the wait is over. */
+function CoolingNote() {
+  const owner = useIsOwner()
+  const book = useQuery({ queryKey: ['payees'], queryFn: api.payees, enabled: owner, staleTime: 30_000, retry: false })
+  const cooling = (book.data?.payees ?? []).filter((row) => row.cooling)
+  if (cooling.length === 0) return null
+  const names = cooling.map((row) => row.name).join(', ')
+  return (
+    <section className="panel wip-note" data-testid="payee-cooling">
+      <p><strong>{names}</strong> {cooling.length === 1 ? 'is a new payee' : 'are new payees'}. A payout to them waits 24 hours, or you can attest them with your passkey now.</p>
+      <Link className="btn btn-ink btn-small" to="/payees">Attest on Payees</Link>
+    </section>
   )
 }
 
@@ -220,13 +250,13 @@ function MonthStrip({ data }: { data: TodayData }) {
   )
 }
 
-/** The server's one next step for the frozen Northwind job. The bill control stays on Ready to bill. */
+/** The server's one next step. The bill control stays on Ready to bill. */
 function NextForJob({ next }: { next: TodayData['next'] }) {
   if (!next.step && !next.rules) return null
   const rules = next.rules
   const at = rules ? rules.indexOf('Rules') : -1
   return (
-    <section className="panel panel-lime wip-note" aria-label="Next on the Northwind job" data-testid="today-next">
+    <section className="panel panel-lime wip-note" aria-label="The next step" data-testid="today-next">
       <div>
         <span className="eyebrow">Next</span>
         {next.step ? <p>{next.step}</p> : null}
@@ -403,10 +433,12 @@ function Done({ data }: { data: TodayData }) {
   )
 }
 
-/** One thing that needs attention, is in flight, or is done: words, the amount, and the buttons that act on it. */
+/** One thing that needs attention, is in flight, or is done: words and the buttons that act on it. The sentence already names the amount, so the row does not print it a second time. */
 function ItemRow({ item }: { item: TodayItem }) {
   const reduce = useReducedMotion()
-  const owner = useIsOwner()
+  const role = useSession().data?.role
+  const owner = role === 'owner'
+  const canAct = (action: TodayAction) => owner || (role === 'approver' && (action === 'approve' || action === 'reject'))
   const online = useOnline()
   const refresh = useRefreshMoney()
   const toast = useToast()
@@ -431,7 +463,7 @@ function ItemRow({ item }: { item: TodayItem }) {
   const label = KIND_LABEL[item.kind]
   const how = item.how ? HOW[item.how] : null
   const buttons = item.actions.filter((action) => action !== 'open')
-  const disabled = !owner || !online || act.isPending
+  const disabled = !online || act.isPending
   return (
     <motion.li
       layout={!reduce}
@@ -444,21 +476,22 @@ function ItemRow({ item }: { item: TodayItem }) {
       <div className="item-main">
         {how ? <Chip tone={how.tone}>{how.label}</Chip> : <Chip tone={label.tone}>{label.label}</Chip>}
         <Link to={`/p/${item.proposalId}`} className="item-title">{item.title}</Link>
-        <Money cents={item.amountCents} currency={item.currency} />
+        {item.title.includes(dollars(item.amountCents, item.currency)) ? null : <Money cents={item.amountCents} currency={item.currency} />}
         <span className="muted small">{relative(item.at)}</span>
       </div>
       <p className="fine">{item.detail}</p>
       {buttons.length > 0 ? (
         <div className="row gap-s wrap">
           {buttons.map((action) => (
-            <button key={action} type="button" className={`btn btn-small ${action === 'settle' || action === 'approve' ? 'btn-ink' : 'btn-ghost'}`} disabled={disabled} onClick={() => act.mutate(action)}>
+            <button key={action} type="button" className={`btn btn-small ${action === 'settle' || action === 'approve' ? 'btn-ink' : 'btn-ghost'}`} disabled={disabled || !canAct(action)} onClick={() => act.mutate(action)}>
               {act.isPending && act.variables === action ? <><Spinner />{ACTION[action](item)}</> : ACTION[action](item)}
             </button>
           ))}
           <Link className="link" to={`/p/${item.proposalId}`}>Open receipt →</Link>
         </div>
       ) : null}
-      {!owner && buttons.length > 0 ? <p className="fine">This key can ask and read. Only the owner key can act on a request.</p> : null}
+      {role === 'approver' && buttons.some((action) => action !== 'approve' && action !== 'reject') ? <p className="fine">You can approve or reject. Sending the money stays with the owner.</p> : null}
+      {role && role !== 'owner' && role !== 'approver' && buttons.length > 0 ? <p className="fine">This key can ask and read. Only the owner can act on a request.</p> : null}
       <ProblemCard error={act.error} />
     </motion.li>
   )
@@ -518,7 +551,9 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   why: string
   onLocked: (proposal: Proposal) => void
 }) {
-  const owner = useIsOwner()
+  const role = useSession().data?.role
+  const owner = role === 'owner'
+  const canDecide = owner || role === 'approver'
   const online = useOnline()
   const refresh = useRefreshMoney()
   const toast = useToast()
@@ -535,7 +570,7 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
   const shown = lockedProposal ?? proposal
   const locked = lockedProposal !== null || proposal.phase !== 'pending_approval'
   const kind = KIND[proposal.kind]
-  const disabled = !owner || !online || approve.isPending || reject.isPending
+  const disabled = !canDecide || !online || approve.isPending || reject.isPending
 
   return (
     <article className={`approval${locked ? ' is-locked' : ''}`} aria-live="polite" data-tour="approval">
@@ -584,7 +619,8 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
           </button>
           {demo ? <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => approve.mutate('passkey')}>Try with my passkey</button> : null}
           <button type="button" className="btn btn-ghost" disabled={disabled} onClick={() => reject.mutate()}>{reject.isPending ? <><Spinner />Rejecting…</> : 'Reject'}</button>
-          {!owner ? <p className="fine">This key can ask and read. Only the owner key can approve.</p> : null}
+          {role === 'approver' ? <p className="fine">You can approve or reject, up to your limit. Sending the money stays with the owner.</p> : null}
+          {role && role !== 'owner' && role !== 'approver' ? <p className="fine">This key can ask and read. Only the owner can approve.</p> : null}
         </div>
       )}
       <ProblemCard error={approve.error ?? reject.error} />

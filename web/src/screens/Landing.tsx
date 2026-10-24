@@ -37,6 +37,48 @@ const BENEFITS = [
   { title: 'Never wonder “why did we pay that?”', body: 'Every cent has a receipt: who asked, which rule, who approved, which PayPal payment. Anyone can check it.' },
 ]
 
+/**
+ * The whole idea in one picture: the client's money comes in, your rules decide, your freelancer is paid, and the AI
+ * at the side can only ask. Static facts from the frozen Northwind job; the moving dots are decoration only.
+ */
+function MoneyMap() {
+  return (
+    <figure className="map" aria-label="How money moves through Mandate">
+      <div className="map-flow">
+        <div className="map-node map-client">
+          <span className="eyebrow">Northwind · your client</span>
+          <b>Pays $150.00</b>
+          <span>by card on your page, or a PayPal invoice</span>
+          <span className="chip chip-auto">Paid ✓</span>
+        </div>
+        <span className="map-pipe" aria-hidden="true"><i /></span>
+        <div className="map-node map-you">
+          <span className="eyebrow">You · Line Studio</span>
+          <b>Your rules decide</b>
+          <ul>
+            <li><span className="map-tag map-tag-auto">No tap</span> under $20, or a rule you signed</li>
+            <li><span className="map-tag">Your tap</span> $20 and up, sealed when you tap</li>
+            <li><span className="map-tag map-tag-never">Never</span> anyone not on your list</li>
+          </ul>
+        </div>
+        <span className="map-pipe" aria-hidden="true"><i /></span>
+        <div className="map-node map-pro">
+          <span className="eyebrow">Priya Shah · your freelancer</span>
+          <b>Paid $90.00</b>
+          <span>60% of what Northwind paid, by your rule · no tap</span>
+        </div>
+      </div>
+      <div className="map-agent">
+        <span className="eyebrow">An AI agent, fooled by an email</span>
+        <p>“Pay a new account $480.”</p>
+        <p className="map-agent-answer"><span className="chip chip-deny">Refused</span> <b>$0 moved</b></p>
+        <span className="fine">Agents can ask. They have no way to pay.</span>
+      </div>
+      <figcaption className="fine">One job: $150 in, $90 out to Priya, $60 kept, $480 stopped. You tapped once.</figcaption>
+    </figure>
+  )
+}
+
 export function Landing() {
   const root = useReveal()
   const navigate = useNavigate()
@@ -44,7 +86,6 @@ export function Landing() {
   const cta = unlocked ? '/' : '/unlock'
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
-  const [play, setPlay] = useState(0)
 
   const startDemo = async () => {
     setBusy(true)
@@ -65,12 +106,6 @@ export function Landing() {
     }
   }
 
-  const watch = () => {
-    setPlay((count) => count + 1)
-    const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    document.getElementById('watch')?.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'center' })
-  }
-
   return (
     <div className="land" ref={root}>
       <a className="skip" href="#land-main">Skip to content</a>
@@ -86,15 +121,16 @@ export function Landing() {
       </header>
 
       <main id="land-main">
-        <section className="land-hero story-hero">
-          <div className="land-hero-copy">
+        {/* The first screen says what Mandate is for, and shows the whole idea in one picture. The replay is one scroll down. */}
+        <section className="hero" aria-labelledby="h-home">
+          <div className="hero-copy">
             <span className="eyebrow">For studios that get paid by clients and pay freelancers</span>
-            <h1>Stop being the <span className="hl">approval button</span> for your studio’s money.</h1>
+            <h1 id="h-home">Stop being the <span className="hl">approval button</span> for your studio’s money.</h1>
             <p className="lede">Clients pay in. Freelancers get paid out. You sign the rules once; Mandate does the rest, and nobody, human or AI, can move a cent you didn’t approve.</p>
-            <div className="story-doors" data-testid="three-doors">
+            <div className="hero-doors" data-testid="three-doors">
               <div className="row gap-s wrap">
-                <button type="button" className="btn btn-ink btn-big" onClick={watch}>Watch it run a real job</button>
                 <button type="button" className="btn btn-lime btn-big" data-testid="door-demo" onClick={startDemo} disabled={busy}>{busy ? 'Starting the demo…' : 'Try the demo'}</button>
+                <a className="btn btn-ink btn-big" href="#watch">Watch it run · 2 min</a>
               </div>
               <div className="row gap-s wrap align-center story-own">
                 <span className="fine">Ready for your own?</span>
@@ -108,7 +144,17 @@ export function Landing() {
               <span>Sandbox only</span> · <span>AI cannot move money</span> · <Link to="/verify">Check any receipt yourself</Link>
             </div>
           </div>
-          <Theatre onTry={() => void startDemo()} busy={busy} playSignal={play} />
+          <MoneyMap />
+          <a className="hero-cue" href="#watch"><span>See all of it, one job start to finish</span><span aria-hidden="true">↓</span></a>
+        </section>
+
+        <section id="watch" className="watch" aria-labelledby="h-watch">
+          <div className="watch-head">
+            <span className="eyebrow">Watch it run</span>
+            <h2 id="h-watch">One job, start to finish, in twelve chapters.</h2>
+            <p className="fine">Pick any chapter, change the speed, or go full screen. Every card is the console’s own, with the real numbers.</p>
+          </div>
+          <Theatre onTry={() => void startDemo()} busy={busy} />
         </section>
 
         <section className="land-section" aria-labelledby="h-problem" data-reveal>
@@ -254,7 +300,7 @@ export function Landing() {
           <p>Bill a client, watch them pay, see your freelancer paid by a rule, and try to make the rules pay something they shouldn’t.</p>
           <div className="row gap-s wrap">
             <Link className="btn btn-ink btn-big" to={cta}>Open the console</Link>
-            <button type="button" className="btn btn-ghost btn-big" onClick={watch}>Watch it again</button>
+            <a className="btn btn-ghost btn-big" href="#watch">Watch it again</a>
           </div>
         </section>
       </main>

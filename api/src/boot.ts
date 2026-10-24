@@ -10,11 +10,17 @@ import { createApp } from './app'
 import { ModelBudget, capsFromEnv, sqliteBudgetStore } from './ops/budget'
 import { proxyHops } from './ops/client-ip'
 import { FakePayPal } from './paypal/fake'
+import type { InvoicePort } from './paypal/invoices'
+import type { PayPalPort } from './paypal/port'
+import type { WatchPort } from './paypal/watch'
 import { buildServices } from './services/container'
 import { openSeal } from './tenancy/envelope'
 import { TenantRegistry } from './tenancy/registry'
 
 import { cleanupExpiredDemos, runTenantSchedulerSweep } from './ops/scheduler'
+
+/** A PayPal account for one studio: the client, the invoice tools and the account reader. */
+export type StudioPayPal = { paypal: PayPalPort; invoices: InvoicePort | null; watch: WatchPort | null; environment: 'sandbox' | 'live' }
 
 export type ProductBoot = {
   control: ControlStore | null
@@ -64,6 +70,11 @@ export function openProduct(input: {
   ledger?: DatabaseSync | null
   model?: AgentModel | null
   drafterModel?: AgentModel | null
+  /**
+   * Builds the PayPal account a studio moves money on. A studio that owns real money gets the server's own account; the
+   * hosted demo gets a stand-in. Called once per studio, so each has its own client and its own token.
+   */
+  paypalFactory?: () => StudioPayPal | null
 }): ProductBoot {
   const flags = input.flags
   const budget = new ModelBudget(capsFromEnv(input.env), input.now, 'ws_default', input.ledger ? sqliteBudgetStore(input.ledger) : null)
@@ -113,43 +124,62 @@ export function openProduct(input: {
     mkdirSync(wsRoot, { recursive: true })
     demo = { root: wsRoot, template }
   }
-  const registry = flags.tenancy ? new TenantRegistry((id) => {
+  let registry: TenantRegistry | null = null
+  if (flags.tenancy) registry = new TenantRegistry((id) => {
     const row = control.workspace(id)
     if (!row || row.status !== 'active' || !row.signing_key_sealed) return null
     if (row.mode !== 'demo' && row.mode !== 'studio') return null
     if (row.expires_at && row.expires_at <= input.now().toISOString()) return null
     const db = openDatabase(row.db_path)
     migrate(db)
-    const paypal = new FakePayPal()
+    // The studio's own PayPal. A studio that moves real money uses the server's account; the hosted demo uses a
+    // stand-in, and says so. There is no other path: one code, chosen by what the studio is.
+    // A studio someone created moves money on this server's PayPal, decided now, at boot: credentials added later are
+    // picked up, and a server with none gives the studio none — never a stand-in that pretends money moved. Only the
+    // hosted demo plays with a stand-in, and it says so.
+    const real = row.mode === 'studio' || row.paypal_mode === 'sandbox' ? input.paypalFactory?.() ?? null : null
+    const paypal = real?.paypal ?? (row.mode === 'demo' ? new FakePayPal() : null)
+    const paypalMode = real ? 'sandbox' as const : row.mode === 'demo' ? 'fake' as const : 'none' as const
+    const invoices = real?.invoices ?? null
+    const watch = real?.watch ?? null
     const signer = loadSigner({ pem: openSeal(masterKey, row.signing_key_sealed), production: false })
     const services = buildServices({
       db,
       paypal,
+      invoices,
+      watch,
       now: input.now,
       signer,
+      workspaceId: id,
       payeeBook: flags.payeeBook,
       newPayeeWaitHours: flags.newPayeeWaitHours,
+      paypalEnvironment: real?.environment ?? 'sandbox',
       onExternalRef: (kind, externalId) => control.rememberRef(kind, externalId, id),
     })
     const app = createApp({
       db,
       paypal,
+      invoices,
+      watch,
       signer,
       now: input.now,
       nested: true,
       control,
+      registry,
       budget: row.mode === 'demo'
         ? new ModelBudget({ globalDailyTokens: 10_000_000, workspaceDailyTokens: 50_000, maxOutputTokens: 2048, maxSteps: 4 }, input.now, id, sqliteBudgetStore(db))
         : budget,
       masterKey,
-      workspace: { id, mode: row.mode },
+      workspace: { id, mode: row.mode, name: row.name, paypalMode },
       services,
       model: input.model ?? null,
       drafterModel: input.drafterModel ?? null,
       config: {
         apiKey: input.env.API_KEY && input.env.API_KEY.length >= 16 ? input.env.API_KEY : 'tenant-placeholder-key',
         rateLimitPerMinute: 0,
-        paypalConfigured: false,
+        paypalConfigured: real !== null,
+        paypalMode: real ? real.environment : paypalMode,
+        paypalEnvironment: real?.environment ?? 'sandbox',
         log: false,
         publicUrl: input.publicUrl,
         flags,
@@ -162,7 +192,8 @@ export function openProduct(input: {
         idleHours,
         absoluteDays,
         redact,
-        demoReset: row.mode === 'demo' || input.env.DEMO_RESET === 'on',
+        // Starting over re-seeds the sample studio. That is the demo's to do, never a studio someone created.
+        demoReset: row.mode === 'demo',
       },
     })
     return {
@@ -174,7 +205,7 @@ export function openProduct(input: {
         await services.mandate.sweepPending()
       },
     }
-  }) : null
+  })
 
   const cleanupTimer = (flags.tenancy || flags.demoEnabled)
     ? setInterval(() => {

@@ -26,6 +26,12 @@ export function machineKeyHash(token: string): string {
   return machineKeyHmac(token)
 }
 
+/** A client or agent key names its studio: `mnd_cl_ws_…_secret` or `mnd_ag_ws_…_secret`. */
+export function workspaceFromMachineKey(token: string): string | null {
+  const match = /^mnd_(?:cl|ag)_(ws_(?:default|[a-z2-7]{20}))_/.exec(token.trim())
+  return match?.[1] ?? null
+}
+
 function plainHash(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }

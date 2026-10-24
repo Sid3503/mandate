@@ -134,3 +134,23 @@ describe('status links: a read-only page about one job, for one person', () => {
     controlDb.close()
   })
 })
+
+describe('a link names the studio it belongs to', () => {
+  it('carries the studio\'s id, so the person who opens it reaches that studio and not the default one', async () => {
+    // The owner key opens this harness, so it is set up as the default kind of workspace with a studio's id: what is
+    // under test is only that the link names the workspace it was made in.
+    const studio = 'ws_abcdefghijklmnopqrst'
+    const h = harness({ workspace: { id: studio, mode: 'default', name: 'Harbor Studio' } })
+    const deal = await agree(h.app)
+    await collect(h.app, deal.id, 0)
+    const made = await issue(h.app, 'client_northwind')
+    expect(made.status).toBe(201)
+    expect(made.json.url).toMatch(new RegExp(`/app/s/[^?]+\\?workspace=${studio}$`))
+  })
+
+  it('stays as it always was in the default studio', async () => {
+    const h = await funded()
+    const made = await issue(h.app, 'client_northwind')
+    expect(made.json.url).toMatch(/\/app\/s\/[^?]+$/)
+  })
+})

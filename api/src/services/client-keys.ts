@@ -21,7 +21,7 @@ export class ClientKeyService {
     private readonly workspaceId: string = 'ws_default',
   ) {}
 
-  issue(input: { name: string; partyId: string; expiryDays?: number | null }): { key: ClientKeySummary; apiKey: string } {
+  issue(input: { name: string; partyId: string; expiryDays?: number | null; expiresAt?: string | null }): { key: ClientKeySummary; apiKey: string } {
     const name = input.name.trim().slice(0, 120)
     if (!name) throw new Problem(422, 'client-key.name', 'The key needs a name', 'Give the key a name, such as “Northwind buyer agent”.')
     const partyId = input.partyId.trim()
@@ -35,7 +35,7 @@ export class ClientKeyService {
     const rawEntropy = randomBytes(24).toString('base64url')
     const machineToken = `mnd_cl_${this.workspaceId}_${rawEntropy}`
     const keyPrefix = `mnd_cl_${this.workspaceId}_${rawEntropy.slice(0, 4)}...`
-    const expiresAt = input.expiryDays ? new Date(this.now().getTime() + input.expiryDays * 86_400_000).toISOString() : null
+    const expiresAt = input.expiresAt ?? (input.expiryDays ? new Date(this.now().getTime() + input.expiryDays * 86_400_000).toISOString() : null)
     this.repo.createClientKey({
       id, name, party_id: partyId,
       status: 'active', key_hash: machineKeyHash(machineToken), key_prefix: keyPrefix, created_at: this.now().toISOString(), last_seen_at: null,
@@ -75,7 +75,8 @@ export class ClientKeyService {
     if (!row) throw new Problem(404, 'client-key.unknown', 'No client key with that id', 'Check the client keys list for the id.')
     if (row.status === 'revoked') throw new Problem(409, 'client-key.revoked', 'That key was revoked, not paused', 'Issue a new key if you want the access back.')
     this.repo.setClientKeyStatus(id, 'revoked', this.now().toISOString())
-    const issued = this.issue({ name: row.name, partyId: row.party_id })
+    // A rotated key keeps the old one's end date: rotating is a new secret, not a longer life.
+    const issued = this.issue({ name: row.name, partyId: row.party_id, expiresAt: row.expires_at ?? null })
     live.publish({ type: 'changed', scope: 'agents', what: 'client-key.rotated', at: stamp() })
     return issued
   }

@@ -79,7 +79,12 @@ export type DealRow = {
   seller_id: string
   offered_by: string
   actor: string
-  status: 'agreed' | 'refused'
+  /**
+   * `open` is a standing offer waiting for the other side; `countered` was answered with a counter-offer; `agreed` was
+   * accepted and signed; `refused` broke the offerer's own rules and never stood; `withdrawn` and `expired` were open
+   * when the negotiation ended without a deal.
+   */
+  status: 'agreed' | 'refused' | 'open' | 'countered' | 'withdrawn' | 'expired'
   job_id: string | null
   terms_json: string
   verdict_json: string
@@ -179,7 +184,46 @@ export type DeliveryRow = {
   decided_at: string | null
 }
 
-export type PartyRulesRecord = { partyId: string; version: number; body: PartyRules; createdAt: string; origin: 'seed' | 'written' }
+export type PartyRulesRecord = { partyId: string; version: number; body: PartyRules; createdAt: string; origin: 'seed' | 'written'; writtenBy: 'owner' | 'party' | null }
+
+export type NegotiationRow = {
+  id: string
+  buyer_id: string
+  seller_id: string
+  status: 'open' | 'agreed' | 'walked_away' | 'expired' | 'stalled'
+  scope: string
+  category: string
+  currency: string
+  milestones_json: string
+  offers_per_side: number
+  started_by: string
+  ended_reason: string | null
+  ended_by: string | null
+  agreed_deal_id: string | null
+  debrief_json: string | null
+  created_at: string
+  updated_at: string
+  expires_at: string
+  ended_at: string | null
+}
+
+export type MoveRow = {
+  id: string
+  negotiation_id: string
+  seq: number
+  side: 'seller' | 'buyer'
+  action: 'offer' | 'accept' | 'walk_away'
+  deal_id: string | null
+  total_cents: number | null
+  final: number
+  message: string | null
+  assessment: string | null
+  actor: string
+  /** `agent` (a hosted negotiator), `strategy` (the code's planned move, when the model's was unusable), `person`, or `outside` (the company's own agent). */
+  by: string
+  run_id: string | null
+  created_at: string
+}
 
 // The phase lists live in domain/phases.ts, with the predicates that read them. Re-exported here because the repo
 // is where the SQL that uses them lives.
@@ -307,6 +351,25 @@ export class Repo {
     ).get() as { id: string; version: number; body_json: string; created_at: string; signature_json: string | null } | undefined
     if (!row) return null
     return { id: row.id, version: row.version, body: WarrantBodySchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, signatureJson: row.signature_json }
+  }
+
+  /**
+   * The rules in the owner's own words, as they last wrote them. Null when they have not written any, or when they have
+   * already become rules: the words are a draft, and a draft that has been published is done.
+   */
+  ruleWords(): { body: string; at: string } | null {
+    const row = this.db.prepare('SELECT body, created_at FROM rule_words ORDER BY created_at DESC LIMIT 1').get() as { body: string; created_at: string } | undefined
+    if (!row) return null
+    return { body: row.body, at: row.created_at }
+  }
+
+  saveRuleWords(body: string, now: string): void {
+    this.db.prepare('DELETE FROM rule_words').run()
+    this.db.prepare('INSERT INTO rule_words (id, body, created_at) VALUES (?, ?, ?)').run('words', body, now)
+  }
+
+  clearRuleWords(): void {
+    this.db.prepare('DELETE FROM rule_words').run()
   }
 
   warrant(id: string, version: number): WarrantRecord | null {
@@ -590,19 +653,89 @@ export class Repo {
   // ---------- deal rules and deals ----------
 
   partyRules(partyId: string): PartyRulesRecord | null {
-    const row = this.db.prepare('SELECT party_id, version, body_json, created_at, origin FROM party_rules WHERE party_id = ? ORDER BY version DESC LIMIT 1')
-      .get(partyId) as { party_id: string; version: number; body_json: string; created_at: string; origin: string } | undefined
-    return row ? { partyId: row.party_id, version: row.version, body: PartyRulesSchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, origin: row.origin === 'seed' ? 'seed' : 'written' } : null
+    const row = this.db.prepare('SELECT party_id, version, body_json, created_at, origin, written_by FROM party_rules WHERE party_id = ? ORDER BY version DESC LIMIT 1')
+      .get(partyId) as PartyRulesDbRow | undefined
+    return row ? toPartyRules(row) : null
   }
 
   partyRulesVersions(partyId: string): PartyRulesRecord[] {
-    const rows = this.db.prepare('SELECT party_id, version, body_json, created_at, origin FROM party_rules WHERE party_id = ? ORDER BY version DESC')
-      .all(partyId) as Array<{ party_id: string; version: number; body_json: string; created_at: string; origin: string }>
-    return rows.map((row) => ({ partyId: row.party_id, version: row.version, body: PartyRulesSchema.parse(JSON.parse(row.body_json)), createdAt: row.created_at, origin: row.origin === 'seed' ? 'seed' : 'written' }))
+    const rows = this.db.prepare('SELECT party_id, version, body_json, created_at, origin, written_by FROM party_rules WHERE party_id = ? ORDER BY version DESC')
+      .all(partyId) as PartyRulesDbRow[]
+    return rows.map(toPartyRules)
   }
 
-  insertPartyRules(partyId: string, version: number, body: PartyRules, now: string, origin: 'seed' | 'written'): void {
-    this.db.prepare('INSERT INTO party_rules (party_id, version, body_json, created_at, origin) VALUES (?, ?, ?, ?, ?)').run(partyId, version, JSON.stringify(body), now, origin)
+  insertPartyRules(partyId: string, version: number, body: PartyRules, now: string, origin: 'seed' | 'written', writtenBy: 'owner' | 'party' | null = null): void {
+    this.db.prepare('INSERT INTO party_rules (party_id, version, body_json, created_at, origin, written_by) VALUES (?, ?, ?, ?, ?, ?)').run(partyId, version, JSON.stringify(body), now, origin, writtenBy)
+  }
+
+  /** A company has claimed its seat once it wrote its own numbers with its own key. */
+  sheetClaimed(partyId: string): boolean {
+    return Boolean(this.db.prepare(`SELECT 1 FROM party_rules WHERE party_id = ? AND written_by = 'party' LIMIT 1`).get(partyId))
+  }
+
+  // ---------- negotiations ----------
+
+  insertNegotiation(row: NegotiationRow): void {
+    this.db.prepare(`INSERT INTO negotiations (id, buyer_id, seller_id, status, scope, category, currency, milestones_json, offers_per_side, started_by,
+      ended_reason, ended_by, agreed_deal_id, debrief_json, created_at, updated_at, expires_at, ended_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      row.id, row.buyer_id, row.seller_id, row.status, row.scope, row.category, row.currency, row.milestones_json, row.offers_per_side, row.started_by,
+      row.ended_reason, row.ended_by, row.agreed_deal_id, row.debrief_json, row.created_at, row.updated_at, row.expires_at, row.ended_at,
+    )
+    live.publish({ type: 'changed', scope: 'deal', what: 'negotiation.opened', at: stamp() })
+  }
+
+  negotiation(id: string): NegotiationRow | null {
+    return (this.db.prepare('SELECT * FROM negotiations WHERE id = ?').get(id) as NegotiationRow | undefined) ?? null
+  }
+
+  listNegotiations(limit: number, buyerId: string | null = null): NegotiationRow[] {
+    return (buyerId
+      ? this.db.prepare('SELECT * FROM negotiations WHERE buyer_id = ? ORDER BY created_at DESC LIMIT ?').all(buyerId, limit)
+      : this.db.prepare('SELECT * FROM negotiations ORDER BY created_at DESC LIMIT ?').all(limit)) as NegotiationRow[]
+  }
+
+  endNegotiation(id: string, status: NegotiationRow['status'], reason: string, by: string | null, agreedDealId: string | null, now: string): void {
+    this.db.prepare(`UPDATE negotiations SET status = ?, ended_reason = ?, ended_by = ?, agreed_deal_id = ?, ended_at = ?, updated_at = ? WHERE id = ? AND status = 'open'`)
+      .run(status, reason, by, agreedDealId, now, now, id)
+    // Whatever offer was still standing when it ended without a deal is no longer open.
+    if (status !== 'agreed') this.db.prepare(`UPDATE deals SET status = ? WHERE thread_id = ? AND status = 'open'`).run(status === 'walked_away' ? 'withdrawn' : 'expired', id)
+    live.publish({ type: 'changed', scope: 'deal', what: `negotiation.${status}`, at: stamp() })
+  }
+
+  /** Keeps one side's debrief. Each side writes its own key of the JSON object, so neither overwrites the other. */
+  saveDebrief(id: string, side: 'seller' | 'buyer', debrief: unknown): void {
+    const row = this.negotiation(id)
+    if (!row) return
+    const current = row.debrief_json ? JSON.parse(row.debrief_json) as Record<string, unknown> : {}
+    this.db.prepare('UPDATE negotiations SET debrief_json = ? WHERE id = ?').run(JSON.stringify({ ...current, [side]: debrief }), id)
+    live.publish({ type: 'changed', scope: 'deal', what: 'negotiation.debrief', at: stamp() })
+  }
+
+  touchNegotiation(id: string, now: string): void {
+    this.db.prepare('UPDATE negotiations SET updated_at = ? WHERE id = ?').run(now, id)
+  }
+
+  insertMove(row: MoveRow): void {
+    this.db.prepare(`INSERT INTO negotiation_moves (id, negotiation_id, seq, side, action, deal_id, total_cents, final, message, assessment, actor, by, run_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      row.id, row.negotiation_id, row.seq, row.side, row.action, row.deal_id, row.total_cents, row.final, row.message, row.assessment, row.actor, row.by, row.run_id, row.created_at,
+    )
+    live.publish({ type: 'changed', scope: 'deal', what: `negotiation.${row.action}`, dealId: row.deal_id ?? undefined, at: stamp() })
+  }
+
+  moves(negotiationId: string): MoveRow[] {
+    return this.db.prepare('SELECT * FROM negotiation_moves WHERE negotiation_id = ? ORDER BY seq ASC').all(negotiationId) as MoveRow[]
+  }
+
+  setDealStatus(id: string, status: DealRow['status']): void {
+    this.db.prepare('UPDATE deals SET status = ? WHERE id = ?').run(status, id)
+  }
+
+  /** An accepted offer becomes the signed deal: the terms it was offered with, judged and signed at the moment of acceptance. */
+  agreeDeal(id: string, input: { jobId: string; termsJson: string; verdictJson: string; buyerRulesVersion: number; sellerRulesVersion: number; termsHash: string; sig: string; keyId: string }): void {
+    this.db.prepare(`UPDATE deals SET status = 'agreed', job_id = ?, terms_json = ?, verdict_json = ?, buyer_rules_version = ?, seller_rules_version = ?, terms_hash = ?, sig = ?, key_id = ? WHERE id = ? AND status = 'open'`)
+      .run(input.jobId, input.termsJson, input.verdictJson, input.buyerRulesVersion, input.sellerRulesVersion, input.termsHash, input.sig, input.keyId, id)
+    live.publish({ type: 'changed', scope: 'deal', what: 'deal.agreed', dealId: id, at: stamp() })
   }
 
   insertDeal(row: DealRow): void {
@@ -1149,5 +1282,18 @@ export class Repo {
     this.db.prepare(
       `UPDATE idempotency SET state = 'done', status_code = ?, response_json = ?, updated_at = ? WHERE key = ?`,
     ).run(status, JSON.stringify(body), now, key)
+  }
+}
+
+type PartyRulesDbRow = { party_id: string; version: number; body_json: string; created_at: string; origin: string; written_by: string | null }
+
+function toPartyRules(row: PartyRulesDbRow): PartyRulesRecord {
+  return {
+    partyId: row.party_id,
+    version: row.version,
+    body: PartyRulesSchema.parse(JSON.parse(row.body_json)),
+    createdAt: row.created_at,
+    origin: row.origin === 'seed' ? 'seed' : 'written',
+    writtenBy: row.written_by === 'party' ? 'party' : row.written_by === 'owner' ? 'owner' : null,
   }
 }

@@ -1,6 +1,6 @@
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
-import { session } from './session'
-import type { ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
+import { session, workspaceFromKey } from './session'
+import type { NegotiationView, ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -33,17 +33,24 @@ export class ApiError extends Error {
 type Options = { method?: string; body?: unknown; idempotencyKey?: string; key?: string; headers?: Record<string, string> }
 
 /** Prefix tenant routes only. Public doors (/demo/start, /workspaces, /join) stay on the outer server. */
-function scopePath(path: string): { path: string; credentials: RequestCredentials; client: boolean } {
-  const workspace = session.workspace()
+function scopePath(path: string, bearer?: string | null): { path: string; credentials: RequestCredentials; client: boolean } {
+  // A client or agent key names its studio. That wins over a tab that has not chosen a workspace yet.
+  const embedded = bearer ? workspaceFromKey(bearer) : null
+  // The default studio is not a studio: it is the server itself. Its requests are never prefixed, so a server with
+  // workspaces switched off (which answers /w/... with 404) still serves a console that remembered `ws_default`.
+  const chosen = embedded || session.workspace()
+  const workspace = chosen && chosen !== 'ws_default' ? chosen : null
   const tenant = Boolean(workspace) && (path.startsWith('/v1/') || path.startsWith('/auth/') || path.startsWith('/mcp'))
-  return { path: tenant && workspace ? `/w/${workspace}${path}` : path, credentials: workspace ? 'include' : 'same-origin', client: Boolean(workspace) }
+  // A chosen workspace, the default one included, still marks the request as the console's own (a cookie session
+  // may only write when it does), whatever the path.
+  return { path: tenant && workspace ? `/w/${workspace}${path}` : path, credentials: chosen ? 'include' : 'same-origin', client: Boolean(chosen) }
 }
 
 async function request<T>(path: string, options: Options = {}): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' }
   const key = options.key ?? session.get()
   if (key) headers.authorization = `Bearer ${key}`
-  const scoped = scopePath(path)
+  const scoped = scopePath(path, options.key === '' ? null : key)
   if (scoped.client) headers['x-mandate-client'] = 'web'
   if (options.body !== undefined) headers['content-type'] = 'application/json'
   if (options.idempotencyKey) headers['idempotency-key'] = options.idempotencyKey
@@ -104,27 +111,32 @@ export type PolicyStreamEvent = ({ type: 'stage' } & DraftStage) | { type: 'done
 export type DraftStreamEvent = ({ type: 'stage' } & DraftStage) | { type: 'done'; draft: RulesDraft } | { type: 'error'; code: string; title: string; message: string }
 
 export type NegotiationEvent =
-  | { type: 'start'; threadId: string; model: string; maxOffers: number; studio: string; client: string }
+  | { type: 'start'; threadId: string; model: string; maxOffers: number; offersPerSide: number; studio: string; client: string; scope: string; currency: string; seats: { seller: 'agent' | 'client'; buyer: 'agent' | 'client' } }
   | { type: 'turn_start'; turn: number; side: 'buyer' | 'seller'; company: string }
   | { type: 'turn_tool'; turn: number; side: 'buyer' | 'seller'; phase: 'start' | 'call' | 'end'; id: string; tool: string; input?: unknown; ok?: boolean; ms?: number; output?: unknown }
-  | { type: 'turn'; turn: number; side: 'buyer' | 'seller'; runId: string; ms: number; deal: import('./types').Deal }
-  | { type: 'turn_error'; turn: number; side: 'buyer' | 'seller'; runId: string; error: string }
-  | { type: 'done'; threadId: string; agreed: boolean; dealId: string | null; stopped: boolean }
+  | { type: 'turn'; turn: number; side: 'buyer' | 'seller'; runId: string; ms: number; action: 'offer' | 'accept' | 'walk_away'; deal: import('./types').Deal | null; message: string | null; final: boolean; assessment: string | null; by: 'agent' }
+  | { type: 'turn_error'; turn: number; side: 'buyer' | 'seller'; runId: string; error: string; detail: string | null }
+  | { type: 'waiting'; side: 'buyer' | 'seller'; company: string }
+  | { type: 'debrief'; side: 'buyer' | 'seller'; debrief: import('./types').NegotiationDebrief }
+  | { type: 'done'; threadId: string; agreed: boolean; dealId: string | null; stopped: boolean; status: import('./types').NegotiationView['status']; ending: string | null; failed: string | null; negotiation: import('./types').NegotiationView }
   | { type: 'error'; code: string; message: string }
+
+/** What the owner asks of a negotiation: the job, how it is paid, the deadline both sides know, and a brief for the studio's negotiator. */
+export type NegotiationRequest = { buyer?: string; task?: string; milestones?: string[]; offersPerSide?: number; sellerBrief?: string; buyerBrief?: string; threadId?: string }
 
 /**
  * Watches a negotiation as it happens (server-sent events over a POST, because an EventSource cannot carry the key).
  * Resolves when the stream ends. Pressing Stop aborts the request, which also cancels the model call on the server.
  */
-async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, signal: AbortSignal): Promise<void> {
+async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, signal: AbortSignal, body: NegotiationRequest = {}): Promise<void> {
   const key = session.get()
-  const scoped = scopePath('/v1/negotiations/stream')
+  const scoped = scopePath('/v1/negotiations/stream', key)
   let response: Response
   try {
     response = await fetch(scoped.path, {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...(scoped.client ? { 'x-mandate-client': 'web' } : {}), ...(key ? { authorization: `Bearer ${key}` } : {}) },
-      body: '{}',
+      body: JSON.stringify(body),
       cache: 'no-store',
       credentials: scoped.credentials,
       signal,
@@ -166,7 +178,7 @@ async function streamNegotiation(onEvent: (event: NegotiationEvent) => void, sig
  */
 async function postStream<E>(path: string, body: unknown, onEvent: (event: E) => void, signal?: AbortSignal): Promise<void> {
   const key = session.get()
-  const scoped = scopePath(path)
+  const scoped = scopePath(path, key)
   let response: Response
   try {
     response = await fetch(scoped.path, {
@@ -204,6 +216,33 @@ async function postStream<E>(path: string, body: unknown, onEvent: (event: E) =>
   }
 }
 
+/** Same hash the server uses for a step-up grant: sha256(`mandate/step/${kind}\n${payload}`) as hex. */
+async function stepBindingHex(kind: string, payload: string): Promise<string> {
+  const bytes = new TextEncoder().encode(`mandate/step/${kind}\n${payload}`)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Asks for a passkey, then retries the call with the grant.
+ * The binding is sent as well as the action, so a server that has not been restarted still accepts it.
+ */
+async function signStep<T>(kind: string, payload: string, optionsBody: Record<string, unknown>, again: (grant: string) => Promise<T>): Promise<T> {
+  const binding = await stepBindingHex(kind, payload)
+  const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { ...optionsBody, kind, binding } })
+  let signed: unknown
+  try {
+    signed = await startAuthentication({ optionsJSON: started.options as never })
+  } catch (error) {
+    const name = (error as { name?: string })?.name ?? ''
+    if (name === 'NotAllowedError') throw new ApiError(0, 'auth/stepup-cancelled', 'Passkey was not used', 'The signature was cancelled. Press the button again.', {})
+    if (name === 'SecurityError') throw new ApiError(0, 'auth/stepup-failed', 'Passkey was not accepted', 'Open the console on localhost, not on an IP address, and try again.', {})
+    throw new ApiError(0, 'auth/stepup-failed', 'Passkey was not accepted', 'The passkey could not be used in this browser.', {})
+  }
+  const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+  return again(verified.grant)
+}
+
 /** The clerk, told as it works: each tool call as it starts and ends, the words as they are written, then the whole reply. */
 const streamClerk = (body: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } }, onEvent: (event: ClerkStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/clerk/stream', body, onEvent, signal)
 
@@ -237,7 +276,18 @@ export const api = {
   suggestions: () => request<Suggestions>('/v1/suggestions'),
   guarantees: () => request<Guarantees>('/v1/guarantees'),
   demoStart: () => request<{ workspaceId: string; expiresAt: string; role: string; mode: string }>('/demo/start', { method: 'POST', body: {} }),
-  createStudio: (name: string) => request<{ workspaceId: string; memberId: string; challengeId: string; options: Record<string, unknown>; paypal: string }>('/workspaces', { method: 'POST', body: { name } }),
+  createStudio: (name: string) => request<{ workspaceId: string; memberId: string; challengeId: string; options: Record<string, unknown>; paypal: 'fake' | 'sandbox' }>('/workspaces', { method: 'POST', body: { name } }),
+  /** Closes this studio. Money already sent stays in PayPal. The ledger on this server is deleted. */
+  closeStudio: async (name: string) => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'studio.close' } })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+    return request<{ ok: boolean }>('/v1/studio/close', { method: 'POST', body: { name }, headers: { 'x-mandate-stepup': verified.grant } })
+  },
+  /** The rules in the owner's own words. Kept on the server until they become rules. */
+  ruleWords: () => request<{ words: { body: string; at: string } | null }>('/v1/rules/words'),
+  saveRuleWords: (text: string) => request<{ words: { body: string; at: string } }>('/v1/rules/words', { method: 'POST', body: { text } }),
+  clearRuleWords: () => request<{ words: null }>('/v1/rules/words', { method: 'DELETE' }),
   passkeyRegisterVerify: (body: { challengeId: string; response: unknown }) => request<{ credentialId: string; fingerprint: string }>('/auth/register/verify', { method: 'POST', body }),
   passkeyLoginOptions: () => request<{ challengeId: string; options: Record<string, unknown> }>('/auth/login/options', { method: 'POST', body: {} }),
   passkeyLoginVerify: (body: { challengeId: string; response: unknown }) => request<{ workspaceId: string; role: string; displayName: string }>('/auth/login/verify', { method: 'POST', body }),
@@ -248,7 +298,7 @@ export const api = {
     const signed = await startAuthentication({ optionsJSON: started.options as never })
     return request<{ workspaceId: string; role: string; displayName: string }>('/auth/login/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
   },
-  authMe: () => request<{ role: string; displayName: string; method: string }>('/auth/me'),
+  authMe: () => request<{ memberId: string; workspaceId: string; role: string; displayName: string; method: string }>('/auth/me'),
   sessions: () => request<{ sessions: Array<{ publicId: string; at: string; lastSeen: string; method: string; revoked: boolean; current: boolean }> }>('/auth/sessions'),
   authEvents: () => request<{ events: Array<{ at: string; event: string; result: string }> }>('/auth/events'),
   revokeSession: (publicId: string) => request<{ ok: boolean }>('/auth/sessions/revoke', { method: 'POST', body: { publicId } }),
@@ -293,7 +343,15 @@ export const api = {
   tryRequest: (requestBody: Record<string, unknown>, rules?: unknown) => request<TryOne>('/v1/rules/try', { method: 'POST', body: { request: requestBody, ...(rules ? { rules } : {}) } }),
   tryCases: (rules?: unknown) => request<TryCases>('/v1/rules/cases', { method: 'POST', body: rules ? { rules } : {} }),
   pause: (reason: string) => request<Safety>('/v1/safety/pause', { method: 'POST', body: { reason } }),
-  resume: () => request<Safety>('/v1/safety/resume', { method: 'POST' }),
+  resume: async () => {
+    const send = (grant?: string) => request<Safety>('/v1/safety/resume', { method: 'POST', headers: grant ? { 'x-mandate-stepup': grant } : undefined })
+    try {
+      return await send()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return signStep('resume', 'safety.resume', {}, send)
+    }
+  },
   clientErrors: () => request<{ data: ClientErrorRow[] }>('/v1/client-errors'),
   ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
   replayRules: (rules: unknown) => request<Replay>('/v1/rules/replay', { method: 'POST', body: rules }),
@@ -310,7 +368,15 @@ export const api = {
       return request<{ agent: AgentRow; apiKey: string }>('/v1/agents', { method: 'POST', body: input, headers: { 'x-mandate-stepup': verified.grant } })
     }
   },
-  revokeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/revoke`, { method: 'POST' }),
+  revokeAgent: async (id: string) => {
+    const send = (grant?: string) => request<AgentRow>(`/v1/agents/${encodeURIComponent(id)}/revoke`, { method: 'POST', headers: grant ? { 'x-mandate-stepup': grant } : undefined })
+    try {
+      return await send()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return signStep('agent.revoke', id, { id }, send)
+    }
+  },
   resumeAgent: (id: string) => request<AgentRow>(`/v1/agents/${id}/resume`, { method: 'POST' }),
   agentScorecard: (id: string) => request<AgentScorecard>(`/v1/agents/${id}/scorecard`),
   /** Asks the MCP door which tools a key may use. The console is served by the same server, so this needs no CORS. */
@@ -338,9 +404,34 @@ export const api = {
   switchDemoRole: (role: 'owner' | 'approver' | 'proposer' | 'viewer' | 'payee') => request<{ role: string }>('/v1/demo/switch', { method: 'POST', body: { role } }),
   liveProof: () => request<{ files: Array<{ name: string; content: unknown }> }>('/v1/live-proof'),
   clientKeys: () => request<ClientKeyRow[]>('/v1/client-keys'),
-  createClientKey: (input: { name: string; partyId: string }) => request<{ key: ClientKeyRow; apiKey: string }>('/v1/client-keys', { method: 'POST', body: input }),
-  revokeClientKey: (id: string) => request<ClientKeyRow>(`/v1/client-keys/${id}/revoke`, { method: 'POST' }),
-  rotateClientKey: (id: string) => request<{ key: ClientKeyRow; apiKey: string }>(`/v1/client-keys/${id}/rotate`, { method: 'POST' }),
+  createClientKey: async (input: { name: string; partyId: string }) => {
+    const body = { name: input.name.trim(), partyId: input.partyId.trim() }
+    const send = (grant?: string) => request<{ key: ClientKeyRow; apiKey: string }>('/v1/client-keys', { method: 'POST', body, headers: grant ? { 'x-mandate-stepup': grant } : undefined })
+    try {
+      return await send()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return signStep('client-key.issue', JSON.stringify(body), { input: body }, send)
+    }
+  },
+  revokeClientKey: async (id: string) => {
+    const send = (grant?: string) => request<ClientKeyRow>(`/v1/client-keys/${encodeURIComponent(id)}/revoke`, { method: 'POST', headers: grant ? { 'x-mandate-stepup': grant } : undefined })
+    try {
+      return await send()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return signStep('client-key.revoke', id, { id }, send)
+    }
+  },
+  rotateClientKey: async (id: string) => {
+    const send = (grant?: string) => request<{ key: ClientKeyRow; apiKey: string }>(`/v1/client-keys/${encodeURIComponent(id)}/rotate`, { method: 'POST', headers: grant ? { 'x-mandate-stepup': grant } : undefined })
+    try {
+      return await send()
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      return signStep('client-key.rotate', id, { id }, send)
+    }
+  },
   health: () => request<Health>('/health'),
   ready: () => request<Health>('/ready'),
   session: (key?: string) => request<Session>('/v1/session', { key }),
@@ -400,8 +491,13 @@ export const api = {
   signingKeys: () => request<{ data: SigningKey[] }>('/.well-known/mandate-keys.json'),
   deals: () => request<{ data: Deal[] }>('/v1/deals?limit=50'),
   verifyDeal: (id: string) => request<DealCheck>(`/v1/deals/${id}/verify`),
-  offerDeal: (body: { buyer: string; as?: 'buyer' | 'seller'; threadId?: string; prompt?: string; terms: Record<string, unknown> }, idempotencyKey: string) =>
+  offerDeal: (body: { buyer: string; as?: 'buyer' | 'seller'; threadId?: string; prompt?: string; final?: boolean; offersPerSide?: number; terms?: Record<string, unknown>; totalCents?: number; milestoneCount?: number }, idempotencyKey: string) =>
     request<Deal>('/v1/deals/offers', { method: 'POST', body, idempotencyKey }),
+  acceptDeal: (id: string, body: { message?: string } = {}) => request<Deal>(`/v1/deals/${id}/accept`, { method: 'POST', body }),
+  negotiations: () => request<{ data: NegotiationView[] }>('/v1/negotiations'),
+  negotiation: (id: string) => request<NegotiationView>(`/v1/negotiations/${id}`),
+  walkAway: (id: string, body: { reason?: string } = {}) => request<NegotiationView>(`/v1/negotiations/${id}/walk-away`, { method: 'POST', body }),
+  agentMove: (id: string) => request<NegotiationView>(`/v1/negotiations/${id}/agent-move`, { method: 'POST' }),
   billMilestone: (dealId: string, milestone: number, evidenceUrl: string) =>
     request<Proposal>(`/v1/deals/${dealId}/milestones/${milestone}/bill`, { method: 'POST', body: { evidenceUrl } }),
   deliverMilestone: (dealId: string, milestone: number, evidenceUrl: string) =>

@@ -32,6 +32,20 @@ async function keepPricesUI(page: Page) {
   }
 }
 
+const BUYER = 'buyer-agent-e2e-key-0123456789'
+
+/** A deal is made as in life: the studio offers, and the client accepts that exact offer with its own key. */
+async function agreeDeal(request: APIRequestContext, job: string, scope: string) {
+  const offered = await (await request.post('/v1/deals/offers', {
+    headers: { authorization: `Bearer ${OWNER}`, 'idempotency-key': `deal-${job}-0001` },
+    data: { buyer: 'Northwind', terms: { scope, category: 'design', currency: 'USD', totalCents: 30000, milestones: [{ title: 'Concepts', amountCents: 15000 }, { title: 'Final files', amountCents: 15000 }], proofRequired: true, jobId: job } },
+  })).json()
+  expect(offered.status).toBe('open')
+  const agreed = await (await request.post(`/v1/deals/${offered.id}/accept`, { headers: { authorization: `Bearer ${BUYER}` }, data: {} })).json()
+  expect(agreed.status).toBe('agreed')
+  return agreed as { id: string; jobId: string; status: string }
+}
+
 async function ask(page: Page, fill: () => Promise<void>) {
   await page.goto('/app/new')
   await fill()
@@ -436,36 +450,40 @@ test('a receipt has a guide, and the open tour passes axe', async ({ page, reque
   expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(' | ')}`)).toEqual([])
 })
 
-test('two agents negotiate a deal, it is signed, and billing a milestone follows it', async ({ page }) => {
+test('two negotiators negotiate a deal move by move, one accepts, and billing a milestone follows it', async ({ page }) => {
   await unlock(page, OWNER)
   await keepPricesUI(page)
   await page.goto('/app/deals')
   await expect(page.getByText('Where a deal can exist')).toBeVisible()
-  await page.getByRole('button', { name: 'Let the agents negotiate' }).click()
+  const form = page.locator('[data-tour="deal-negotiate"]')
+  await form.getByLabel('The job').fill('Spring launch logo')
+  await form.getByLabel('Paid in milestones').fill('Concepts, Final files')
+  await page.getByRole('button', { name: 'Let the negotiators negotiate' }).click()
   const story = page.locator('.stage')
-  // The screen comes alive at once: a running state, the studio's agent thinking, a Stop button.
+  // The screen comes alive at once: a running state, the studio's negotiator thinking, a Stop button.
   await expect(story).toContainText('Live negotiation')
   await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible()
   await expect(story.locator('.seat-seller')).toContainText('Thinking')
   await expect(story.locator('.turn.is-thinking')).toBeVisible()
   await shots(page, '25a-negotiation-thinking')
-  // Then offers arrive one at a time, and pins land on the price line.
+  // Then moves arrive one at a time.
   await expect(story.locator('.turn.is-in')).toHaveCount(1, { timeout: 30_000 })
   await expect(story.locator('.seat-buyer')).toContainText('Thinking', { timeout: 1500 })
   await shots(page, '25b-negotiation-midway')
-  await expect(story).toContainText('The negotiation, turn by turn', { timeout: 30_000 })
+  await expect(story).toContainText('The negotiation, move by move', { timeout: 60_000 })
   const turns = story.locator('.turn.is-in')
-  await expect(turns).toHaveCount(3)
-  await expect(story.locator('.pin')).toHaveCount(3)
-  await expect(turns.nth(0)).toContainText('$450.00')
-  await expect(turns.nth(0)).toContainText('deal.over_buyer_limit')
+  // Each side opens at its own target and concedes; the client accepts the studio's $300.
+  await expect(turns).toHaveCount(6)
+  await expect(turns.nth(0)).toContainText('$400.00')
   await expect(turns.nth(1)).toContainText('$200.00')
-  await expect(turns.nth(1)).toContainText('deal.under_seller_minimum')
-  await expect(turns.nth(2)).toContainText('$300.00')
-  await expect(turns.nth(2)).toContainText('Agreed')
-  await expect(story).toContainText('Agreed in 3 offers')
-  // The client agent never saw the studio's floor, so nothing it said can contain it.
-  await expect(story.locator('.turn-buyer')).not.toContainText('$250')
+  await expect(turns.nth(4)).toContainText('$300.00')
+  await expect(turns.nth(5)).toContainText('Accepted')
+  await expect(story.getByTestId('negotiation-end')).toContainText('Agreed at $300.00')
+  // Each side is told how it went for itself, and its negotiator's debrief.
+  await expect(story.getByTestId('seat-result-seller')).toContainText('above the least you take')
+  await expect(story.getByTestId('seat-result-seller')).toContainText('Its negotiator’s debrief')
+  // The client's negotiator never saw the studio's floor, so nothing it said can contain it.
+  await expect(story.locator('.turn-buyer .quote').first()).not.toContainText('$250')
   await shots(page, '25-deal-negotiated')
 
   const card = page.locator('.deal-card.is-agreed')
@@ -497,11 +515,11 @@ test('pressing Stop ends a running negotiation and keeps what was offered', asyn
   await unlock(page, OWNER)
   await keepPricesUI(page)
   await page.goto('/app/deals')
-  await page.getByRole('button', { name: 'Let the agents negotiate' }).click()
+  await page.getByRole('button', { name: 'Let the negotiators negotiate' }).click()
   await expect(page.locator('.stage .turn.is-in')).toHaveCount(1, { timeout: 30_000 })
   await page.getByRole('button', { name: 'Stop' }).click()
   await expect(page.locator('.stage')).toContainText('Stopped')
-  await expect(page.getByRole('button', { name: 'Let the agents negotiate' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Let the negotiators negotiate' })).toBeEnabled()
   await shots(page, '25c-negotiation-stopped')
 })
 
@@ -560,7 +578,8 @@ test('the system page shows the AI layer: which models, which prompt versions, a
   const panel = page.getByRole('region', { name: 'The AI layer' })
   await expect(panel).toBeVisible()
   await expect(panel).toContainText('Prompt versions')
-  await expect(panel).toContainText('clerk v1')
+  await expect(panel).toContainText('clerk v2')
+  await expect(panel).toContainText('negotiator v3')
   await expect(panel).toContainText('reviewer v2')
 })
 
@@ -659,7 +678,7 @@ test('the owner can try a request and check the rules with cases, under the live
   await unlock(page, OWNER)
   await page.goto('/app/rules')
   const before = (await (await request.get('/v1/proposals', { headers })).json()).data.length
-  await page.getByText('Try a request, or check the rules with cases').click()
+  // The dry run sits in the page, not behind a folded-away summary: understanding the rules is the point of the screen.
   const panel = page.getByTestId('try-rules').first()
   await expect(panel).toContainText('Cases made from the rules')
   await expect(panel.locator('table.try-cases')).toContainText('Someone who is not on the rules', { timeout: 20_000 })
@@ -825,8 +844,12 @@ test('a visitor with no key sees what Mandate is first, and can reach the unlock
   await expect(page).toHaveURL(/\/app\/?$/)
 })
 
-test('a proposer key can ask but never approve', async ({ page }) => {
-  await unlock(page, PROPOSER)
+test('a proposer key can ask but never approve', async ({ page, request }) => {
+  // A proposer lands where it works: the clerk. Today, with its approve buttons, is the owner's.
+  await page.goto('/app/unlock')
+  await page.getByLabel('API key').fill(PROPOSER)
+  await page.getByRole('button', { name: 'Unlock console' }).click()
+  await expect(page.getByRole('heading', { name: 'Ask Mandate' })).toBeVisible()
   await expect(page.getByText('Proposer · can ask, not approve')).toBeVisible()
   const answer = await ask(page, async () => {
     await page.getByText('Money in').click()
@@ -836,11 +859,11 @@ test('a proposer key can ask but never approve', async ({ page }) => {
     await page.getByLabel('Job').fill('job_agent_draft')
   })
   await expect(answer.getByText('Needs you')).toBeVisible()
-  await page.goto('/app/')
-  const card = page.locator('.approval').filter({ hasText: 'Agent-drafted invoice' })
-  await expect(card.getByRole('button', { name: /Approve/ })).toBeDisabled()
-  await expect(card).toContainText('Only the owner key can approve')
   await shots(page, '15-proposer')
+  // The server is the one that says no: an approve with this key is refused, whatever a screen shows.
+  const asked = (await (await request.get('/v1/proposals', { headers: { authorization: `Bearer ${OWNER}` } })).json()).data.find((row: { description: string }) => row.description === 'Agent-drafted invoice')
+  const tried = await request.post(`/v1/proposals/${asked.id}/approve`, { headers: { authorization: `Bearer ${PROPOSER}` } })
+  expect(tried.status()).toBe(403)
 })
 
 test('offline is read-only', async ({ page, context }) => {
@@ -960,12 +983,7 @@ test('autopilot runs the job: proof in, invoice out, client pays, contractor pai
   await widerCap(request)
   await keepPrices(request)
   const job = `job_autopilot_${test.info().project.name}`
-  const offered = await request.post('/v1/deals/offers', {
-    headers: { ...headers, 'idempotency-key': `deal-${job}-0001` },
-    data: { buyer: 'Northwind', terms: { scope: 'Autopilot logo', category: 'design', currency: 'USD', totalCents: 30000, milestones: [{ title: 'Concepts', amountCents: 15000 }, { title: 'Final files', amountCents: 15000 }], proofRequired: true, jobId: job } },
-  })
-  const deal = await offered.json()
-  expect(deal.status).toBe('agreed')
+  const deal = await agreeDeal(request, job, 'Autopilot logo')
 
   // The owner says yes once, to the rules. This is the only approval in the whole job.
   await publishRules(request, { standing: [RULE], automation: { billSignedDeals: true, payOnSettle: true, remindUnpaidAfterDays: 3, maxReminders: 2 } })
@@ -1024,10 +1042,7 @@ test('Ask Mandate opens from any screen, answers from the ledger with no model, 
 
   // "The work is delivered" becomes a card with a button. Nothing is sent until the owner presses it.
   const job = `job_ask_${test.info().project.name}`
-  const deal = await (await request.post('/v1/deals/offers', {
-    headers: { ...headers, 'idempotency-key': `deal-${job}-0001` },
-    data: { buyer: 'Northwind', terms: { scope: 'Ask logo', category: 'design', currency: 'USD', totalCents: 30000, milestones: [{ title: 'Concepts', amountCents: 15000 }, { title: 'Final files', amountCents: 15000 }], proofRequired: true, jobId: job } },
-  })).json()
+  const deal = await agreeDeal(request, job, 'Ask logo')
   await ask.getByLabel('Message to the clerk').fill('the Ask logo concepts for Northwind are delivered https://www.figma.com/file/ask-concepts')
   await ask.getByRole('button', { name: 'Send' }).click()
   const card = ask.getByTestId('action-card')
@@ -1159,11 +1174,7 @@ test('billing waits for the client: delivered, accepted by the client\'s agent, 
   const headers = { authorization: `Bearer ${OWNER}` }
   await fake(request, 'invoices-on')
   const job = `job_accept_${test.info().project.name}`
-  const deal = await (await request.post('/v1/deals/offers', {
-    headers: { ...headers, 'idempotency-key': `deal-${job}-0001` },
-    data: { buyer: 'Northwind', terms: { scope: 'Accepted logo', category: 'design', currency: 'USD', totalCents: 30000, milestones: [{ title: 'Concepts', amountCents: 15000 }, { title: 'Final files', amountCents: 15000 }], proofRequired: true, jobId: job } },
-  })).json()
-  expect(deal.status).toBe('agreed')
+  const deal = await agreeDeal(request, job, 'Accepted logo')
   await publishRules(request, { automation: { billSignedDeals: true, requireAcceptance: true, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 } })
   await unlock(page, OWNER)
 
@@ -1248,7 +1259,9 @@ test('the owner sets each company’s price limit, and the band follows', async 
   await expect(page.getByTestId('seat-bar')).toContainText('You are Line Studio.')
   await expect(page.locator('[data-tour="price-buyer"]')).toHaveCount(0)
   await expect(page.locator('[data-tour="price-buyer-sealed"]')).toContainText('sealed')
-  await expect(page.locator('[data-tour="deal-band"]')).not.toContainText('$400.00')
+  // The studio's own numbers are shown; Northwind's ceiling is not, anywhere in the band.
+  await expect(page.locator('[data-tour="deal-band"]')).not.toContainText('pays at most $400.00')
+  await expect(page.locator('[data-tour="deal-band"]')).toContainText('sealed')
   // This demo has no real Northwind, so the owner plays it, openly.
   await page.getByTestId('seat-toggle').click()
   await expect(page.getByTestId('seat-bar')).toContainText('You are playing Northwind for this demo.')
@@ -1258,40 +1271,51 @@ test('the owner sets each company’s price limit, and the band follows', async 
     await expect(bar.getByText('Starting examples, not your numbers yet')).toBeVisible()
     await expect(bar.getByText('2 to keep')).toBeVisible()
     await expect(page.locator('[data-tour="deal-band"]')).toContainText('starting examples')
-    await expect(page.getByRole('button', { name: 'Let the agents negotiate' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Let the negotiators negotiate' })).toBeDisabled()
     await bar.getByRole('button', { name: 'Keep these numbers' }).click()
     await expect(page.getByText('Starting numbers kept')).toBeVisible()
     await expect(bar).toHaveCount(0)
   }
   const buyer = page.locator('[data-tour="price-buyer"]')
   const seller = page.locator('[data-tour="price-seller"]')
-  await expect(buyer.locator('input[inputmode="decimal"]')).toHaveValue('400.00')
-  await expect(seller.locator('input[inputmode="decimal"]')).toHaveValue('250.00')
+  await expect(buyer.getByLabel('Walk-away in USD')).toHaveValue('400.00')
+  await expect(seller.getByLabel('Walk-away in USD')).toHaveValue('250.00')
   await expect(sheets.getByText('both numbers are set')).toBeVisible()
   await expect(page.locator('[data-tour="deal-band"]')).toContainText('$250.00 to $400.00')
-  // The form says what "Offered by" does, before anyone has to ask.
-  await expect(page.getByText('The rules judge the terms, never the speaker')).toBeVisible()
-
-  // A refused thread says what to do next, in one clean sentence.
-  await page.getByLabel('Total').fill('450')
-  await page.getByRole('button', { name: 'Offer these terms' }).click()
-  await expect(page.locator('[data-tour="deal-next"]').first()).toHaveText('No deal yet — Lower the total. Adjust a price limit above, or offer again below.')
+  // An offer under the studio's own floor does not stand, and says why in the studio's own numbers.
+  const offer = page.locator('[data-tour="deal-offer"]')
+  // On a phone the form is the last thing on the page, above the tab bar: bring it to the middle, as a thumb would.
+  const tapOffer = async () => {
+    await offer.evaluate((element) => element.scrollIntoView({ block: 'center' }))
+    await offer.getByRole('button', { name: 'Make this offer' }).click()
+  }
+  await offer.getByLabel('The job').fill('Hand-made offer')
+  await offer.getByLabel('Total in USD').fill('200')
+  await tapOffer()
+  await expect(page.getByText('That offer does not stand')).toBeVisible()
+  await page.locator('.toast', { hasText: 'That offer does not stand' }).getByRole('button', { name: 'Dismiss' }).click()
+  await expect(page.getByText('That offer does not stand')).toBeHidden()
+  // One inside it stands until the client answers, and the owner answers for a client that has no key of its own.
+  await offer.getByLabel('Total in USD').fill('450')
+  await tapOffer()
+  await expect(page.getByText('Offer made')).toBeVisible()
+  await expect(page.getByTestId('negotiation').filter({ hasText: 'Hand-made offer' }).getByTestId('your-move')).toContainText('Your move, for Northwind')
 
   // The client’s ceiling moves to $480: the band follows, and negotiation stays available.
-  await buyer.locator('input[inputmode="decimal"]').fill('480')
-  await buyer.getByRole('button', { name: 'Save this limit' }).click()
+  await buyer.getByLabel('Walk-away in USD').fill('480')
+  await buyer.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByText('Northwind’s ceiling is now $480.00')).toBeVisible()
   await expect(page.locator('[data-tour="deal-band"]')).toContainText('$250.00 to $480.00')
-  await expect(page.getByRole('button', { name: 'Let the agents negotiate' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Let the negotiators negotiate' })).toBeEnabled()
 
   // The studio’s floor moves the same way, then both numbers are put back so the suite ends as it started.
-  await seller.locator('input[inputmode="decimal"]').fill('260')
-  await seller.getByRole('button', { name: 'Save this limit' }).click()
+  await seller.getByLabel('Walk-away in USD').fill('260')
+  await seller.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.getByText('Line Studio’s floor is now $260.00')).toBeVisible()
-  await buyer.locator('input[inputmode="decimal"]').fill('400')
-  await buyer.getByRole('button', { name: 'Save this limit' }).click()
-  await seller.locator('input[inputmode="decimal"]').fill('250')
-  await seller.getByRole('button', { name: 'Save this limit' }).click()
+  await buyer.getByLabel('Walk-away in USD').fill('400')
+  await buyer.getByRole('button', { name: 'Save', exact: true }).click()
+  await seller.getByLabel('Walk-away in USD').fill('250')
+  await seller.getByRole('button', { name: 'Save', exact: true }).click()
   await expect(page.locator('[data-tour="deal-band"]')).toContainText('$250.00 to $400.00')
   // Back in the studio's own seat, the client's number is sealed again.
   await page.getByTestId('seat-toggle').click()
@@ -1311,16 +1335,16 @@ test('a client key writes only its own ceiling, and never sees the studio’s fl
   const sheets = page.locator('[data-tour="price-sheets"]')
   await expect(sheets.getByText('What your company will accept')).toBeVisible()
   // Its own ceiling is here, prefilled. The studio’s form and the band are not on this screen at all.
-  await expect(page.locator('[data-tour="price-buyer"] input[inputmode="decimal"]')).toHaveValue('400.00')
+  await expect(page.locator('[data-tour="price-buyer"]').getByLabel('Walk-away in USD')).toHaveValue('400.00')
   await expect(page.locator('[data-tour="price-seller"]')).toHaveCount(0)
   await expect(page.locator('[data-tour="deal-band"]')).toHaveCount(0)
-  await expect(sheets.getByText('The studio is never told this number.')).toBeVisible()
+  await expect(sheets.getByText('The studio is never told these numbers.')).toBeVisible()
 
   // It moves its own ceiling through these same controls, then puts it straight back.
-  await page.locator('[data-tour="price-buyer"] input[inputmode="decimal"]').fill('420')
+  await page.locator('[data-tour="price-buyer"]').getByLabel('Walk-away in USD').fill('420')
   await page.locator('[data-tour="price-buyer"] button[type="submit"]').click()
   await expect(page.getByText('Northwind’s ceiling is now $420.00')).toBeVisible()
-  await page.locator('[data-tour="price-buyer"] input[inputmode="decimal"]').fill('400')
+  await page.locator('[data-tour="price-buyer"]').getByLabel('Walk-away in USD').fill('400')
   await page.locator('[data-tour="price-buyer"] button[type="submit"]').click()
   await expect(page.getByText('Northwind’s ceiling is now $400.00')).toBeVisible()
 })
