@@ -1,4 +1,18 @@
-export function centsToPayPal(cents: number): string {
+/**
+ * Currencies PayPal takes in whole units only (no decimals at all): an amount of "100.00" JPY is refused. Amounts are
+ * still kept in hundredths everywhere in Mandate; these are simply always whole.
+ * https://developer.paypal.com/reference/currency-codes/
+ */
+export const WHOLE_UNIT_CURRENCIES = new Set(['HUF', 'JPY', 'TWD'])
+
+/** True when an amount can be paid in this currency: whole units for a currency that has no decimals. */
+export const payableIn = (cents: number, currency: string) => !WHOLE_UNIT_CURRENCIES.has(currency.toUpperCase()) || cents % 100 === 0
+
+export function centsToPayPal(cents: number, currency = 'USD'): string {
+  if (WHOLE_UNIT_CURRENCIES.has(currency.toUpperCase())) {
+    if (cents % 100 !== 0) throw new Error(`${currency} has no decimals: ${cents} hundredths is not a whole amount`)
+    return String(cents / 100)
+  }
   const negative = cents < 0
   const absolute = Math.abs(cents)
   const dollars = Math.floor(absolute / 100)

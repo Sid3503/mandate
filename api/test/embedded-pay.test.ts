@@ -147,6 +147,17 @@ describe('who may pay on our own page', () => {
     expect((await session.json()).code).toBe('auth.origin')
   })
 
+  it('treats localhost and 127.0.0.1 on the same port as the same console, and nothing else', async () => {
+    const { app } = harness()
+    const proposalId = await payableCharge(app)
+    const token = await payLink(app)
+    const from = (origin: string) => app.request(`http://mandate.test/v1/share/${token}/pay/session`, { method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify({ proposalId }) })
+    expect((await from('http://localhost:8787')).status).toBe(200)
+    expect((await from('http://localhost:9999')).status).toBe(403)
+    expect((await from('https://localhost:8787')).status).toBe(403)
+    expect((await from('http://localhost.evil.example:8787')).status).toBe(403)
+  })
+
   it('never lets a link pay money out', async () => {
     const { app } = harness()
     await payableCharge(app)
@@ -167,6 +178,44 @@ describe('one bill, one instrument', () => {
     const session = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId: asked.json.id } })
     expect(session.status).toBe(409)
     expect(session.json.code).toBe('pay.invoice_open')
+  })
+
+  it('never lets a link send an invoice: only the owner does that', async () => {
+    const invoices = new FakeInvoices()
+    const { app } = harness({ invoices })
+    const asked = await call(app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem('charge'), body: chargeBody() })
+    await call(app, 'POST', `/v1/proposals/${asked.json.id}/approve`, { body: { instrument: 'invoice' } })
+    const token = await payLink(app)
+    const tried = await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId: asked.json.id } })
+    expect(tried.status).toBe(409)
+    expect(tried.json.code).toBe('pay.not_on_page')
+    expect((await call(app, 'GET', `/v1/proposals/${asked.json.id}`)).json.invoiceId).toBeNull()
+  })
+
+  it('lets a link pay by card a small bill the rules locked with no tap, and never invoice one it has no card for', async () => {
+    const invoices = new FakeInvoices()
+    const { app } = harness({ invoices })
+    // Under the automatic line: the rules lock it with no tap, so nobody chose how it is paid.
+    const asked = await call(app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem('small'), body: chargeBody({ amountCents: 1_200 }) })
+    expect(asked.json).toMatchObject({ gate: 'AUTO', phase: 'locked' })
+    const token = await payLink(app)
+    // Settling before any card was handed over is refused, and no invoice is sent by the link.
+    const early = await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId: asked.json.id } })
+    expect(early.json.code).toBe('pay.no_card')
+    expect((await call(app, 'GET', `/v1/proposals/${asked.json.id}`)).json.invoiceId).toBeNull()
+    // With the card form open, it is paid on the page.
+    expect((await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId: asked.json.id } })).status).toBe(200)
+    const paid = await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId: asked.json.id } })
+    expect(paid.json.phase).toBe('captured')
+  })
+
+  it('tells the payer only what they need about a payment', async () => {
+    const { app } = harness()
+    const proposalId = await payableCharge(app)
+    const token = await payLink(app)
+    await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId } })
+    const paid = await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId } })
+    expect(Object.keys(paid.json).sort()).toEqual(['amountCents', 'captureId', 'capturedAmountCents', 'currency', 'id', 'phase'])
   })
 
   it('does not invoice a bill the owner said to be paid on our page', async () => {
@@ -261,5 +310,43 @@ describe('one bill, one instrument', () => {
     const again = await services.mandate.paySession(proposalId).catch((error: { status?: number }) => error)
     expect((again as { status?: number }).status).toBe(409)
     expect(services.repo.eventsFor(proposalId).some((event) => event.type === 'order.replaced')).toBe(false)
+  })
+})
+
+describe('a card is captured only if its bank confirmed the cardholder where that is required (3-D Secure)', () => {
+  it('asks PayPal for the bank check on every card order', async () => {
+    const { app, paypal } = harness()
+    const proposalId = await payableCharge(app)
+    const token = await payLink(app)
+    const session = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId } })
+    expect(session.json.orderId).toMatch(/-CARD$/)
+    expect(paypal!.orders.get(session.json.orderId)).toBeTruthy()
+  })
+
+  it('refuses a card its bank did not confirm, charges nothing, and lets the buyer try another', async () => {
+    const { app, paypal } = harness()
+    const proposalId = await payableCharge(app)
+    const token = await payLink(app)
+    const session = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId } })
+    paypal!.cards.set(session.json.orderId, { brand: 'VISA', lastDigits: '0004', authentication: { liabilityShift: 'NO', enrollment: 'Y', status: 'N' } })
+    const refused = await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId } })
+    expect(refused.status).toBe(402)
+    expect(refused.json.code).toBe('pay.card_not_verified')
+    expect(paypal!.captureCalls).toBe(0)
+    const packet = (await call(app, 'GET', `/v1/proposals/${proposalId}/packet`)).json
+    expect(packet.proposal.phase).toBe('order_created')
+    expect(packet.events.map((event: { type: string }) => event.type)).toContain('card.not_verified')
+
+    // A check that did not finish is a retry, not a refusal.
+    paypal!.cards.set(session.json.orderId, { brand: 'VISA', lastDigits: '0004', authentication: { liabilityShift: 'UNKNOWN', enrollment: 'Y', status: 'U' } })
+    expect((await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId } })).json.code).toBe('pay.card_check_incomplete')
+
+    // Another card, confirmed by its bank: captured, and the receipt says which card, never the number.
+    paypal!.cards.set(session.json.orderId, { brand: 'MASTERCARD', lastDigits: '4444', authentication: { liabilityShift: 'POSSIBLE', enrollment: 'Y', status: 'Y' } })
+    const paid = await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId } })
+    expect(paid.json.phase).toBe('captured')
+    const after = (await call(app, 'GET', `/v1/proposals/${proposalId}/packet`)).json
+    const done = after.events.find((event: { type: string }) => event.type === 'capture.completed')
+    expect(done.payload.card).toEqual({ brand: 'MASTERCARD', lastDigits: '4444', liabilityShift: 'POSSIBLE' })
   })
 })

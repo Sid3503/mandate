@@ -116,6 +116,28 @@ export const WarrantBodySchema = z.object({
 })
 
 export type WarrantBody = z.infer<typeof WarrantBodySchema>
+
+/**
+ * The rules a studio starts from when it has none: everything empty, every limit at its safest, and nothing set. A
+ * first version is written from the owner's own words on top of this.
+ */
+export const BLANK_WARRANT: WarrantBody = {
+  currency: 'USD',
+  autoSettleUnderCents: 2000,
+  monthlyCapCents: 18000,
+  perPaymentCeilingCents: 50000,
+  evidenceRequired: true,
+  timezone: 'UTC',
+  payees: [],
+  categories: [],
+  clients: [],
+  fundingRequired: true,
+  contractorShareBps: 10000,
+  clearingDays: 0,
+  allowPartialPayment: false,
+  standing: [],
+  automation: { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 },
+}
 export type Payee = z.infer<typeof PayeeSchema>
 
 export const ProposalCreateSchema = z.object({

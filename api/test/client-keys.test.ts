@@ -49,6 +49,14 @@ describe('client keys', () => {
     expect((await call(app, 'GET', '/v1/party-rules', { key: northwind })).status).toBe(403)
   })
 
+  it('keeps a key\'s end date when it is rotated: a new secret, not a longer life', async () => {
+    const { app } = harness()
+    const created = await issue(app, { name: 'Northwind buyer', partyId: 'client_northwind', expiryDays: 30 })
+    expect(created.json.key.expiresAt).toBeTruthy()
+    const rotated = await call(app, 'POST', `/v1/client-keys/${created.json.key.id}/rotate`)
+    expect(rotated.json.key.expiresAt).toBe(created.json.key.expiresAt)
+  })
+
   it('revokes a key at once, and rotates it without a gap', async () => {
     const { app } = harness()
     const created = await issue(app, { name: 'Northwind buyer', partyId: 'client_northwind' })
@@ -125,5 +133,18 @@ describe('client keys', () => {
     const expired = await call(app, 'GET', '/v1/party-rules/mine', { key: created.json.apiKey })
     expect(expired.status).toBe(403)
     expect(expired.json.code).toBe('client-key.expired')
+  })
+})
+
+describe('what a client\'s key learns about the studio', () => {
+  it('knows the studio is paused, never why, by whom, or how its systems are', async () => {
+    const { app } = harness()
+    const created = await call(app, 'POST', '/v1/client-keys', { body: { name: 'Northwind buyer', partyId: 'client_northwind' } })
+    await call(app, 'POST', '/v1/safety/pause', { body: { reason: 'Cash is tight until Friday' } })
+    const seen = await call(app, 'GET', '/v1/status', { key: created.json.apiKey })
+    expect(seen.status).toBe(200)
+    expect(seen.json.paused).toMatchObject({ reason: null, by: null })
+    expect(seen.json.ai).toBeNull()
+    expect(JSON.stringify(seen.json)).not.toContain('Cash is tight')
   })
 })

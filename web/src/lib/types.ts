@@ -4,7 +4,6 @@ export type Proposal = components['schemas']['Proposal']
 export type Warrant = components['schemas']['Warrant']
 export type SessionRole = 'owner' | 'approver' | 'proposer' | 'viewer' | 'payee'
 export type Session = Omit<components['schemas']['Session'], 'role'> & { role: SessionRole }
-
 /** Planned switches from GET /v1/flags. Off means that feature is not active. */
 export type ServerFlags = {
   tenancy: boolean
@@ -196,9 +195,9 @@ export type Suggestion = { id: string; payeeId: string; payeeName: string; clien
 export type Suggestions = { suggestions: Suggestion[]; taps: { thisMonth: number; lastMonth: number; byRule: number } }
 export type TryVerdict = { gate: Gate; clause: string; detail: string }
 export type TryFunding = { captureId: string; jobId: string | null; canStillFundCents: number } | null
-export type TryCaseResult = { id: string; label: string; request: Record<string, unknown>; live: TryVerdict; draft: TryVerdict | null }
+export type TryCaseResult = { id: string; label: string; request: Record<string, unknown>; live: TryVerdict | null; draft: TryVerdict | null }
 export type TryCases = { cases: TryCaseResult[]; funding: TryFunding }
-export type TryOne = { live: TryVerdict; draft: TryVerdict | null; funding: TryFunding }
+export type TryOne = { live: TryVerdict | null; draft: TryVerdict | null; funding: TryFunding }
 
 export type Guarantees = {
   guarantees: Array<{ id: string; promise: string; audit?: string; tests: string[]; random?: boolean }>
@@ -211,7 +210,8 @@ export type SystemStatus = {
   paused: { reason: string | null; since: string | null; by: 'owner' | 'breaker' | null } | null
   degraded: Array<'paypal' | 'ai'>
   paypal: { circuit: 'closed' | 'open' | 'half_open'; consecutiveFailures: number; lastError: string | null; lastOkAt: string | null; openUntil: string | null } | null
-  ai: { enabled: boolean; primary: string | null; fallback: string | null; circuit: 'closed' | 'open' | 'half_open' }
+  /** Null for a client's key: how the studio's systems are doing is the studio's business. */
+  ai: { enabled: boolean; primary: string | null; fallback: string | null; circuit: 'closed' | 'open' | 'half_open' } | null
 }
 
 export type ClientErrorRow = { id: string; at: string; role: string; scope: string; message: string; stack: string | null; url: string | null; agent: string | null; release: string | null }
@@ -244,7 +244,10 @@ export type Negotiation = {
   model: string
   agreed: boolean
   dealId: string | null
-  turns: Array<{ turn: number; side: 'buyer' | 'seller'; runId: string; deal?: Deal; error?: string; ms?: number }>
+  status: NegotiationView['status']
+  ending: string | null
+  turns: Array<{ turn: number; side: 'buyer' | 'seller'; runId: string; action?: 'offer' | 'accept' | 'walk_away'; deal?: Deal; error?: string; ms?: number }>
+  negotiation: NegotiationView
 }
 
 export type PartyRulesView = {
@@ -262,6 +265,112 @@ export type PartyRulesView = {
   maxMilestoneCents?: number
   minTotalCents?: number
   minMilestoneCents?: number
+  /** What the company hopes for. Private like its limit. */
+  targetTotalCents?: number
+  style?: NegotiationStyle
+  /** A client that set its own numbers lets Mandate's negotiator speak for it. */
+  delegate?: boolean
+  /** The company's standing instructions to its negotiator. */
+  brief?: string
+  /** Who wrote the latest version: the studio's owner, or the company itself with its own key. */
+  writtenBy?: 'owner' | 'party' | null
+  /** A client that wrote its own numbers owns its seat: the studio sees only that a limit is set. */
+  claimed?: boolean
+  sealed?: boolean
+  limitSet?: boolean
+}
+
+export type NegotiationStyle = 'firm' | 'balanced' | 'flexible'
+export type Side = 'buyer' | 'seller'
+
+/** How good an agreed price was for one side, against its own walk-away and target. Shown only to that side. */
+export type NegotiationOutcome = {
+  side: Side
+  priceCents: number
+  marginCents: number
+  towardTargetPct: number
+  verdict: 'beat_target' | 'met_target' | 'good' | 'fair' | 'at_limit'
+  summary: string
+}
+
+/** A negotiator's debrief for its own company, after the end. */
+export type NegotiationDebrief = {
+  satisfaction: 'satisfied' | 'acceptable' | 'dissatisfied'
+  ratings: { outcome: number; process: number; relationship: number; self: number }
+  wouldSignAgain: boolean
+  summary: string
+  lesson: string
+  model: string
+  at: string
+}
+
+export type NegotiationAdvice = {
+  action: 'offer' | 'accept' | 'walk_away'
+  offerCents: number | null
+  range: { fromCents: number; toCents: number } | null
+  mayAccept: boolean
+  offersLeftAfter: number
+  why: string
+}
+
+export type NegotiationSeat =
+  | { side: Side; visible: false }
+  | {
+      side: Side
+      visible: true
+      reservationCents: number
+      targetCents: number
+      targetChosen: boolean
+      style: NegotiationStyle
+      offersLeft: number
+      advice: NegotiationAdvice | null
+      outcome: NegotiationOutcome | null
+      debrief: NegotiationDebrief | null
+    }
+
+export type NegotiationMove = {
+  seq: number
+  side: Side
+  action: 'offer' | 'accept' | 'walk_away'
+  dealId: string | null
+  totalCents: number | null
+  final: boolean
+  message: string | null
+  /** `agent` (Mandate's negotiator), `person`, or `outside` (the company's own agent). */
+  by: string
+  runId: string | null
+  /** The mover's private reasoning. Present only for the caller's own side. */
+  assessment: string | null
+  createdAt: string
+}
+
+export type NegotiationView = {
+  id: string
+  buyerId: string
+  buyerName: string
+  sellerName: string
+  status: 'open' | 'agreed' | 'walked_away' | 'expired' | 'stalled'
+  endedReason: string | null
+  endedBy: Side | null
+  ending: string | null
+  agreedDealId: string | null
+  jobId: string | null
+  scope: string
+  category: string
+  currency: string
+  milestones: string[]
+  offersPerSide: number
+  startedBy: string
+  createdAt: string
+  updatedAt: string
+  expiresAt: string
+  endedAt: string | null
+  turn: Side | null
+  standing: { dealId: string | null; side: Side; totalCents: number | null; final: boolean } | null
+  moves: NegotiationMove[]
+  seats: { seller: NegotiationSeat; buyer: NegotiationSeat }
+  you: { sides: Side[]; agentMay: Side[] }
+  fairness: { zone: { minCents: number; maxCents: number }; sellerSharePct: number; nashCents: number } | null
 }
 
 export type Health = {
@@ -441,7 +550,8 @@ export type RulesDraft = {
   model: string
   ms: number
   runId: string
-  secondReader?: { model: string; agreed: boolean; verdict: string; critique?: string }
+  /** A different model's reading of the draft against the owner's words. `unavailable` means it did not happen: never a pass. */
+  secondReader?: { model: string; status: 'agreed' | 'concerns' | 'unavailable'; agreed: boolean | null; verdict: string; concerns: Array<{ change: number; text: string; why: string }>; missing?: string }
 }
 
 export type SentenceStatus = 'covered' | 'partly' | 'not_covered' | 'unenforceable' | 'context' | 'untrusted' | 'skipped' | 'unchecked'

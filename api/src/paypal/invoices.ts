@@ -87,7 +87,7 @@ export function createToolkitInvoices(options: { clientId: string; clientSecret:
         reference: input.proposalId,
         note: input.note.slice(0, 4000),
         primary_recipients: [{ billing_info: { email_address: input.recipientEmail, name: { given_name: given || 'Client', surname: rest.join(' ') || undefined }, business_name: input.recipientName.slice(0, 300) } }],
-        items: [{ name: input.title.slice(0, 200), description: input.description.slice(0, 1000), quantity: '1', unit_amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents) } }],
+        items: [{ name: input.title.slice(0, 200), description: input.description.slice(0, 1000), quantity: '1', unit_amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) } }],
         allow_partial_payment: input.allowPartialPayment,
         ...(input.earlyPaymentDiscount ? { early_payment_discount: { percent: percentString(input.earlyPaymentDiscount.percentBps), due_date: input.earlyPaymentDiscount.dueDate } } : {}),
       })

@@ -141,13 +141,22 @@ export class ShareService {
    * client's bills on this job, and everything else answers with the same 404 as a bad link: a holder of a link
    * learns nothing about what they may not touch.
    */
-  payable(token: string, proposalId: string): { proposalId: string } {
+  payable(token: string, proposalId: string, stage: 'session' | 'capture' = 'session'): { proposalId: string } {
     const row = this.resolve(token)
     const gone = () => new Problem(404, 'share.unknown', 'This link is not available', 'It may have expired or been withdrawn. Ask the person who sent it for a new one.')
     if (row.can_pay !== 1 || row.role !== 'client') throw gone()
     const job = this.mandate.job(row.job_id)
     const charge = job.charges.find((item) => item.id === proposalId)
     if (!charge || charge.payeeId !== row.party_id) throw gone()
+    // A link pays only a bill the owner chose to have paid on our page. A bill going out as a PayPal invoice is paid
+    // on that invoice: letting a link "capture" it would have the link send the invoice, which is the owner's act.
+    const proposal = this.repo.proposal(charge.id)
+    if (!proposal || proposal.kind !== 'charge') throw gone()
+    if (proposal.invoice_id) throw new Problem(409, 'pay.invoice_open', 'This bill is on its way by email', 'PayPal invoiced you for it, so pay that invoice. The studio can cancel the invoice to let you pay here instead.')
+    if (proposal.pay_instrument === 'invoice') throw new Problem(409, 'pay.not_on_page', 'This bill is paid on its PayPal invoice', 'The studio sends this bill as a PayPal invoice. Pay it there; this page shows when it is paid.')
+    // A link settles only a card the payer handed over on this page: the card order must exist. Settling a bill with
+    // no order would have the server invoice it instead, and sending an invoice is the owner's act, never a link's.
+    if (stage === 'capture' && !(proposal.order_id && proposal.order_kind === 'card')) throw new Problem(409, 'pay.no_card', 'Open the card form first', 'Nothing has been paid by card on this page yet, so there is nothing to settle.')
     return { proposalId: charge.id }
   }
 

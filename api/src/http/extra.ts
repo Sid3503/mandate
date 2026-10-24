@@ -8,6 +8,7 @@ import type { WebAuthnCredential } from '@simplewebauthn/server'
 import { clearSessionCookie, cookieWriteAllowed, readSessionCookie, writeSessionCookie } from '../auth/cookies'
 import { applyCounterRollback, beginLogin, beginRegistration, finishLogin, finishRegistration, passkeyRuleBinding, stepBinding, type WebAuthnConfig } from '../auth/passkeys'
 import { ControlStore, hashToken, type MemberRole } from '../control/store'
+import { migrate, openDatabase } from '../db/database'
 import { defaultFlags, type ServerFlags } from '../flags'
 import { Problem } from './problem'
 import type { Metrics } from '../ops/metrics'
@@ -16,6 +17,7 @@ import { isWorkspaceId, newWorkspaceId } from '../tenancy/ids'
 import { seal } from '../tenancy/envelope'
 import type { TenantRegistry } from '../tenancy/registry'
 import { clientIp } from '../ops/client-ip'
+import { removeDatabaseFiles } from '../ops/scheduler'
 
 export type ProductCtx = {
   flags: ServerFlags
@@ -36,6 +38,8 @@ export type ProductCtx = {
   trustedProxyHops: number
   demo: { root: string; template: string } | null
   masterKey: string | null
+  /** The PayPal this server really uses. A studio opened here moves money the same way the server does. */
+  paypalMode: 'none' | 'fake' | 'sandbox' | 'live'
   paypal: { pay?: (invoiceId: string, cents?: number) => void; settlePayouts?: (status?: 'SUCCESS' | 'FAILED') => void } | null
   /** Pure rule try. Absent only in a half-built app. */
   tryOne?: (body: unknown) => unknown
@@ -47,6 +51,23 @@ export type ProductCtx = {
   openRequests?: () => string[]
   requireStep?: (c: { req: { header: (name: string) => string | undefined }; get: (key: 'memberId') => string | undefined }, kind: string, binding: string) => void
   sweep?: () => Promise<void>
+}
+
+/** The issue-route body, trimmed the same way Zod trims it, so the grant matches that route. */
+function clientKeyIssuePayload(input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null
+  const row = input as Record<string, unknown>
+  if (typeof row.name !== 'string' || typeof row.partyId !== 'string') return null
+  const name = row.name.trim()
+  const partyId = row.partyId.trim()
+  if (name.length < 1 || name.length > 120 || partyId.length < 1 || partyId.length > 120) return null
+  const out: { name: string; partyId: string; expiryDays?: number | null } = { name, partyId }
+  if ('expiryDays' in row && row.expiryDays !== undefined) {
+    const days = row.expiryDays
+    if (days !== null && (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > 365)) return null
+    out.expiryDays = days
+  }
+  return JSON.stringify(out)
 }
 
 function sameSecret(presented: string, expected: string): boolean {
@@ -180,16 +201,24 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       const now = ctx.now().toISOString()
       mkdirSync(ctx.demo.root, { recursive: true })
       const dbPath = join(ctx.demo.root, `${id}.sqlite`)
-      copyFileSync(ctx.demo.template, dbPath)
+      // A new studio starts with nothing in it: no rules, no people, no example numbers. The owner writes the first
+      // version of the rules in their own words. Only the hosted demo copies a template.
+      const fresh = openDatabase(dbPath)
+      migrate(fresh, { backup: false })
+      fresh.close()
       const { privateKey } = generateKeyPairSync('ed25519')
+      // The studio moves money the way this server moves money: on a real PayPal account when there is one.
+      // A record of what the server had at the time. At boot a studio always uses the server's PayPal as it is then
+      // (or none), so this column never pins a studio to a stand-in.
+      const paypalMode = ctx.paypalMode === 'sandbox' || ctx.paypalMode === 'live' ? 'sandbox' : 'fake'
       control.insertWorkspace({
-        id, slug: id, name, mode: 'studio', paypal_mode: 'fake', db_path: dbPath, status: 'active', created_at: now, expires_at: null, last_active_at: now,
+        id, slug: id, name, mode: 'studio', paypal_mode: paypalMode, db_path: dbPath, status: 'active', created_at: now, expires_at: null, last_active_at: now,
         signing_key_sealed: seal(ctx.masterKey, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()),
       })
       const memberId = randomUUID()
       control.addMember({ id: memberId, workspaceId: id, name: 'Owner', role: 'owner', now })
       const started = await beginRegistration({ config: ctx.webauthn, store: control, memberId, memberName: name, workspaceId: id, now: ctx.now() })
-      return c.json({ workspaceId: id, memberId, ...started, paypal: 'simulated' })
+      return c.json({ workspaceId: id, memberId, ...started, paypal: paypalMode })
     })
   }
 
@@ -375,6 +404,23 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       binding = stepBinding(kind, payeeId)
     } else if (kind === 'rules') {
       binding = body.binding ?? (body.rules ? createHash('sha256').update(JSON.stringify(body.rules)).digest('hex') : '')
+    } else if (kind === 'studio.close') {
+      if (ctx.workspaceMode !== 'studio') throw new Problem(404, 'tenant/not-found', 'Not found', 'A studio is closed from inside that studio.')
+      binding = stepBinding('studio.close', ctx.workspaceId)
+    } else if (kind === 'client-key.issue') {
+      const payload = clientKeyIssuePayload(body.input)
+      if (!payload) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the key and the client.')
+      binding = stepBinding('client-key.issue', payload)
+    } else if (kind === 'agent.revoke' || kind === 'agent.upgrade') {
+      const id = typeof body.id === 'string' ? body.id : ''
+      if (!id) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the agent.')
+      binding = stepBinding(kind, id)
+    } else if (kind === 'resume') {
+      binding = stepBinding('resume', 'safety.resume')
+    } else if (kind === 'client-key.revoke' || kind === 'client-key.rotate' || kind === 'client-key.upgrade') {
+      const id = typeof body.id === 'string' ? body.id : ''
+      if (!id) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the key.')
+      binding = stepBinding(kind, id)
     } else {
       binding = body.binding ?? ''
     }
@@ -559,6 +605,38 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     else if (body.action === 'payout_fail') ctx.paypal?.settlePayouts?.('FAILED')
     else throw new Problem(400, 'request.invalid', 'Request is invalid', 'Use pay, payout_success, or payout_fail.')
     try { await ctx.sweep?.() } catch { /* best-effort sweep */ }
+    return c.json({ ok: true })
+  })
+
+  app.post('/v1/studio/close', async (c) => {
+    if (ctx.workspaceMode !== 'studio') throw new Problem(404, 'tenant/not-found', 'Not found', 'Only a studio its owner created can be closed from here.')
+    const control = requireControl(ctx)
+    const who = memberFromCookie(c, ctx)
+    if (!who) throw new Problem(401, 'auth/required', 'Sign in required', 'Sign in as the owner before closing the studio.')
+    if (who.member.role !== 'owner' || who.member.workspace_id !== ctx.workspaceId) {
+      throw new Problem(403, 'auth/forbidden', 'Owner required', 'Only the owner of this studio can close it.')
+    }
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
+    const row = control.workspace(ctx.workspaceId)
+    if (!row || row.mode !== 'studio') throw new Problem(404, 'tenant/not-found', 'Not found', 'That studio is already gone.')
+    const body = await c.req.json().catch(() => null) as { name?: string } | null
+    const typed = body?.name?.trim() ?? ''
+    if (!row.name.trim() || typed !== row.name.trim()) {
+      throw new Problem(400, 'request.invalid', 'Type the studio’s name', 'Closing deletes this studio on this server. Type its name exactly.')
+    }
+    const binding = stepBinding('studio.close', ctx.workspaceId)
+    const grant = c.req.header('x-mandate-stepup')
+    if (!grant || !control.consumeGrant(grant, who.member.id, 'studio.close', binding, ctx.now().toISOString())) {
+      throw new Problem(401, 'auth/stepup-required', 'Sign this with your passkey', 'Closing the studio needs a fresh passkey signature.')
+    }
+    const dbPath = row.db_path
+    control.event({ id: randomUUID(), at: ctx.now().toISOString(), workspaceId: ctx.workspaceId, memberId: who.member.id, event: 'studio.close', result: 'ok' })
+    if (!control.deleteStudio(ctx.workspaceId)) throw new Problem(404, 'tenant/not-found', 'Not found', 'That studio is already gone.')
+    try { ctx.registry?.drop(ctx.workspaceId) } catch { /* the ledger is already forgotten */ }
+    removeDatabaseFiles(dbPath)
+    c.header('set-cookie', clearSessionCookie(ctx.cookieSecure))
     return c.json({ ok: true })
   })
 

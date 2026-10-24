@@ -70,7 +70,7 @@ One frozen scenario drives every test, screenshot and demo. Nothing in the repo 
 
 | Moment | What Mandate does |
 | --- | --- |
-| Agents negotiate | Studio asks $450, client offers $200. Each is refused by a check against *both* companies' rules. $300 is agreed and **signed**. |
+| Agents negotiate | Each side's negotiator opens at its own target and concedes on its own judgement, inside its own private walk-away (live: $400, $200, $350, $265, $300). The client **accepts** the studio's $300; both companies' rules are checked at that moment and the deal is **signed**. |
 | Studio bills milestone 1 | A $150 charge bound to that milestone. The owner taps. A real PayPal invoice goes to Northwind. |
 | Client pays | Settled **only** when PayPal reports the invoice `PAID` for exactly the locked cents. |
 | Pay Priya | $90 is proposed and cites the settled $150. Without a standing rule the owner taps; with one, Mandate sends it itself. PayPal Payouts sends exactly $90 to Priya's own account. It is called *paid* only when PayPal says `SUCCESS`. |
@@ -96,11 +96,11 @@ One frozen scenario drives every test, screenshot and demo. Nothing in the repo 
 - **Receipts**: one per payment (`/packet`) and one per job, with request, rule, approval, lock, PayPal ids and whether the cents match.
 
 ### Deals and agents
-- **Deal check**: a pure function that tests an offer against *both* companies' rules. Each side keeps **private limits** that the other never sees, and refusals reveal only the side that was breached.
+- **Negotiation**: alternating offers. On its turn a side offers, accepts the other's exact standing offer, or walks away; it ends on acceptance, a walk-away, a deadline both sides know, or a stalemate. An offer must fit the offerer's own rules; an acceptance is checked against *both* companies' rules (a pure function) before the deal is signed. Each side keeps **private limits, a target, a style and a brief** that the other never sees; a client that set its own numbers with its own key is sealed from the studio on the server. Each side is told its own outcome (margin over its walk-away, progress to its target) and its negotiator's debrief. See [docs/NEGOTIATION.md](docs/NEGOTIATION.md).
 - **Signed deals**: an agreed deal is Ed25519-signed, and a charge on that job must bill one of its milestones, once, for exactly the agreed cents (`deal.*` rules).
 - **MCP agent door** (`/mcp` and stdio): six tools (rules, jobs, propose, ledger, offer a deal, explain). **None can approve, pay or change rules.** The owner key is downgraded on this door.
 - **The clerk and two negotiators**: run on Ollama Cloud (`gpt-oss:20b`), with guards (the payee must appear in the request text, a provider error is retried only while nothing has happened, every run is traced with its prompt version and tokens). Evaluated against the real model: the script has 14 cases and then a negotiation.
-- **Live negotiation**: streamed to the console turn by turn, each turn with the tool calls its agent made, with a Stop button.
+- **Live negotiation**: streamed to the console move by move, each with what the negotiator said, its private note (to its own side only) and the tool calls it made, a chart of both sides' concessions, a Stop button, and the end: how it ended, each side's outcome and debrief. Each move is the model's decision; code holds the walk-away, the turn order, the deadline and the arithmetic, and never moves on the model's behalf.
 
 ### Autopilot (the whole job, under signed rules)
 - **Bill on delivery.** A milestone of a signed deal is billed, and its PayPal invoice sent, as soon as proof is attached (`standing.billing`). Amount, client, milestone and once-only come from the signed deal.

@@ -28,7 +28,7 @@ export function closeAll() {
 
 export type Requester = { request: (input: string, init?: RequestInit) => Response | Promise<Response> }
 
-export function harness(options: { commit?: string | null; demoReset?: boolean; flags?: ServerFlags; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: Partial<SafetyConfig>; control?: ControlStore | null; registry?: TenantRegistry | null; budget?: ModelBudget | null; adminKey?: string | null; webauthn?: { rpID: string; rpName: string; origins: string[] } | null; workspace?: { id: string; mode: 'default' | 'demo' | 'studio' | 'live' }; masterKey?: string | null; demo?: { root: string; template: string } | null; classedRates?: boolean; redact?: string[]; rateLimitPerMinute?: number; trustProxy?: boolean; trustedProxyHops?: number; webDist?: string | null; cookieSecure?: boolean; log?: boolean } = {}) {
+export function harness(options: { commit?: string | null; demoReset?: boolean; flags?: ServerFlags; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: Partial<SafetyConfig>; control?: ControlStore | null; registry?: TenantRegistry | null; budget?: ModelBudget | null; adminKey?: string | null; webauthn?: { rpID: string; rpName: string; origins: string[] } | null; workspace?: { id: string; mode: 'default' | 'demo' | 'studio' | 'live'; name?: string | null; paypalMode?: 'fake' | 'sandbox' | 'none' }; masterKey?: string | null; demo?: { root: string; template: string } | null; classedRates?: boolean; redact?: string[]; rateLimitPerMinute?: number; trustProxy?: boolean; trustedProxyHops?: number; webDist?: string | null; cookieSecure?: boolean; log?: boolean; paypalMode?: 'none' | 'fake' | 'sandbox' | 'live' } = {}) {
   const db = openDatabase(':memory:')
   open.push(db)
   migrate(db)
@@ -79,6 +79,7 @@ export function harness(options: { commit?: string | null; demoReset?: boolean; 
       trustedProxyHops: options.trustedProxyHops,
       cookieSecure: options.cookieSecure,
       paypalConfigured: paypal !== null,
+      paypalMode: options.paypalMode ?? 'none',
       log: options.log ?? false,
       publicUrl: 'http://127.0.0.1:8787',
       commit: options.commit,
@@ -138,9 +139,12 @@ export async function confirmPrices(app: Requester) {
 
 export async function agree(app: Requester, overrides: Record<string, unknown> = {}) {
   await confirmPrices(app)
+  // A deal is made the way it is in life: the studio offers, and the client accepts that exact offer.
   const offer = await call(app, 'POST', '/v1/deals/offers', { idem: idem('deal'), body: { buyer: 'Northwind', terms: terms(30_000, { jobId: JOB, ...overrides }) } })
-  if (offer.json.status !== 'agreed') throw new Error(`deal not agreed: ${JSON.stringify(offer.json)}`)
-  return offer.json as { id: string; jobId: string; threadId: string }
+  if (offer.json.status !== 'open') throw new Error(`offer did not stand: ${JSON.stringify(offer.json)}`)
+  const accepted = await call(app, 'POST', `/v1/deals/${offer.json.id}/accept`, { body: {} })
+  if (accepted.json.status !== 'agreed') throw new Error(`deal not agreed: ${JSON.stringify(accepted.json)}`)
+  return accepted.json as { id: string; jobId: string; threadId: string }
 }
 
 /** Bill milestone n of a deal, approve it, and settle it through the fake PayPal. Returns the capture id. */

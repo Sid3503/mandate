@@ -4,7 +4,9 @@ import { resolveClient, resolvePayee } from '../domain/gate'
 import { WarrantBodySchema, type WarrantBody } from '../domain/schemas'
 import { Problem } from '../http/problem'
 import { checkIntent, splitUntrusted, type IntentFlag } from './intent'
-import { applyAudit, segmentPolicy, type PolicySentence } from './policy'
+import { applyAudit, listChanges, segmentPolicy, type PolicySentence } from './policy'
+import { secondReaderSystem, untrusted } from './prompts'
+import { callTool } from './structured'
 import { auditPolicy } from './policyAgents'
 import { unsupportedAddresses } from './guard'
 import type { AgentModel } from './model'
@@ -68,9 +70,12 @@ export type RulesPatch = z.infer<typeof RulesPatchSchema>
 
 export type SecondReaderResult = {
   model: string
-  agreed: boolean
+  /** `unavailable` means no second reading happened. It is never shown as a pass. */
+  status: 'agreed' | 'concerns' | 'unavailable'
+  agreed: boolean | null
   verdict: string
-  critique?: string
+  concerns: Array<{ change: number; text: string; why: string }>
+  missing?: string
 }
 
 export type RulesDraft = {
@@ -301,18 +306,21 @@ function rulesInWords(body: WarrantBody): string {
   ].join('\n')
 }
 
-export function drafterSystem(current: WarrantBody): string {
+export function drafterSystem(current: WarrantBody, firstVersion = false): string {
   return [
     'You are the rules drafter for Mandate, a system that decides whether a company\'s money may move. The owner describes a change to the rules in their own words. You turn it into a patch by calling the tool `propose_rules` exactly once.',
     '',
     'You draft. You never publish, approve, pay, or decide anything: the owner reads your draft as a before-and-after and taps publish themselves.',
     '',
-    'The current rules:',
-    rulesInWords(current),
+    firstVersion
+      ? 'This studio has no rules yet. Your patch is the FIRST version, so it must set everything the rules need: the contractors who may be paid, the clients who may be billed, the kinds of work, the amounts, and whether payouts need client money first. Leave out nothing that the rules cannot work without.'
+      : 'The current rules:',
+    firstVersion ? '' : rulesInWords(current),
     '',
     'How to work:',
     '1. Change only what the owner asked for. Leave every other field out of the patch.',
     '1b. If the request has several parts, put EVERY part in the one patch. Check each sentence of the request against your patch before you call the tool: reminders, billing, who is paid, how much, new people.',
+    '1c. When the studio has no rules yet, use the owner\'s own words for the people: their names and their addresses, exactly as they wrote them. Never invent a person, an email or a number they did not give you.',
     '2. Use the units the tool asks for: dollars, percent, and names exactly as they appear on the rules. Never invent a person, an email or a number the owner did not give you.',
     '3. `standingRules` and `allowedWork` are COMPLETE lists: if you send them, include the existing entries you are keeping.',
     '4. A standing rule lets a payout that matches it go with no tap. Use it when the owner wants someone paid automatically. If they want it to happen the moment a client pays, also set autopilot.payOnSettle. If they want milestones billed as soon as work is delivered, set autopilot.billSignedDeals.',
@@ -340,9 +348,10 @@ export type DraftStage =
   | { stage: 'classified'; rules: number; setAside: number }
   | { stage: 'auditing'; sentences: number; changes: number }
 
-export async function draftRules(input: { model: AgentModel; current: WarrantBody; instruction: string; signal?: AbortSignal; onStage?: (stage: DraftStage) => void; /** False when the caller checks the draft against the words itself, with a model, instead of the built-in word check. */ intent?: boolean }): Promise<RulesDraft> {
+export async function draftRules(input: { model: AgentModel; current: WarrantBody; instruction: string; signal?: AbortSignal; onStage?: (stage: DraftStage) => void; /** False when the caller checks the draft against the words itself, with a model, instead of the built-in word check. */ intent?: boolean; /** True when the studio has no rules yet and this patch is the first version. */ firstVersion?: boolean }): Promise<RulesDraft> {
   const started = Date.now()
   const stage = input.onStage ?? (() => undefined)
+  const firstVersion = input.firstVersion === true
   // The owner's own words, with anyone else's instructions set aside. An address may only come from these.
   const { trusted: ownerWords } = splitUntrusted(input.instruction)
   stage({ stage: 'reading', people: input.current.payees.length + input.current.clients.length, standing: input.current.standing.length })
@@ -360,7 +369,7 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
     try {
       const result = await generateText({
         model: input.model.model,
-        system: drafterSystem(input.current),
+        system: drafterSystem(input.current, firstVersion),
         messages: [{ role: 'user', content: complaint ? `${input.instruction}\n\n(Your last attempt was rejected: ${complaint} Call propose_rules again, fixing that and keeping every part of the request.)` : input.instruction }],
         tools: { propose_rules: tool({ description: 'Propose a patch to the rules. Call it exactly once, with only the fields that change.', inputSchema: RulesPatchSchema }) },
         temperature: 0,
@@ -414,7 +423,14 @@ export async function draftRules(input: { model: AgentModel; current: WarrantBod
     throw new Problem(422, 'rules.draft_unusable', 'The model did not produce a usable draft', detail)
   }
   stage({ stage: 'checking' })
-  const { loosens, tightens, notes } = compareRules(input.current, merged)
+  // The first version of a studio's rules has nothing to loosen or tighten: it is all new. The read-back below is what
+  // tells the owner what it does.
+  const compared = compareRules(input.current, merged)
+  const loosens = firstVersion ? [] : compared.loosens
+  const tightens = firstVersion ? [] : compared.tightens
+  const notes = firstVersion
+    ? ['This is the first version of the rules. Everything in it is new, so there is nothing to loosen or tighten: it decides every request from the start.']
+    : compared.notes
   const intent = await checkDraftAgainstWords({ model: input.model, current: input.current, merged, instruction: input.instruction, audit: input.intent !== false, signal: input.signal, onStage: stage })
   if (intent.usage) {
     totalInputTokens += intent.usage.inputTokens
@@ -457,56 +473,68 @@ async function checkDraftAgainstWords(input: { model: AgentModel; current: Warra
 }
 
 /**
- * An independent second reader for rules drafting.
- * Reviews a proposed rules patch against the owner's instructions and checks fidelity and side-effects.
+ * An independent second reader for a rules draft: a different model, shown the owner's words and the exact list of what
+ * the draft changes (worked out by code), asked one question — does this change do what the owner asked, and nothing
+ * else? It answers through one checked tool: every concern must cite a numbered change it was shown, so it cannot
+ * invent a change and code can point at the line. It fails closed: a reader that could not run says "not checked",
+ * never "verified", because a check that did not happen must never read as one that passed.
  */
+export const SecondReadingSchema = z.object({
+  agreed: z.boolean().describe('true when every change does what the owner asked and nothing the owner did not ask for'),
+  concerns: z.array(z.object({
+    change: z.number().int().min(1).describe('The number of the change this is about'),
+    why: z.string().min(5).max(300).describe('What is wrong with it, against the owner\'s words, in one sentence'),
+  })).max(10).describe('Empty when agreed'),
+  missing: z.string().max(300).optional().describe('Anything the owner asked for that no change does, in one sentence'),
+})
+
 export async function secondReaderOpinion(input: {
   model: AgentModel
   instruction: string
   current: WarrantBody
   draft: WarrantBody
-  summary: string
-  loosens: string[]
-  tightens: string[]
-}): Promise<SecondReaderResult> {
-  const system = [
-    'You are the second reader for Mandate rules drafting.',
-    'Your role is to independently review a drafted rules patch against the owner’s instructions to ensure fidelity and catch unintended side-effects.',
-    'Answer in a short JSON block: {"agreed": true | false, "verdict": "brief verdict", "critique": "brief reasoning"}.',
-  ].join('\n')
-
+  signal?: AbortSignal
+}): Promise<SecondReaderResult & { usage: { inputTokens: number | undefined; outputTokens: number | undefined }; ms: number }> {
+  const changes = listChanges(input.current, input.draft)
+  const shown = changes.map((change) => change.n)
   try {
-    const prompt = `Instruction: "${input.instruction}"\nSummary: "${input.summary}"\nLoosens: ${JSON.stringify(input.loosens)}\nTightens: ${JSON.stringify(input.tightens)}`
-    const res = await generateText({
-      model: input.model.model,
-      system,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0,
-      abortSignal: AbortSignal.timeout(15_000),
+    const made = await callTool({
+      model: input.model,
+      system: secondReaderSystem(),
+      user: [
+        'The owner\'s words:',
+        untrusted('owner_words', input.instruction, 1000),
+        '',
+        changes.length ? 'What the draft changes, worked out by code (exact and complete):' : 'The draft changes nothing.',
+        ...changes.map((change) => `${change.n}. [${change.kind}] ${change.text}`),
+        '',
+        'Give your reading with the second_reading tool.',
+      ].join('\n'),
+      name: 'second_reading',
+      description: 'Your independent reading of the draft.',
+      schema: SecondReadingSchema,
+      signal: input.signal,
+      timeoutMs: 30_000,
+      validate: (value) => {
+        const unknown = value.concerns.filter((concern) => !shown.includes(concern.change)).map((concern) => concern.change)
+        if (unknown.length > 0) return `change ${unknown.join(', ')} is not in the list. Cite only the numbered changes you were shown.`
+        if (value.agreed && value.concerns.length > 0) return 'you agreed but listed concerns. Agree only when there are none.'
+        if (!value.agreed && value.concerns.length === 0 && !value.missing) return 'you disagreed without a concern or anything missing. Say which change is wrong, or what is missing.'
+        return null
+      },
     })
-    const text = res.text.trim()
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      const parsed = JSON.parse(jsonMatch[0]) as { agreed?: boolean; verdict?: string; critique?: string }
-      return {
-        model: input.model.name,
-        agreed: parsed.agreed !== false,
-        verdict: parsed.verdict ?? 'agreed',
-        critique: parsed.critique,
-      }
-    }
+    const concerns = made.value.concerns.map((concern) => ({ change: concern.change, text: changes.find((change) => change.n === concern.change)!.text, why: concern.why }))
     return {
       model: input.model.name,
-      agreed: true,
-      verdict: text.slice(0, 160) || 'agreed',
+      status: made.value.agreed ? 'agreed' : 'concerns',
+      agreed: made.value.agreed,
+      verdict: made.value.agreed ? 'The second reader found the draft does what you asked, and nothing else.' : 'The second reader found something that may not be what you asked.',
+      concerns,
+      ...(made.value.missing ? { missing: made.value.missing } : {}),
+      usage: made.usage,
+      ms: made.ms,
     }
   } catch {
-    return {
-      model: input.model.name,
-      agreed: true,
-      verdict: 'verified',
-      critique: 'Second reader verified the draft against instructions.',
-    }
+    return { model: input.model.name, status: 'unavailable', agreed: null, verdict: 'The second reader could not run, so this draft has NOT had a second reading.', concerns: [], usage: { inputTokens: undefined, outputTokens: undefined }, ms: 0 }
   }
 }
-

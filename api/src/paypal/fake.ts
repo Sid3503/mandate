@@ -1,6 +1,6 @@
 import type { InvoicePort, InvoiceRequest, LiveInvoice } from './invoices'
 import type { LiveDispute, LiveTransaction, WatchPort } from './watch'
-import { PayPalError, type LivePayout, type PayPalPort } from './port'
+import { PayPalError, type CardOnOrder, type LivePayout, type PayPalPort } from './port'
 
 type StoredOrder = {
   amountCents: number
@@ -32,6 +32,8 @@ export class FakePayPal implements PayPalPort {
   lastReturnUrl: string | null = null
 
   readonly orders = new Map<string, StoredOrder>()
+  /** The card each order was paid with and the issuer's 3-D Secure answer, as a test sets them. */
+  readonly cards = new Map<string, CardOnOrder>()
   autoApprove = true
   captureCalls = 0
   refundCalls = 0
@@ -94,6 +96,10 @@ export class FakePayPal implements PayPalPort {
       // PayPal gives every order a payer-action link, card orders included.
       approveUrl: `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
     }
+  }
+
+  async cardResult(orderId: string): Promise<CardOnOrder | null> {
+    return this.cards.get(orderId) ?? null
   }
 
   async captureOrder(orderId: string) {

@@ -22,7 +22,7 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 | Money out | The captured $150 funds Priya's $90. Meera taps. PayPal Payouts sends exactly $90 to Priya's own account, and it is called *paid* only when PayPal says so. | built, verified live in sandbox ($85 payout sent to Priya) |
 | Refusals | $18 team lunch (`category.missing`). Fake vendor "P. Shah" $480 (`payee.unknown`). Payout before the client paid (`funding.missing`). Retry at $250 after the tap (`cart.immutable`). A third $90 past the $180 monthly cap (`cap.monthly`). | built |
 | Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | built |
-| Deal | The two companies' agents agree $300 in two milestones. $450 and $200 are refused by a pure function that checks **both** companies' rules. The agreed deal is signed. | built |
+| Deal | Two companies' negotiators (Mandate's, a person, or the company's own agent over MCP) trade offers move by move. A deal exists only when one side accepts the other's exact offer, inside **both** companies' private rules; it is then signed. It ends on acceptance, a walk-away, a known deadline or a stalemate, and each side gets its own outcome and its negotiator's debrief ([how](docs/NEGOTIATION.md)). The agreed deal is signed. | built |
 | Agents | A clerk Arun can talk to, and two negotiators, on Ollama Cloud (`gpt-oss:20b`) through an MCP server whose six tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
 | Control room | A second screen built with AG Studio (`/app/control-room`): tiles, charts and grids on a copy of the ledger, a layout the owner can save, and a chat analyst that can change the dashboard and nothing else. The Ledger is an AG Grid with CSV export. | built, tested in the browser |
 | Autopilot | With the owner's rules signed, the job runs itself: proof attached → PayPal invoice sent; client pays → the contractor's share is asked for and paid; unpaid invoices get PayPal's reminder. The server re-reads PayPal every few seconds while money is in flight (instantly with a webhook), and the console updates live, so it finishes without anyone pressing or reloading anything. | built, tested in the browser and in pieces live |
@@ -61,7 +61,7 @@ cd api && node --env-file=../.env ./node_modules/tsx/dist/cli.mjs src/main.ts
 
 Open **http://127.0.0.1:8787/** (it opens the landing page, which explains the product; press **Unlock**) and unlock with `dev-mandate-key-change-me`. A guided tour opens on first visit, and every screen has a **Guide** button.
 
-The route: **Deals → Let the agents negotiate** ($450 and $200 refused, $300 agreed and signed) → bill milestone 1 → approve → **Settle**, then approve the order in PayPal as the sandbox buyer and press **Check PayPal and settle** → **Clerk**: "pay Priya her share…" → approve → **Send $90.00** → **Jobs**: $150 in, $90 out, $60 kept. Then paste the fake vendor email into **Clerk** and watch the rules refuse it.
+The route: **Deals → Let the negotiators negotiate** (offers and counter-offers until one side accepts; the deal is signed) → bill milestone 1 → approve → **Settle**, then approve the order in PayPal as the sandbox buyer and press **Check PayPal and settle** → **Clerk**: "pay Priya her share…" → approve → **Send $90.00** → **Jobs**: $150 in, $90 out, $60 kept. Then paste the fake vendor email into **Clerk** and watch the rules refuse it.
 
 Full walk-through with what you should see at each step: [docs/REFERENCE.md](docs/REFERENCE.md#running-against-the-paypal-sandbox).
 
@@ -109,6 +109,7 @@ The console is four places: **Today** (what needs you), **Jobs** (money in relea
 | `PRODUCT.md` | The product story: the problem, what Mandate is, what is built, how it works, what is proven and what is not |
 | `docs/REFERENCE.md` | Everything else: architecture, every screen, rules, the lock, HTTP API, rule codes, tests, security, Render deploy, troubleshooting |
 | `KT.md` | Handover notes and the sandbox accounts |
+| `docs/KT-STUDIO.md` | The "Create your studio" door: what a studio owns, the flags it needs, the traps (localhost, the service worker, per-tab storage) and how to test it |
 
 Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests then Playwright), `npm run demo`. Before pushing: `npm run check` (about 20 seconds; the same checks CI starts with), or `npm run ci` for everything CI runs.
 

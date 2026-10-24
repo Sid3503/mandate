@@ -5,9 +5,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { verifyPasskey, verifyReceipt } from '../../web/src/lib/verify'
 import { createApp } from '../src/app'
-import { passkeyRuleBinding } from '../src/auth/passkeys'
+import { passkeyRuleBinding, stepBinding } from '../src/auth/passkeys'
 import { ControlStore } from '../src/control/store'
 import { migrate, openDatabase, seed } from '../src/db/database'
+import { Repo } from '../src/db/repo'
+import { LINE_STUDIO_WARRANT, WARRANT_ID } from '../src/domain/schemas'
 import { loadSigner } from '../src/domain/signing'
 import { loadFlags } from '../src/flags'
 import { rateClass } from '../src/ops/ratelimit'
@@ -89,6 +91,15 @@ async function ask(app: Requester, prefix: string, headers: Record<string, strin
   return { status: created.status, id: body.id, gate: body.gate }
 }
 
+/** Writes the first version of a studio's rules, the way the owner's own words would become rules. */
+function writeFirstRules(h: { control: ControlStore }, workspaceId: string): void {
+  const row = h.control.workspace(workspaceId)
+  if (!row) throw new Error('no workspace')
+  const db = openDatabase(row.db_path)
+  new Repo(db).insertWarrant(WARRANT_ID, 1, LINE_STUDIO_WARRANT, NOW.toISOString())
+  db.close()
+}
+
 describe('per-workspace passkey rule', () => {
   it('a new studio requires a passkey and the default studio does not', async () => {
     const h = moneyDesk()
@@ -106,9 +117,13 @@ describe('per-workspace passkey rule', () => {
     expect(opened.status).toBe(200)
     const studio = await opened.json() as { workspaceId: string; memberId: string }
     expect(h.control.workspace(studio.workspaceId)?.passkey_for_money).toBe(1)
+    // A new studio starts with no rules at all, so nothing may be asked for money until the owner writes them.
     const token = 'studio-owner-session-token-32'
     h.control.putSession({ token, memberId: studio.memberId, workspaceId: studio.workspaceId, method: 'passkey', now: NOW.toISOString(), idleHours: 12, absoluteDays: 7 })
     const headers = { ...WEB, cookie: `mnd_session=${token}` }
+    const bare = await ask(h.app, `/w/${studio.workspaceId}`, headers)
+    expect(bare.status).toBe(404)
+    writeFirstRules(h, studio.workspaceId)
     const asked = await ask(h.app, `/w/${studio.workspaceId}`, headers)
     expect(asked.status).toBe(201)
     expect(asked.gate).toBe('NEEDS_APPROVAL')
@@ -662,6 +677,41 @@ describe('signature column and existing routes', () => {
     expect(payload).toEqual({ actor: 'owner', cartHash: 'abc' })
     expect(readdirSync(join(dir, 'backups')).some((name) => name.endsWith('.sqlite'))).toBe(true)
     db.close()
+  })
+
+  it('binds a client-key signature to the key being issued, revoked, or rotated', async () => {
+    const controlDb = openDatabase(':memory:')
+    const control = new ControlStore(controlDb, 'pepper-p4')
+    control.ensureDefault(':memory:', NOW.toISOString())
+    const memberId = randomUUID()
+    control.addMember({ id: memberId, workspaceId: 'ws_default', name: 'Meera', role: 'owner', now: NOW.toISOString() })
+    const token = 'client-key-step-session-token-32b'
+    control.putSession({ token, memberId, workspaceId: 'ws_default', method: 'passkey', now: NOW.toISOString(), idleHours: 12, absoluteDays: 7 })
+    const h = harness({ flags: loadFlags({ FLAG_PASSKEYS: '1' }), control, webauthn: WA })
+    const headers = { ...WEB, cookie: `mnd_session=${token}`, 'content-type': 'application/json' }
+    const payload = JSON.stringify({ name: 'Harbor Foods buyer', partyId: 'client_northwind' })
+    const issued = await h.app.request('http://mandate.test/auth/stepup/options', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ kind: 'client-key.issue', input: { name: ' Harbor Foods buyer ', partyId: ' client_northwind ' }, binding: 'not-this' }),
+    })
+    expect(issued.status).toBe(200)
+    const issuedBody = await issued.json() as { challengeId: string }
+    const issueRow = control.takeChallenge(issuedBody.challengeId, NOW.toISOString())
+    expect(issueRow?.binding_kind).toBe('client-key.issue')
+    expect(issueRow?.binding_hash).toBe(stepBinding('client-key.issue', payload))
+
+    const keyId = 'ck_harbor'
+    const revoked = await h.app.request('http://mandate.test/auth/stepup/options', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ kind: 'client-key.revoke', id: keyId }),
+    })
+    expect(revoked.status).toBe(200)
+    const revokedBody = await revoked.json() as { challengeId: string }
+    const revokeRow = control.takeChallenge(revokedBody.challengeId, NOW.toISOString())
+    expect(revokeRow?.binding_kind).toBe('client-key.revoke')
+    expect(revokeRow?.binding_hash).toBe(stepBinding('client-key.revoke', keyId))
   })
 
   it('stores the assertion on the approval and does not add the missing routes', async () => {

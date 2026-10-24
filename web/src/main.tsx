@@ -39,6 +39,13 @@ import { PayeePayments } from './screens/PayeePayments'
 import { Payees } from './screens/Payees'
 import { Loading } from './components/ui'
 
+// The same move as the page script, for a copy of the app that was cached on the IP address.
+if (location.hostname === '127.0.0.1' || location.hostname === '::1') {
+  const next = new URL(location.href)
+  next.hostname = 'localhost'
+  location.replace(next.href)
+}
+
 const ControlRoom = lazy(() => import('./screens/ControlRoom'))
 const Ledger = lazy(() => import('./screens/Ledger').then((module) => ({ default: module.Ledger })))
 

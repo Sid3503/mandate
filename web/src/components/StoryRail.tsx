@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
-import { useDeals, useIsOwner, useProposals, useWarrant } from '../lib/hooks'
+import { useDeals, useIsOwner, useProposals, useSession, useWarrant } from '../lib/hooks'
 import { fundedPhase } from '../lib/words'
 
 const HIDDEN = 'mandate.story.hidden'
@@ -24,11 +24,15 @@ function writeFlag(key: string, on: boolean): void {
   }
 }
 
-/** The studio's own name, as its price sheet says it. The rules do not carry one. */
+/**
+ * The studio's own name, as the owner gave it when they opened it. The seller price sheet names the company the rules
+ * are about, which is the fallback for the default studio.
+ */
 export function useStudioName(): string | null {
   const owner = useIsOwner()
+  const session = useSession()
   const sheets = useQuery({ queryKey: ['party-rules'], queryFn: api.partyRules, enabled: owner, staleTime: 60_000 })
-  return sheets.data?.data.find((sheet) => sheet.role === 'seller')?.displayName || null
+  return session.data?.studioName ?? sheets.data?.data.find((sheet) => sheet.role === 'seller')?.displayName ?? null
 }
 
 /** Who is who, in one line: the person at the keyboard is the studio, and everyone else is someone the studio deals with. */
@@ -53,10 +57,67 @@ export function StoryRail() {
   const owner = useIsOwner()
   const proposals = useProposals()
   const deals = useDeals()
+  const warrant = useWarrant()
   const cast = useCast()
   const [hidden, setHidden] = useState(() => readFlag(HIDDEN))
   const [proved, setProved] = useState(() => readFlag(PROVED))
   if (!owner || hidden || !proposals.data || !deals.data) return null
+
+  // A studio with no rules yet has no job to run either. The first thing to write is the rules, in the owner's words.
+  if (!warrant.data) {
+    return (
+      <section className="story-rail panel" aria-labelledby="h-story" data-testid="story-rail">
+        <div className="row between wrap gap-s">
+          <h2 className="panel-title" id="h-story">Your studio starts here</h2>
+          <button type="button" className="link small" onClick={() => { writeFlag(HIDDEN, true); setHidden(true) }}>Hide this guide</button>
+        </div>
+        <p className="story-cast" data-testid="story-cast">
+          <span><b>You</b> are {cast.studio}</span>
+          <span><b>AI agents</b> can ask, never pay</span>
+        </p>
+        <ol className="story-steps">
+          <li className="is-here" aria-current="step">
+            <span className="story-mark" aria-hidden="true">1</span>
+            <div>
+              <strong>Write the rules your studio runs on</strong>
+              <div className="story-now">
+                <p><span className="eyebrow">Who</span> You, in your own words</p>
+                <p><span className="eyebrow">Why</span> Nothing can be asked for, approved or paid until the rules exist. They decide what pays without your tap, what needs it, and what never happens at all.</p>
+                <Link className="btn btn-ink btn-small" to="/rules">Write your rules →</Link>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </section>
+    )
+  }
+
+  if ((warrant.data.clients ?? []).length === 0 || warrant.data.payees.length === 0) {
+    return (
+      <section className="story-rail panel" aria-labelledby="h-story" data-testid="story-rail">
+        <div className="row between wrap gap-s">
+          <h2 className="panel-title" id="h-story">Your studio starts here</h2>
+          <button type="button" className="link small" onClick={() => { writeFlag(HIDDEN, true); setHidden(true) }}>Hide this guide</button>
+        </div>
+        <p className="story-cast" data-testid="story-cast">
+          <span><b>You</b> are {cast.studio}</span>
+        </p>
+        <ol className="story-steps">
+          <li className="is-here" aria-current="step">
+            <span className="story-mark" aria-hidden="true">1</span>
+            <div>
+              <strong>Name who you bill and who you pay</strong>
+              <div className="story-now">
+                <p><span className="eyebrow">Who</span> You, on the rules</p>
+                <p><span className="eyebrow">Why</span> A request has nowhere to go until a client and a contractor are on the rules.</p>
+                <Link className="btn btn-ink btn-small" to="/rules">Add them on Rules →</Link>
+              </div>
+            </div>
+          </li>
+        </ol>
+      </section>
+    )
+  }
 
   const rows = proposals.data.data
   const charges = rows.filter((row) => row.kind === 'charge')
@@ -72,10 +133,12 @@ export function StoryRail() {
   const steps: Step[] = [
     {
       id: 'agree', done: agreed || billed,
-      title: `Agree a price with ${cast.client}`,
-      who: `Your agent and ${cast.client}’s, each inside its own company’s limit`,
-      why: `No money exists until both companies’ rules agree. You never see ${cast.client}’s limit, and they never see yours.`,
-      to: '/deals', cta: 'Open the deal',
+      title: agreed ? `Agree a price with ${cast.client}` : `Bill ${cast.client}`,
+      who: agreed ? `Your agent and ${cast.client}’s, each inside its own company’s limit` : 'You',
+      why: agreed
+        ? `No money exists until both companies’ rules agree. You never see ${cast.client}’s limit, and they never see yours.`
+        : `A bill does not need a deal. ${cast.client} pays it in PayPal. A deal, on Deals, is for when both companies agree the price first, and ${cast.client} sets their ceiling with their own key.`,
+      to: agreed ? '/deals' : '/new?kind=charge', cta: agreed ? 'Open the deal' : 'Bill them',
     },
     {
       id: 'bill', done: billed,

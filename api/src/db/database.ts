@@ -17,6 +17,13 @@ CREATE TABLE IF NOT EXISTS warrants (
   PRIMARY KEY (id, version)
 );
 
+-- The rules in the owner's own words, kept until they become rules. One row per studio: the last thing they wrote.
+CREATE TABLE IF NOT EXISTS rule_words (
+  id TEXT PRIMARY KEY,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS proposals (
   id TEXT PRIMARY KEY,
   warrant_id TEXT NOT NULL,
@@ -114,6 +121,50 @@ CREATE TABLE IF NOT EXISTS deals (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS deals_thread ON deals(thread_id, created_at);
+
+-- A negotiation: one table, two seats, a deadline both sides know. Offers are rows of deals; every move (an offer,
+-- an acceptance, a walk-away) is a row of negotiation_moves, so the whole exchange can be replayed in order.
+CREATE TABLE IF NOT EXISTS negotiations (
+  id TEXT PRIMARY KEY,
+  buyer_id TEXT NOT NULL,
+  seller_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  category TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  milestones_json TEXT NOT NULL,
+  offers_per_side INTEGER NOT NULL,
+  started_by TEXT NOT NULL,
+  ended_reason TEXT,
+  ended_by TEXT,
+  agreed_deal_id TEXT,
+  -- Each side's own reading of how it went, written by its negotiator after the end. Private to that side.
+  debrief_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  ended_at TEXT
+);
+CREATE INDEX IF NOT EXISTS negotiations_created ON negotiations(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS negotiation_moves (
+  id TEXT PRIMARY KEY,
+  negotiation_id TEXT NOT NULL REFERENCES negotiations(id),
+  seq INTEGER NOT NULL,
+  side TEXT NOT NULL,
+  action TEXT NOT NULL,
+  deal_id TEXT,
+  total_cents INTEGER,
+  final INTEGER NOT NULL DEFAULT 0,
+  message TEXT,
+  -- The mover's own reasoning: what it believes about the other side and why it moved. Private to the mover's side.
+  assessment TEXT,
+  actor TEXT NOT NULL,
+  by TEXT NOT NULL,
+  run_id TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (negotiation_id, seq)
+);
 CREATE INDEX IF NOT EXISTS deals_created ON deals(created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS deliveries (
@@ -275,7 +326,7 @@ export function openDatabase(path: string): DatabaseSync {
   return db
 }
 
-export function migrate(db: DatabaseSync): void {
+export function migrate(db: DatabaseSync, options: { backup?: boolean } = {}): void {
   db.exec(SCHEMA)
   const columns = new Set((db.prepare('PRAGMA table_info(proposals)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!columns.has('job_id')) db.exec('ALTER TABLE proposals ADD COLUMN job_id TEXT')
@@ -300,10 +351,13 @@ export function migrate(db: DatabaseSync): void {
   // written through the API (the seed wrote before it existed), so they count as already written.
   const rulesColumns = new Set((db.prepare('PRAGMA table_info(party_rules)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!rulesColumns.has('origin')) db.exec(`ALTER TABLE party_rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'written'`)
+  // Who wrote a sheet: the studio's owner, or the company itself with its own key. A client that wrote its own number
+  // has claimed its seat, and from then on the studio can neither read nor overwrite it.
+  if (!rulesColumns.has('written_by')) db.exec(`ALTER TABLE party_rules ADD COLUMN written_by TEXT`)
   // A status link may also carry the right to pay what is due, not only to look at it.
   const shareColumns = new Set((db.prepare('PRAGMA table_info(share_links)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!shareColumns.has('can_pay')) db.exec('ALTER TABLE share_links ADD COLUMN can_pay INTEGER NOT NULL DEFAULT 0')
-  applySqlSteps(db, OPS_STEPS, new Date().toISOString(), backupFileDatabase)
+  applySqlSteps(db, OPS_STEPS, new Date().toISOString(), options.backup === false ? undefined : backupFileDatabase)
   const eventColumns = new Set((db.prepare('PRAGMA table_info(events)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!eventColumns.has('actor_json')) db.exec('ALTER TABLE events ADD COLUMN actor_json TEXT')
   const agentColumns = new Set((db.prepare('PRAGMA table_info(agents)').all() as Array<{ name: string }>).map((column) => column.name))
@@ -368,7 +422,7 @@ export function resetDemo(db: DatabaseSync, now: Date): void {
   db.exec('BEGIN')
   try {
     // Children before parents, because events point at proposals and deliveries at deals.
-    for (const table of ['events', 'deliveries', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
+    for (const table of ['events', 'deliveries', 'negotiation_moves', 'negotiations', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
       db.exec(`DELETE FROM ${table}`)
     }
     db.exec("UPDATE safety_state SET paused = 0, reason = NULL, since = NULL, by = NULL WHERE id = 1")

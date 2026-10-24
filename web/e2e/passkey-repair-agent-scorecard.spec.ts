@@ -33,6 +33,7 @@ test('agent scorecard: requests, refusals, auto, needs-tap, last seen and breake
 
   await page.getByRole('button', { name: 'Create recovery codes' }).click()
   await page.getByRole('button', { name: 'I saved these' }).click()
+  await page.getByRole('button', { name: 'Skip for now' }).click()
   await page.getByRole('button', { name: 'Skip rules' }).click()
   await page.getByRole('button', { name: 'Open Today' }).click()
   await expect(page.getByRole('heading', { name: /Today/ })).toBeVisible()

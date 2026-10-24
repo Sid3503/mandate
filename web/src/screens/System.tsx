@@ -123,7 +123,7 @@ function ClientKeys() {
       ) : null}
       {error ? <p className="draft-added" role="alert">{error.title}: {error.detail}</p> : null}
       <form className="draft-form" onSubmit={submit}>
-        <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Northwind buyer agent" required /></label>
+        <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. the client's buyer agent" required /></label>
         <label className="field"><span>Client</span>
           <select value={partyId} onChange={(e) => setPartyId(e.target.value)} required>
             <option value="">Pick a client…</option>
@@ -195,6 +195,81 @@ function FlagsPanel() {
           })}
         </div>
       ) : null}
+    </section>
+  )
+}
+
+const ROLE_LINE: Record<string, string> = {
+  owner: 'Owner · can approve, settle, change rules',
+  approver: 'Approver · can approve up to their limit, and pause',
+  proposer: 'Proposer · can ask and read',
+  viewer: 'Viewer · can look',
+  payee: 'Payee · can see what they are paid',
+}
+
+/** One sentence for the PayPal this server actually has. No studio pastes a secret here. */
+function paypalLine(mode: string | undefined): string {
+  if (mode === 'live') return 'This server’s live PayPal account'
+  if (mode === 'sandbox') return 'This server’s PayPal sandbox'
+  if (mode === 'fake') return 'Simulated · no real money'
+  return 'Not connected · nothing can be charged'
+}
+
+function PayPalAccount({ mode }: { mode: string | undefined }) {
+  const live = mode === 'sandbox' || mode === 'live'
+  return (
+    <section className="panel" aria-labelledby="h-paypal" data-testid="paypal-account">
+      <h2 className="panel-title" id="h-paypal">{live ? 'This server’s PayPal' : mode === 'fake' ? 'Simulated PayPal' : 'PayPal is not connected'}</h2>
+      {live ? (
+        <p>Every studio on this server settles through one PayPal {mode === 'live' ? 'account' : 'sandbox'}. Invoices still go to this studio’s clients, and payouts still go to this studio’s contractors. Another studio cannot see this ledger. This console does not hold the PayPal secret.</p>
+      ) : mode === 'fake' ? (
+        <p>This demo does not move real money. A studio opened on a server that has PayPal uses that server’s sandbox. Invoices and payouts still name this studio’s own clients and contractors.</p>
+      ) : (
+        <p>Nothing on this server can be charged. The connection belongs to the server, not to one studio. When it is connected, invoices and payouts still go to this studio’s own clients and contractors.</p>
+      )}
+    </section>
+  )
+}
+
+function CloseStudio() {
+  const me = useSession()
+  const navigate = useNavigate()
+  const client = useQueryClient()
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<ApiError | null>(null)
+  if (me.data?.role !== 'owner' || me.data.workspaceMode !== 'studio') return null
+  const studio = me.data.studioName?.trim() ?? ''
+  const match = studio.length > 0 && name.trim() === studio
+  const close = async () => {
+    if (!match || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.closeStudio(name.trim())
+      try {
+        const raw = localStorage.getItem('mandate.studio.progress')
+        const saved = raw ? JSON.parse(raw) as { workspace?: string } : null
+        if (saved?.workspace === me.data?.workspaceId) localStorage.removeItem('mandate.studio.progress')
+      } catch { /* the wizard can be started again */ }
+      session.clear()
+      client.clear()
+      navigate('/welcome', { replace: true })
+    } catch (caught) {
+      setError(caught as ApiError)
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="panel panel-warn" aria-labelledby="h-close-studio" data-testid="close-studio">
+      <h2 className="panel-title" id="h-close-studio">Close this studio</h2>
+      <p>Money already sent stays in PayPal. The ledger, the rules, the people, and the signing key on this server are deleted. This cannot be undone.</p>
+      <label className="field">
+        <span>Type <strong>{studio}</strong> to close it</span>
+        <input value={name} onChange={(event) => setName(event.target.value)} autoComplete="off" spellCheck={false} data-testid="close-studio-name" />
+      </label>
+      <button type="button" className="btn btn-ink" disabled={!match || busy} onClick={() => void close()} data-testid="close-studio-btn">{busy ? 'Closing…' : 'Close studio'}</button>
+      {error ? <p role="alert">{error.title}. {error.detail}</p> : null}
     </section>
   )
 }
@@ -297,6 +372,7 @@ export function System() {
         </section>
       ) : null}
       <ToolTiers />
+      <PayPalAccount mode={me.data?.paypalMode} />
       <div className="rules-grid">
         <section className="panel" data-tour="system-checks">
           <h2 className="panel-title">Checks</h2>
@@ -316,9 +392,9 @@ export function System() {
         <section className="panel" data-tour="system-console">
           <h2 className="panel-title">This console</h2>
           <div className="kvs">
-            <KV label="Key">{me.data?.role === 'owner' ? 'Owner · can approve, settle, change rules' : 'Proposer · can ask and read'}</KV>
+            <KV label="Key">{ROLE_LINE[me.data?.role ?? ''] ?? 'Signed in'}</KV>
             <KV label="API version" mono>{me.data?.version ?? '—'}</KV>
-            <KV label="PayPal">{me.data?.paypalConfigured ? 'Sandbox credentials set' : 'Not configured'}</KV>
+            <KV label="PayPal">{paypalLine(me.data?.paypalMode)}</KV>
             <KV label="Agents">{me.data?.agents.enabled ? `On · ${me.data.agents.model}` : 'Off · set OLLAMA_API_KEY'}</KV>
             <KV label="Origin" mono>{location.origin}</KV>
             <KV label="Offline">App shell only. Money calls are never cached or queued.</KV>
@@ -333,6 +409,7 @@ export function System() {
           <Link className="btn btn-ghost" to="/members">Members</Link>
         </section>
       </div>
+      <CloseStudio />
     </div>
   )
 }

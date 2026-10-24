@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
 import { AskPanel } from './AskPanel'
-import { useToday } from '../lib/hooks'
+import { useToday, useWarrant } from '../lib/hooks'
 
 /** `open(message)` asks it straight away. `open(message, { send: false })` only fills the box, so the person reads it and presses send. */
 type AskContext = { open: (message?: string, options?: { send?: boolean }) => void; close: () => void; isOpen: boolean }
@@ -57,6 +57,7 @@ export function AskProvider({ children }: { children: ReactNode }) {
 
 function AskDialog({ initial, fillOnly, onClose }: { initial: string | undefined; fillOnly: boolean; onClose: () => void }) {
   const today = useToday()
+  const warrant = useWarrant()
   const location = useLocation()
   const box = useRef<HTMLDivElement>(null)
   const first = useRef(location.pathname)
@@ -91,10 +92,13 @@ function AskDialog({ initial, fillOnly, onClose }: { initial: string | undefined
     : job
     ? { jobId: decodeURIComponent(job) }
     : undefined
+  // The examples are this studio's own people, taken from its rules, not the sample studio's.
+  const contractor = warrant.data?.payees?.[0]?.displayName ?? 'the contractor'
+  const client = warrant.data?.clients?.[0]?.displayName ?? 'the client'
   const examples = [
     ...(today.data?.readyToBill ?? []).slice(0, 1).map((item) => `${item.title} for ${item.buyerName} is delivered, bill it ${LINK}`),
-    ...((today.data?.automation?.standingRules ?? 0) > 0 ? [`pay Priya her share for the latest Northwind payment ${LINK}`] : []),
-    'pay Priya 60% of what Northwind pays, automatically',
+    ...((today.data?.automation?.standingRules ?? 0) > 0 ? [`pay ${contractor} her share for the latest ${client} payment ${LINK}`] : []),
+    `pay ${contractor} 60% of what ${client} pays, automatically`,
   ]
 
   return (

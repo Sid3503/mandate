@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { expect, test, type Page } from '@playwright/test'
+import { currentWorkspace, writeFirstRules } from './studio'
 
 async function arm(page: Page) {
   const client = await page.context().newCDPSession(page)
@@ -28,10 +29,12 @@ test('sign in, approve, verify the receipt, then see a tampered one fail', async
   expect(fingerprint.length).toBe(16)
   await page.getByRole('button', { name: 'Create recovery codes' }).click()
   await page.getByRole('button', { name: 'I saved these' }).click()
+  await page.getByRole('button', { name: 'Skip for now' }).click()
   await page.getByRole('button', { name: 'Skip rules' }).click()
   await page.getByRole('button', { name: 'Open Today' }).click()
-  const workspace = await page.evaluate(() => sessionStorage.getItem('mandate.workspace'))
-  expect(workspace).toBeTruthy()
+  const workspace = await currentWorkspace(page)
+  // A new studio has no rules until the owner writes them, so this one writes them first.
+  await writeFirstRules(page, workspace)
   const made = await page.request.post(`/w/${workspace}/v1/proposals`, {
     headers: { origin: 'http://localhost:8777', 'x-mandate-client': 'web', 'idempotency-key': 'passkey-receipt-1' },
     data: {

@@ -143,7 +143,7 @@ describe('red team: the door has no handle to pull', () => {
     const w = await world()
     const { use, client } = await connect(w.app, STUDIO_KEY)
     const names = (await client.listTools()).tools.map((tool) => tool.name)
-    expect(names).toHaveLength(6)
+    expect(names).toHaveLength(9)
     const before = money(w.paypal!)
     for (const guess of ['approve', 'capture', 'pay', 'send_payout', 'refund', 'publish_rules', 'create_order', 'pay_order', 'create_refund', 'accept_dispute_claim', 'create_invoice', 'record_payment_for_invoice', 'execute_sql', 'reject']) {
       const result = await use(guess, { id: 'anything', proposalId: 'anything', amountCents: 9_000 })

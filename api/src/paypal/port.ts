@@ -5,6 +5,12 @@ export type CreatedOrder = {
   payeeAttached: boolean
 }
 
+export type CardOnOrder = {
+  brand: string | null
+  lastDigits: string | null
+  authentication: { liabilityShift: string | null; enrollment: string | null; status: string | null } | null
+}
+
 export type LiveOrder = {
   orderId: string
   status: string
@@ -78,6 +84,11 @@ export type PayPalPort = {
     cancelUrl?: string
   }): Promise<CreatedOrder>
   getOrder(orderId: string): Promise<LiveOrder>
+  /**
+   * The card a buyer paid an order with, and the issuer's 3-D Secure answer, as PayPal reports them on the order's
+   * payment source. Null before a card was submitted. Optional: a port without it is treated as "no check was asked".
+   */
+  cardResult?(orderId: string): Promise<CardOnOrder | null>
   captureOrder(orderId: string, proposalId: string): Promise<CapturedPayment>
   refundCapture(input: {
     proposalId: string

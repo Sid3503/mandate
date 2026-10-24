@@ -11,7 +11,8 @@ import { DealTermsSchema, type DealTerms } from '../domain/deal'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
 import { NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
-import { PayPalError, type CreatedOrder, type LivePayout, type PayPalPort } from '../paypal/port'
+import { PayPalError, type CardOnOrder, type CreatedOrder, type LivePayout, type PayPalPort } from '../paypal/port'
+import { cardAuthDecision } from '../domain/cardAuth'
 import type { LiveDispute, WatchPort } from '../paypal/watch'
 import { assessFeatures } from '../domain/paypalFeatures'
 import { reconcile } from '../domain/reconcile'
@@ -315,6 +316,8 @@ export class MandateService {
       const version = current ? current.version + 1 : 1
       const id = current?.id ?? WARRANT_ID
       this.repo.insertWarrant(id, version, parsed.data, now, signatureJson)
+      // The words in the owner's own words have become rules. They are a draft, and a draft that is now rules is done.
+      this.repo.clearRuleWords()
       for (const payee of parsed.data.payees) {
         this.repo.insertPayee({
           id: payee.id,
@@ -726,6 +729,21 @@ export class MandateService {
         approveUrl: live.approveUrl ?? saved.approve_url,
       })
     }
+    // A card paid on our own page is captured only if the card's bank confirmed the cardholder where that is required.
+    // The server reads the answer from PayPal itself: the browser reports one too, and a browser can be made to lie.
+    let card: CardOnOrder | null = null
+    if (saved.order_kind === 'card' && live.status === 'APPROVED' && this.paypal.cardResult) {
+      card = await this.paypal.cardResult(saved.order_id!)
+      const decision = cardAuthDecision(card?.authentication ?? null)
+      if (decision.action !== 'capture') {
+        const now = this.iso()
+        this.repo.transaction(() => {
+          this.repo.setPhase(saved.id, 'order_created', now)
+          this.repo.insertEvent(randomUUID(), saved.id, 'card.not_verified', saved.clause, { orderId: saved.order_id, action: decision.action, why: decision.why, brand: card?.brand ?? null, lastDigits: card?.lastDigits ?? null, ...(card?.authentication ?? {}) }, now)
+        })
+        throw new Problem(402, decision.action === 'refuse' ? 'pay.card_not_verified' : 'pay.card_check_incomplete', decision.action === 'refuse' ? 'The card was not confirmed by its bank' : 'The bank check did not finish', decision.why, { proposalId: saved.id })
+      }
+    }
     const captured = await this.paypal.captureOrder(saved.order_id!, saved.id)
     if (captured.amountCents !== saved.amount_cents || captured.currency !== saved.currency) {
       return this.refuseLive(saved, captured.amountCents, captured.currency)
@@ -737,6 +755,8 @@ export class MandateService {
         orderId: saved.order_id,
         captureId: captured.captureId,
         amountCents: captured.amountCents,
+        // What the receipt can say about the card: its brand, its last four digits, and whether the bank confirmed it.
+        ...(card ? { card: { brand: card.brand, lastDigits: card.lastDigits, liabilityShift: card.authentication?.liabilityShift ?? null } } : {}),
         ...(by ? { by } : {}),
       }, now)
     })
@@ -1446,13 +1466,19 @@ export class MandateService {
    */
   tryRequest(input: ProposalCreate, rules?: WarrantBody) {
     const live = this.repo.latestWarrant()
-    if (!live) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+    // A studio with no rules yet can still try a draft: the verdict comes from the draft, and there is no live column.
+    if (!live && !rules) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
     const now = this.iso()
     const under = (body: WarrantBody) => {
-      const made = this.judge(input, { id: live.id, version: live.version, body }, now, 'owner')
+      const made = this.judge(input, { id: live?.id ?? 'draft', version: live?.version ?? 0, body }, now, 'owner')
       return { gate: made.decision.gate, clause: made.decision.clause, detail: made.decision.detail }
     }
-    return { live: under(live.body), draft: rules ? under(rules) : null }
+    return { live: live ? under(live.body) : null, draft: rules ? under(rules) : null }
+  }
+
+  /** The live rules, or null when the studio has not written any yet. */
+  liveRules(): WarrantBody | null {
+    return this.repo.latestWarrant()?.body ?? null
   }
 
   private proposeNew(input: ProposalCreate, now: string, actor: Role, runId: string | null = null): HttpResult {
@@ -1828,7 +1854,9 @@ export class MandateService {
    */
   replay(proposed: WarrantBody, limit = 40) {
     const live = this.repo.latestWarrant()
-    if (!live) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+    // A studio with no rules yet has nothing to replay against: there is no live version to compare with, and its
+    // ledger is empty. The answer is nothing, and saying so is true.
+    if (!live) return { checked: 0, changed: [], nowNoTap: 0, nowTap: 0, nowRefused: 0, nowAllowed: 0 }
     const names = (id: string | null) => [...live.body.payees, ...live.body.clients, ...proposed.payees, ...proposed.clients].find((party) => party.id === id)?.displayName ?? 'Unknown'
     const rows = this.repo.listProposals(limit, null)
     const label = (d: Decision) => (d.gate === 'DENY' ? `refused (${d.clause})` : d.gate === 'AUTO' ? 'goes with no tap' : 'waits for the owner’s tap')

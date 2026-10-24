@@ -11,15 +11,16 @@ import { Metrics } from './ops/metrics'
 import type { ModelBudget } from './ops/budget'
 import { MAX_RATE_BUCKETS, RateLimiter, pruneBuckets, rateClass } from './ops/ratelimit'
 import { redactText } from './ops/redact'
+import { isWorkspaceId } from './tenancy/ids'
 import type { TenantRegistry } from './tenancy/registry'
 import { Hono, type Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import type { DatabaseSync } from 'node:sqlite'
 import { VERSION } from './config'
 import { defaultFlags, type ServerFlags } from './flags'
-import { databaseReady, resetDemo } from './db/database'
+import { databaseReady, openDatabase, resetDemo } from './db/database'
 import { z } from 'zod'
-import { BillMilestoneSchema, DealOfferSchema, DecideDeliverySchema } from './domain/deal'
+import { BillMilestoneSchema, DealAcceptSchema, DealOfferSchema, DecideDeliverySchema, WalkAwaySchema } from './domain/deal'
 import type { Signer } from './domain/signing'
 import { IdempotencyKeySchema, ProposalCreateSchema, CaptureSchema, ListQuerySchema, WarrantBodySchema, SafetyConfigSchema, type WarrantBody } from './domain/schemas'
 import { onError, Problem, sendProblem, invalidRequest } from './http/problem'
@@ -30,7 +31,7 @@ import { PayPalError, type PayPalPort } from './paypal/port'
 import { handleMcp } from './mcp/http'
 import { AgentService, logReviewFailure } from './agents/service'
 import { live } from './services/live'
-import { acceptLegacyMachineKey, machineKeyHash } from './services/machine-key'
+import { acceptLegacyMachineKey, machineKeyHash, workspaceFromMachineKey } from './services/machine-key'
 import type { Notifier } from './services/notify'
 import { StudioTurnSchema } from './agents/studio'
 import { DEEP_RUN, EVERY_CHANGE_RUN, GUARANTEES } from './domain/guarantees'
@@ -85,6 +86,12 @@ export type AppDeps = {
     webhookId?: string | null
     /** Which PayPal the browser SDK talks to, and which hosts the console's content security policy may name. */
     paypalEnvironment?: 'sandbox' | 'live'
+    /**
+     * The PayPal this app really uses. `none` means the server has no PayPal account, so no money can move at all;
+     * `fake` means a stand-in that only the tests and the hosted demo use; `sandbox` and `live` are a real account.
+     * The console says which, so nobody is told a payment is real when it is not.
+     */
+    paypalMode?: 'none' | 'fake' | 'sandbox' | 'live'
     /** `auto` lets the hosted stand-in for the client's agent answer a delivery as soon as it arrives. */
     clientAgent?: 'auto' | 'manual'
     /** Lets the owner wipe the ledger back to a fresh Line Studio. Sandbox demos only. */
@@ -104,7 +111,9 @@ export type AppDeps = {
   }
   control?: ControlStore | null
   registry?: TenantRegistry | null
-  workspace?: { id: string; mode: 'default' | 'demo' | 'studio' | 'live' }
+  workspace?: { id: string; mode: 'default' | 'demo' | 'studio' | 'live'; /** The name the owner gave this studio. Null for the default studio. */
+    name?: string | null; /** Whether this studio moves money on a real PayPal account or on a stand-in. */
+    paypalMode?: 'fake' | 'sandbox' | 'none' }
   nested?: boolean
   budget?: ModelBudget | null
   metrics?: Metrics
@@ -137,10 +146,21 @@ const DraftRulesSchema = z.object({ instruction: z.string().trim().min(3).max(10
 const PolicySchema = z.object({ text: z.string().trim().min(POLICY_MIN_CHARS).max(POLICY_MAX_CHARS) }).strict()
 const NegotiationSchema = z.object({
   buyer: z.string().trim().max(200).optional(),
+  /** What the job is. Becomes the scope of every offer. */
   task: z.string().trim().max(300).optional(),
+  /** What the job is paid in, in order, e.g. ["Concepts", "Final files"]. */
+  milestones: z.array(z.string().trim().min(1).max(120)).min(1).max(12).optional(),
+  category: z.string().trim().toLowerCase().regex(/^[a-z][a-z0-9_-]{0,31}$/).optional(),
+  /** The owner's instructions to the studio's negotiator. */
   sellerBrief: z.string().trim().max(600).optional(),
+  /** Instructions to the client's negotiator. Only while the owner may speak for that client. */
   buyerBrief: z.string().trim().max(600).optional(),
-  maxOffers: z.number().int().min(2).max(8).optional(),
+  /** The deadline both sides know: the most offers each side may make. */
+  offersPerSide: z.number().int().min(2).max(8).optional(),
+  /** Older name for the deadline, counted over both sides. */
+  maxOffers: z.number().int().min(2).max(16).optional(),
+  /** Carry on an open negotiation instead of opening a new one. */
+  threadId: z.uuid().optional(),
 }).strict()
 
 const PUBLIC = new Set(['/', '/health', '/ready', '/healthz', '/readyz', '/openapi.json', '/v1/webhooks/paypal', '/.well-known/mandate-keys.json', '/demo/start', '/workspaces', '/join', '/join/preview', '/ops/metrics', '/ops/model/kill', '/ops/model/resume', '/__fake/session'])
@@ -148,6 +168,8 @@ const PUBLIC = new Set(['/', '/health', '/ready', '/healthz', '/readyz', '/opena
 /** Routes only the owner key may call. A proposer, such as an agent, can ask but never decide or move money. */
 const OWNER_ONLY = [
   { method: 'PUT', pattern: /^\/v1\/warrant$/ },
+  { method: 'POST', pattern: /^\/v1\/rules\/words$/ },
+  { method: 'DELETE', pattern: /^\/v1\/rules\/words$/ },
   { method: 'GET', pattern: /^\/v1\/party-rules$/ },
   // A PUT to /v1/party-rules/:partyId is not owner-only: each company may write its own sheet. The route decides
   // whose sheet that is; the other side's sheet stays out of reach, so both limits stay private.
@@ -191,7 +213,7 @@ const OWNER_ONLY = [
 function requiredAgentScope(method: string, path: string): AgentScope | null {
   if (path === '/mcp' || path.startsWith('/mcp/')) return 'mcp'
   if (method === 'GET' && path === '/v1/stream') return 'stream'
-  if (path.startsWith('/v1/deals') || path.startsWith('/v1/deliveries') || path.startsWith('/v1/party-rules')) return 'deals'
+  if (path.startsWith('/v1/deals') || path.startsWith('/v1/deliveries') || path.startsWith('/v1/party-rules') || path.startsWith('/v1/negotiations')) return 'deals'
   if (method === 'GET') return 'read'
   if (method === 'POST' && path === '/v1/proposals') return 'propose'
   return null
@@ -199,11 +221,13 @@ function requiredAgentScope(method: string, path: string): AgentScope | null {
 
 /** A client's agent may do only this. Everything else is the studio's business. */
 function buyerMayCall(method: string, path: string): boolean {
-  return (method === 'GET' && (path === '/v1/session' || path === '/v1/deals' || path === '/v1/party-rules/mine' || /^\/v1\/deals\/[^/]+$/.test(path)))
-    || (method === 'GET' && path === '/v1/deliveries')
+  return (method === 'GET' && (path === '/v1/session' || path === '/v1/status' || path === '/v1/deals' || path === '/v1/party-rules/mine' || /^\/v1\/deals\/[^/]+(\/verify)?$/.test(path)))
+    || (method === 'GET' && (path === '/v1/deliveries' || path === '/v1/negotiations' || /^\/v1\/negotiations\/[^/]+$/.test(path)))
     // The client writes its own ceiling through `mine`: the route resolves it to its own party and refuses any other.
     || (method === 'PUT' && path === '/v1/party-rules/mine')
     || (method === 'POST' && (path === '/v1/deals/offers' || path === '/mcp' || /^\/v1\/deals\/[^/]+\/milestones\/\d+\/decision$/.test(path)))
+    // A client answers an offer for itself: accept it, walk away, or let its own delegated negotiator take one move.
+    || (method === 'POST' && (/^\/v1\/deals\/[^/]+\/accept$/.test(path) || /^\/v1\/negotiations\/[^/]+\/(walk-away|agent-move)$/.test(path)))
 }
 
 /** A status link carries its own proof in the path, so it needs no key. It can only read one person's view of one job. */
@@ -222,7 +246,13 @@ function requireOwnOrigin(c: { req: { header(name: string): string | undefined }
   const refused = () => new Problem(403, 'auth.origin', 'Not from this console', 'This link may only be used from the console that sent it.')
   if (!here) throw refused()
   try {
-    if (new URL(origin).origin !== new URL(here).origin) throw refused()
+    const own = new URL(here)
+    const from = new URL(origin)
+    // On this machine, localhost and 127.0.0.1 are the same console: the console moves itself to localhost, because a
+    // passkey cannot be made on an IP address. Anything else must be this console's own origin exactly.
+    const loopback = (host: string) => host === 'localhost' || host === '127.0.0.1' || host === '[::1]'
+    const same = from.origin === own.origin || (loopback(own.hostname) && loopback(from.hostname) && from.port === own.port && from.protocol === own.protocol)
+    if (!same) throw refused()
   } catch (error) {
     if (error instanceof Problem) throw error
     throw refused()
@@ -306,6 +336,14 @@ export function createApp(deps: AppDeps) {
   const openapi = buildOpenApi(deps.config.publicUrl)
 
   app.use('*', async (c, next) => {
+    // A passkey is bound to localhost. Chrome refuses to create one on 127.0.0.1, so a page opened there moves across.
+    const moved = loopbackPasskeyUrl(c.req.method, c.req.path, c.req.url, c.req.header('host'), c.req.header('sec-fetch-dest'))
+    if (moved) return c.redirect(moved, 302)
+    // A client or agent key carries its studio. A paste at the front door must not be judged against the default studio.
+    if (!deps.nested && deps.registry) {
+      const steered = await steerMachineKey(c, deps)
+      if (steered) return steered
+    }
     const incoming = c.req.header('x-request-id')
     const requestId = incoming && /^[A-Za-z0-9._:-]{1,128}$/.test(incoming) ? incoming : randomUUID()
     c.set('requestId', requestId)
@@ -432,7 +470,7 @@ export function createApp(deps: AppDeps) {
       } else {
         // Agents have their own keys: look them up by hash, enforce status, and carry their scopes and limits.
         const agent = services.repo.getAgentByKeyHash(keyHash)
-        if (!agent) throw new Problem(401, 'auth.unauthorized', 'Unauthorized', 'Provide a valid owner key or agent key.')
+        if (!agent) throw new Problem(401, 'auth.unauthorized', 'Unauthorized', 'Provide a valid owner, client, or agent key.')
         if (agent.status === 'revoked') throw new Problem(403, 'agent.revoked', 'This agent key is revoked', 'Ask the owner for a new agent key.')
         if (agent.status === 'suspended') throw new Problem(403, 'agent.suspended', 'This agent is suspended', 'The agent tripped the breaker. The owner can resume it from the System page.')
         if (agent.expires_at && agent.expires_at <= deps.now().toISOString()) {
@@ -459,7 +497,9 @@ export function createApp(deps: AppDeps) {
     if (c.get('memberRole') === 'approver' && !isDemoReset && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
       const pause = c.req.method === 'POST' && (/^\/v1\/safety\/pause(\/autopilot)?$/.test(c.req.path) || /^\/v1\/agents\/[^/]+\/(pause|suspend)$/.test(c.req.path))
       const approve = c.req.method === 'POST' && /^\/v1\/proposals\/[^/]+\/approve$/.test(c.req.path)
-      if (!pause && !approve) throw new Problem(403, 'auth/forbidden', 'Outside this role', 'An approver can approve up to their limit, and pause. They cannot publish rules.')
+      // Today is the queue. An approver reads it and acts on what is waiting. They still cannot publish rules or send money.
+      const readToday = c.req.method === 'GET' && c.req.path === '/v1/today'
+      if (!pause && !approve && !readToday) throw new Problem(403, 'auth/forbidden', 'Outside this role', 'An approver can read Today, approve up to their limit, and pause. They cannot publish rules or send money.')
     }
     if (c.get('viaCookie') && c.req.method !== 'GET' && c.req.method !== 'HEAD') {
       const origin = deps.config.webauthn?.origins ?? [new URL(deps.config.publicUrl).origin]
@@ -543,6 +583,8 @@ export function createApp(deps: AppDeps) {
     if (upstream && upstream.circuit !== 'closed') degraded.push('paypal')
     if (ai.enabled && primary && primary.circuit !== 'closed' && !ai.fallback) degraded.push('ai')
     const pause = services.safety.state()
+    // A client's key is another company: it may know the studio is paused, never why, by whom, or how its systems are.
+    if (c.get('principal').side === 'buyer') return c.json({ time: deps.now().toISOString(), degraded: [], paused: pause.paused ? { reason: null, since: pause.since, by: null } : null, paypal: null, ai: null })
     return c.json({ time: deps.now().toISOString(), degraded, paused: pause.paused ? { reason: pause.reason, since: pause.since, by: pause.by } : null, paypal: upstream, ai: { enabled: ai.enabled, primary: ai.primary, fallback: ai.fallback, circuit: primary?.circuit ?? 'closed' } })
   })
   // Errors the console hit on a person's screen, so an operator can see them. Rate limited, size capped, never trusted.
@@ -627,7 +669,10 @@ export function createApp(deps: AppDeps) {
     const parsed = ShareCreateSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
     const made = services.shares.issue({ jobId: c.req.param('jobId'), ...parsed.data })
-    return c.json({ share: made.share, token: made.token, url: `${deps.config.publicUrl.replace(/\/$/, '')}/app/s/${made.token}` }, 201)
+    // A link is opened by someone with no key, so it must say which studio it belongs to: without it, the page would
+    // ask the default studio about a token it has never seen. The default studio's links stay as they always were.
+    const workspace = deps.workspace?.id && deps.workspace.id !== 'ws_default' ? `?workspace=${encodeURIComponent(deps.workspace.id)}` : ''
+    return c.json({ share: made.share, token: made.token, url: `${deps.config.publicUrl.replace(/\/$/, '')}/app/s/${made.token}${workspace}` }, 201)
   })
   app.post('/v1/shares/:id/revoke', (c) => c.json(services.shares.revoke(c.req.param('id'))))
   app.get('/v1/share/:token', (c) => c.json(services.shares.view(c.req.param('token'))))
@@ -654,9 +699,13 @@ export function createApp(deps: AppDeps) {
     requireOwnOrigin(c, deps)
     const parsed = PayRequestSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
-    const allowed = services.shares.payable(c.req.param('token'), parsed.data.proposalId)
+    const allowed = services.shares.payable(c.req.param('token'), parsed.data.proposalId, 'capture')
     const settled = await services.mandate.capture(allowed.proposalId)
-    return c.json(settled.body, settled.status as 200)
+    // The payer is told what they need: whether it is paid, and PayPal's reference. Nothing the studio keeps (its
+    // notes, its fees, its rules version) travels back over a link.
+    if (settled.status !== 200) return c.json(settled.body, settled.status as 409)
+    const view = settled.body as { id: string; phase: string; amountCents: number; currency: string; captureId: string | null; capturedAmountCents: number | null }
+    return c.json({ id: view.id, phase: view.phase, amountCents: view.amountCents, currency: view.currency, captureId: view.captureId, capturedAmountCents: view.capturedAmountCents }, settled.status as 200)
   })
   // The same two steps for the owner, who may pay a bill themselves or open it on another screen.
   app.post('/v1/pay/session', async (c) => {
@@ -922,8 +971,23 @@ export function createApp(deps: AppDeps) {
     const waitHours = flags.newPayeeWaitHours ?? 24
     return c.json({ ok: true, payee: enrichPayee(row, warrant, nowMs, waitHours) })
   })
-  app.get('/v1/session', (c) => c.json({ role: c.get('memberRole') ?? c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, agents: { enabled: agents.enabled, model: agents.modelName, reason: agents.offReason, budget: agents.budgetUsage }, demoReset: deps.config.demoReset === true }))
+  app.get('/v1/session', (c) => c.json({ role: c.get('memberRole') ?? c.get('principal').role, side: c.get('principal').side, version: VERSION, paypalConfigured: deps.config.paypalConfigured, paypalMode: deps.config.paypalMode ?? 'none', studioName: deps.workspace?.name ?? null, workspaceMode: deps.workspace?.mode ?? 'default', workspaceId: deps.workspace?.id ?? 'ws_default', agents: { enabled: agents.enabled, model: agents.modelName, reason: agents.offReason, budget: agents.budgetUsage }, demoReset: deps.config.demoReset === true }))
   app.get('/v1/flags', (c) => c.json(deps.config.flags ?? defaultFlags()))
+  // The rules in the owner's own words. They are a draft: kept until they become rules, and never money.
+  app.get('/v1/rules/words', (c) => c.json({ words: services.repo.ruleWords() }))
+  app.post('/v1/rules/words', async (c) => {
+    assertJson(c)
+    const body = await readJson(c) as { text?: unknown }
+    const text = typeof body.text === 'string' ? body.text.trim() : ''
+    if (text.length === 0) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Write the rule in your own words.')
+    if (text.length > 1000) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Keep it under 1000 characters.')
+    services.repo.saveRuleWords(text, deps.now().toISOString())
+    return c.json({ words: { body: text, at: deps.now().toISOString() } })
+  })
+  app.delete('/v1/rules/words', (c) => {
+    services.repo.clearRuleWords()
+    return c.json({ words: null })
+  })
   app.post('/v1/workspace/passkey-rule', async (c) => {
     assertJson(c)
     if (!deps.control) throw new Problem(404, 'flag/disabled', 'Not available', 'This server has no workspace record.')
@@ -1229,10 +1293,10 @@ export function createApp(deps: AppDeps) {
     assertJson(c)
     const parsed = CasesSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
-    const live = service.currentWarrant()
+    const liveBody = service.liveRules()
+    const body = parsed.data.rules ?? liveBody
+    if (!body) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
     const funding = service.tryFunding()
-    const { id: _id, version: _version, createdAt: _createdAt, ...liveBody } = live
-    const body = parsed.data.rules ?? WarrantBodySchema.parse(liveBody)
     const cases = generateCases(body, funding).map((item) => ({ id: item.id, label: item.label, request: item.request, ...service.tryRequest(ProposalCreateSchema.parse(item.request), parsed.data.rules) }))
     return c.json({ cases, funding })
   })
@@ -1381,6 +1445,26 @@ export function createApp(deps: AppDeps) {
     const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') ?? 50) || 50))
     return c.json(deals.list(limit, c.get('principal')))
   })
+  // Accepting the other side's standing offer is the only way a deal comes into being.
+  app.post('/v1/deals/:id/accept', async (c) => {
+    assertJson(c)
+    const parsed = DealAcceptSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return send(c, deals.accept(c.req.param('id'), parsed.data, c.get('principal')))
+  })
+  app.get('/v1/negotiations', (c) => c.json(deals.negotiations(c.get('principal'))))
+  app.get('/v1/negotiations/:id', (c) => c.json(deals.negotiationView(c.req.param('id'), c.get('principal'))))
+  app.post('/v1/negotiations/:id/walk-away', async (c) => {
+    assertJson(c)
+    const parsed = WalkAwaySchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return c.json(deals.walkAway(c.req.param('id'), parsed.data, c.get('principal')))
+  })
+  // One move by Mandate's hosted negotiator, for the caller's own seat (or, for the owner, a seat it may speak for).
+  app.post('/v1/negotiations/:id/agent-move', async (c) => {
+    await assertEmpty(c)
+    return c.json(await agents.agentMove(c.req.param('id'), c.get('principal')))
+  })
   app.get('/v1/deals/:id', (c) => c.json(deals.get(c.req.param('id'), c.get('principal'))))
   app.get('/v1/deliveries', (c) => c.json(deals.deliveries(c.get('principal'))))
   app.post('/v1/deals/:id/milestones/:n/deliver', async (c) => {
@@ -1408,6 +1492,10 @@ export function createApp(deps: AppDeps) {
     await assertEmpty(c)
     const milestone = Number(c.req.param('n'))
     if (!Number.isInteger(milestone) || milestone < 0 || milestone > 11) throw new Problem(404, 'deal.milestone_unknown', 'No such milestone', 'Milestones are numbered from 0.')
+    // The hosted stand-in may answer for a client only while that client has not claimed its seat, or has delegated
+    // to it. A client that speaks for itself accepts its own deliveries: the studio cannot sign that for it.
+    const reviewed = deals.get(c.req.param('id'), OWNER) as { buyerId: string }
+    if (!deals.agentMaySpeakFor('buyer', reviewed.buyerId)) throw new Problem(403, 'deal.seat_claimed', 'The client reviews its own deliveries', 'This client set its own numbers with its own key, so only it (or the agent it chose) accepts a delivery.')
     return c.json(await agents.reviewDelivery(c.req.param('id'), milestone, c.get('principal')))
   })
   app.get('/v1/deals/:id/verify', (c) => c.json(deals.verify(c.req.param('id'))))
@@ -1452,6 +1540,7 @@ export function createApp(deps: AppDeps) {
     trustedProxyHops: deps.config.trustedProxyHops ?? 1,
     demo: deps.demo ?? null,
     masterKey: deps.masterKey ?? null,
+    paypalMode: deps.config.paypalMode ?? 'none',
     paypal: deps.paypal as ProductCtx['paypal'],
     tryOne: (body: unknown) => {
       const parsed = TrySchema.safeParse(body)
@@ -1475,6 +1564,77 @@ export function createApp(deps: AppDeps) {
   mountExtra(app, product, (request) => app.fetch(request))
 
   return app
+}
+
+const misstampedKeyHome = new Map<string, string>()
+
+function fileHoldsMachineKey(db: DatabaseSync, hash: string): boolean {
+  for (const table of ['client_keys', 'agents']) {
+    try {
+      const row = db.prepare(`SELECT 1 AS ok FROM ${table} WHERE key_hash = ? LIMIT 1`).get(hash) as { ok: number } | undefined
+      if (row) return true
+    } catch {
+      // A file from before this table existed.
+    }
+  }
+  return false
+}
+
+/** The studio whose file holds a key that was labeled ws_default. Null when the default ledger has it, or nobody does. */
+function studioHoldingMisstampedKey(deps: AppDeps, token: string): string | null {
+  const hash = machineKeyHash(token)
+  const cached = misstampedKeyHome.get(hash)
+  if (cached) return cached
+  if (fileHoldsMachineKey(deps.db, hash)) return null
+  for (const studio of deps.control?.studioFiles() ?? []) {
+    if (!studio.db_path || !existsSync(studio.db_path)) continue
+    const db = openDatabase(studio.db_path)
+    try {
+      if (!fileHoldsMachineKey(db, hash)) continue
+      misstampedKeyHome.set(hash, studio.id)
+      return studio.id
+    } finally {
+      db.close()
+    }
+  }
+  return null
+}
+
+/** Sends a machine key to the studio named inside it. The nested studio does not steer again. */
+async function steerMachineKey(c: { req: { path: string; url: string; method: string; header: (name: string) => string | undefined; raw: Request } }, deps: AppDeps): Promise<Response | null> {
+  const path = c.req.path
+  if (path.startsWith('/w/') || isWeb(path)) return null
+  const api = path.startsWith('/v1') || path.startsWith('/auth') || path === '/mcp' || path.startsWith('/mcp/') || path === '/.well-known/mandate-keys.json'
+  if (!api) return null
+  const header = c.req.header('authorization') ?? ''
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+  const named = workspaceFromMachineKey(token)
+  const here = deps.workspace?.id ?? 'ws_default'
+  if (!named || !isWorkspaceId(named)) return null
+  if (named === here && named !== 'ws_default') return null
+  // Older studios stamped every client key as ws_default while saving it in the studio's own file.
+  const id = named === 'ws_default' ? studioHoldingMisstampedKey(deps, token) : named
+  if (!id || id === here) return null
+  const tenant = deps.registry?.get(id)
+  if (!tenant) {
+    if (named === 'ws_default') return null
+    throw new Problem(404, 'tenant/not-found', 'Not found', 'No workspace has that id.')
+  }
+  const url = new URL(c.req.url)
+  const body = c.req.method === 'GET' || c.req.method === 'HEAD' ? undefined : await c.req.raw.arrayBuffer()
+  return tenant.fetch(new Request(url, { method: c.req.method, headers: c.req.raw.headers, body }))
+}
+
+/** A browser page on a loopback IP, sent to the same path on localhost. API calls stay where they are. */
+function loopbackPasskeyUrl(method: string, path: string, rawUrl: string, host: string | undefined, dest: string | undefined): string | null {
+  if (method !== 'GET' && method !== 'HEAD') return null
+  if (dest !== 'document') return null
+  if (path !== '/' && path !== '/app' && !path.startsWith('/app/')) return null
+  const named = host ? (host.startsWith('[') ? host.slice(1, host.indexOf(']')) : host.replace(/:\d+$/, '')) : new URL(rawUrl).hostname
+  if (named !== '127.0.0.1' && named !== '::1') return null
+  const url = new URL(rawUrl)
+  url.hostname = 'localhost'
+  return url.toString()
 }
 
 function workspacePasskeyOn(deps: AppDeps): { on: boolean; mode: 'default' | 'demo' | 'studio' | 'live' } {

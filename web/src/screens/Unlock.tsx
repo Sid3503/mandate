@@ -4,7 +4,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Mark } from '../components/Shell'
 import { Chip, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
-import { session } from '../lib/session'
+import { session, workspaceFromKey } from '../lib/session'
 
 export function Unlock() {
   const navigate = useNavigate()
@@ -30,10 +30,10 @@ export function Unlock() {
   })
 
   const roleLanding = (role?: string, side?: string | null) => {
+    if (side === 'buyer') return '/deals'
     if (role === 'proposer') return '/clerk'
     if (role === 'viewer') return '/proof'
     if (role === 'payee') return '/payments'
-    if (side === 'buyer') return '/deals'
     return '/'
   }
 
@@ -78,12 +78,27 @@ export function Unlock() {
     setBusy(true)
     setError(null)
     try {
-      const me = await api.session(key.trim())
-      session.set(key.trim())
+      const trimmed = key.trim()
+      const embedded = workspaceFromKey(trimmed)
+      const previous = session.workspace()
+      if (embedded) session.setWorkspace(embedded)
+      let me
+      try {
+        me = await api.session(trimmed)
+      } catch (caught) {
+        if (embedded) {
+          if (previous) session.setWorkspace(previous)
+          else session.clearWorkspace()
+        }
+        throw caught
+      }
+      session.set(trimmed)
+      session.setWorkspace(me.workspaceId)
+      session.setMode(me.workspaceMode)
       try { localStorage.removeItem('mandate.session.expired') } catch {}
       client.clear()
       client.setQueryData(['session'], me)
-      const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : (session.mode() === 'demo' ? roleLanding(me.role, me.side) : '/')
+      const target = from !== '/' && from !== '/app' && from !== '/app/' ? from : roleLanding(me.role, me.side)
       navigate(target, { replace: true })
     } catch (caught) {
       setError(caught)

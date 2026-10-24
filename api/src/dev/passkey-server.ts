@@ -57,6 +57,7 @@ const app = createApp({
     apiKey: 'passkey-repair-owner-key-32',
     rateLimitPerMinute: 0,
     paypalConfigured: false,
+    paypalMode: 'none',
     log: false,
     publicUrl,
     flags,

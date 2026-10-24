@@ -177,19 +177,31 @@ export function demoModel(options: { delayMs?: number } = {}): AgentModel {
         return call('propose_rules', patch)
       }
 
-      // Negotiators: the studio opens high, the client opens low, the studio settles at a fair price.
-      if (system.includes('You negotiate for')) {
-        const threadId = /threadId "([0-9a-f-]{36})"/.exec(system)?.[1]
-        if (seen > 0) return say('Offer made.')
-        const seller = system.includes('the seller')
-        const earlier = (message.match(/^\d+\. /gm) ?? []).length
-        const total = seller ? (earlier === 0 ? 45_000 : 30_000) : 20_000
-        const half = total / 2
-        return call('offer_deal', {
-          buyer: 'Northwind',
-          threadId,
-          prompt: seller ? (earlier === 0 ? 'Our opening price for the spring-launch logo.' : 'Let us meet in the middle.') : 'This is what we can commit to.',
-          terms: { scope: 'Spring launch logo', category: 'design', currency: 'USD', totalCents: total, proofRequired: true, milestones: [{ title: 'Concepts', amountCents: half }, { title: 'Final files', amountCents: half }] },
+      // Negotiators: the script makes the move the code's reference names, which a real model is free to ignore.
+      if (/'s negotiator\./.test(system) && /THE TABLE SO FAR/.test(message)) {
+        if (seen > 0) return say('Move made.')
+        const buyer = /buyer "([^"]+)"/.exec(message)?.[1] ?? 'Northwind'
+        const threadId = /threadId(?: is)? "([0-9a-f-]{36})"/.exec(message)?.[1]
+        const reference = /Reference [^:]*: (offer about ([^.]*\.\d{2}|[^ .]+)|accept|walk away)/.exec(message)
+        const standing = /dealId ([0-9a-f-]{36})/.exec(message)?.[1]
+        if (reference?.[1] === 'accept' && standing) return call('accept_offer', { dealId: standing, prompt: 'That works for us. Let us get started.', assessment: 'Their offer is at least as good as what I would offer next.' })
+        if (reference?.[1] === 'walk away' && threadId) return call('walk_away', { threadId, prompt: 'We cannot make this work this time.', assessment: 'Their best offer is outside our mandate.' })
+        const amount = reference?.[2] ? Math.round(Number(reference[2].replace(/[^0-9.]/g, '')) * 100) : null
+        const opening = !/standing offer:/i.test(message)
+        return call('offer_deal', { buyer, threadId, totalCents: amount ?? 30_000, prompt: opening ? 'Here is our opening price for the work as scoped.' : 'We have moved to meet you. This reflects the scope.', assessment: opening ? 'Opening near our target to anchor.' : 'Conceding in line with their movement.' })
+      }
+
+      // Debriefs: a plain reading of the facts. The amount it names is one of the facts' amounts.
+      if (/Write your company a short, honest debrief/.test(system)) {
+        const pct = /(\d+)% of the way/.exec(message)?.[1]
+        const amount = /The result for you: (\S+)/.exec(message)?.[1]
+        const deal = Boolean(amount)
+        return call('debrief', {
+          satisfaction: !deal ? 'acceptable' : Number(pct ?? 0) >= 50 ? 'satisfied' : 'acceptable',
+          ratings: { outcome: deal ? 4 : 3, process: 4, relationship: 4, self: 4 },
+          wouldSignAgain: deal,
+          summary: deal ? `We agreed ${amount} for the whole job, inside our limit.` : 'There was no deal, and none was available inside our limit.',
+          lesson: 'Open a little closer to where we expect to land.',
         })
       }
 
