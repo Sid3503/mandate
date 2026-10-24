@@ -10,11 +10,11 @@ This file is the product story: what it is, why it exists, what we built, how it
 
 ---
 
-## Where the product is today (7 October 2026)
+## Where the product is today (25 October 2026)
 
-The API test count below was re-run on 12 October 2026 (509). The browser counts, Lighthouse, and model scores in this file were not re-run for this change.
+Every number below was re-run on 25 October 2026: 891 API tests across 75 files, 150 browser tests in 23 specs, and 23 verified guarantees.
 
-**What runs on the PayPal sandbox:** staff and AI agents ask; a pure function of the owner's signed rules decides; the owner says yes once (standing rules, autopilot) and taps for exceptions; PayPal moves exactly the locked cents. Tested in pieces on real sandbox infrastructure (order creation, contractor payouts, and gated partial refunds; full interactive checkout requires human buyer browser login).
+**What runs on the PayPal sandbox, end to end:** staff and AI agents ask; a pure function of the owner's signed rules decides; the owner says yes once (standing rules, autopilot) and taps for exceptions; PayPal moves exactly the locked cents. The whole chain has run live: a bill paid by card **on Mandate's own page** (captures `16863006RF678602F`, `79204140TH113652R`), an invoice paid by the sandbox buyer and settled only when PayPal said `PAID` (`INV2-76H8-5LLT-E4P4-C2HD`), Payouts v1 to Priya (`SJ5B3GGM7UBAU`, `DKPZEQ87HG8MU`), and a second payout sent by **autopilot under a signed standing rule, with no tap** (`9Z37SHHD8E598`, `SUCCESS`).
 
 **The console feels alive.** It listens to the server (`/v1/stream`), so a delivery, a decision, an invoice or a settlement appears the moment it is written, with no reload. The server asks PayPal every 5 seconds while money is in flight (instantly with a webhook).
 
@@ -24,9 +24,9 @@ The API test count below was re-run on 12 October 2026 (509). The browser counts
 
 **A second screen, built with AG Studio** (`/app/control-room`, desktop). The Ledger page is the table of requests (AG Grid); the control room is the dashboard the owner builds from them: money in and out, refusals by rule, how each request was approved, who still owes what. Studio is handed plain rows copied from the ledger and can only display them: it has no connection to PayPal or to Mandate, and the tiles count only what PayPal confirmed. A chat analyst inside Studio reads the ledger copy, sets filters and asks Studio's page and widget agents to draw. It runs on Mandate's own model through one route that holds no ledger service and no PayPal client, so the worst it can do is change the dashboard.
 
-**Numbers:** 715 API tests (across 61 test files, 56 of them a red team), 135 browser runs (56 job tests on desktop and on phone, plus passkey and role tests), an axe accessibility scan on every signed-in screen, and 20 verified cryptographic guarantees.
+**Numbers:** 891 API tests (across 75 test files, including 46 red-team cases and the chaos suite), 150 browser tests in 23 specs on desktop, a Pixel 7 and a passkey profile, an axe accessibility scan on every signed-in screen, and 23 verified cryptographic guarantees.
 
-**Not yet:** a real open dispute (the sandbox cannot create one), the demo video, the deck and the Devpost write-up. The webhook id and the deploy hook are in §11.
+**Not yet:** a real open dispute (the sandbox cannot create one), and a hosted demo that stays up through judging (the free Render instance sleeps and wipes its ledger). The demo video (`pitch/video/mandate-pitch.mp4`, 2:53) and the Devpost text are written; the webhook id and the deploy hook are host settings in §11.
 
 ---
 
@@ -180,7 +180,7 @@ An installable React app served at `/app/`.
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 715 API tests (across 61 test files, 56 of them a red team) and 135 browser runs (56 job tests on desktop and on phone, plus passkey and role tests), with an accessibility scan on every signed-in screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 891 API tests across 75 test files (including 46 red-team cases) and 150 browser tests in 23 specs on desktop, a Pixel 7 and a passkey profile, with an accessibility scan on every signed-in screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -281,9 +281,9 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 10. Proof
 
-- **715 API tests** (Vitest across 61 files; 56 are the red team) and **135 browser runs** (Playwright: 56 job tests on desktop and on phone, plus passkey and role tests, with an axe WCAG 2.1 AA scan). Mobile Lighthouse scores: Welcome 90, Unlock 88, Today 80.
+- **891 API tests** (Vitest across 75 files, including 46 red-team cases and the chaos suite) and **150 browser tests in 23 specs** (Playwright on desktop, a Pixel 7 and a passkey profile, with an axe WCAG 2.1 AA scan on every signed-in screen). Mobile Lighthouse scores: Welcome 90, Unlock 88, Today 80.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation).
-- **What ran live on the real PayPal sandbox:** order `51H50117X4794793P` created ($150.00; capture skipped awaiting interactive buyer login); contractor payout batch `D9RZNWUWD2F3A` ($85.00) sent to Priya via real PayPal Payouts v1 API; partial refund `12C310409G863064M` ($1.00) executed via Mandate gated route against capture `6GX18294LL7579630` after seeding the parent proposal row in SQLite. In previous builds, invoices and payouts were also verified live; the unbroken end-to-end chain was not run live in one go.
+- **What ran live on the real PayPal sandbox:** the unbroken chain — a $150 bill paid by card **on our own page** (capture `79204140TH113652R`; another card capture `16863006RF678602F`), an invoice created, sent and paid by the sandbox buyer and settled only when PayPal said `PAID` (`INV2-76H8-5LLT-E4P4-C2HD`, $150), Priya's $90 through Payouts v1 (`SJ5B3GGM7UBAU`, then `DKPZEQ87HG8MU`), and the second $90 sent by **autopilot with no tap** (`9Z37SHHD8E598`, `standing.matched`, `SUCCESS`). A partial refund (`12C310409G863064M`, $1.00) ran through the gated route against capture `6GX18294LL7579630`.
 - **Proof** checks `locks.valid`, `moved.authorised`, `amounts.match`, `payouts.funded`, `cap.respected`, `jobs.in_covers_out`, `history.complete`, `deals.signed`, `billing.accepted`, `agents.no_reach` and `safety.respected`, and `paypal.agrees` when PayPal is asked. The tests tamper with the database eight ways to check the right one fails.
 - **Autopilot** has 13 tests of its own plus a browser test of the whole chain, and 14 autopilot cases in the red team.
 
@@ -292,7 +292,10 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 - **Sandbox only.** No real money. A hosted service is described by `render.yaml` and [docs/CICD.md](docs/CICD.md). The webhook id and the deploy hook are host settings this repo does not prove.
 - **The seeded addresses are not proven sandbox accounts.** The seeded invoice recipient is `ap@northwind.example`. The seeded payout receiver is `priya.shah@example.com`.
 - **Fake-tested, not live:** an open dispute that PayPal's API lists as open (a first-stage Resolution Center case is not listed, so Mandate cannot see it), and signed webhook deliveries. Refunds ran live in sandbox (refund `12C310409G863064M` on capture `6GX18294LL7579630` executed via gated route against a parent proposal row seeded in SQLite).
-- **Autopilot's full chain was not run live in one go.** Each live piece has run on the real sandbox (the auto-billed invoice, the reminder, the standing-rule payout after a real paid invoice), and the whole chain runs in the browser and in tests against the fake PayPal.
+- **Autopilot's full chain has run live, in one go.** The client paid $150 on our own page; the server saw the settlement, asked for Priya's share, matched the standing rule and sent $90 through Payouts with no tap (`9Z37SHHD8E598`). The same chain runs in the browser and against the fake PayPal on every commit.
+- **The hosted demo is ephemeral.** A free Render instance sleeps after about 15 minutes and wipes its disk on restart, so a hosted copy shows a fresh ledger. A paid instance with a persistent disk keeps it (`docs/CICD.md`).
+- **The negotiation needs a model.** The protocol, the rules checks, the turn order, the arithmetic and the signing are code; the offers are chosen by the model, by a person, or by the company's own agent over MCP.
+- **The card form needs PayPal's card fields to be enabled on the app** (*Advanced Credit and Debit Card Payments*). The feature panel says whether they are, by trying to mint a client token.
 - **Without `requireAcceptance`, `billSignedDeals` trusts the proof link to exist, not to be true.** Anyone who can attach an https link to a milestone sends the client a real invoice, for exactly the agreed amount. With it on, the client's own agent must accept first. The hosted stand-in for the client's agent cannot open the link, so it judges whether the link plausibly fits the milestone, not whether the work is good; a real client agent, or a person, is a stronger check. An unpaid invoice can be cancelled from Today and the milestone billed again.
 - **Drafter evaluation scope:** the drafter has its own model (`gemma4:31b`). In real model evaluation, 11 plain wordings were evaluated (100% pass, 0 hidden loosenings, 52,713 tokens, halted cleanly before the injection group due to token cap); prompt injection handling was verified 4/4 passing by deterministic scripted-model unit tests in CI; a full 30-wording run needs about 145,000 tokens (estimate) and was not done.
 - **PayPal's transaction report lags** by a few hours, so the newest payments can show as unmatched for a while.
@@ -301,12 +304,12 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 12. What is next
 
-1. Prove a real refund on the sandbox. A formal dispute can only be seen once PayPal escalates a case to a claim.
+1. Prove an open dispute. A formal dispute can only be seen once PayPal escalates a case to a claim; until then the hold is fake-tested.
 2. A public Postman workspace, and a read-only AG Grid agent query ("show me what the rules refused").
-3. The pitch: demo video, a short deck, and the Devpost write-up.
-4. One complete live run of autopilot: an auto-billed invoice paid by the sandbox buyer, followed by the auto payout, in one go. Every piece has run live; the unbroken chain has not.
+3. A hosted demo that stays up through judging: a paid instance with a persistent disk, so a judge's ledger survives a restart.
+4. Postgres and real multi-tenancy, and adopting AP2's credential format so a Mandate lock can travel with an agent payment.
 
-Deliberately cut: passkeys, a multi-round human negotiation UI, a 90-day backtest.
+Deliberately cut: multi-currency conversion (a studio picks one currency and a time zone), a 90-day backtest, and quorum approval for very large transfers.
 
 ## 13. Where to look
 

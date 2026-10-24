@@ -1,6 +1,8 @@
 .env
 .opencode.firecrawl_key
 cookies.txt
+.DS_Store
+**/.DS_Store
 node_modules/
 api/data/
 *.sqlite

@@ -18,8 +18,8 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 
 | Step | What happens | Status |
 | --- | --- | --- |
-| Money in | The studio bills $150. Meera (owner) taps. Capture tries an invoice first. Orders run when invoicing is off, unpermitted, or the row already has an order id. | built, tested in sandbox (order created; capture requires interactive buyer login) |
-| Money out | The captured $150 funds Priya's $90. Meera taps. PayPal Payouts sends exactly $90 to Priya's own account, and it is called *paid* only when PayPal says so. | built, verified live in sandbox ($85 payout sent to Priya) |
+| Money in | The studio bills $150. Meera (owner) taps and chooses how the client pays: a PayPal invoice, or a card form **inside** the console. An invoice settles only when PayPal says `PAID`; a card order is made from the lock, and the server refuses to capture if the amount, currency or reference differ. | built, paid live in sandbox (invoice `INV2-76H8-5LLT-E4P4-C2HD`; card captures `16863006RF678602F`, `79204140TH113652R`) |
+| Money out | The captured $150 funds Priya's $90. Meera taps — or a signed standing rule sends it with no tap. PayPal Payouts sends exactly $90 to Priya's own account, and it is called *paid* only when PayPal says so. | built, verified live in sandbox ($90 payouts to Priya, the second sent by autopilot) |
 | Refusals | $18 team lunch (`category.missing`). Fake vendor "P. Shah" $480 (`payee.unknown`). Payout before the client paid (`funding.missing`). Retry at $250 after the tap (`cart.immutable`). A third $90 past the $180 monthly cap (`cap.monthly`). | built |
 | Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | built |
 | Deal | Two companies' negotiators (Mandate's, a person, or the company's own agent over MCP) trade offers move by move. A deal exists only when one side accepts the other's exact offer, inside **both** companies' private rules; it is then signed. It ends on acceptance, a walk-away, a known deadline or a stalemate, and each side gets its own outcome and its negotiator's debrief ([how](docs/NEGOTIATION.md)). The agreed deal is signed. | built |
@@ -35,7 +35,7 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 | Invoices | A client charge is billed as a PayPal invoice through the Agent Toolkit, and settled only when PayPal says it was paid. Falls back to checkout where the app lacks the permission. | built, live in sandbox |
 | **Paying on our own page** | A client with a link that may pay opens a card form *inside* the console: no PayPal account, no leaving the page, and the amount is the locked one. The order is made from the lock and the server refuses to capture if it differs. | built, tested |
 
-Job totals for the live sandbox run: order `51H50117X4794793P` created for $150 (capture skipped awaiting interactive buyer login); $1.00 refund executed via gated route on prior capture; $85.00 contractor payout sent to Priya via real PayPal Payouts API (`D9RZNWUWD2F3A`).
+Job totals for the live sandbox run: **$300 in** on two bills paid on Mandate's own page (captures `8DH00050UJ145481` and `79204140TH113652R`, the second a Visa typed into PayPal's card fields), **$180 out** to Priya through Payouts v1 (batches `DKPZEQ87HG8MU` and `9Z37SHHD8E598` — the second sent by autopilot under a signed standing rule, with no tap), **$120 kept**, the $180 cap used exactly; plus a $1.00 refund executed through the gated route.
 
 ## Quick Start
 
@@ -61,7 +61,7 @@ cd api && node --env-file=../.env ./node_modules/tsx/dist/cli.mjs src/main.ts
 
 Open **http://127.0.0.1:8787/** (it opens the landing page, which explains the product; press **Unlock**) and unlock with `dev-mandate-key-change-me`. A guided tour opens on first visit, and every screen has a **Guide** button.
 
-The route: **Deals → Let the negotiators negotiate** (offers and counter-offers until one side accepts; the deal is signed) → bill milestone 1 → approve → **Settle**, then approve the order in PayPal as the sandbox buyer and press **Check PayPal and settle** → **Clerk**: "pay Priya her share…" → approve → **Send $90.00** → **Jobs**: $150 in, $90 out, $60 kept. Then paste the fake vendor email into **Clerk** and watch the rules refuse it.
+The route: **Deals → Let the negotiators negotiate** (offers and counter-offers until one side accepts; the deal is signed) → bill milestone 1 → approve → **Settle**, then pay the bill as the client — type a sandbox card into the form on the page, or send the PayPal invoice — and the receipt settles only when PayPal says so → **Clerk**: "pay Priya her share…" → approve → **Send $90.00** → **Jobs**: $150 in, $90 out, $60 kept. Then paste the fake vendor email into **Clerk** and watch the rules refuse it.
 
 Full walk-through with what you should see at each step: [docs/REFERENCE.md](docs/REFERENCE.md#running-against-the-paypal-sandbox).
 
@@ -115,7 +115,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests t
 
 ## Quality
  
-715 API tests (across 61 test files, including fast-check property sequences, red-team cases 1 to 35, and chaos tests). 135 Playwright browser tests across desktop and mobile Pixel 7 emulation with axe WCAG 2.1 AA accessibility scans. Mobile Lighthouse audit: Welcome 90, Unlock 88, Today 80. 20 verified cryptographic guarantees in docs/guarantees.json.
+891 API tests (across 75 test files, including fast-check property sequences, 46 red-team cases, and chaos tests). 150 Playwright browser tests in 23 specs, on desktop, a Pixel 7 and a passkey profile, with axe WCAG 2.1 AA scans on every signed-in screen. Mobile Lighthouse audit: Welcome 90, Unlock 88, Today 80. 23 verified cryptographic guarantees in docs/guarantees.json.
 
 ## Where to read next
 

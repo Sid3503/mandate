@@ -166,8 +166,8 @@ Additionally, the centralized red team suite in `api/test/redteam.test.ts` exerc
 
 - **Hygiene (`npm run hygiene`):** 23/23 checks passed. Exact Node version pinned (`.nvmrc`), lockfiles verified, 0 secret files tracked, workflows pinned to full SHAs, least privilege `permissions: contents: read`.
 - **Typecheck (`npm run typecheck`):** API and Web clean. Zero TypeScript errors.
-- **API Unit and Integration Suite (`npm --prefix api test`):** 61 test files, 715 tests passing synchronously and concurrently with zero failures.
-- **End-to-End Playwright Suite (`npm --prefix web run e2e`):** 135 tests passing across `desktop`, `phone`, and `passkey` projects with Axe WCAG 2.1 AA accessibility verification.
+- **API Unit and Integration Suite (`npm --prefix api test`):** 75 test files, 891 tests passing synchronously and concurrently with zero failures.
+- **End-to-End Playwright Suite (`npm --prefix web run e2e`):** 150 tests in 23 specs across `desktop`, `phone`, and `passkey` projects with Axe WCAG 2.1 AA accessibility verification.
 - **Performance Read p95 (`api/test/p95.test.ts`):** Core endpoints (`/v1/status`, `/v1/warrant`, `/v1/proposals`, `/v1/today`, `/v1/party-rules`) respond in < 50ms p95.
 - **Frontend Bundle Optimization:** Rollup code splitting configured in `web/vite.config.ts`. ControlRoom chunk reduced from 4,602 kB down to 15.85 kB. Precache clean at 40 entries.
 - **Mobile Lighthouse Audit (Default Mobile Throttling on Production Build):**
