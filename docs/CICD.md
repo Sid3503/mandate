@@ -38,7 +38,7 @@ The goal is fast and safe: you merge small changes often, nothing untested reach
 - **Only green commits deploy.** `render.yaml` sets `autoDeployTrigger: checksPass`, so Render waits for the CI checks on the commit. A red commit never reaches the hosted demo.
 - **A deploy that did not happen is a red run.** "Verify deploy" polls `/ready`, which now reports `releaseId` (the running commit), and fails if the live service does not report the commit within 25 minutes. It then checks the console, the security headers, the public links, the signing keys, the auth wall, and the MCP door.
 - **The smoke test is safe on a live demo.** It only reads. With the optional `SMOKE_OWNER_KEY` it makes one read-only agent key, connects over MCP, confirms a read-only key cannot see `propose`, and revokes the key. It never asks for money to move.
-- **Docs-only pushes do not deploy.** `render.yaml` lists `buildFilter.ignoredPaths` (docs, tests, workflows, scripts). A redeploy restarts the instance; on the free plan that wipes the ledger, and the blueprint uses a Starter plan with a disk, so a README edit still should not deploy. The post-deploy check reads the same list, so the two always agree.
+- **Docs-only pushes do not deploy.** `render.yaml` lists `buildFilter.ignoredPaths` (docs, tests, workflows, scripts). A redeploy restarts the free instance and wipes its ledger, so a README edit should not. The post-deploy check reads the same list, so the two always agree.
 - **Pinned and least-privilege.** Every action is pinned to a commit SHA (a moved tag cannot change what runs). Workflows default to `contents: read`, checkouts do not keep a token, and nothing uses `pull_request_target`, so a fork's pull request never runs with your secrets.
 - **Secrets stay secret.** CI needs none to run. The deploy hook lives in the `production` environment, and logs print status codes only.
 
@@ -74,7 +74,7 @@ A deploy restarts the instance; on the free plan it wipes the ledger. Nothing sh
 1. In `render.yaml` set `autoDeployTrigger: off` and push, or turn Auto-Deploy off in Render.
 2. Set the repository variable `DEPLOY_FREEZE` to `true`, so "Verify deploy" stops waiting for deploys that will not come.
 3. Deploy only by hand with **Deploy a commit**, and only for a real fix.
-4. The blueprint already uses a Starter plan with a persistent disk (`DATABASE_PATH` on the disk), so a deploy keeps the ledger. On the free plan, remove the disk and expect a wipe.
+4. The blueprint runs on the free plan with no disk, so a deploy starts from a fresh ledger. To keep it, move to a paid instance with a persistent disk (`DATABASE_PATH` on the disk).
 
 ## Not covered, on purpose
 
