@@ -182,4 +182,4 @@ Playwright (`npm --prefix web run e2e`): 112 passed (7.4m), 1 worker. Desktop te
 
 P12.T3 complete: p95 read test passes in api/test/p95.test.ts, ControlRoom chunk split to 15.85 kB, mobile Lighthouse default throttling scored 56 perf / 98 a11y / 96 best practices / 100 SEO on Unlock (56/100/100/100 on Welcome and Today in demo); 4 vendor chunks exceed 1,000 kB uncompressed.
 
-Final run: 61 test files, 715 API tests passed, secret check passed, 135 Playwright tests passed, 20 guarantees verified. Lighthouse mobile: Welcome 90, Unlock 88, Today 80.
+Final run: 75 test files, 891 API tests passed, secret check passed, 150 Playwright tests in 23 specs, 23 guarantees verified. Lighthouse mobile: Welcome 90, Unlock 88, Today 80.

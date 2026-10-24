@@ -138,7 +138,7 @@ npm run render:env
   6. **Verify Signed Receipt**: Confirm the green toast notification ("Signed and sent") appears and the status updates to "Approved · locked" with an amber demo proof mark.
   7. **Switch to Proposer Role**: Click **"proposer"** in the top demo banner. Verify that you are redirected to **Ask Mandate** (`/app/clerk`), where agents can ask questions but cannot approve payouts.
   8. **Switch to Viewer Role**: Click **"viewer"** in the banner. Verify that you are routed to the **Proof** screen (`/app/proof`) in read-only audit mode.
-  9. **Inspect Guarantees and Replay**: On the Proof screen, inspect the list of 20 verified Mandate Guarantees. Click **"Verify receipt offline"** to inspect offline ES256 verification.
+  9. **Inspect Guarantees and Replay**: On the Proof screen, inspect the list of 23 verified Mandate Guarantees. Click **"Verify receipt offline"** to inspect offline ES256 verification.
   10. **Reset the Demo Workspace**: Switch the role back to **"owner"**, click **"Reset demo"**, type `reset the demo`, and confirm. Verify that the ledger and rules return cleanly to template state.
 
 ---

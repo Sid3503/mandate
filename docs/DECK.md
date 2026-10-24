@@ -64,8 +64,8 @@
 
 ## Slide 7: Performance, Reliability, and Isolation
 
-- 715 Vitest tests and 135 Playwright end-to-end tests passing clean
-- 20 verified cryptographic guarantees validated on every commit
+- 891 Vitest tests and 150 Playwright browser tests in 23 specs, passing clean
+- 23 verified cryptographic guarantees validated on every commit
 - Mobile Lighthouse scores of 90 on Welcome, 88 on Unlock, and sub-50ms p95 read latency
 
 **Speaker note**: Our code is hardened with property-based testing, chaos simulations, and strict multi-tenant isolation.

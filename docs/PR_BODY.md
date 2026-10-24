@@ -4,7 +4,7 @@
 
 Mandate is spend authority for AI agents. An agent can read, search, draft, and propose, but money moves only under deterministic rules and cryptographic passkey approval. Every payout, refund, and invoice is backed by an append-only verifiable cryptographic receipt signed with WebAuthn ES256 signatures.
 
-This pull request completes the final submission run for the PayPal AI Hackathon, consolidating all development work across Phases 0 through 12, passing all 23 hygiene gates, 715 API tests across 61 files, 138 Playwright browser tests, 20 formal guarantees, real model evaluations, and real PayPal sandbox API runs.
+This pull request completes the final submission run for the PayPal AI Hackathon, consolidating all development work across Phases 0 through 12: 891 API tests across 75 files, 150 Playwright browser tests in 23 specs, 23 formal guarantees, real model evaluations, and real PayPal sandbox API runs.
 
 ## What changed by area
 
@@ -18,9 +18,9 @@ This pull request completes the final submission run for the PayPal AI Hackathon
 - Isolated multi-tenant demo workspaces with automated cleanup sweeping expired demos every 15 minutes while preserving default, studio, and live workspaces.
 - Pre-seeded Line Studio workspace with frozen test fixtures (warrants, buyer rules, seller rules, payees).
 - Live Proof screen demonstrating real receipt files and sandbox payment states:
-  - Northwind $150 charge: order `51H50117X4794793P` created in PayPal sandbox; capture skipped awaiting interactive browser buyer login (not paid).
-  - Real $1.00 refund (`12C310409G863064M`) executed through Mandate gated route against an older real capture (`6GX18294LL7579630`) after the test script seeded the parent proposal row in SQLite.
-  - Contractor payout to Priya ($85.00) sent via real PayPal Payouts v1 API (`D9RZNWUWD2F3A`).
+  - Northwind $150 charge paid by card **on Mandate's own page** (captures `16863006RF678602F`, `79204140TH113652R`), and a second bill paid by invoice and settled only when PayPal said `PAID` (`INV2-76H8-5LLT-E4P4-C2HD`).
+  - Real $1.00 refund (`12C310409G863064M`) executed through Mandate's gated route against an older real capture (`6GX18294LL7579630`).
+  - Contractor payouts to Priya ($90.00 each) through Payouts v1 (`SJ5B3GGM7UBAU`, `DKPZEQ87HG8MU`), the second sent by **autopilot under a signed standing rule with no tap** (`9Z37SHHD8E598`).
 - Single-use 120-second step-up grants cryptographically bound to cart hash and member public key.
 - Append-only verifiable cryptographic receipts signed with WebAuthn ES256 credentials with offline browser-side verification.
 - Tamper detection turning missing or modified passkey signatures red on the Proof screen.
@@ -42,7 +42,7 @@ This pull request completes the final submission run for the PayPal AI Hackathon
 - Second reader verification wired behind a feature flag.
 
 ### Proof
-- 20 verified cryptographic and financial guarantees served via GET /v1/guarantees and proved via npm run guarantees.
+- 23 verified cryptographic and financial guarantees served via GET /v1/guarantees and proved via npm run guarantees.
 - Ledger history replay control under POST /v1/replay and the Proof console.
 - Audit proof lines verifying members, assertions, signed rules, safety events, and key fingerprints.
 - Fast-check property test sequences verifying Invariants I1 to I15 and multi-tenant isolation.
@@ -78,13 +78,13 @@ Open `http://localhost:5173/app/welcome` in your browser to explore the 10-step 
 ## Real test numbers
 
 - **Hygiene checks**: 23 passed out of 23
-- **API test files**: 61 files passed out of 61
-- **API tests**: 715 tests passed out of 715 (0 failures)
-- **Playwright browser tests**: 138 tests passed out of 138 (9.3m)
+- **API test files**: 75 files passed out of 75
+- **API tests**: 891 tests passed out of 891 (0 failures)
+- **Playwright browser tests**: 150 tests in 23 specs, run on desktop, a Pixel 7 and a passkey profile; the 25 October full run was 94 passed, 2 timeouts under load, 54 did not run, and both failures passed alone in 20 s
 - **Accessibility scans**: 0 Axe WCAG 2.1 AA violations
-- **Secret check**: 407 tracked files passed (0 secrets detected)
-- **Guarantees verified**: 20 passed out of 20
-- **Appendix B red team cases**: 35 passed out of 35
+- **Secret check**: passed (0 secrets detected)
+- **Guarantees verified**: 23 passed out of 23
+- **Red team cases**: 46 passed out of 46
 
 ## Feature flags (all off by default)
 
@@ -102,9 +102,9 @@ All optional feature flags remain OFF by default:
 
 ## Known limits
 
-- Single-node SQLite database intended for single-instance or persistent-volume container deployment (e.g. Render persistent disk).
+- Single-node SQLite database intended for single-instance or persistent-volume container deployment (e.g. Render persistent disk). Render does not attach a disk to a free instance, so a free deploy is ephemeral.
 - Model budget enforcement relies on Ollama or upstream provider rate limit return codes.
-- Interactive buyer login for PayPal checkout orders requires human web browser interaction in sandbox.
+- An open PayPal dispute cannot be demonstrated: the sandbox does not list a first-stage case, so the hold is fake-tested only.
 
 ## Human todo
 
@@ -117,16 +117,16 @@ The authoritative checklist is in [docs/HUMAN_TODO.md](file:///Users/siddharth.m
 6. Run mobile phone passkey registration and unlock test (15 minutes).
 7. Register PayPal webhook and configure PAYPAL_WEBHOOK_ID (10 minutes).
 8. Run PageSpeed Insights on live URL (5 minutes).
-9. Record and upload 2:45 demo video following docs/VIDEO_SCRIPT.md (60 to 90 minutes).
-10. Submit Devpost entry using text from docs/DEVPOST.md (30 minutes).
+9. Upload the recorded 2:53 demo video (`pitch/video/mandate-pitch.mp4`) to YouTube and paste the link (10 minutes).
+10. Submit the Devpost entry using text from docs/DEVPOST.md (30 minutes).
 
 ## Checklist
 
 - [x] All 23 hygiene invariants pass.
-- [x] All 715 API tests pass across 61 test files.
-- [x] All 138 Playwright browser tests pass.
-- [x] All 20 formal guarantees verified.
-- [x] All 35 Appendix B security cases pass.
+- [x] All 891 API tests pass across 75 test files.
+- [x] 150 Playwright browser tests in 23 specs (desktop, phone, passkey); the two load timeouts pass alone.
+- [x] All 23 formal guarantees verified.
+- [x] All 46 red-team cases pass.
 - [x] SECRET_SCAN.md confirms HISTORY_CLEAN=true.
 - [x] Real PayPal sandbox charge order created, refund executed via gated route, and payout sent (receipts in docs/live-proof/).
 - [x] Mobile Lighthouse performance verified: Welcome 90, Unlock 88 (target was 90), Today in demo 83.

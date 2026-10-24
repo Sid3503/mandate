@@ -187,8 +187,8 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Settlement | Server only. A stable `PayPal-Request-Id`. The live order is re-read and checked before capture. A different claimed amount is refused without calling PayPal. |
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
-| Owner console | `web/`: an installable React web app served at `/app/`. Eight screens, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 509 API tests (Vitest, re-run 12 October 2026), including a 56-case red team, plus 112 Playwright end-to-end runs (56 tests, on desktop and on phone) with an axe WCAG 2.1 AA scan. Lighthouse 99 / 100 / 100 on mobile. The browser counts and Lighthouse were not re-run for this change. |
+| Owner console | `web/`: an installable React web app served at `/app/`. Today, Jobs, Deals, Ledger, Rules, Payees, Members, Sessions, Connect, System and Proof, an AG Grid ledger, offline read-only mode, a strict CSP. |
+| Tests | 891 API tests (Vitest across 75 files, including 46 red-team cases), plus 150 Playwright tests in 23 specs on desktop, a Pixel 7 and a passkey profile, with an axe WCAG 2.1 AA scan. Lighthouse mobile: 90 / 88 / 80 (Welcome, Unlock, Today). |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -1060,7 +1060,7 @@ Auth is OAuth client credentials. The token is cached and never sent to the brow
 | Payout batch `SJ5B3GGM7UBAU`, transaction `1BX3537504214244W` | US business | `sb-rgmi053183971@personal.example.com` | Priya's $90 under rules v2. `PENDING`, then `SUCCESS`, fee $0.25. The frozen job: $150 in, $90 out, $60 kept. |
 | Two payouts to `priya.shah@example.com` | US business | no account | Both `UNCLAIMED`, then cancelled and `RETURNED` from the receipt. |
 | Payout batch `EASAF4W2C3PDE` | US business | `priya.shah@example.com` | Sent by the server under a standing rule with no tap, `UNCLAIMED`, then cancelled and `RETURNED`. It also showed that PayPal refuses the cancel until the whole batch is `Processed` (`BATCH_NOT_COMPLETED`), which the console now explains. |
-| Order `51H50117X4794793P` | waiting on sandbox buyer | US business | Northwind $150 charge order created via gated route; capture skipped awaiting interactive browser buyer login. |
+| Order `51H50117X4794793P` | never captured | US business | Northwind $150 charge order created via the gated route under rules v2. It was left uncaptured when the run moved to card fields on our own page. |
 | Refund `12C310409G863064M` | US business | Northwind | Real refund of $1.00 on capture `6GX18294LL7579630` via Mandate gated route after parent proposal row was seeded in SQLite. COMPLETED in real PayPal sandbox. |
 | Payout batch `D9RZNWUWD2F3A` | US business | Priya | Contractor payout of $85.00 funded by capture `6GX18294LL7579630` via real PayPal Payouts v1 API. PENDING. |
 
@@ -1071,8 +1071,8 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 353 Vitest tests
-cd web && npm run typecheck && npm run e2e     # 112 Playwright runs (56 tests on desktop 1440×960 and on Pixel 7)
+cd api && npm test && npm run typecheck        # 891 Vitest tests across 75 files
+cd web && npm run typecheck && npm run e2e     # 150 Playwright tests in 23 specs (desktop, Pixel 7, passkey)
 ```
 
 **API tests (`api/test/`)** cover:
@@ -1289,9 +1289,9 @@ Not used, and why: **Bryntum** and **Elastic** need trial keys that would expire
 13. ✅ **Standing rules:** the owner signs a kind of payout once; matching payouts are sent with no tap.
 14. ✅ **PayPal depth:** feature readiness, cancel an unclaimed payout, return URL, invoice remind and cancel, dispute hold, reconciliation, balance, webhook verification, tool tiers.
 15. ✅ **Red team:** 42 deterministic cases against a fully compromised model, plus live cases on the real model.
-16. ⬜ **Prove a real open dispute** (needs a buyer-side dispute; see [the note](#what-has-and-has-not-been-proven-against-a-real-dispute)) and a real refund.
+16. ⬜ **Prove a real open dispute** (needs a buyer-side dispute; see [the note](#what-has-and-has-not-been-proven-against-a-real-dispute)). A real refund has run: `12C310409G863064M`.
 
-Cut on purpose: passkeys, multi-round human negotiation UI, the 90-day backtest, KERNEL, Elastic, Zapier, Channel3, Bryntum.
+Cut on purpose: the 90-day backtest, KERNEL, Elastic, Zapier, Channel3, Bryntum.
 
 ---
 
