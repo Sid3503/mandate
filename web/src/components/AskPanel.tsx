@@ -108,7 +108,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
           pending: false,
           error: session.data?.agents.reason === 'daily_budget'
             ? new ApiError(503, 'budget/exhausted', 'The AI is paused for today', `The day's model budget is used up${budget ? ` (${budget.percent}% of ${budget.cap.toLocaleString('en-US')} tokens)` : ''}. Questions about the ledger still work without one. Raise MODEL_WORKSPACE_DAILY_TOKENS to give it more.`, {})
-            : new ApiError(503, 'agents.unconfigured', 'No language model is configured', 'Questions about the ledger work without one (try “What is waiting for me?”). To ask the clerk to file a request, set OLLAMA_API_KEY.', {}),
+            : new ApiError(503, 'agents.unconfigured', 'No language model is configured', 'Questions about the ledger work without one (try “What is waiting for me?”). The clerk that files requests is off: this server has no language model. System shows how to turn it on.', {}),
         })
       }
       patch(id, { route })
@@ -187,7 +187,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
             </>
           ) : (
             <>
-              <Chip tone="muted">no model</Chip> Questions about the ledger, and jumping around, work without a language model. To have the clerk file a request, set <span className="mono">OLLAMA_API_KEY</span>.
+              <Chip tone="muted">no model</Chip> Questions about the ledger, and jumping around, work without a language model. The clerk that files requests is off on this server; System shows how to turn it on.
             </>
           )}
         </div>

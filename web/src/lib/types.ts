@@ -370,6 +370,7 @@ export type NegotiationView = {
   moves: NegotiationMove[]
   seats: { seller: NegotiationSeat; buyer: NegotiationSeat }
   you: { sides: Side[]; agentMay: Side[] }
+  negotiators: { seller: boolean; buyer: boolean }
   fairness: { zone: { minCents: number; maxCents: number }; sellerSharePct: number; nashCents: number } | null
 }
 

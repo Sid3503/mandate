@@ -399,6 +399,9 @@ export class DealService {
       seats: { seller, buyer },
       // The seats the caller may answer for, and of those, the ones Mandate's negotiator may answer for on its behalf.
       you: { sides: (['seller', 'buyer'] as const).filter((side) => canAct(side)), agentMay: (['seller', 'buyer'] as const).filter((side) => canAct(side) && this.agentMaySpeakFor(side, thread.buyer_id)) },
+      // Who Mandate's negotiator may speak for in this negotiation: always the studio; the client only if it never
+      // claimed its seat, or claimed it and delegated. When both, the owner can let the two negotiators finish it.
+      negotiators: { seller: true, buyer: this.agentMaySpeakFor('buyer', thread.buyer_id) },
       fairness: agreed && seller.visible && buyer.visible ? fairness(seatOf(this.seatSheet('seller', thread.buyer_id)), seatOf(this.seatSheet('buyer', thread.buyer_id)), (JSON.parse(agreed.terms_json) as StoredTerms).totalCents) : null,
     }
   }

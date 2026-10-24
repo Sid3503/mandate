@@ -1,7 +1,7 @@
 // A throwaway server for end-to-end tests and demos: in-memory ledger, fake PayPal, the built console.
 // Never use this with real money. Run: node --import tsx src/dev/e2e-server.ts
 import { serve } from '@hono/node-server'
-import { appendFileSync, writeSync } from 'node:fs'
+import { appendFileSync, readFileSync, writeSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../app'
 import { buildServices } from '../services/container'
@@ -11,6 +11,8 @@ import { FakeInvoices, FakePayPal, FakeWatch } from '../paypal/fake'
 import { createPayPalClient } from '../paypal/client'
 import { loadFlags } from '../flags'
 import { demoModel } from './demo-model'
+import { PartyRulesSchema } from '../domain/deal'
+import { WARRANT_ID } from '../domain/schemas'
 
 const port = Number(process.env.PORT ?? 8799)
 
@@ -28,6 +30,37 @@ for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) process.on(signal
 const db = openDatabase(':memory:')
 migrate(db)
 seed(db, new Date())
+
+// E2E_SCENARIO picks the cast a demo is recorded with (api/src/dev/scenarios.json): the studio, its client, its
+// contractor, the kinds of work, the rules' amounts and each company's price sheet. `line` is the seed as it is.
+// The recorder and the outside agent read the same file, so a take never mixes two casts.
+type Scenario = {
+  studio: string
+  client: { id: string; displayName: string; email: string; aliases: string[] }
+  payee: { id: string; displayName: string; email: string; aliases: string[] }
+  categories: string[]
+  clientCategories: string[]
+  rules: { currency: string; autoSettleUnderCents: number; monthlyCapCents: number; perPaymentCeilingCents: number; contractorShareBps: number; timezone: string }
+  seller: { minTotalCents: number; targetTotalCents?: number; style?: string; brief?: string }
+  buyer: { maxTotalCents: number; targetTotalCents?: number; style?: string; brief?: string }
+}
+const scenarioName = process.env.E2E_SCENARIO ?? 'line'
+const scenarios = JSON.parse(readFileSync(new URL('./scenarios.json', import.meta.url), 'utf8')) as Record<string, Scenario>
+const scenario = scenarios[scenarioName]
+if (!scenario) throw new Error(`E2E_SCENARIO ${scenarioName} is not in scenarios.json (${Object.keys(scenarios).join(', ')})`)
+if (scenarioName !== 'line') {
+  const now = new Date().toISOString()
+  const row = db.prepare('SELECT body_json FROM warrants WHERE version = 1').get() as { body_json: string }
+  const body = { ...JSON.parse(row.body_json), ...scenario.rules, payees: [scenario.payee], clients: [scenario.client], categories: scenario.categories, standing: [] }
+  db.prepare('UPDATE warrants SET body_json = ? WHERE version = 1').run(JSON.stringify(body))
+  db.exec('DELETE FROM payees')
+  db.prepare('INSERT INTO payees (id, email, status, verified_method, first_seen, total_paid_cents) VALUES (?, ?, ?, ?, ?, 0)').run(scenario.payee.id, scenario.payee.email, 'active', 'owner_attested', now)
+  db.exec('DELETE FROM party_rules')
+  const sheet = db.prepare(`INSERT INTO party_rules (party_id, version, body_json, created_at, origin) VALUES (?, 1, ?, ?, 'seed')`)
+  const common = { currency: scenario.rules.currency, maxMilestones: 4, requireProof: true }
+  sheet.run(WARRANT_ID, JSON.stringify(PartyRulesSchema.parse({ role: 'seller', displayName: scenario.studio, categories: scenario.categories, ...common, ...scenario.seller })), now)
+  sheet.run(scenario.client.id, JSON.stringify(PartyRulesSchema.parse({ role: 'buyer', displayName: scenario.client.displayName, categories: scenario.clientCategories, ...common, ...scenario.buyer })), now)
+}
 // E2E_REAL_PAYPAL=1 takes money through the real PayPal sandbox (PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET, sandbox
 // only) instead of the fake, for recording the product doing it for real. The example addresses are not PayPal
 // accounts, so a payout to them is held as unclaimed: E2E_PAYEE_EMAIL and E2E_CLIENT_EMAIL put sandbox accounts in
@@ -73,7 +106,7 @@ const app = createApp({
     apiKey: 'owner-e2e-key-0123456789',
     proposerKey: 'proposer-e2e-key-0123456789',
     buyerAgentKey: 'buyer-agent-e2e-key-0123456789',
-    buyerAgentParty: 'client_northwind',
+    buyerAgentParty: scenario.client.id,
     webDist: process.env.WEB_DIST ?? fileURLToPath(new URL('../../../web/dist', import.meta.url)),
     rateLimitPerMinute: 0,
     paypalConfigured: true,

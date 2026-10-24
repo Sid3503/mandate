@@ -372,7 +372,7 @@ export function Studio() {
           <form onSubmit={submit} className="stack">
             <label className="field">
               <span>Studio name</span>
-              <input value={name} onChange={(event) => setName(event.target.value)} minLength={2} maxLength={80} required placeholder="Harbor Studio" />
+              <input value={name} onChange={(event) => setName(event.target.value)} minLength={2} maxLength={80} required placeholder="Your studio’s name" />
             </label>
             <button className="btn btn-lime btn-block" type="submit" disabled={busy || !passkeys || name.trim().length < 2}>{busy ? 'Waiting for the passkey…' : 'Create and save a passkey'}</button>
             <ProblemCard error={error} />
@@ -409,7 +409,7 @@ export function Studio() {
             <p>Name the one client who pays this studio, and the one contractor you assign the work to and pay from that money. The next step is the rule that says when. Invoices, shares, and who can be paid without a tap come after you publish that rule.</p>
             <label className="field">
               <span>Client you bill</span>
-              <input value={clientName} onChange={(event) => setClientName(event.target.value)} placeholder="Harbor Foods" autoComplete="organization" />
+              <input value={clientName} onChange={(event) => setClientName(event.target.value)} placeholder="The client company’s name" autoComplete="organization" />
             </label>
             <label className="field">
               <span>Client email</span>
@@ -417,16 +417,17 @@ export function Studio() {
             </label>
             <label className="field">
               <span>Contractor you pay</span>
-              <input value={payeeName} onChange={(event) => setPayeeName(event.target.value)} placeholder="Ava Chen" autoComplete="name" />
+              <input value={payeeName} onChange={(event) => setPayeeName(event.target.value)} placeholder="Their full name" autoComplete="name" />
             </label>
             <label className="field">
               <span>Contractor email</span>
-              <input type="email" value={payeeEmail} onChange={(event) => setPayeeEmail(event.target.value)} placeholder="ava@studio.com" autoComplete="email" />
+              <input type="email" value={payeeEmail} onChange={(event) => setPayeeEmail(event.target.value)} placeholder="contractor@example.com" autoComplete="email" />
             </label>
             <label className="field">
               <span>What you do</span>
-              <input value={work} onChange={(event) => setWork(event.target.value)} placeholder="Logo and brand design" maxLength={120} />
+              <input value={work} onChange={(event) => setWork(event.target.value)} placeholder="e.g. brand design, web development" maxLength={120} />
             </label>
+            {!pair(clientName, clientEmail) || !pair(payeeName, payeeEmail) ? <p className="fine">Add a name and an email for both the client and the contractor to continue, or skip this for now.</p> : null}
             <button className="btn btn-lime btn-block" type="submit" disabled={busy || !pair(clientName, clientEmail) || !pair(payeeName, payeeEmail)}>{busy ? 'Saving…' : 'Continue'}</button>
             <button type="button" className="btn btn-ghost btn-block" onClick={() => setStep('rules')} disabled={busy}>Skip for now</button>
             <ProblemCard error={error} />

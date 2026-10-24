@@ -91,6 +91,7 @@ export function Deals() {
       ]
     : [{ key: 'mine', partyId: 'mine', role: session.data?.side === 'buyer' ? ('buyer' as const) : ('seller' as const), displayName: mine.data?.displayName ?? '', sheet: mine.data }]
   const sheetsReady = owner ? Boolean(rules.data && warrant.data) : Boolean(session.data) && !mine.isLoading
+  const offerCategory = (owner ? warrant.data?.categories?.find((item) => buyerSheet?.categories.includes(item)) ?? warrant.data?.categories?.[0] : mine.data?.categories?.[0]) ?? ''
   const jump = () => {
     const id = live.state.result?.agreedDealId
     if (!id) return
@@ -137,7 +138,7 @@ export function Deals() {
       {owner && !noRules ? (
         <NegotiateForm
           disabled={!agents || !online || running || !bothSet || !confirmed}
-          why={!bothSet ? 'Both companies need a price limit first: a deal needs a number each company will accept.' : !confirmed ? 'Keep the starting numbers first: the negotiators talk only inside numbers a person chose.' : !agents ? 'Set OLLAMA_API_KEY to turn the negotiators on. You can still make an offer yourself below.' : null}
+          why={!bothSet ? 'Both companies need a price limit first: a deal needs a number each company will accept.' : !confirmed ? 'Keep the starting numbers first: the negotiators talk only inside numbers a person chose.' : !agents ? 'The AI negotiators are off on this server. You can still make an offer yourself below.' : null}
           clients={warrant.data?.clients ?? []}
           clientSpeaksForItself={claimed && buyerSheet?.delegate !== true}
           running={running}
@@ -160,16 +161,16 @@ export function Deals() {
       ) : null}
 
       <div className="stack-l deal-list">
-        {threads.map((thread) => <NegotiationCard key={thread.id} view={thread} deal={rows.find((row) => row.id === thread.agreedDealId) ?? null} owner={owner} agentsOn={agents} highlight={highlight} onChanged={() => void refresh()} />)}
+        {threads.map((thread) => <NegotiationCard key={thread.id} view={thread} deal={rows.find((row) => row.id === thread.agreedDealId) ?? null} owner={owner} agentsOn={agents} highlight={highlight} onChanged={() => void refresh()} onFinish={owner && agents && !running ? () => { void live.start({ threadId: thread.id }); window.scrollTo({ top: 0, behavior: 'smooth' }) } : undefined} />)}
       </div>
 
       {!noRules && sheetsReady ? (
         <OfferForm
-          blocked={!bothSet || !confirmed}
-          blockedHint={!bothSet ? 'Both companies need a price limit before an offer can be made. You can bill a client from New request without a deal.' : 'Keep the starting numbers first: offers wait until a person chose them.'}
+          blocked={!bothSet || !confirmed || !offerCategory}
+          blockedHint={!offerCategory ? 'Add a kind of work to your rules first: an offer is for one kind of work.' : !bothSet ? (owner ? 'Both companies need a price limit before an offer can be made. You can bill a client from New request without a deal.' : 'Set the most your company will pay, above, before making an offer.') : 'Keep the starting numbers first: offers wait until a person chose them.'}
           clients={owner ? (warrant.data?.clients ?? []).map((client) => client.displayName) : [mine.data?.displayName ?? '']}
           currency={currency}
-          category={(owner ? warrant.data?.categories?.find((item) => buyerSheet?.categories.includes(item)) ?? warrant.data?.categories?.[0] : mine.data?.categories?.[0]) ?? 'design'}
+          category={offerCategory}
           side={owner ? 'seller' : 'buyer'}
           onMade={() => void refresh()}
         />
@@ -402,7 +403,11 @@ function PriceSheetForm({ party, owner }: { party: SheetParty; owner: boolean })
   const [style, setStyle] = useState<NegotiationStyle>(party.sheet?.style ?? 'balanced')
   const [brief, setBrief] = useState(party.sheet?.brief ?? '')
   const [delegate, setDelegate] = useState(party.sheet?.delegate === true)
-  const [name, setName] = useState(party.displayName)
+  const studio = useStudioName()
+  // The name is the company's own: the studio's name for the studio, and for a client the name already on the rules
+  // (the server fills it in when this is left empty). It can be corrected here at any time.
+  const [name, setName] = useState(party.displayName || (party.role === 'seller' ? studio ?? '' : ''))
+  useEffect(() => { if (!name && party.role === 'seller' && studio && !party.sheet) setName(studio) }, [studio])
   const cents = parseCents(value)
   const targetCents = target.trim() ? parseCents(target) : null
   const label = party.role === 'buyer' ? 'pays at most' : 'needs at least'
@@ -412,7 +417,7 @@ function PriceSheetForm({ party, owner }: { party: SheetParty; owner: boolean })
   const targetWrong = targetCents !== null && cents !== null && (party.role === 'seller' ? targetCents < cents : targetCents > cents)
   const save = useMutation({
     mutationFn: () => api.putPartyRules(party.partyId, {
-      ...(name.trim() && !party.sheet ? { displayName: name.trim() } : {}),
+      ...(name.trim() && name.trim() !== party.sheet?.displayName ? { displayName: name.trim() } : {}),
       [field]: cents,
       ...(targetCents !== null ? { targetTotalCents: targetCents } : {}),
       style,
@@ -431,21 +436,19 @@ function PriceSheetForm({ party, owner }: { party: SheetParty; owner: boolean })
   return (
     <form className="sheet-form" data-tour={`price-${party.role}`} onSubmit={(event) => { event.preventDefault(); if (cents && !targetWrong) save.mutate() }}>
       <div className="row between wrap gap-s">
-        <span className="eyebrow">{party.sheet ? party.displayName : party.role === 'buyer' ? 'A client on the rules' : 'Your studio'}</span>
+        <span className="eyebrow">{party.sheet ? party.displayName : !owner ? 'Your company' : party.role === 'buyer' ? 'A client on the rules' : 'Your studio'}</span>
         {party.sheet ? <span className="mono small">sheet v{party.sheet.version}{party.sheet.writtenBy === 'party' ? ' · written by them' : ''}</span> : <Chip tone="need">not set</Chip>}
       </div>
       <div className="field-row">
-        {party.sheet ? null : (
-          <label className="field"><span>Company name</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required placeholder="Harbor Foods" /></label>
-        )}
+        <label className="field"><span>Company name</span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required={party.role === 'seller'} placeholder={party.role === 'buyer' && !owner ? 'As the studio’s rules name you' : 'Your company’s name'} /><small>{party.role === 'buyer' && !owner && !name ? 'Leave empty to use the name on the studio’s rules.' : 'How the other side’s negotiator will address you.'}</small></label>
         <label className="field">
-          <span>{name || 'This company'} {label} for a whole job</span>
-          <span className="dollar-input"><span>{currency}</span><input inputMode="decimal" value={value} onChange={(event) => setValue(event.target.value)} placeholder="400.00" required aria-label={`Walk-away in ${currency}`} /></span>
+          <span>{name || (owner ? 'This company' : 'Your company')} {label} for a whole job</span>
+          <span className="dollar-input"><span>{currency}</span><input inputMode="decimal" value={value} onChange={(event) => setValue(event.target.value)} placeholder={party.role === 'buyer' ? 'The most you will pay' : 'The least you will take'} required aria-label={`Walk-away in ${currency}`} /></span>
           <small>The walk-away: no offer past it can be made or accepted.</small>
         </label>
         <label className="field">
           <span>Hopes for (target)</span>
-          <span className="dollar-input"><span>{currency}</span><input inputMode="decimal" value={target} onChange={(event) => setTarget(event.target.value)} placeholder={party.role === 'buyer' ? '250.00' : '450.00'} aria-label={`Target in ${currency}`} /></span>
+          <span className="dollar-input"><span>{currency}</span><input inputMode="decimal" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="Where you aim" aria-label={`Target in ${currency}`} /></span>
           <small>{targetWrong ? `A target must be ${party.role === 'seller' ? 'at or above' : 'at or under'} the walk-away.` : 'Where the negotiator aims. Private, like the walk-away.'}</small>
         </label>
       </div>
@@ -480,7 +483,7 @@ const STATUS_CHIP: Record<NegotiationView['status'], { tone: 'auto' | 'need' | '
  * One negotiation, for whoever is looking: the moves so far, and — when it is their turn — the three things a side may
  * do. The owner may answer for a client only while that client has not claimed its seat; the server decides that.
  */
-function NegotiationCard({ view, deal, owner, agentsOn, highlight, onChanged }: { view: NegotiationView; deal: Deal | null; owner: boolean; agentsOn: boolean; highlight: string | null; onChanged: () => void }) {
+function NegotiationCard({ view, deal, owner, agentsOn, highlight, onChanged, onFinish }: { view: NegotiationView; deal: Deal | null; owner: boolean; agentsOn: boolean; highlight: string | null; onChanged: () => void; onFinish?: () => void }) {
   const agreed = view.status === 'agreed'
   const name = (side: Side) => (side === 'seller' ? view.sellerName : view.buyerName)
   // No move yet: whoever may act opens (the studio first, when the owner may speak for both).
@@ -516,6 +519,12 @@ function NegotiationCard({ view, deal, owner, agentsOn, highlight, onChanged }: 
       ) : null}
       {view.moves.filter((move) => move.totalCents !== null).length >= 2 ? <ConcessionChart moves={view.moves} currency={view.currency} offersPerSide={view.offersPerSide} studio={view.sellerName} client={view.buyerName} /> : null}
 
+      {view.status === 'open' && onFinish && view.negotiators.buyer ? (
+        <div className="row between wrap gap-s finish-bar">
+          <span className="fine">Both sides let Mandate’s negotiators speak for them here: they can play it to the end, move by move, while you watch.</span>
+          <button type="button" className="btn btn-lime btn-small" onClick={onFinish} data-testid="finish-negotiation">Let the negotiators finish it</button>
+        </div>
+      ) : null}
       {view.status === 'open' ? (
         mySide && own ? <YourMove view={view} side={mySide} counterparty={name(mySide === 'seller' ? 'buyer' : 'seller')} owner={owner} agentsOn={agentsOn} onChanged={onChanged} />
           : <p className="fine" data-testid="waiting">Waiting for {view.turn ? name(view.turn) : 'the first offer'}. {view.turn ? `${name(view.turn)} answers in its own console, or its own agent does. ` : ''}Each side may make {view.offersPerSide} offers; this negotiation closes by itself on {new Date(view.expiresAt).toLocaleDateString()} if nobody answers.</p>
@@ -671,7 +680,7 @@ function OfferForm({ blocked = false, blockedHint = '', clients, currency, categ
         <div className="field-row">
           {side === 'seller' && clients.length > 1 ? <label className="field"><span>To</span><select value={client} onChange={(event) => setBuyer(event.target.value)}>{clients.map((item) => <option key={item} value={item}>{item}</option>)}</select></label> : null}
           <label className="field"><span>The job</span><input value={scope} onChange={(event) => setScope(event.target.value)} maxLength={300} required placeholder="What will be delivered" /></label>
-          <label className="field"><span>Price for the whole job</span><span className="dollar-input"><span>{currency}</span><input inputMode="decimal" value={total} onChange={(event) => { setTotal(event.target.value); setIdem(newKey()) }} placeholder="300.00" required aria-label={`Total in ${currency}`} /></span></label>
+          <label className="field"><span>Price for the whole job</span><span className="dollar-input"><span>{currency}</span><input inputMode="decimal" value={total} onChange={(event) => { setTotal(event.target.value); setIdem(newKey()) }} placeholder="Your price" required aria-label={`Total in ${currency}`} /></span></label>
         </div>
         <div className="field-row">
           <label className="field"><span>Milestones</span><input value={titles} onChange={(event) => setTitles(event.target.value)} maxLength={300} placeholder="First half, Second half" /><small>Comma-separated; the price is split evenly.</small></label>

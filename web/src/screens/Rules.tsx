@@ -180,7 +180,7 @@ export function Rules() {
           </ul>
           <div className="panel wip-note" data-testid="rules-example">
             <span className="eyebrow">One job, and where the rules show up</span>
-            <p>A client pays you <b>$150</b> for a logo. Your rules say what happens next: the contractor&rsquo;s share comes out of that money (say <b>$90</b>), <b>$60</b> stays in the studio, and nothing is paid to anyone who is not on your list. If the client has not paid yet, nothing goes out at all &mdash; the rules say so before anyone is asked, and before any money moves.</p>
+            <p>A client pays you for a job. Your rules say what happens next: the contractor&rsquo;s share comes out of that money, the rest stays in the studio, and nothing is paid to anyone who is not on your list. If the client has not paid yet, nothing goes out at all &mdash; the rules say so before anyone is asked, and before any money moves.</p>
             <p className="fine">Those numbers are an example. Yours will be the ones you write.</p>
           </div>
           {own ? (
@@ -767,7 +767,7 @@ function PolicyBox({ onUse }: { onUse: (result: RulesDraft) => void }) {
       <p className="fine">Paste a spending policy from a document or an email. A model reads it sentence by sentence and says which parts Mandate can enforce, which are a person’s judgment, and which are not your words. Another drafts rules for the rest, and a second reading checks that draft against each sentence. Code checks every claim against the rules. You read the draft and publish it yourself.</p>
       <form className="draft-form" onSubmit={(event) => { event.preventDefault(); if (text.trim().length >= 20) read.mutate(text.trim()) }}>
         <label className="sr-only" htmlFor="policy-text">Your written policy</label>
-        <textarea id="policy-text" rows={8} maxLength={POLICY_LIMIT} value={text} placeholder={'Contractors may be paid at most $2,000 a month.\nEvery request needs a link to the work.\nUse good judgment on anything unusual.'} onChange={(event) => setText(event.target.value)} />
+        <textarea id="policy-text" rows={8} maxLength={POLICY_LIMIT} value={text} placeholder={'Contractors may be paid at most 2,000 a month.\nEvery request needs a link to the work.\nUse good judgment on anything unusual.'} onChange={(event) => setText(event.target.value)} />
         <div className="row between wrap">
           <span className="fine">{text.length.toLocaleString()} of {POLICY_LIMIT.toLocaleString()} characters · at least 20 to read. Quoted or forwarded text is not treated as yours.</span>
           <button type="submit" className="btn btn-ink" disabled={!online || text.trim().length < 20 || read.isPending}>{read.isPending ? 'Reading…' : 'Read my policy'}</button>

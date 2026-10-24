@@ -511,6 +511,7 @@ export function createMandateMcpServer(context: McpContext): McpServer {
       threadId: z.string().min(8).max(64).describe('The negotiation to end'),
       prompt: z.string().max(500).optional().describe('One courteous sentence to the other side'),
       assessment: z.string().max(1000).optional().describe('Your private reasoning for your own company: why there is no deal here'),
+      ...(negotiating ? { confirm: z.boolean().optional().describe('true to walk away even though their standing offer is inside your walk-away') } : {}),
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, async (args) => {
@@ -519,6 +520,17 @@ export function createMandateMcpServer(context: McpContext): McpServer {
       if (over) return over
       const thread = services.repo.negotiation(args.threadId)
       if (context.dealClientId && thread && thread.buyer_id !== context.dealClientId) return failure('deal.wrong_client', 'This negotiation is with one client.', { status: 422 })
+      // Walking away cannot be undone, so Mandate's own negotiator is asked to confirm it once when a deal inside its
+      // own walk-away is on the table and it still has offers: the usual guard on an irreversible action. It still
+      // decides; code only makes sure it decided with the facts in front of it.
+      if (negotiating && !(args as { confirm?: boolean }).confirm) {
+        const view = services.deals.negotiationView(args.threadId, principal)
+        const side = view.turn && view.you.sides.includes(view.turn) ? view.turn : null
+        const seat = side ? view.seats[side] : null
+        if (side && seat?.visible && view.standing && view.standing.side !== side && view.standing.dealId && seat.advice?.mayAccept && seat.offersLeft > 0) {
+          return failure('negotiation.confirm_walk_away', `Not walked away yet. Their standing offer of ${dollars(view.standing.totalCents ?? 0)} is inside your walk-away, and you still have ${seat.offersLeft} offer${seat.offersLeft === 1 ? '' : 's'} left. Walking away ends this negotiation for good, with no deal. You may accept it (accept_offer with dealId "${view.standing.dealId}"), counter (offer_deal), or, if no deal really is better for your company, call walk_away again with confirm: true.`, { status: 409 })
+        }
+      }
       services.deals.walkAway(args.threadId, { reason: args.prompt, assessment: args.assessment }, principal, context.runId, context.hosted ? 'agent' : 'outside')
       return json({ result: 'WALKED_AWAY', ...negotiationState(args.threadId), nextStep: 'The negotiation is over with no deal.' })
     } catch (error) {

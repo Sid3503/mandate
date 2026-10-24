@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { ModelBudget } from '../src/ops/budget'
-import { agree, BUYER_KEY, call, closeAll, collect, confirmPrices, EVIDENCE, harness, JOB, STUDIO_KEY, terms } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, confirmPrices, EVIDENCE, harness, idem, JOB, STUDIO_KEY, terms } from './support'
 import { scriptedModel, type ScriptContext, type ScriptedStep } from './mockModel'
 
 afterEach(closeAll)
@@ -277,6 +277,20 @@ describe('the negotiators', () => {
     expect((await call(app, 'GET', '/v1/deals')).json.data.map((deal: { status: string; terms: { totalCents: number } }) => `${deal.status}:${deal.terms.totalCents}`).sort()).toEqual(['refused:20000', 'withdrawn:45000'])
   })
 
+  it('ask a negotiator to confirm a walk-away while a deal inside its walk-away is on the table', async () => {
+    const model = negotiators((seat) => {
+      if (seat.seller) return offerOf(seat, 35_000, 'A fair price for the work.')
+      return { tool: 'walk_away', input: { threadId: seat.threadId, prompt: 'Too far apart.', assessment: 'No room.', ...(seat.round > 0 ? { confirm: true } : {}) } }
+    })
+    const { app } = harness({ model })
+    await confirmPrices(app)
+    const run = await call(app, 'POST', '/v1/negotiations', { body: {} })
+    // The first walk-away came back with the facts; the confirmed one ended it. Code never moved for the model.
+    expect(model.prompts.find((prompt) => prompt.includes('is BUYING') && prompt.includes('Not walked away yet'))).toBeTruthy()
+    expect(movesOf(run.json)).toEqual(['seller:offer:35000', 'buyer:walk_away:null'])
+    expect(run.json).toMatchObject({ agreed: false, status: 'walked_away' })
+  })
+
   it('end with no deal at the deadline both sides knew, and say so', async () => {
     const model = negotiators((seat) => offerOf(seat, seat.seller ? 45_000 - seat.turn * 500 : 20_000 + seat.turn * 500))
     const { app } = harness({ model })
@@ -386,8 +400,24 @@ describe('the negotiators', () => {
     // The client answers for itself, and that makes the deal.
     const view = (await call(app, 'GET', `/v1/negotiations/${run.json.threadId}`, { key: BUYER_KEY })).json
     expect(view.you.sides).toEqual(['buyer'])
+    expect(view.negotiators).toEqual({ seller: true, buyer: false })
     const accepted = await call(app, 'POST', `/v1/deals/${view.standing.dealId}/accept`, { key: BUYER_KEY, body: { message: 'Deal.' } })
     expect(accepted.json.status).toBe('agreed')
+  })
+
+  it('carry on a negotiation the client began by hand, once it delegates, and finish it', async () => {
+    const model = negotiators((seat) => seat.seller ? offerOf(seat, seat.turn === 1 ? 40_000 : 35_000) : acceptOf(seat))
+    const { app } = harness({ model })
+    await confirmPrices(app)
+    expect((await call(app, 'PUT', '/v1/party-rules/mine', { key: BUYER_KEY, body: { maxTotalCents: 38_000 } })).status).toBe(201)
+    const first = await call(app, 'POST', '/v1/negotiations', { body: {} })
+    expect(movesOf(first.json)).toEqual(['seller:offer:40000'])
+    // The client counters by hand, then lets Mandate's negotiator speak for it.
+    await call(app, 'POST', '/v1/deals/offers', { key: BUYER_KEY, idem: idem('hand'), body: { buyer: 'Northwind', threadId: first.json.threadId, totalCents: 23_000 } })
+    expect((await call(app, 'PUT', '/v1/party-rules/mine', { key: BUYER_KEY, body: { delegate: true } })).status).toBe(201)
+    const done = await call(app, 'POST', '/v1/negotiations', { body: { threadId: first.json.threadId } })
+    expect(done.json).toMatchObject({ threadId: first.json.threadId, agreed: true })
+    expect(movesOf(done.json)).toEqual(['seller:offer:40000', 'buyer:offer:23000', 'seller:offer:35000', 'buyer:accept:35000'])
   })
 
   it('speak for a client that delegated, in private: the studio sees its moves, never its reasoning', async () => {
@@ -400,6 +430,8 @@ describe('the negotiators', () => {
     const ownerView = run.json.negotiation
     expect(ownerView.moves[1]).toMatchObject({ side: 'buyer', action: 'accept', assessment: null, runId: null })
     expect(ownerView.seats.buyer).toEqual({ side: 'buyer', visible: false })
+    // Both sides let Mandate's negotiators speak, so the owner may let them finish an open negotiation.
+    expect(ownerView.negotiators).toEqual({ seller: true, buyer: true })
     // The client's own brief reached its agent, and the studio's record of that run is sealed.
     expect(model.prompts.some((prompt) => prompt.includes('is BUYING') && prompt.includes('We care about speed.'))).toBe(true)
     const runs = (await call(app, 'GET', '/v1/agent-runs')).json.data as Array<{ id: string; agent: string; input: string }>

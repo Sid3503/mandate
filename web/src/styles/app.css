@@ -1315,3 +1315,4 @@ html { scroll-behavior: smooth; }
 .draft-second-agreed { background: var(--lime-soft); }
 .draft-second-concerns { border-width: 2px; border-style: dashed; }
 .draft-second-unavailable { background: transparent; border-style: dotted; }
+.finish-bar { border: 1.5px dashed var(--ink); padding: 10px 12px; background: var(--lime-soft); }
