@@ -103,7 +103,7 @@ export function NewRequest() {
   const send = useMutation({
     mutationFn: (body: ProposalInput) => api.propose(body, idem),
     onSuccess: (made) => {
-      toast(made.gate === 'DENY' ? { title: 'Refused by the rules', body: `${made.clause}. Nothing moved.`, tone: 'info' } : made.gate === 'AUTO' ? { title: 'Filed. No tap needed', body: 'It is inside your rules and goes through by itself.' } : { title: 'Filed. Waiting for your tap', body: 'Approve it on Today.', tone: 'warn' })
+      toast(made.gate === 'DENY' ? { title: 'Refused by the rules', body: `${made.clause}. Nothing moved.`, tone: 'info' } : made.gate === 'AUTO' ? { title: 'Filed. No tap needed', body: 'It is inside your rules and goes through by itself.' } : { title: owner ? 'Filed. Waiting for your tap' : 'Filed. Waiting for the owner', body: owner ? 'Approve it on Today.' : 'The owner approves it. You can follow it on its receipt.', tone: 'warn' })
       void refresh()
     },
   })
@@ -191,8 +191,8 @@ export function NewRequest() {
           <div className="field-row">
             <label className="field" data-tour="new-amount">
               <span>Amount</span>
-              <span className="dollar-input big"><span>$</span><input inputMode="decimal" autoComplete="off" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="90.00" required /></span>
-              <small className="mono">{cents === null ? 'Dollars and cents' : `= ${cents} cents`}</small>
+              <span className="dollar-input big"><span>{warrant.data?.currency ?? 'USD'}</span><input inputMode="decimal" autoComplete="off" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required aria-label={`Amount in ${warrant.data?.currency ?? 'USD'}`} /></span>
+              <small className="mono">{cents === null ? 'The amount, with cents' : `= ${cents} hundredths`}</small>
             </label>
             <label className="field" data-tour="new-work">
               <span>Kind of work</span>
@@ -200,16 +200,16 @@ export function NewRequest() {
                 {(warrant.data?.categories ?? []).map((item) => <option key={item} value={item}>{item}</option>)}
                 <option value={OTHER}>Something else…</option>
               </select>
-              {category === OTHER ? <input value={otherCategory} onChange={(event) => setOtherCategory(event.target.value)} placeholder="lunch" aria-label="Other kind of work" /> : null}
+              {category === OTHER ? <input value={otherCategory} onChange={(event) => setOtherCategory(event.target.value)} placeholder="Name the kind of work" aria-label="Other kind of work" /> : null}
             </label>
           </div>
 
-          <label className="field"><span>What it is for</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === 'charge' ? `${clientName} logo milestone 1 invoice` : `${clientName} logo milestone 1`} required maxLength={500} /></label>
+          <label className="field"><span>What it is for</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === 'charge' ? `What ${clientName} is billed for` : 'What this payment is for'} required maxLength={500} /></label>
           <label className="field" data-tour="new-proof"><span>Link to the work</span><input type="url" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} placeholder="https://example.com/the-work" /><small>The rules need an https link.</small></label>
           {kind !== 'payment' ? (
             <label className="field">
               <span>Job</span>
-              <input list="jobs" value={jobId} onChange={(event) => setJobId(event.target.value)} placeholder="job_first" pattern="[a-z0-9][a-z0-9_-]{0,63}" readOnly={kind === 'refund' && Boolean(parentRow)} />
+              <input list="jobs" value={jobId} onChange={(event) => setJobId(event.target.value)} placeholder="e.g. job_spring-launch" title="Lowercase letters, numbers, - and _" pattern="[a-z0-9][a-z0-9_-]{0,63}" readOnly={kind === 'refund' && Boolean(parentRow)} />
               <datalist id="jobs">{jobIds.map((id) => <option key={id} value={id} />)}</datalist>
             </label>
           ) : jobId ? <p className="fine">Job <span className="mono">{jobId}</span>, taken from the client payment.</p> : null}

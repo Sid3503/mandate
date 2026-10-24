@@ -79,10 +79,17 @@ its own company. Code holds only what is authority, arithmetic or privacy:
 Each move is one run of the model with three tools only (least privilege), a forced tool call, reasoning effort
 "medium" on gpt-oss, and the model card's own sampling settings. A move the server refuses comes back to the model as the
 tool's answer, and it may correct itself in the same turn. A model that answers in words instead of moving is told so
-and asked once more. If it still makes no valid move, the move fails and is reported: **code never moves on the model's
-behalf.**
+and asked again, at most twice, with the exact calls it can make. If it still makes no valid move, the move fails and is
+reported: **code never moves on the model's behalf.** Walking away cannot be undone, so when Mandate's negotiator walks
+away while the other side's standing offer is inside its own walk-away and it still has offers left, the tool answers
+once with those facts and asks it to confirm (`confirm: true`): the usual guard on an irreversible action. The model
+still decides.
 
-The prompts are versioned (`negotiator@v3`, `debrief@v1`) with snapshot tests, and fence the other company's words as
+After the end, each debrief is given the moves worked out by code (each side's opening against its walk-away, every
+concession on both sides, the offers left), and is sent back if it names an amount that is not a fact or advises
+opening closer to the walk-away. A debrief that still fails its checks is not shown: no debrief beats a wrong one.
+
+The prompts are versioned (`negotiator@v3`, `debrief@v2`) with snapshot tests, and fence the other company's words as
 untrusted data. The prompt's negotiation guidance is drawn from the research listed below: anchor with your first offer
 and counter-anchor from your own target, concede in proportion to the other side's movement, mind the known deadline,
 accept when the offer is at least as good as what you could still get, walk away only when the other side's best

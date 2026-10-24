@@ -4,7 +4,7 @@
 //   ->  bill milestone 1, lock it to be paid on our own card page
 //   ->  she asks Mandate (⌘K) for the rule change in her own words; the drafter writes it,
 //       code checks it, and she reviews and publishes it
-//   ->  the card pays milestone 1 here, and that pays Priya's share with no tap
+//   ->  the card pays milestone 1 here, and that pays the contractor's share with no tap
 //   ->  connect an agent, and an outside agent on a live model is fooled by its inbox:
 //       three refusals, and the breaker suspends its key  ->  verify a receipt.
 // Navigation is done by clicking the real sidebar and links, then smooth-scrolling
@@ -12,10 +12,22 @@
 import { chromium } from 'playwright'
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 
 const START_WALL = Date.now()
+
+// The cast: who the studio is, who it bills, who it pays, the job and the words typed. One file for the demo server,
+// the outside agent and this recorder (api/src/dev/scenarios.json), chosen with SCENARIO (default line). Start the
+// server with the same E2E_SCENARIO.
+const SCENARIO_NAME = process.env.SCENARIO ?? 'line'
+const SC = JSON.parse(readFileSync(new URL('../../api/src/dev/scenarios.json', import.meta.url), 'utf8'))[SCENARIO_NAME]
+if (!SC) throw new Error(`SCENARIO ${SCENARIO_NAME} is not in api/src/dev/scenarios.json`)
+const OWNER_NAME = SC.owner.split(' ')[0]
+const CLIENT = SC.client.displayName
+const PAYEE = SC.payee.displayName
+const PAYEE_SHORT = SC.payeeShort
+const SHARE_RATE = SC.rules.contractorShareBps / 10000
 
 const BASE = process.env.BASE ?? 'http://127.0.0.1:8799'
 const OWNER = process.env.OWNER_KEY ?? 'owner-e2e-key-0123456789'
@@ -149,7 +161,7 @@ await page.addInitScript(() => {
 })
 
 const pause = (ms) => page.waitForTimeout(ms)
-// Milestone 1 and Priya's share, in cents, read from the deal the agents signed.
+// Milestone 1 and the contractor's share, in cents, read from the deal the agents signed.
 let M1 = 0
 let SHARE = 0
 const usd = (cents, digits = 2) => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: cents % 100 && digits === 0 ? 2 : digits, maximumFractionDigits: 2 })}`
@@ -635,7 +647,8 @@ async function show(locator, noteOpts, { scale = 1.32, markId } = {}) {
 // A card that replaces another fades in on top of it, and the old one goes only once it is
 // covered. Fading the old one out first let the app show through between the two cards.
 async function paintIntro(kind) {
-  await page.evaluate((kind) => {
+  const cast = [[OWNER_NAME, SC.ownerLine], [CLIENT, SC.clientLine], [PAYEE_SHORT, SC.payeeLine]]
+  await page.evaluate(({ kind, cast }) => {
     const cursor = document.getElementById('demo-cursor')
     if (cursor) cursor.style.opacity = '0'
     const old = document.getElementById('demo-intro')
@@ -652,11 +665,7 @@ async function paintIntro(kind) {
       h1.textContent = 'Three people.'
       const list = document.createElement('div')
       list.className = 'who'
-      for (const [name, role] of [
-        ['Meera', 'Owns Line Studio. She is the only one who taps and pays.'],
-        ['Northwind', 'The client. They pay for the logo.'],
-        ['Priya', 'The designer. She keeps 60% of what Northwind pays.'],
-      ]) {
+      for (const [name, role] of cast) {
         const row = document.createElement('div')
         const strong = document.createElement('strong')
         strong.textContent = name
@@ -689,7 +698,7 @@ async function paintIntro(kind) {
       el.style.transition = 'opacity 420ms ease'
       el.style.opacity = '1'
     })
-  }, kind)
+  }, { kind, cast })
 }
 
 async function hideIntro() {
@@ -763,7 +772,7 @@ await page.getByLabel('API key').fill(OWNER)
 await pause(520)
 await click(page.getByRole('button', { name: 'Unlock console' }), 1100)
 await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
-await chapter('Meera’s Today')
+await chapter(`${OWNER_NAME}’s Today`)
 mark('hook')
 await pause(11900)
 
@@ -778,7 +787,7 @@ await pause(300)
 const breakNotes = {
   'A fake vendor email': ['break', 1.42, 'payee.unknown', 'Not on the list', 'A made-up vendor is refused in code. PayPal is never called.', 10400],
   'An $18 team lunch': ['break-lunch', 1.42, 'category.missing', 'Lunch is not allowed', 'Under the automatic line, and still refused. The amount does not skip the category.', 11900],
-  'Pay before the client has paid': ['break-funding', 1.42, 'funding.missing', 'No client money yet', 'Priya is paid only from a client payment that has already settled.', 11300],
+  'Pay before the client has paid': ['break-funding', 1.42, 'funding.missing', 'No client money yet', `${PAYEE_SHORT} is paid only from a client payment that has already settled.`, 11300],
 }
 for (const title of Object.keys(breakNotes)) {
   mark(`try:${title}`)
@@ -801,13 +810,14 @@ await chapter('Both companies’ rules')
 await show(band, {
   kicker: 'Where a deal can exist',
   title: 'A floor and a ceiling',
-  body: 'Line Studio will not take a job under $250. Northwind will not pay over $400. Each keeps its number private; a deal can only be accepted inside the overlap.',
+  body: `${SC.studio} will not take a job under ${usd(SC.seller.minTotalCents, 0)}. ${CLIENT} will not pay over ${usd(SC.buyer.maxTotalCents, 0)}. Each keeps its number private; a deal can only be accepted inside the overlap.`,
   hold: 6200,
 }, { scale: 1.16, markId: 'deals-band' })
 mark('negotiate-start')
 const negotiate = page.locator('[data-tour="deal-negotiate"]')
-await negotiate.getByLabel('The job').fill('Spring launch logo')
-await negotiate.getByLabel('Paid in milestones').fill('Concepts, Final files')
+await negotiate.getByLabel('The job').fill(SC.job.task)
+await negotiate.getByLabel('Paid in milestones').fill(SC.job.milestones.join(', '))
+await negotiate.getByLabel('Deadline').selectOption(String(SC.job.offersPerSide))
 await click(page.getByRole('button', { name: 'Let the negotiators negotiate' }), 600)
 const stage = page.locator('[data-tour="deal-story"]')
 await stage.waitFor()
@@ -819,8 +829,8 @@ const agreed = (await (await page.request.get(`${BASE}/v1/deals/${negotiation.ag
 const total = (deal) => deal.terms.milestones.reduce((sum, m) => sum + m.amountCents, 0)
 const offers = negotiation.moves.filter((move) => move.action === 'offer').map((move) => move.totalCents)
 M1 = agreed.terms.milestones[0].amountCents
-SHARE = Math.round(M1 * 0.6)
-log(`deal: agreed ${usd(total(agreed))} after ${offers.map((c) => usd(c)).join(', ')}; milestone 1 ${usd(M1)}, Priya ${usd(SHARE)}`)
+SHARE = Math.round(M1 * SHARE_RATE)
+log(`deal: agreed ${usd(total(agreed))} after ${offers.map((c) => usd(c)).join(', ')}; milestone 1 ${usd(M1)}, ${PAYEE_SHORT} ${usd(SHARE)}`)
 writeFileSync(`${OUT}/deal.json`, JSON.stringify({ agreedCents: total(agreed), milestoneCents: M1, shareCents: SHARE, offerCents: offers, ending: negotiation.ending }))
 await chapter('The negotiators negotiate')
 await show(stage, {
@@ -829,11 +839,27 @@ await show(stage, {
   body: 'Each negotiator decides its own moves inside its own company’s private limits. A deal exists only when one side accepts the other’s exact offer: then both companies’ rules are checked and the server signs it.',
   hold: 11000,
 }, { scale: 1.08, markId: 'negotiate' })
+// Then each negotiator tells its own company how it went: the outcome worked out by code, the debrief by the model.
+const debriefed = stage.locator('.seat-result .debrief')
+await debriefed.nth(1).waitFor({ timeout: 180000 }).catch(() => log('debrief: both did not arrive in time'))
+const ended = (await (await page.request.get(`${BASE}/v1/negotiations/${negotiation.id}`, { headers: { authorization: `Bearer ${OWNER}` } })).json())
+const debriefs = { seller: ended.seats?.seller?.debrief ?? null, buyer: ended.seats?.buyer?.debrief ?? null }
+const outcomes = { seller: ended.seats?.seller?.outcome?.summary ?? null, buyer: ended.seats?.buyer?.outcome?.summary ?? null }
+writeFileSync(`${OUT}/deal.json`, JSON.stringify({ agreedCents: total(agreed), milestoneCents: M1, shareCents: SHARE, offerCents: offers, moves: negotiation.moves.map((move) => ({ side: move.side, action: move.action, totalCents: move.totalCents, message: move.message })), ending: negotiation.ending, outcomes, debriefs }))
+if (debriefs.seller && debriefs.buyer) {
+  const feel = { satisfied: 'satisfied', acceptable: 'acceptable', dissatisfied: 'not satisfied' }
+  await show(stage.locator('.seat-results'), {
+    kicker: 'Was each side happy?',
+    title: `${SC.studio}: ${feel[debriefs.seller.satisfaction]} · ${CLIENT}: ${feel[debriefs.buyer.satisfaction]}`,
+    body: 'Code measures each side against its own walk-away and target. Each negotiator then writes its own company a debrief: how the outcome, the process and the relationship went, and one lesson for next time.',
+    hold: 9000,
+  }, { scale: 1.06, markId: 'debrief' })
+}
 mark('deliver')
 await click(stage.getByRole('button', { name: /Go to the signed deal/ }), 800)
 const proof = page.getByLabel('Link to the delivered work for the next milestone')
 await proof.waitFor()
-await proof.fill('https://www.figma.com/file/northwind-logo')
+await proof.fill(SC.proof)
 await pause(400)
 await click(page.getByRole('button', { name: /Deliver milestone 1/ }), 1000)
 await page.waitForURL(/\/p\//)
@@ -845,12 +871,12 @@ await navTo('Today')
 await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
 await quiet()
 await pause(700)
-const charge = page.locator('.approval').filter({ hasText: 'Bill Northwind' }).filter({ hasText: usd(M1) })
+const charge = page.locator('.approval').filter({ hasText: `Bill ${CLIENT}` }).filter({ hasText: usd(M1) })
 await charge.waitFor()
 await click(charge.getByText('On our page'), 450)
 await chapter('Pay on our page')
 await show(charge.locator('[data-testid="instrument"]'), {
-  kicker: 'How Northwind pays',
+  kicker: `How ${CLIENT} pays`,
   title: 'A card form here',
   body: 'Not a PayPal invoice, and not a redirect to the sandbox. The card stays on this page. The amount is still the lock.',
   hold: 6200,
@@ -880,7 +906,7 @@ const askBox = askDialog.locator('textarea')
 await moveTo(askBox, 520)
 await pause(500)
 // The last clause asks for something the rules cannot do, so the check has something to catch.
-await askBox.pressSequentially('Pay Priya 60% of what Northwind pays, automatically, and email me when it happens', { delay: 58 })
+await askBox.pressSequentially(SC.rulesSentence, { delay: 58 })
 mark('ask-typed')
 await pause(1100)
 await keys(['↵'], 'Enter', { hold: 380 })
@@ -906,7 +932,7 @@ if (await ignoredNote.count()) {
 await show(draftResult.locator('.draft-loosens'), {
   kicker: 'Checked by code',
   title: 'What it lets happen without her',
-  body: 'Priya from Northwind with no tap, paid the moment the client pays. Nothing is live yet.',
+  body: `${PAYEE_SHORT} from ${CLIENT} with no tap, paid the moment the client pays. Nothing is live yet.`,
   hold: 7200,
 }, { scale: 1.2, markId: 'rules-draft' })
 
@@ -919,26 +945,26 @@ await diff.waitFor()
 await show(diff, {
   kicker: 'Before it is live',
   title: 'Two changes',
-  body: 'Priya from Northwind, with no tap. And pay contractors when the client pays. She still has to publish.',
+  body: `${PAYEE_SHORT} from ${CLIENT}, with no tap. And pay contractors when the client pays. It is still a draft until it is published.`,
   hold: 5600,
 }, { scale: 1.2, markId: 'rules-review' })
 mark('rules-publish')
 await click(page.getByRole('button', { name: 'Publish version 2' }), 1000)
-await page.getByText('Standing rule: Priya Shah is paid, with no tap').waitFor()
+await page.getByText(`Standing rule: ${PAYEE} is paid, with no tap`).waitFor()
 await page.getByTestId('rules-glance').waitFor()
 await chapter('Version 2 is live')
 await show(page.getByTestId('rules-glance'), {
   kicker: 'Signed',
   title: 'The standing rule is in force',
-  body: `Under $20, no tap. And now whatever this rule covers, no tap either. The ${usd(M1, 0)} bill still needs hers.`,
+  body: `Under ${usd(SC.rules.autoSettleUnderCents, 0)}, no tap. And now whatever this rule covers, no tap either. The ${usd(M1, 0)} bill still needs a tap.`,
   hold: 5800,
 }, { scale: 1.12, markId: 'rules-live' })
 
-log(`settle ${usd(M1)} — Priya is paid by the rule`)
+log(`settle ${usd(M1)} — ${PAYEE_SHORT} is paid by the rule`)
 await navTo('Today')
 await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
 await quiet()
-const ready = page.locator('.item-ready').filter({ hasText: 'Northwind' })
+const ready = page.locator('.item-ready').filter({ hasText: CLIENT })
 await ready.waitFor()
 await smoothScrollTo(ready, { ms: 800, align: 'center' })
 await pause(400)
@@ -976,8 +1002,8 @@ await show(card, {
 mark('pay')
 await click(page.getByTestId('pay-submit'), 1200)
 await lockCard().waitFor({ timeout: REAL_PAYPAL ? 90000 : 20000 })
-await chapter('Northwind paid')
-await show(lockCard(), { kicker: 'Settled', title: 'PayPal confirmed the lock', body: 'What arrived matches what was signed. That payment is what releases Priya’s share.', hold: 6400 }, { scale: 1.16, markId: 'settled' })
+await chapter(`${CLIENT} paid`)
+await show(lockCard(), { kicker: 'Settled', title: 'PayPal confirmed the lock', body: `What arrived matches what was signed. That payment is what releases ${PAYEE_SHORT}’s share.`, hold: 6400 }, { scale: 1.16, markId: 'settled' })
 await page.evaluate(() => {
   window.__receiptBlobs = []
   const orig = URL.createObjectURL.bind(URL)
@@ -995,23 +1021,23 @@ await navTo('Today')
 await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
 await quiet()
 const done = page.locator('[data-tour="today-done"]')
-const priya = done.locator('.item').filter({ hasText: `Priya Shah was paid ${usd(SHARE)}` })
+const priya = done.locator('.item').filter({ hasText: `${PAYEE} was paid ${usd(SHARE)}` })
 // A real payout settles on PayPal's side a little later; the server looks every few seconds.
 await priya.waitFor({ timeout: REAL_PAYPAL ? 180000 : 15000 })
 await smoothScrollTo(priya, { ms: 800, align: 'center' })
-await chapter('Priya is paid')
+await chapter(`${PAYEE_SHORT} is paid`)
 await show(priya, {
   kicker: 'No tap',
   title: 'The rule paid her',
-  body: `Northwind’s ${usd(M1, 0)} settled, so autopilot sent Priya ${usd(SHARE, 0)}. Meera did not approve this one.`,
+  body: `${CLIENT}’s ${usd(M1, 0)} settled, so autopilot sent ${PAYEE_SHORT} ${usd(SHARE, 0)}. ${OWNER_NAME} did not approve this one.`,
   hold: 7800,
 }, { scale: 1.28, markId: 'payout-auto' })
 mark('open-priya')
-await click(priya.getByRole('link', { name: `Priya Shah was paid ${usd(SHARE)}` }), 900)
-await page.locator('.payout-status').getByText(/reached Priya Shah/).waitFor({ timeout: REAL_PAYPAL ? 120000 : 30000 })
+await click(priya.getByRole('link', { name: `${PAYEE} was paid ${usd(SHARE)}` }), 900)
+await page.locator('.payout-status').getByText(`reached ${PAYEE}`).waitFor({ timeout: REAL_PAYPAL ? 120000 : 30000 })
 await show(page.locator('.payout-status'), {
   kicker: 'Autopilot',
-  title: `${usd(SHARE, 0)} reached Priya`,
+  title: `${usd(SHARE, 0)} reached ${PAYEE_SHORT}`,
   body: 'Asked because the client paid. Locked under the standing rule, no tap. PayPal says the cents match.',
   hold: 8600,
 }, { scale: 1.18, markId: 'payout-sent' })
@@ -1035,11 +1061,11 @@ log('connect an agent')
 await navTo('Connect an agent')
 await page.getByTestId('connect-agent').waitFor()
 await pause(600)
-await page.getByPlaceholder('e.g. Nightly invoice sweep').fill('Northwind billing clerk')
+await page.getByPlaceholder('e.g. Nightly invoice sweep').fill(SC.agentName)
 await pause(600)
 await smoothScrollTo(page.getByTestId('can-and-cannot-preview'), { ms: 900, align: 'center' })
 await chapter('Any agent, same door')
-await show(page.getByTestId('can-and-cannot-preview'), { kicker: 'Six tools', title: 'It can ask. It cannot pay.', body: 'Read, explain, propose. Approve and pay stay on Meera’s key.', hold: 12800 }, { scale: 1.18, markId: 'agent' })
+await show(page.getByTestId('can-and-cannot-preview'), { kicker: 'Its tools', title: 'It can ask. It cannot pay.', body: `Read, explain, propose. Approve and pay stay on ${OWNER_NAME}’s key.`, hold: 12800 }, { scale: 1.18, markId: 'agent' })
 // The key she makes goes to an outside agent: a separate program, on a live model, that reaches Mandate only
 // through the MCP door. Its inbox has been poisoned. It asks; the rules refuse; three refusals and its key is
 // suspended. The scorecard below follows along as it happens.
@@ -1059,7 +1085,7 @@ mark('attack')
 const API_DIR = new URL('../../api/', import.meta.url).pathname
 const agentRun = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'scripts/outside-agent.ts', `${BASE}/mcp`], {
   cwd: API_DIR,
-  env: { ...process.env, MANDATE_AGENT_KEY: AGENT_KEY },
+  env: { ...process.env, MANDATE_AGENT_KEY: AGENT_KEY, SCENARIO: SCENARIO_NAME },
   stdio: ['ignore', 'pipe', 'pipe'],
 })
 agentRun.stderr.on('data', (chunk) => process.stderr.write(`[agent] ${chunk}`))
@@ -1072,7 +1098,7 @@ for await (const raw of createInterface({ input: agentRun.stdout })) {
   if (line.kind === 'refused') mark(`attack-refused-${++refusals}`)
   if (line.kind === 'suspended') mark('attack-suspended')
 }
-const row = scorecard.locator('tr', { hasText: 'Northwind billing clerk' })
+const row = scorecard.locator('tr', { hasText: SC.agentName })
 await row.getByText('suspended', { exact: false }).first().waitFor({ timeout: 15000 })
 await pause(1600)
 await termClose()
@@ -1080,7 +1106,7 @@ await chapter('Only that key is stopped')
 await show(row, {
   kicker: 'Breaker',
   title: 'Suspended, on its own',
-  body: 'Three refusals in two minutes, so this key is stopped. Mandate carries on, and Meera decides whether it comes back.',
+  body: `Three refusals in two minutes, so this key is stopped. Mandate carries on, and ${OWNER_NAME} decides whether it comes back.`,
   hold: 7400,
 }, { scale: 1.2, markId: 'suspended' })
 

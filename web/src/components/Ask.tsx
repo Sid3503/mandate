@@ -8,7 +8,7 @@ type AskContext = { open: (message?: string, options?: { send?: boolean }) => vo
 const Ask = createContext<AskContext>({ open: () => undefined, close: () => undefined, isOpen: false })
 export const useAsk = () => useContext(Ask)
 
-const LINK = 'https://www.figma.com/file/northwind-logo'
+const LINK = 'https://example.com/the-work'
 
 /**
  * "Ask Mandate": the studio clerk, one keystroke away from any screen. Say what you want in a sentence; the clerk turns
@@ -97,8 +97,8 @@ function AskDialog({ initial, fillOnly, onClose }: { initial: string | undefined
   const client = warrant.data?.clients?.[0]?.displayName ?? 'the client'
   const examples = [
     ...(today.data?.readyToBill ?? []).slice(0, 1).map((item) => `${item.title} for ${item.buyerName} is delivered, bill it ${LINK}`),
-    ...((today.data?.automation?.standingRules ?? 0) > 0 ? [`pay ${contractor} her share for the latest ${client} payment ${LINK}`] : []),
-    `pay ${contractor} 60% of what ${client} pays, automatically`,
+    ...((today.data?.automation?.standingRules ?? 0) > 0 ? [`pay ${contractor} their share for the latest ${client} payment ${LINK}`] : []),
+    `pay ${contractor} ${warrant.data?.contractorShareBps ? `${warrant.data.contractorShareBps / 100}%` : 'their share'} of what ${client} pays, automatically`,
   ]
 
   return (

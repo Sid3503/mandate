@@ -11,7 +11,7 @@ import type { ShareView } from '../lib/types'
 type Payout = NonNullable<ShareView['contractor']>['payouts'][number]
 
 const PAYOUT: Record<Payout['state'], { label: string; tone: 'deny' | 'auto' | 'need' | 'ink' | 'muted'; note: string }> = {
-  asked: { label: 'Waiting for the owner', tone: 'need', note: 'The studio has asked to pay this. The owner has not approved it yet.' },
+  asked: { label: 'Waiting for the studio', tone: 'need', note: 'The studio has asked to pay this and has not approved it yet.' },
   approved: { label: 'Approved', tone: 'ink', note: 'Approved and about to be sent through PayPal.' },
   sending: { label: 'On its way', tone: 'need', note: 'PayPal is processing it. It is not counted as paid until PayPal says so.' },
   unclaimed: { label: 'Needs your PayPal account', tone: 'need', note: 'PayPal could not find an account for this email. Create or confirm one to receive it.' },

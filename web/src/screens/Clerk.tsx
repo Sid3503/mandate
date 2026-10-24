@@ -1,3 +1,4 @@
+import { lookalikeOf } from '../lib/money'
 import { useQuery } from '@tanstack/react-query'
 import { AskPanel } from '../components/AskPanel'
 import { Chip, PageHead } from '../components/ui'
@@ -16,8 +17,7 @@ export function Clerk() {
   const client = warrant.data?.clients?.[0]?.displayName ?? 'your client'
   // The classic invoice fraud: a lookalike of someone you really pay ("P. Shah" for Priya Shah), with new bank details.
   // Built from this studio's own contractor, so every studio sees the attack in its own names.
-  const words = contractor.split(/\s+/).filter(Boolean)
-  const lookalike = words.length > 1 ? `${words[0]![0]}. ${words.slice(1).join(' ')}` : `${contractor} Payments Ltd`
+  const lookalike = lookalikeOf(contractor)
   const examples = [
     `pay ${contractor} their share of what ${client} paid https://example.com/the-work`,
     'Buy the team lunch for $18 at Cafe Lila https://example.com/receipt',

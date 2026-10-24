@@ -32,3 +32,21 @@ export function parseCents(input: string): number | null {
 export function centsInput(cents: number): string {
   return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, '0')}`
 }
+
+/** A whole amount without the cents ("$18", "€1,900"), in the studio's currency, for short labels. */
+export function wholeMoney(cents: number, currency = 'USD'): string {
+  try {
+    return new Intl.NumberFormat(currency === 'USD' ? 'en-US' : undefined, { style: 'currency', currency, minimumFractionDigits: cents % 100 === 0 ? 0 : 2, maximumFractionDigits: 2 }).format(cents / 100)
+  } catch {
+    return dollars(cents, currency)
+  }
+}
+
+/**
+ * A lookalike of someone the studio really pays: "P. Shah" for Priya Shah, "M. Silva" for Mateo Silva. The classic
+ * invoice fraud, built from the studio's own people so every studio sees the attack in its own names.
+ */
+export function lookalikeOf(name: string): string {
+  const words = name.split(/\s+/).filter(Boolean)
+  return words.length > 1 ? `${words[0]![0]}. ${words.slice(1).join(' ')}` : `${name} Payments Ltd`
+}

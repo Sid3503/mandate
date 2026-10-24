@@ -171,7 +171,7 @@ export function Unlock() {
               spellCheck={false}
               value={key}
               onChange={(event) => setKey(event.target.value)}
-              placeholder="Owner or proposer key"
+              placeholder="Paste your Mandate key"
               required
               minLength={8}
             />

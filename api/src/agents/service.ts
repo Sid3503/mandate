@@ -663,19 +663,31 @@ export class AgentService {
     }
     let run!: RunOutput
     let used = options.model
-    // A model that answers in words instead of moving is told so and asked once more: the standard repair for a
-    // missed tool call. Nothing reached the table on the first try, so the second cannot make a move twice.
+    // A model that answers in words instead of moving is told so and asked again, at most twice, with the exact calls
+    // it can make: the standard repair for a missed tool call. Nothing reached the table on a words-only try, so a
+    // retry cannot make a move twice, and code never moves on the model's behalf.
     const attempt = (content: string) => this.withModels((chosen) => runAgent({
       model: chosen, services: this.services, principal, runId, system, messages: [{ role: 'user', content }],
       onlyTools: ['offer_deal', 'accept_offer', 'walk_away'], asks: 3, maxSteps: 4, stopAfter: ['offer_deal', 'accept_offer', 'walk_away'],
       toolChoice: 'required', timeoutMs: 90_000, signal: options.signal, onEvent, dealClientId: thread.buyer_id, temperature: null, reasoning: reasoning(chosen, 'medium'),
     }), { primary: options.model, retrySame: true })
+    const standing = view.standing && view.standing.side !== side && view.standing.dealId ? view.standing : null
+    const repair = [
+      'Your last answer was in words only, so nothing happened at the table. Words alone do nothing: make your move now with exactly one call.',
+      ...(standing && advice?.mayAccept ? [`- To take their offer of ${price(standing.totalCents ?? 0, thread.currency)}: accept_offer with dealId "${standing.dealId}".`] : []),
+      ...(own.visible && own.offersLeft > 0 ? [`- To make an offer: offer_deal with threadId "${threadId}" and your totalCents.`] : []),
+      `- To end it: walk_away with threadId "${threadId}".`,
+    ].join('\n')
     try {
-      try {
-        ;({ output: run, model: used } = await attempt(prompt))
-      } catch (error) {
-        if (!(error instanceof Problem && error.code === 'agent.no_tool_call') || options.signal?.aborted) throw error
-        ;({ output: run, model: used } = await attempt(`${prompt}\n\nYour last answer was in words only, so nothing happened. Make your move now: call exactly one of accept_offer, offer_deal or walk_away.`))
+      let tries = 0
+      for (;;) {
+        try {
+          ;({ output: run, model: used } = await attempt(tries === 0 ? prompt : `${prompt}\n\n${repair}`))
+          break
+        } catch (error) {
+          if (!(error instanceof Problem && error.code === 'agent.no_tool_call') || options.signal?.aborted || tries >= 2) throw error
+          tries += 1
+        }
       }
     } catch (error) {
       const code = error instanceof Problem ? (error.code === 'agent.no_tool_call' ? 'no_move' : error.code) : 'agent.model_error'
@@ -719,7 +731,14 @@ export class AgentService {
       if (signal?.aborted) return
       const done = thread.debrief_json ? (JSON.parse(thread.debrief_json) as Record<string, unknown>)[side] : undefined
       if (done) continue
-      const debrief = await this.debrief(threadId, side, signal).catch(() => null)
+      // A debrief changes nothing, so a failed one is simply asked for again, once; a second failure is recorded.
+      const debrief = await this.debrief(threadId, side, signal)
+        .catch(() => (signal?.aborted ? null : this.debrief(threadId, side, signal)))
+        .catch((error: unknown) => {
+          const who = side === 'seller' ? STUDIO : buyerPrincipal(thread.buyer_id)
+          this.record({ id: randomUUID(), agent: `debrief:${side}`, who, conversationId: threadId, model: this.model?.name ?? 'unknown', input: '', output: null, steps: [], status: 'error', error: error instanceof Problem ? error.code : 'agent.model_error', ms: 0, prompt: 'debrief' })
+          return null
+        })
       if (debrief) {
         repo.saveDebrief(threadId, side, debrief)
         await told?.(side, debrief)
@@ -746,6 +765,7 @@ export class AgentService {
       seat.outcome ? `The result for you: ${seat.outcome.summary}` : 'There was no deal.',
       `Moves (${view.moves.length}, deadline ${view.offersPerSide} offers each):`,
       ...view.moves.map((move) => `${move.seq}. ${move.side === side ? 'You' : counterparty} ${move.action === 'offer' ? `offered ${price(move.totalCents ?? 0, c)}${move.final ? ' (final)' : ''}` : move.action === 'accept' ? `accepted ${price(move.totalCents ?? 0, c)}` : 'walked away'}${move.message ? (move.side === side ? `, saying "${move.message}"` : `, saying ${untrusted('counterparty_message', move.message, 300)}`) : ''}`),
+      ...movedBy(view.moves, side, seat.reservationCents, view.offersPerSide, c),
     ]
     const allowed = facts.join('\n')
     const made = await this.withModels((chosen) => callTool({
@@ -759,9 +779,16 @@ export class AgentService {
       signal,
       validate: (value) => {
         const invented = unsupportedAmounts(`${value.summary} ${value.lesson}`, [allowed])
-        return invented.length > 0 ? `you mentioned ${invented.join(', ')}, which is not an amount in the facts. Use only the amounts given.` : null
+        if (invented.length > 0) return `you mentioned ${invented.join(', ')}, which is not an amount in the facts. Use only the amounts given.`
+        // The one direction error live runs kept making: an opening closer to your walk-away leaves you LESS room.
+        if (/\b(open|opening|start|starting|anchor)\w*\b[^.]*\bcloser to (?:(?:your|our|the) )?walk[\s\u2011-]?away/i.test(value.lesson)) {
+          return 'your lesson says to open closer to the walk-away. That leaves less room to concede, so it can only make the price worse for your company. Find the lesson in the concessions and the timing instead.'
+        }
+        return null
       },
     }).then((result) => ({ ...result, ms: result.ms })), { retrySame: true })
+    // Fail closed: a debrief that still breaks a check after its last try is not shown. No debrief beats a wrong one.
+    if (made.output.leftover) throw new Problem(422, 'agent.no_answer', 'The debrief did not pass its checks', made.output.leftover)
     this.record({ id: randomUUID(), agent: `debrief:${side}`, who: principal, conversationId: threadId, model: made.model.name, input: allowed, output: JSON.stringify(made.output.value), steps: [], status: 'ok', error: null, ms: made.output.ms, prompt: 'debrief', usage: made.output.usage })
     return { ...made.output.value, model: made.model.name, at: this.now().toISOString() }
   }
@@ -829,4 +856,30 @@ export function guardedStream(userText: string, emit: (event: ClerkStreamEvent) 
     }
     emit(event)
   }
+}
+
+/**
+ * How each side moved, worked out by code so the debrief reasons from correct arithmetic: each side's opening and how
+ * far it sat from the walk-away, every concession on both sides, and how many offers were left at the end.
+ */
+export function movedBy(moves: Array<{ side: Side; action: string; totalCents: number | null }>, side: Side, reservationCents: number, offersPerSide: number, currency: string): string[] {
+  const offersOf = (who: Side) => moves.filter((move) => move.side === who && move.action === 'offer' && move.totalCents !== null).map((move) => move.totalCents!)
+  const conceded = (offers: number[], who: Side) => {
+    const steps = offers.slice(1).map((value, i) => Math.abs(value - offers[i]!))
+    const accepted = moves.find((move) => move.side === who && move.action === 'accept')
+    const last = offers[offers.length - 1]
+    if (accepted?.totalCents != null && last !== undefined && accepted.totalCents !== last) steps.push(Math.abs(accepted.totalCents - last))
+    return steps
+  }
+  const words = (steps: number[]) => (steps.length ? `${steps.map((step) => price(step, currency)).join(', ')} (in all ${price(steps.reduce((sum, step) => sum + step, 0), currency)})` : 'none')
+  const other: Side = side === 'seller' ? 'buyer' : 'seller'
+  const mine = offersOf(side)
+  const theirs = offersOf(other)
+  const lines = ['How the moves went (worked out by the system):']
+  if (mine.length) lines.push(`- Your opening was ${price(mine[0]!, currency)}, ${price(Math.abs(mine[0]! - reservationCents), currency)} ${side === 'seller' ? 'above' : 'below'} your walk-away.`)
+  if (theirs.length) lines.push(`- Their opening was ${price(theirs[0]!, currency)}.`)
+  lines.push(`- Your concessions, in order: ${words(conceded(mine, side))}.`)
+  lines.push(`- Their concessions, in order: ${words(conceded(theirs, other))}.`)
+  lines.push(`- Offers you had left at the end: ${Math.max(0, offersPerSide - mine.length)} of ${offersPerSide}.`)
+  return lines
 }
