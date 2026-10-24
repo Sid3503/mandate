@@ -6,6 +6,8 @@ import { createApp } from './app'
 import { buildServices } from './services/container'
 import { AgentService } from './agents/service'
 import { loadConfig } from './config'
+import { loadFlags } from './flags'
+import { openProduct, type StudioPayPal } from './boot'
 import { migrate, openDatabase, seed } from './db/database'
 import { loadSigner } from './domain/signing'
 import { buildModels } from './agents/model'
@@ -29,11 +31,27 @@ const signer = loadSigner({
   production: config.nodeEnv === 'production',
 })
 
-const sandbox = config.paypal ? !config.paypal.baseUrl.includes('api-m.paypal.com') : true
+const sandbox = config.paypal ? (() => { try { return new URL(config.paypal.baseUrl).hostname !== 'api-m.paypal.com' } catch { return true } })() : true
 const paypal = config.paypal ? createPayPalClient(config.paypal) : null
 const invoices = config.invoices && config.paypal ? createToolkitInvoices({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
 const watch = config.paypal ? createToolkitWatch({ clientId: config.paypal.clientId, clientSecret: config.paypal.clientSecret, sandbox }) : null
-const services = buildServices({ db, paypal, invoices, watch, publicUrl: config.publicUrl, now: () => new Date(), signer, safety: { tripAfter: config.breakerRefusals, windowSeconds: config.breakerWindowSeconds } })
+// A studio that owns money gets the server's own PayPal account, with its own client and its own token. One factory,
+// one code path: a studio never quietly falls back to a stand-in.
+const paypalFactory: (() => StudioPayPal | null) | undefined = config.paypal ? () => ({
+  paypal: createPayPalClient(config.paypal!),
+  invoices: config.invoices ? createToolkitInvoices({ clientId: config.paypal!.clientId, clientSecret: config.paypal!.clientSecret, sandbox }) : null,
+  watch: createToolkitWatch({ clientId: config.paypal!.clientId, clientSecret: config.paypal!.clientSecret, sandbox }),
+  environment: sandbox ? 'sandbox' : 'live',
+}) : undefined
+const paypalMode = config.paypal ? (sandbox ? 'sandbox' : 'live') : 'none'
+const flags = loadFlags(process.env)
+const services = buildServices({
+  db, paypal, invoices, watch, publicUrl: config.publicUrl, now: () => new Date(), signer,
+  safety: { tripAfter: config.breakerRefusals, windowSeconds: config.breakerWindowSeconds },
+  payeeBook: flags.payeeBook,
+  newPayeeWaitHours: flags.newPayeeWaitHours,
+  paypalEnvironment: sandbox ? 'sandbox' : 'live',
+})
 
 // Ollama Cloud's open-weights models power the agents. With no key they are off and everything else works.
 const { primary: model, drafter: drafterModel, fallback: fallbackModel } = buildModels({
@@ -42,8 +60,19 @@ const { primary: model, drafter: drafterModel, fallback: fallbackModel } = build
   AGENT_MODEL: config.agentModel,
   DRAFTER_MODEL: config.drafterModel,
 })
-// If the main model errors, the fallback is tried once before the person sees a failure.
-const agents = new AgentService(services, model, () => new Date(), drafterModel, fallbackModel)
+const product = openProduct({
+  databasePath: config.databasePath,
+  ledger: db,
+  flags,
+  env: process.env,
+  publicUrl: config.publicUrl,
+  now: () => new Date(),
+  nodeEnv: config.nodeEnv,
+  model,
+  drafterModel,
+  paypalFactory,
+})
+const agents = new AgentService(services, model, () => new Date(), drafterModel, fallbackModel, product.budget, flags)
 
 installProcessGuards()
 let draining = false
@@ -72,13 +101,30 @@ const app = createApp({
     webDist,
     rateLimitPerMinute: config.rateLimitPerMinute,
     paypalConfigured: config.paypal !== null,
+    paypalMode,
     log: config.log,
     publicUrl: config.publicUrl,
     commit: config.commit,
     webhookId: config.paypalWebhookId,
+    paypalEnvironment: config.paypalEnvironment,
     clientAgent: config.clientAgent,
     demoReset: config.demoReset,
+    flags,
+    adminKey: product.adminKey,
+    cookieSecure: product.cookieSecure,
+    trustProxy: product.trustProxy,
+    trustedProxyHops: product.trustedProxyHops,
+    redact: product.redact,
+    webauthn: product.webauthn,
+    classedRates: product.classedRates,
+    idleHours: product.idleHours,
+    absoluteDays: product.absoluteDays,
   },
+  control: product.control,
+  registry: product.registry,
+  budget: product.budget,
+  masterKey: product.masterKey,
+  demo: product.demo,
 })
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
@@ -126,6 +172,7 @@ function shutdown() {
   if (reviewTimer) clearInterval(reviewTimer)
   console.log(JSON.stringify({ level: 'info', message: 'draining' }))
   const done = () => {
+    try { product.close() } catch { /* already closed */ }
     try { db.close() } catch { /* already closed */ }
     process.exit(0)
   }

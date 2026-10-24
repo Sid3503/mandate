@@ -20,7 +20,7 @@ export function BreakIt() {
   const owner = useIsOwner()
   const ask = useAsk()
   const agentsOn = useAgentsOn()
-  const [ran, setRan] = useState<{ id: string; verdict: TryVerdict } | null>(null)
+  const [ran, setRan] = useState<{ id: string; verdict: TryVerdict | null } | null>(null)
   const run = useMutation({
     mutationFn: async (attack: Attack) => ({ id: attack.id, verdict: (await api.tryRequest(attack.request)).live }),
     onSuccess: setRan,
@@ -56,7 +56,7 @@ export function BreakIt() {
       ) : null}
       <p className="fine">Have your own agent? <Link className="link" to="/system#h-connect">Connect it here</Link> and tell it to ignore the rules.</p>
       {run.isError ? <p role="alert" className="fine">The rules could not be reached, so nothing was tried.</p> : null}
-      {ran && shown ? (
+      {ran && shown && ran.verdict ? (
         <div className="break-result" role="status" aria-live="polite">
           <div className="row gap-s wrap"><GateChip gate={ran.verdict.gate} /><Chip tone={ran.verdict.gate === 'DENY' ? 'deny' : 'muted'}>{ran.verdict.clause}</Chip></div>
           <p>{ran.verdict.gate === 'DENY' ? ran.verdict.detail : `The rules would not refuse this right now (${ran.verdict.detail}). Nothing was filed.`}</p>

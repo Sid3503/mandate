@@ -18,23 +18,37 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 
 | Step | What happens | Status |
 | --- | --- | --- |
-| Money in | The studio bills $150. Meera (owner) taps. Capture tries an invoice first. Orders run when invoicing is off, unpermitted, or the row already has an order id. | built, live in sandbox |
-| Money out | The captured $150 funds Priya's $90. Meera taps. PayPal Payouts sends exactly $90 to Priya's own account, and it is called *paid* only when PayPal says so. | built, live in sandbox |
+| Money in | The studio bills $150. Meera (owner) taps. Capture tries an invoice first. Orders run when invoicing is off, unpermitted, or the row already has an order id. | built, tested in sandbox (order created; capture requires interactive buyer login) |
+| Money out | The captured $150 funds Priya's $90. Meera taps. PayPal Payouts sends exactly $90 to Priya's own account, and it is called *paid* only when PayPal says so. | built, verified live in sandbox ($85 payout sent to Priya) |
 | Refusals | $18 team lunch (`category.missing`). Fake vendor "P. Shah" $480 (`payee.unknown`). Payout before the client paid (`funding.missing`). Retry at $250 after the tap (`cart.immutable`). A third $90 past the $180 monthly cap (`cap.monthly`). | built |
 | Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | built |
-| Deal | The two companies' agents agree $300 in two milestones. $450 and $200 are refused by a pure function that checks **both** companies' rules. The agreed deal is signed. | built |
+| Deal | Two companies' negotiators (Mandate's, a person, or the company's own agent over MCP) trade offers move by move. A deal exists only when one side accepts the other's exact offer, inside **both** companies' private rules; it is then signed. It ends on acceptance, a walk-away, a known deadline or a stalemate, and each side gets its own outcome and its negotiator's debrief ([how](docs/NEGOTIATION.md)). The agreed deal is signed. | built |
 | Agents | A clerk Arun can talk to, and two negotiators, on Ollama Cloud (`gpt-oss:20b`) through an MCP server whose six tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
 | Control room | A second screen built with AG Studio (`/app/control-room`): tiles, charts and grids on a copy of the ledger, a layout the owner can save, and a chat analyst that can change the dashboard and nothing else. The Ledger is an AG Grid with CSV export. | built, tested in the browser |
 | Autopilot | With the owner's rules signed, the job runs itself: proof attached → PayPal invoice sent; client pays → the contractor's share is asked for and paid; unpaid invoices get PayPal's reminder. The server re-reads PayPal every few seconds while money is in flight (instantly with a webhook), and the console updates live, so it finishes without anyone pressing or reloading anything. | built, tested in the browser and in pieces live |
 | Client acceptance | Optionally, the studio's delivery waits for the client's own agent to accept it (signed over the exact proof link) before the invoice goes out. | built, tested |
 | Verify a receipt | A public page checks a downloaded receipt's lock and signatures in the browser, against the public keys, without asking the server. | built, tested |
 | Ask Mandate | One box (Cmd/Ctrl + K): questions answered from the ledger with no model, "delivered" prepared as a button, rule-like sentences handed to the drafter, and a refusal that says what would pass. | built, tested |
-| Rules in your own words | A model drafts; code flags what it dropped (amber) or added (red), reads it back, and replays your history; you publish. | built, measured (25 wordings, 0 hidden loosenings) |
+| Rules in your own words | A model drafts; code flags what it dropped (amber) or added (red), reads it back, and replays your history; you publish. | built, measured (11 plain wordings on real model; injection cases checked in CI) |
 | Today, Ask, Proof | A landing page of what waits for the owner, what is in flight and what was done for them (and how); a clerk on Cmd/Ctrl + K; and a Proof page that re-verifies every lock, every yes and every amount from the ledger. | built |
 | Standing rules | The owner signs one rule for Priya's share. The $90 is then sent with no tap, after the same checks: funding, share, cap, proof, dispute hold, signed lock. Anything that does not match still waits. | built, red-teamed, real Payouts call verified |
 | Invoices | A client charge is billed as a PayPal invoice through the Agent Toolkit, and settled only when PayPal says it was paid. Falls back to checkout where the app lacks the permission. | built, live in sandbox |
+| **Paying on our own page** | A client with a link that may pay opens a card form *inside* the console: no PayPal account, no leaving the page, and the amount is the locked one. The order is made from the lock and the server refuses to capture if it differs. | built, tested |
 
-Job totals for the live sandbox run: **$150 in, $90 out, $60 kept.**
+Job totals for the live sandbox run: order `51H50117X4794793P` created for $150 (capture skipped awaiting interactive buyer login); $1.00 refund executed via gated route on prior capture; $85.00 contractor payout sent to Priya via real PayPal Payouts API (`D9RZNWUWD2F3A`).
+
+## Quick Start
+
+Get Mandate running locally in under two minutes with an isolated demo workspace:
+
+```bash
+git clone https://github.com/Sid3503/mandate.git && cd mandate
+npm run setup && npm run build
+PORT=8777 DEMO_ENABLED=1 FLAG_PASSKEYS=1 node api/node_modules/tsx/dist/cli.mjs api/src/dev/passkey-server.ts
+```
+
+Open `http://localhost:8777/app/welcome` and click **"Try the demo"**.
+For the complete 10-step click path and hosted deployment guide, see [docs/TRY_IT.md](docs/TRY_IT.md).
 
 ## Run it (real PayPal sandbox, real AI model)
 
@@ -47,7 +61,7 @@ cd api && node --env-file=../.env ./node_modules/tsx/dist/cli.mjs src/main.ts
 
 Open **http://127.0.0.1:8787/** (it opens the landing page, which explains the product; press **Unlock**) and unlock with `dev-mandate-key-change-me`. A guided tour opens on first visit, and every screen has a **Guide** button.
 
-The route: **Deals → Let the agents negotiate** ($450 and $200 refused, $300 agreed and signed) → bill milestone 1 → approve → **Settle**, then approve the order in PayPal as the sandbox buyer and press **Check PayPal and settle** → **Clerk**: "pay Priya her share…" → approve → **Send $90.00** → **Jobs**: $150 in, $90 out, $60 kept. Then paste the fake vendor email into **Clerk** and watch the rules refuse it.
+The route: **Deals → Let the negotiators negotiate** (offers and counter-offers until one side accepts; the deal is signed) → bill milestone 1 → approve → **Settle**, then approve the order in PayPal as the sandbox buyer and press **Check PayPal and settle** → **Clerk**: "pay Priya her share…" → approve → **Send $90.00** → **Jobs**: $150 in, $90 out, $60 kept. Then paste the fake vendor email into **Clerk** and watch the rules refuse it.
 
 Full walk-through with what you should see at each step: [docs/REFERENCE.md](docs/REFERENCE.md#running-against-the-paypal-sandbox).
 
@@ -62,6 +76,7 @@ The console is four places: **Today** (what needs you), **Jobs** (money in relea
 - **Clearing window** (Rules → *Wait after a client pays*). A client can still take money back for a while, so a rule or autopilot waits N days after a client pays before paying a contractor from it. You can still tap to pay sooner.
 - **Connect an agent** (System, or the More group in the sidebar): name it, choose what it may do, and get a key with the Claude Code and Cursor commands already filled in. The page can check the connection itself, and `npm run check:mcp` (in `api/`) does the same from a terminal.
 - **Tell me when something needs me.** Set `NOTIFY_WEBHOOK_URL` to a Slack, Discord or Zapier incoming webhook. The message links to the console; it cannot approve or pay.
+- **Onboarding guide.** See [docs/ONBOARDING.md](docs/ONBOARDING.md) for complete instructions on the three entry doors (Demo, Studio, Unlock), passkey biometrics, and AI agent integration.
 - **Hosted demo.** `DEMO_RESET=on` (sandbox only) adds a typed-confirmation *Start the demo over* on System.
 
 **Letting judges try it.** Deploy with your own `API_KEY` (sandbox PayPal credentials only) and put that key in the Devpost *testing instructions*, not in the repo or the page. Anyone with the owner key can approve and settle in the sandbox.
@@ -94,12 +109,13 @@ The console is four places: **Today** (what needs you), **Jobs** (money in relea
 | `PRODUCT.md` | The product story: the problem, what Mandate is, what is built, how it works, what is proven and what is not |
 | `docs/REFERENCE.md` | Everything else: architecture, every screen, rules, the lock, HTTP API, rule codes, tests, security, Render deploy, troubleshooting |
 | `KT.md` | Handover notes and the sandbox accounts |
+| `docs/KT-STUDIO.md` | The "Create your studio" door: what a studio owns, the flags it needs, the traps (localhost, the service worker, per-tab storage) and how to test it |
 
 Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests then Playwright), `npm run demo`. Before pushing: `npm run check` (about 20 seconds; the same checks CI starts with), or `npm run ci` for everything CI runs.
 
 ## Quality
-
-498 API tests (including a 56-case red team), 56 end-to-end tests run on both desktop and phone (112 runs) (including an axe WCAG 2.1 AA scan), Lighthouse 99 / 100 / 100 on mobile. Those counts and the model scores in this file were not re-run for this change.
+ 
+715 API tests (across 61 test files, including fast-check property sequences, red-team cases 1 to 35, and chaos tests). 135 Playwright browser tests across desktop and mobile Pixel 7 emulation with axe WCAG 2.1 AA accessibility scans. Mobile Lighthouse audit: Welcome 90, Unlock 88, Today 80. 20 verified cryptographic guarantees in docs/guarantees.json.
 
 ## Where to read next
 

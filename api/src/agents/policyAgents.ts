@@ -52,7 +52,7 @@ export async function readPolicy(input: { model: AgentModel; current: WarrantBod
   const called = await callTool({
     model: input.model,
     system: policyReaderSystem(input.current),
-    user: `${input.parts > 1 ? `Part ${input.part} of ${input.parts} of the pasted policy.\n` : ''}${untrusted('policy', document, 16_000)}\n\nCall classify_policy with one entry for each of the ${shown.length} ids above.`,
+    user: `${input.parts > 1 ? `Part ${input.part} of ${input.parts} of the pasted policy.\n` : ''}${untrusted('policy', document, 20_000)}\n\nCall classify_policy with one entry for each of the ${shown.length} ids above.`,
     name: 'classify_policy',
     description: 'Say what kind of sentence each numbered sentence is. Call it once, with an entry for every id.',
     schema: ReaderSchema,

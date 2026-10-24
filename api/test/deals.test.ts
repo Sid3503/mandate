@@ -12,45 +12,83 @@ const offer = async (app: Parameters<typeof call>[0], total: number, key = OWNER
   return call(app, 'POST', '/v1/deals/offers', { key, idem: idem('offer'), body: { buyer: 'Northwind', terms: terms(total), ...extra } })
 }
 
-describe('the deal check', () => {
-  it('refuses $450 and $200 and agrees $300, as the frozen story says', async () => {
+const accept = (app: Parameters<typeof call>[0], dealId: string, key = OWNER_KEY) => call(app, 'POST', `/v1/deals/${dealId}/accept`, { key, body: {} })
+const counter = (app: Parameters<typeof call>[0], threadId: string, total: number, key = OWNER_KEY, extra: Record<string, unknown> = {}) =>
+  call(app, 'POST', '/v1/deals/offers', { key, idem: idem('counter'), body: { buyer: 'Northwind', terms: terms(total), threadId, ...extra } })
+
+describe('a negotiation', () => {
+  it('makes a deal only when one side accepts the other side\'s exact standing offer', async () => {
     const { app } = harness()
+    // The studio opens above the client's ceiling. That is a legal offer: whether the client can live with it is
+    // the client's to say. Nothing about the client's limit comes back.
     const high = await offer(app, 45_000, OWNER_KEY, { as: 'seller' })
     expect(high.status).toBe(201)
-    expect(high.json.status).toBe('refused')
-    expect(high.json.verdict.violations.map((v: { code: string }) => v.code)).toEqual(['deal.over_buyer_limit'])
+    expect(high.json).toMatchObject({ status: 'open', offeredBy: 'seller', jobId: null, signature: null })
+    const threadId = high.json.threadId as string
 
-    const low = await offer(app, 20_000, OWNER_KEY, { as: 'buyer' })
-    expect(low.json.status).toBe('refused')
-    expect(low.json.verdict.violations.map((v: { code: string }) => v.code)).toEqual(['deal.under_seller_minimum'])
+    // The client cannot accept it: it is past the client's own ceiling, and the client is told so in its own numbers.
+    const tooHigh = await accept(app, high.json.id, BUYER_KEY)
+    expect(tooHigh.status).toBe(422)
+    expect(tooHigh.json.code).toBe('deal.outside_your_rules')
+    expect(tooHigh.json.detail).toContain('400.00')
 
-    const fair = await offer(app, 30_000, OWNER_KEY, { as: 'seller' })
-    expect(fair.json).toMatchObject({ status: 'agreed', buyerName: 'Northwind' })
-    expect(fair.json.jobId).toMatch(/^job_northwind_[0-9a-f]{6}$/)
-    expect(fair.json.signature).toBeTruthy()
-    expect(fair.json.verdict.zone).toEqual({ minCents: 25_000, maxCents: 40_000 })
+    // So it counters. The counter answers the studio's offer, which no longer stands.
+    const low = await counter(app, threadId, 20_000, BUYER_KEY)
+    expect(low.json).toMatchObject({ status: 'open', offeredBy: 'buyer' })
+    expect((await call(app, 'GET', `/v1/deals/${high.json.id}`)).json.status).toBe('countered')
+    expect((await accept(app, high.json.id, BUYER_KEY)).status).toBe(409)
+    // The studio cannot accept $200 either: it is under its own floor.
+    expect((await accept(app, low.json.id)).json.code).toBe('deal.outside_your_rules')
+
+    const studio = await counter(app, threadId, 35_000)
+    const client = await counter(app, threadId, 30_000, BUYER_KEY)
+    expect(studio.json.status).toBe('open')
+    // The studio accepts the client's $300: now, and only now, there is a deal.
+    const agreed = await accept(app, client.json.id)
+    expect(agreed.status).toBe(200)
+    expect(agreed.json).toMatchObject({ status: 'agreed', offeredBy: 'buyer', buyerName: 'Northwind' })
+    expect(agreed.json.jobId).toMatch(/^job_northwind_[0-9a-f]{6}$/)
+    expect(agreed.json.signature).toBeTruthy()
+    expect((await call(app, 'GET', `/v1/deals/${agreed.json.id}/verify`)).json.verdict).toBe('valid')
+
+    const view = (await call(app, 'GET', `/v1/negotiations/${threadId}`)).json
+    expect(view).toMatchObject({ status: 'agreed', endedBy: 'seller', agreedDealId: agreed.json.id, turn: null })
+    expect(view.moves.map((move: { side: string; action: string; totalCents: number }) => `${move.side}:${move.action}:${move.totalCents}`)).toEqual([
+      'seller:offer:45000', 'buyer:offer:20000', 'seller:offer:35000', 'buyer:offer:30000', 'seller:accept:30000',
+    ])
+    // Each side is told how good the price was for it, against its own walk-away and target.
+    expect(view.seats.seller.outcome).toMatchObject({ marginCents: 5_000, towardTargetPct: 33, verdict: 'fair' })
+    expect(view.seats.buyer.outcome).toMatchObject({ marginCents: 10_000, towardTargetPct: 50, verdict: 'good' })
+    // A repeated accept is a replay, not a second deal.
+    expect((await accept(app, client.json.id)).json.id).toBe(agreed.json.id)
   })
 
-  it('keeps each side\'s limit private from the other side\'s agent', async () => {
+  it('keeps each side\'s limit private from the other side', async () => {
     const { app } = harness()
-    // The studio's agent asks too much. It learns the buyer refused and which way to move, but not the number.
     const seller = await offer(app, 45_000, STUDIO_KEY)
     const text = JSON.stringify(seller.json)
-    expect(seller.json.verdict.violations[0]).toMatchObject({ code: 'deal.over_buyer_limit', hint: 'Lower the total.' })
+    expect(seller.json.status).toBe('open')
+    expect(seller.json.verdict.violations).toEqual([])
     expect(text).not.toContain('40000')
     expect(text).not.toContain('400.00')
     expect(seller.json.verdict.zone).toBeUndefined()
 
-    // The client's agent asks too little. It is told its own rule in full and the studio's only as "private".
-    const buyer = await offer(app, 20_000, BUYER_KEY)
-    expect(buyer.status).toBe(201)
-    expect(JSON.stringify(buyer.json)).not.toContain('250.00')
-    expect(buyer.json.verdict.violations[0].detail).toContain('private')
-    expect(buyer.json.offeredBy).toBe('buyer')
-
-    // An agent sees its own side's broken rule with the number.
-    const own = await offer(app, 50_000, BUYER_KEY)
+    // The client's own offer past its own ceiling is refused, in its own numbers. It is not a move.
+    const own = await counter(app, seller.json.threadId, 50_000, BUYER_KEY)
+    expect(own.json.status).toBe('refused')
     expect(own.json.verdict.violations[0].detail).toContain('400.00')
+    const buyer = await counter(app, seller.json.threadId, 20_000, BUYER_KEY)
+    expect(buyer.json.status).toBe('open')
+    expect(JSON.stringify(buyer.json)).not.toContain('250.00')
+
+    // Each side reads the table and its own seat; the other seat shows nothing but that it exists.
+    const asClient = (await call(app, 'GET', `/v1/negotiations/${seller.json.threadId}`, { key: BUYER_KEY })).json
+    expect(asClient.seats.seller).toEqual({ side: 'seller', visible: false })
+    expect(asClient.seats.buyer).toMatchObject({ visible: true, reservationCents: 40_000 })
+    expect(JSON.stringify(asClient)).not.toContain('25000')
+    const asStudio = (await call(app, 'GET', `/v1/negotiations/${seller.json.threadId}`, { key: STUDIO_KEY })).json
+    expect(asStudio.seats.buyer).toEqual({ side: 'buyer', visible: false })
+    expect(asStudio.seats.seller).toMatchObject({ visible: true, reservationCents: 25_000 })
   })
 
   it('binds a key to one side: a client agent cannot speak for the studio or read its rules', async () => {
@@ -58,6 +96,8 @@ describe('the deal check', () => {
     const wrong = await offer(app, 30_000, BUYER_KEY, { as: 'seller' })
     expect(wrong.status).toBe(403)
     expect(wrong.json.code).toBe('deal.wrong_side')
+    // The studio's key cannot speak for the client either.
+    expect((await offer(app, 30_000, STUDIO_KEY, { as: 'buyer' })).json.code).toBe('deal.wrong_side')
     const rules = await call(app, 'GET', '/v1/party-rules/mine', { key: BUYER_KEY })
     expect(rules.json).toMatchObject({ partyId: 'client_northwind', role: 'buyer' })
     expect(JSON.stringify(rules.json)).not.toContain('minTotalCents')
@@ -69,13 +109,12 @@ describe('the deal check', () => {
     }
   })
 
-  it('refuses terms that contradict themselves or sit outside either rule set', async () => {
+  it('refuses terms that contradict themselves or break the offerer\'s own rules, and leaves the rest to the other side', async () => {
     const { app } = harness()
     await confirmPrices(app)
     const cases: Array<[string, Record<string, unknown>, string]> = [
       ['milestones that do not add up', { milestones: [{ title: 'a', amountCents: 10_000 }, { title: 'b', amountCents: 10_000 }] }, 'deal.shape'],
-      ['work the buyer does not buy', { category: 'production' }, 'deal.category_buyer'],
-      ['work nobody sells', { category: 'lunch' }, 'deal.category_seller'],
+      ['work the studio does not sell', { category: 'lunch' }, 'deal.category_seller'],
       ['no proof at each milestone', { proofRequired: false }, 'deal.proof_required'],
       ['a due date in the past', { dueDate: '2026-01-01' }, 'deal.due_date_past'],
       ['a currency neither side uses', { currency: 'EUR' }, 'deal.currency'],
@@ -85,34 +124,90 @@ describe('the deal check', () => {
       expect(response.json.status, label).toBe('refused')
       expect(response.json.verdict.violations.map((v: { code: string }) => v.code), label).toContain(code)
     }
+    // Work the studio sells but the client does not buy is a legal offer. The client simply cannot accept it.
+    const production = await call(app, 'POST', '/v1/deals/offers', { idem: idem('prod'), body: { buyer: 'Northwind', terms: terms(30_000, { category: 'production' }), as: 'seller' } })
+    expect(production.json.status).toBe('open')
+    const refused = await accept(app, production.json.id, BUYER_KEY)
+    expect(refused.status).toBe(422)
+    expect(refused.json.violations.map((v: { code: string }) => v.code)).toContain('deal.category_buyer')
     const stranger = await call(app, 'POST', '/v1/deals/offers', { idem: idem('bad'), body: { buyer: 'Acme', terms: terms(30_000) } })
     expect(stranger.status).toBe(422)
     expect(stranger.json.code).toBe('deal.buyer_unknown')
   })
 
-  it('closes a negotiation thread once a deal is agreed, and replays a repeated offer', async () => {
+  it('opens a negotiation only with an offer that stands: a refused opening leaves nothing waiting', async () => {
+    const { app } = harness()
+    await confirmPrices(app)
+    const refused = await offer(app, 20_000, STUDIO_KEY)
+    expect(refused.json.status).toBe('refused')
+    expect((await call(app, 'GET', '/v1/negotiations')).json.data).toEqual([])
+    const stands = await offer(app, 30_000, STUDIO_KEY)
+    expect(stands.json.status).toBe('open')
+    expect((await call(app, 'GET', '/v1/negotiations')).json.data).toHaveLength(1)
+  })
+
+  it('keeps turns, replays a repeated offer, and closes the thread once a deal is agreed', async () => {
     const { app } = harness()
     await confirmPrices(app)
     const threadId = crypto.randomUUID()
     const first = await call(app, 'POST', '/v1/deals/offers', { idem: 'same-offer-key-1', body: { buyer: 'Northwind', terms: terms(30_000), threadId } })
     const replay = await call(app, 'POST', '/v1/deals/offers', { idem: 'same-offer-key-1', body: { buyer: 'Northwind', terms: terms(30_000), threadId } })
     expect(replay.json.id).toBe(first.json.id)
-    const again = await call(app, 'POST', '/v1/deals/offers', { idem: idem('late'), body: { buyer: 'Northwind', terms: terms(32_000), threadId } })
-    expect(again.status).toBe(409)
-    expect(again.json.code).toBe('deal.thread_closed')
+    expect(first.json.threadId).toBe(threadId)
+    const twice = await call(app, 'POST', '/v1/deals/offers', { idem: idem('again'), body: { buyer: 'Northwind', terms: terms(31_000), threadId } })
+    expect(twice.status).toBe(409)
+    expect(twice.json.code).toBe('negotiation.not_your_turn')
     const changed = await call(app, 'POST', '/v1/deals/offers', { idem: 'same-offer-key-1', body: { buyer: 'Northwind', terms: terms(32_000), threadId } })
     expect(changed.status).toBe(422)
+    expect((await accept(app, first.json.id, BUYER_KEY)).json.status).toBe('agreed')
+    const late = await call(app, 'POST', '/v1/deals/offers', { key: BUYER_KEY, idem: idem('late'), body: { buyer: 'Northwind', terms: terms(32_000), threadId } })
+    expect(late.status).toBe(409)
+    expect(late.json.code).toBe('deal.thread_closed')
+  })
+
+  it('ends with no deal when a side walks away, at the deadline, or when neither side moves', async () => {
+    const { app } = harness()
+    await confirmPrices(app)
+    // Walking away is always a move, and it ends the negotiation. The offer that was standing is withdrawn.
+    const opening = await offer(app, 45_000, STUDIO_KEY)
+    const walked = await call(app, 'POST', `/v1/negotiations/${opening.json.threadId}/walk-away`, { key: BUYER_KEY, body: { reason: 'Too far apart this time.' } })
+    expect(walked.json).toMatchObject({ status: 'walked_away', endedBy: 'buyer' })
+    expect((await call(app, 'GET', `/v1/deals/${opening.json.id}`)).json.status).toBe('withdrawn')
+    expect((await counter(app, opening.json.threadId, 44_000, STUDIO_KEY)).json.code).toBe('negotiation.ended')
+
+    // The deadline: two offers each. The studio's second offer is its last, and the client's last is under its floor.
+    const short = await call(app, 'POST', '/v1/deals/offers', { key: STUDIO_KEY, idem: idem('short'), body: { buyer: 'Northwind', terms: terms(45_000), offersPerSide: 2 } })
+    const t = short.json.threadId as string
+    await counter(app, t, 20_000, BUYER_KEY)
+    await counter(app, t, 44_000, STUDIO_KEY)
+    const last = await counter(app, t, 21_000, BUYER_KEY)
+    expect(last.json.status).toBe('expired')
+    expect((await call(app, 'GET', `/v1/negotiations/${t}`)).json).toMatchObject({ status: 'expired', ending: 'the deadline passed with no offer both sides could accept' })
+
+    // A concession is never taken back.
+    const third = await offer(app, 40_000, STUDIO_KEY)
+    await counter(app, third.json.threadId, 20_000, BUYER_KEY)
+    const back = await counter(app, third.json.threadId, 41_000, STUDIO_KEY)
+    expect(back.json.status).toBe('refused')
+    expect(back.json.verdict.violations[0].code).toBe('negotiation.regressive')
+
+    // A stalemate: both sides hold their price for three rounds.
+    const stuck = await offer(app, 45_000, STUDIO_KEY)
+    const s = stuck.json.threadId as string
+    for (const [total, key] of [[20_000, BUYER_KEY], [45_000, STUDIO_KEY], [20_000, BUYER_KEY], [45_000, STUDIO_KEY], [20_000, BUYER_KEY]] as const) await counter(app, s, total, key)
+    expect((await call(app, 'GET', `/v1/negotiations/${s}`)).json.status).toBe('stalled')
   })
 
   it('uses the latest rules a company has written', async () => {
     const { app } = harness()
-    expect((await offer(app, 45_000)).json.status).toBe('refused')
+    const first = await offer(app, 45_000)
+    expect((await accept(app, first.json.id)).json.code).toBe('deal.outside_your_rules')
     const rules = (await call(app, 'GET', '/v1/party-rules')).json.data.find((r: { partyId: string }) => r.partyId === 'client_northwind')
     const { partyId: _p, version: _v, createdAt: _c, ...body } = rules
     expect((await call(app, 'PUT', '/v1/party-rules/client_northwind', { key: STUDIO_KEY, body: { ...body, maxTotalCents: 50_000 } })).status).toBe(403)
     const published = await call(app, 'PUT', '/v1/party-rules/client_northwind', { body: { ...body, maxTotalCents: 50_000 } })
     expect(published.json.version).toBe(3)
-    const accepted = await offer(app, 45_000)
+    const accepted = await accept(app, first.json.id)
     expect(accepted.json).toMatchObject({ status: 'agreed', rulesVersions: { buyer: 3, seller: 2 } })
     expect((await call(app, 'PUT', '/v1/party-rules/client_northwind', { body: { ...body, role: 'seller', minTotalCents: 1 } })).json.code).toBe('deal.role_mismatch')
   })
@@ -129,14 +224,16 @@ describe('the deal check', () => {
     // Keeping only one side still waits: both companies must keep.
     await call(app, 'PUT', '/v1/party-rules/client_northwind', { body: { maxTotalCents: 40_000 } })
     expect((await call(app, 'POST', '/v1/deals/offers', { idem: idem('kept2'), body: { buyer: 'Northwind', terms: terms(30_000) } })).status).toBe(409)
-    // Kept on both sides: the same terms are judged, and agree.
+    // Kept on both sides: the offer stands, and the client's acceptance makes the deal.
     await call(app, 'PUT', '/v1/party-rules/wnt_line_studio', { body: { minTotalCents: 25_000 } })
-    const agreed = await call(app, 'POST', '/v1/deals/offers', { idem: idem('kept3'), body: { buyer: 'Northwind', terms: terms(30_000) } })
+    const made = await call(app, 'POST', '/v1/deals/offers', { idem: idem('kept3'), body: { buyer: 'Northwind', terms: terms(30_000) } })
+    expect(made.json.status).toBe('open')
+    const agreed = await accept(app, made.json.id, BUYER_KEY)
     expect(agreed.json.status).toBe('agreed')
     expect(agreed.json.rulesVersions).toEqual({ buyer: 2, seller: 2 })
   })
 
-  it('lets each company write its own price sheet, and nobody else’s', async () => {
+  it('lets each company write its own price sheet; a client that wrote its own is sealed from the studio', async () => {
     const { app } = harness()
     const sheets = (await call(app, 'GET', '/v1/party-rules')).json.data as Array<Record<string, unknown>>
     const seller = sheets.find((row) => row.partyId === 'wnt_line_studio')!
@@ -159,8 +256,18 @@ describe('the deal check', () => {
     const studioSheet = await call(app, 'PUT', '/v1/party-rules/mine', { key: STUDIO_KEY, body: { ...sheet(seller), minTotalCents: 26_000 } })
     expect(studioSheet.json).toMatchObject({ partyId: 'wnt_line_studio', version: 2, minTotalCents: 26_000 })
     expect((await call(app, 'PUT', '/v1/party-rules/client_northwind', { key: STUDIO_KEY, body: sheet(buyer) })).status).toBe(403)
+
+    // The client has claimed its seat. The studio's owner now sees that a ceiling is set, and nothing of it, and
+    // can neither overwrite it nor speak for the client.
     const after = (await call(app, 'GET', '/v1/party-rules')).json.data as Array<Record<string, unknown>>
-    expect(after.find((row) => row.partyId === 'client_northwind')).toMatchObject({ version: 2, maxTotalCents: 48_000 })
+    const sealed = after.find((row) => row.partyId === 'client_northwind')!
+    expect(sealed).toMatchObject({ version: 2, claimed: true, sealed: true, limitSet: true })
+    expect(sealed.maxTotalCents).toBeUndefined()
+    expect(JSON.stringify(after)).not.toContain('48000')
+    const overwrite = await call(app, 'PUT', '/v1/party-rules/client_northwind', { body: { maxTotalCents: 60_000 } })
+    expect(overwrite.status).toBe(403)
+    expect(overwrite.json.code).toBe('deal.seat_claimed')
+    expect((await offer(app, 30_000, OWNER_KEY, { as: 'buyer' })).json.code).toBe('deal.seat_claimed')
 
     // An agent key may read its company's terms through `mine`; setting them is not its move.
     const created = await call(app, 'POST', '/v1/agents', { body: { name: 'negotiator', scopes: ['deals'] } })

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useGuide } from '../components/GuidedTour'
 import { ConnectAgent } from '../components/ConnectAgent'
 import { DemoReset } from '../components/DemoReset'
@@ -9,7 +9,7 @@ import { FeaturePanel, ToolTiers } from '../components/PayPalFeatures'
 import { Chip, KV, Loading, PageHead } from '../components/ui'
 import { api, ApiError } from '../lib/api'
 import { SCOPE_WORDS } from '../lib/connect'
-import type { AgentRow, ClientKeyRow } from '../lib/types'
+import type { AgentRow, ClientKeyRow, ServerFlags } from '../lib/types'
 import { when } from '../lib/format'
 import { useIsOwner, useSession, useWarrant } from '../lib/hooks'
 import { session } from '../lib/session'
@@ -28,20 +28,40 @@ function AgentKeys() {
   }
   return (
     <section className="panel" aria-labelledby="h-agents" data-testid="agent-keys-panel">
-      <h2 className="panel-title" id="h-agents">Connected agents</h2>
-      <p className="fine">Each agent has its own key, its own scopes and its own hourly limits. The owner key keeps full control; an agent key can never approve, publish rules or pause.
-        A key that trips the breaker is suspended on its own, and the others carry on. Make another on <a href="#h-connect">Connect an agent</a>.</p>
+      <h2 className="panel-title" id="h-agents">Connected agents and scorecard</h2>
+      <p className="fine">Each agent has its own key, scopes, hourly limits, and scorecard. The owner key keeps full control; an agent key can never approve, publish rules or pause.
+        A key that trips the breaker after repeated refused requests is suspended on its own, and the others carry on. Make another on <a href="#h-connect">Connect an agent</a>.</p>
       {error ? <p className="draft-added" role="alert">{error.title}: {error.detail}</p> : null}
       <div className="table-wrap" style={{ marginTop: 12 }}>
         {rows.data && rows.data.length > 0 ? (
-          <table className="keys-table">
-            <thead><tr><th scope="col">Name</th><th scope="col">Scopes</th><th scope="col">Status</th><th scope="col">Last seen</th><th scope="col">Hourly limit</th><th scope="col">Actions</th></tr></thead>
+          <table className="keys-table" data-testid="agent-scorecard-table">
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">Scopes</th>
+                <th scope="col">Status</th>
+                <th scope="col">Scorecard (Req / Auto / Tap / Refused)</th>
+                <th scope="col">Last seen</th>
+                <th scope="col">Hourly limit</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
             <tbody>
               {rows.data.map((agent) => (
-                <tr key={agent.id}>
-                  <th scope="row">{agent.name}</th>
+                <tr key={agent.id} data-testid={`agent-row-${agent.id}`}>
+                  <th scope="row">
+                    <div>{agent.name}</div>
+                    {agent.scorecard?.breakerTripped ? <span className="chip chip-need" style={{ fontSize: '0.75rem', marginTop: 4 }}>Breaker tripped</span> : null}
+                  </th>
                   <td>{agent.scopes.map((s) => SCOPE_WORDS[s]).join(', ')}</td>
-                  <td><Chip tone={agent.status === 'active' ? 'auto' : agent.status === 'suspended' ? 'need' : 'deny'} title={agent.status === 'suspended' ? 'The breaker stopped this agent after repeated refused requests. Look at what it asked for, then resume it.' : undefined}>{agent.status}</Chip></td>
+                  <td>
+                    <Chip tone={agent.status === 'active' ? 'auto' : agent.status === 'suspended' ? 'need' : 'deny'} title={agent.status === 'suspended' ? 'The breaker stopped this agent after repeated refused requests. Look at what it asked for, then resume it.' : undefined}>
+                      {agent.status}
+                    </Chip>
+                  </td>
+                  <td className="fine nowrap" data-testid={`scorecard-${agent.id}`}>
+                    <span title="Total proposals asked">{agent.scorecard?.requests ?? 0} req</span> · <span style={{ color: 'var(--color-auto, #22c55e)' }} title="Auto-approved">{agent.scorecard?.auto ?? 0} auto</span> · <span style={{ color: 'var(--color-need, #f59e0b)' }} title="Needs human tap">{agent.scorecard?.needsTap ?? 0} tap</span> · <span style={{ color: 'var(--color-deny, #ef4444)' }} title="Refused by rules">{agent.scorecard?.refusals ?? 0} refused</span>
+                  </td>
                   <td className="fine nowrap">{agent.lastSeenAt ? when(agent.lastSeenAt) : 'never'}</td>
                   <td className="fine nowrap">{agent.limits.proposalsPerHour}/h · ${(agent.limits.centsPerHour / 100).toLocaleString()}</td>
                   <td><div className="row gap-s">
@@ -103,7 +123,7 @@ function ClientKeys() {
       ) : null}
       {error ? <p className="draft-added" role="alert">{error.title}: {error.detail}</p> : null}
       <form className="draft-form" onSubmit={submit}>
-        <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Northwind buyer agent" required /></label>
+        <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. the client's buyer agent" required /></label>
         <label className="field"><span>Client</span>
           <select value={partyId} onChange={(e) => setPartyId(e.target.value)} required>
             <option value="">Pick a client…</option>
@@ -133,6 +153,123 @@ function ClientKeys() {
           </table>
         ) : <p className="fine">{rows.isLoading ? 'Loading…' : rows.data ? 'No client keys yet. Issue the first one above.' : 'Could not load client keys.'}</p>}
       </div>
+    </section>
+  )
+}
+
+const FLAG_WORDS: Record<keyof ServerFlags, string> = {
+  tenancy: 'Separate workspace for each studio',
+  demoEnabled: 'A private demo for a visitor',
+  demoTtlHours: 'Demo lifetime, hours',
+  demoMaxActive: 'Demos open at once',
+  demoMaxPerIpHour: 'Demos one address may start in an hour',
+  passkeys: 'Passkey sign-in',
+  requirePasskeyForMoney: 'A passkey signature on every payment',
+  legacyOwnerKeyEnabled: 'The pasted owner key still works',
+  invites: 'Invite a person',
+  inviteTtlHours: 'Invite lifetime, hours',
+  safetyBreaker: 'Extra emergency brake',
+  payeeBook: 'Payee book',
+  newPayeeWaitHours: 'Hours before a new payee can be paid',
+  policyPaste: 'Paste a written policy',
+  secondReader: 'A second reader on a draft',
+  mcpExposeReadTools: 'Expose only read tools to agents',
+  paypalLogin: 'Log in with PayPal',
+  modelEnabled: 'AI agents',
+}
+
+function FlagsPanel() {
+  const flags = useQuery({ queryKey: ['flags'], queryFn: api.flags })
+  return (
+    <section className="panel" aria-labelledby="h-flags" data-testid="flags-panel">
+      <h2 className="panel-title" id="h-flags">Switches</h2>
+      <p className="fine">Read from the server. Off means that feature is not active. These switches do not approve or pay.</p>
+      {flags.isLoading ? <Loading /> : null}
+      {flags.isError ? <p className="fine">The switches could not be read.</p> : null}
+      {flags.data ? (
+        <div className="kvs">
+          {(Object.keys(FLAG_WORDS) as Array<keyof ServerFlags>).map((name) => {
+            const value = flags.data?.[name]
+            const shown = typeof value === 'boolean' ? (value ? 'On' : 'Off') : String(value)
+            return <KV key={name} label={FLAG_WORDS[name]}>{shown}</KV>
+          })}
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+const ROLE_LINE: Record<string, string> = {
+  owner: 'Owner · can approve, settle, change rules',
+  approver: 'Approver · can approve up to their limit, and pause',
+  proposer: 'Proposer · can ask and read',
+  viewer: 'Viewer · can look',
+  payee: 'Payee · can see what they are paid',
+}
+
+/** One sentence for the PayPal this server actually has. No studio pastes a secret here. */
+function paypalLine(mode: string | undefined): string {
+  if (mode === 'live') return 'This server’s live PayPal account'
+  if (mode === 'sandbox') return 'This server’s PayPal sandbox'
+  if (mode === 'fake') return 'Simulated · no real money'
+  return 'Not connected · nothing can be charged'
+}
+
+function PayPalAccount({ mode }: { mode: string | undefined }) {
+  const live = mode === 'sandbox' || mode === 'live'
+  return (
+    <section className="panel" aria-labelledby="h-paypal" data-testid="paypal-account">
+      <h2 className="panel-title" id="h-paypal">{live ? 'This server’s PayPal' : mode === 'fake' ? 'Simulated PayPal' : 'PayPal is not connected'}</h2>
+      {live ? (
+        <p>Every studio on this server settles through one PayPal {mode === 'live' ? 'account' : 'sandbox'}. Invoices still go to this studio’s clients, and payouts still go to this studio’s contractors. Another studio cannot see this ledger. This console does not hold the PayPal secret.</p>
+      ) : mode === 'fake' ? (
+        <p>This demo does not move real money. A studio opened on a server that has PayPal uses that server’s sandbox. Invoices and payouts still name this studio’s own clients and contractors.</p>
+      ) : (
+        <p>Nothing on this server can be charged. The connection belongs to the server, not to one studio. When it is connected, invoices and payouts still go to this studio’s own clients and contractors.</p>
+      )}
+    </section>
+  )
+}
+
+function CloseStudio() {
+  const me = useSession()
+  const navigate = useNavigate()
+  const client = useQueryClient()
+  const [name, setName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<ApiError | null>(null)
+  if (me.data?.role !== 'owner' || me.data.workspaceMode !== 'studio') return null
+  const studio = me.data.studioName?.trim() ?? ''
+  const match = studio.length > 0 && name.trim() === studio
+  const close = async () => {
+    if (!match || busy) return
+    setBusy(true)
+    setError(null)
+    try {
+      await api.closeStudio(name.trim())
+      try {
+        const raw = localStorage.getItem('mandate.studio.progress')
+        const saved = raw ? JSON.parse(raw) as { workspace?: string } : null
+        if (saved?.workspace === me.data?.workspaceId) localStorage.removeItem('mandate.studio.progress')
+      } catch { /* the wizard can be started again */ }
+      session.clear()
+      client.clear()
+      navigate('/welcome', { replace: true })
+    } catch (caught) {
+      setError(caught as ApiError)
+      setBusy(false)
+    }
+  }
+  return (
+    <section className="panel panel-warn" aria-labelledby="h-close-studio" data-testid="close-studio">
+      <h2 className="panel-title" id="h-close-studio">Close this studio</h2>
+      <p>Money already sent stays in PayPal. The ledger, the rules, the people, and the signing key on this server are deleted. This cannot be undone.</p>
+      <label className="field">
+        <span>Type <strong>{studio}</strong> to close it</span>
+        <input value={name} onChange={(event) => setName(event.target.value)} autoComplete="off" spellCheck={false} data-testid="close-studio-name" />
+      </label>
+      <button type="button" className="btn btn-ink" disabled={!match || busy} onClick={() => void close()} data-testid="close-studio-btn">{busy ? 'Closing…' : 'Close studio'}</button>
+      {error ? <p role="alert">{error.title}. {error.detail}</p> : null}
     </section>
   )
 }
@@ -168,6 +305,7 @@ export function System() {
         <button type="button" className="btn btn-ghost" onClick={() => guide.start('welcome')}>Take the full tour</button>
         <button type="button" className="btn btn-ghost" onClick={lock}>Lock console</button>
       </PageHead>
+      {owner ? <FlagsPanel /> : null}
       <FeaturePanel />
       {safety.data ? (
         <section className="panel" aria-labelledby="h-safety" data-testid="safety-panel">
@@ -234,6 +372,7 @@ export function System() {
         </section>
       ) : null}
       <ToolTiers />
+      <PayPalAccount mode={me.data?.paypalMode} />
       <div className="rules-grid">
         <section className="panel" data-tour="system-checks">
           <h2 className="panel-title">Checks</h2>
@@ -253,9 +392,9 @@ export function System() {
         <section className="panel" data-tour="system-console">
           <h2 className="panel-title">This console</h2>
           <div className="kvs">
-            <KV label="Key">{me.data?.role === 'owner' ? 'Owner · can approve, settle, change rules' : 'Proposer · can ask and read'}</KV>
+            <KV label="Key">{ROLE_LINE[me.data?.role ?? ''] ?? 'Signed in'}</KV>
             <KV label="API version" mono>{me.data?.version ?? '—'}</KV>
-            <KV label="PayPal">{me.data?.paypalConfigured ? 'Sandbox credentials set' : 'Not configured'}</KV>
+            <KV label="PayPal">{paypalLine(me.data?.paypalMode)}</KV>
             <KV label="Agents">{me.data?.agents.enabled ? `On · ${me.data.agents.model}` : 'Off · set OLLAMA_API_KEY'}</KV>
             <KV label="Origin" mono>{location.origin}</KV>
             <KV label="Offline">App shell only. Money calls are never cached or queued.</KV>
@@ -266,8 +405,11 @@ export function System() {
             ))}
           </div>
           <a className="btn btn-ghost" href="/openapi.json" target="_blank" rel="noreferrer">OpenAPI 3.1 contract ↗</a>
+          <Link className="btn btn-ghost" to="/sessions">Sessions and sign-in history</Link>
+          <Link className="btn btn-ghost" to="/members">Members</Link>
         </section>
       </div>
+      <CloseStudio />
     </div>
   )
 }

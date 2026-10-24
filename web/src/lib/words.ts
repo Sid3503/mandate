@@ -21,6 +21,7 @@ export const PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
   order_created: { label: 'Waiting on PayPal buyer', tone: 'need' },
   capture_inflight: { label: 'Settling', tone: 'ink' },
   captured: { label: 'Settled', tone: 'auto' },
+  settled_short: { label: 'Settled short', tone: 'need' },
   refunded: { label: 'Refunded', tone: 'auto' },
   capture_refused: { label: 'Refused at PayPal', tone: 'deny' },
   invoice_draft: { label: 'Invoice drafted', tone: 'need' },
@@ -41,6 +42,61 @@ const PAYOUT_PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
 
 export function phaseInfo(phase: string, kind?: Kind): { label: string; tone: 'deny' | 'auto' | 'need' | 'ink' | 'muted' } {
   return (kind === 'payment' ? PAYOUT_PHASE[phase] : undefined) ?? PHASE[phase] ?? { label: phase, tone: 'muted' }
+}
+
+/**
+ * Mirrors `api/src/domain/phases.ts`. The web has no server import, so these three questions are repeated here.
+ * `captured` is the lock paid in full; `settled_short` is money that really arrived, for less than the lock.
+ */
+export const fullPhase = (phase: string): boolean => phase === 'captured'
+export const fundedPhase = (phase: string): boolean => phase === 'captured' || phase === 'settled_short'
+export const paidPhase = (phase: string): boolean => phase === 'captured' || phase === 'settled_short' || phase === 'refunded'
+
+/**
+ * Why a settlement was not the locked amount, in the words a person reads on a receipt. Mirrors
+ * `api/src/domain/settlement.ts`, where a code is only chosen when the PayPal field behind it was present.
+ */
+export const DELTA_REASON: Record<string, string> = {
+  full: 'the lock was paid',
+  early_discount: 'early-payment discount',
+  credit_note: 'credit on the bill',
+  paypal_fee: 'PayPal fee',
+  partial: 'partial payment',
+  unexplained: 'nothing arrived',
+}
+
+/** The PayPal field a reason was read from, so a delta always travels with the source of the number. */
+export const DELTA_SOURCE: Record<string, string> = {
+  early_discount: 'PayPal reported the early-payment discount as applied',
+  credit_note: 'PayPal reported a discount on the invoice',
+  paypal_fee: 'PayPal reported the fee on the payment',
+  partial: 'PayPal reported only part of the invoice as paid',
+}
+
+/**
+ * Whether PayPal named the adjustment, as opposed to reporting only that part of the invoice was paid. `partial`
+ * has a field behind it (`payments.paid_amount`, which is how much arrived) but that field does not say *why* the
+ * rest is missing, so it must never be described as an explanation. Mirrors the adjustment reasons in
+ * `api/src/domain/settlement.ts`.
+ */
+export const namedAdjustment = (reason: string | null): boolean => reason === 'early_discount' || reason === 'credit_note' || reason === 'paypal_fee'
+
+type Settled = Pick<Proposal, 'amountCents' | 'settledCents' | 'capturedAmountCents' | 'deltaCents' | 'deltaReason' | 'deltaSource' | 'currency'>
+
+/**
+ * The one sentence that explains a settlement: what was authorised, what arrived, and the difference with the
+ * reason PayPal gave for it. Every number in it comes from what the server stored, never from arithmetic done
+ * here, and it returns null when nothing has settled yet.
+ */
+export function settlementLine(proposal: Settled): string | null {
+  const arrived = proposal.settledCents ?? proposal.capturedAmountCents
+  if (arrived === null || arrived === undefined) return null
+  const head = `${dollars(proposal.amountCents, proposal.currency)} authorised · ${dollars(arrived, proposal.currency)} settled`
+  const delta = proposal.deltaCents ?? arrived - proposal.amountCents
+  if (delta === 0) return head
+  const reason = DELTA_REASON[proposal.deltaReason ?? ''] ?? 'no reason given'
+  const source = proposal.deltaSource ? DELTA_SOURCE[proposal.deltaReason ?? ''] : null
+  return `${head} · ${dollars(Math.abs(delta), proposal.currency)} ${delta < 0 ? 'short' : 'over'}: ${reason}.${source ? ` ${source}.` : ''}`
 }
 
 /** A contractor payout that is approved, sent, or finished. It is paid through PayPal Payouts, never Orders checkout. */
@@ -66,7 +122,7 @@ export const EVENT: Record<string, string> = {
   'invoice.created': 'PayPal invoice drafted',
   'invoice.sent': 'Invoice sent to the client',
   'invoice.status': 'PayPal updated the invoice',
-  'invoice.partial': 'Invoice part-paid, not counted as settled',
+  'invoice.partial': 'Invoice settled short of the lock',
   'invoice.unavailable': 'Invoicing not permitted, used checkout instead',
   'payout.sent': 'Payout sent to PayPal',
   'payout.status': 'PayPal is processing the payout',
@@ -130,6 +186,7 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
     case 'deal.unknown': return 'The deal this charge names does not exist or was never agreed.'
     case 'deal.milestone_mismatch': return 'A milestone can only be billed for exactly its agreed amount.'
     case 'deal.milestone_billed': return 'That milestone has already been billed.'
+    case 'duplicate.open': return 'This is the same ask as one that is already open: the same money, on the same job, from the same source. Finish or reject that one first.'
     case 'deal.milestone_unknown': return 'The deal has no such milestone.'
     case 'deal.job_mismatch': return 'That deal belongs to a different job.'
     case 'deal.party_mismatch': return 'That deal was made with a different client.'

@@ -1,3 +1,4 @@
+import { fundedPhase } from './words'
 import type { Job } from './types'
 
 export type StageState = 'done' | 'here' | 'todo'
@@ -18,13 +19,14 @@ export function jobStages(job: Job): Stage[] {
   const billedCount = milestones.filter((item) => item.chargeId && !NOT_BILLED.includes(item.phase ?? '')).length
   const billed = sent.length > 0
   const paidCharges = job.charges.filter((charge) => charge.phase === 'captured')
+  const partPaidCharges = job.charges.filter((charge) => charge.phase === 'settled_short')
   const paidOut = job.payouts.filter((payout) => payout.phase === 'captured')
   const stages: Stage[] = []
   if (job.deal) {
     stages.push({ id: 'agreed', label: 'Agreed', detail: job.deal.signatureValid ? 'Signed deal' : 'Signature does not verify', state: job.deal.signatureValid ? 'done' : 'here' })
   }
   stages.push({ id: 'billed', label: 'Billed', detail: milestones.length > 0 ? `${billedCount} of ${milestones.length} milestones` : billed ? `${sent.length} charge${sent.length === 1 ? '' : 's'}` : job.charges.length > 0 ? 'Waiting for your tap' : 'Not yet', state: billed && (milestones.length === 0 || billedCount === milestones.length) ? 'done' : 'todo' })
-  stages.push({ id: 'client', label: 'Client paid', detail: paidCharges.length > 0 ? `${paidCharges.length} settled` : 'Not yet', state: paidCharges.length > 0 && paidCharges.length === sent.length ? 'done' : 'todo' })
+  stages.push({ id: 'client', label: 'Client paid', detail: paidCharges.length > 0 ? `${paidCharges.length} settled${partPaidCharges.length > 0 ? `, ${partPaidCharges.length} part paid` : ''}` : partPaidCharges.length > 0 ? `${partPaidCharges.length} part paid` : 'Not yet', state: paidCharges.length > 0 && paidCharges.length === sent.length ? 'done' : 'todo' })
   stages.push({ id: 'contractor', label: 'Contractor paid', detail: paidOut.length > 0 ? `${paidOut.length} paid` : 'Not yet', state: paidOut.length > 0 && job.totals.heldCents === 0 ? 'done' : 'todo' })
   // The first stage that is not done is where the job is. A stage that has begun but not finished is "here" too.
   const firstOpen = stages.findIndex((stage) => stage.state !== 'done')
@@ -36,12 +38,12 @@ export function jobNext(job: Job, owner: boolean): NextStep {
   const unbilled = milestones.find((item) => !item.chargeId)
   const waitingForYou = job.charges.find((charge) => charge.phase === 'pending_approval') ?? job.payouts.find((payout) => payout.phase === 'pending_approval')
   if (waitingForYou) return { text: owner ? 'A request on this job is waiting for your tap.' : 'A request on this job is waiting for the owner.', to: owner ? '/' : null, cta: owner ? 'Open it on Today' : null, owner: true, waiting: !owner }
-  const fundable = job.charges.find((charge) => charge.phase === 'captured' && charge.fundableCents > 0 && Boolean(charge.captureId))
+  const fundable = job.charges.find((charge) => fundedPhase(charge.phase) && charge.fundableCents > 0 && Boolean(charge.captureId))
   const billing = job.charges.find((charge) => CLIENT_BUSY.includes(charge.phase))
   const paying = job.payouts.find((payout) => PAYOUT_BUSY.includes(payout.phase))
   if (paying) return { text: 'PayPal is moving the contractor’s money. Nothing for you to do.', to: null, cta: null, owner: false, waiting: true }
   if (billing) return { text: 'Waiting for the client to pay. Mandate asks PayPal every few seconds and this page updates by itself.', to: null, cta: null, owner: false, waiting: true }
-  const clearing = job.charges.find((charge) => charge.phase === 'captured' && charge.fundableCents > 0 && charge.clearing?.pending)
+  const clearing = job.charges.find((charge) => fundedPhase(charge.phase) && charge.fundableCents > 0 && charge.clearing?.pending)
   if (clearing && fundable === clearing) {
     const until = clearing.clearing?.clearsAt ? new Date(clearing.clearing.clearsAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null
     return { text: `The client’s payment is clearing${until ? ` until ${until}` : ''}. Your rule pays the contractor by itself after that. You can still pay sooner yourself.`, to: owner ? `/new?kind=payment&funding=${encodeURIComponent(clearing.captureId ?? '')}` : null, cta: owner ? 'Pay sooner' : null, owner: true, waiting: !owner }

@@ -191,11 +191,26 @@ describe('comparing the PayPal account with the ledger', () => {
   it('matches what Mandate moved and flags what it did not', async () => {
     const watch = new FakeWatch()
     const h = await funded({ watch })
-    watch.transactions = [txn(h.captureId, 15_000), txn('EXTERNAL-1', -4_800, { subject: 'Font licence' }), txn('X-2', 2_000, { customId: h.proposalId })]
+    watch.transactions = [txn(h.captureId, 15_000), txn('EXTERNAL-1', -4_800, { subject: 'Font licence' })]
     const result = await call(h.app, 'GET', '/v1/paypal/activity')
-    expect(result.json).toMatchObject({ available: true, matched: 2, unmatched: 1, unmatchedNetCents: -4_800 })
-    expect(result.json.rows.find((row: { id: string }) => row.id === 'EXTERNAL-1').proposalId).toBeNull()
-    expect(result.json.rows.find((row: { id: string }) => row.id === h.captureId).proposalId).toBe(h.proposalId)
+    expect(result.json).toMatchObject({ available: true, matched: 1, unmatched: 1, unmatchedNetCents: -4_800, mismatched: 0, mismatchedNetCents: 0 })
+    const external = result.json.rows.find((row: { id: string }) => row.id === 'EXTERNAL-1')
+    expect(external.proposalId).toBeNull()
+    expect(external.balanced).toBeNull()
+    const mine = result.json.rows.find((row: { id: string }) => row.id === h.captureId)
+    expect(mine).toMatchObject({ proposalId: h.proposalId, matchedBy: 'id', expectedCents: 15_000, expectedCurrency: 'USD', deltaCents: 0, balanced: true })
+  })
+
+  it('finds a request by its custom field, and checks the money on that path too', async () => {
+    const watch = new FakeWatch()
+    const h = await funded({ watch })
+    // Two transactions claim the one 15,000 request, so PayPal shows 17,000 for it. The request is compared as a
+    // total and does not line up, which is exactly what the Ledger tab now says instead of a bare "Matched".
+    watch.transactions = [txn(h.captureId, 15_000), txn('X-2', 2_000, { customId: h.proposalId })]
+    const result = await call(h.app, 'GET', '/v1/paypal/activity')
+    expect(result.json).toMatchObject({ matched: 2, unmatched: 0, mismatched: 1, mismatchedNetCents: 2_000 })
+    const extra = result.json.rows.find((row: { id: string }) => row.id === 'X-2')
+    expect(extra).toMatchObject({ proposalId: h.proposalId, matchedBy: 'custom', balanced: false, deltaCents: null })
   })
 
   it('says so, instead of failing, when Transaction Search is off', async () => {

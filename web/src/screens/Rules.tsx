@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { EmailNotice } from '../components/EmailNotice'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
@@ -8,7 +8,7 @@ import { StageTrail, type StageView } from '../components/ToolTrail'
 import { TryRules } from '../components/TryRules'
 import { useToast } from '../components/Toast'
 import { when } from '../lib/format'
-import { useAgentsOn, useIsOwner, useOnline, useVersions } from '../lib/hooks'
+import { useAgentsOn, useIsOwner, useOnline, useSession, useToday, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { Party, PolicyResult, PolicySentence, Replay, RulesDraft, SentenceStatus, Warrant } from '../lib/types'
 import { wip, type RulesWip } from '../lib/wip'
@@ -26,19 +26,58 @@ const automationWords = (a: Body['automation'] | undefined) => {
 
 const nameOf = (b: Body, id: string) => [...b.payees, ...(b.clients ?? [])].find((party) => party.id === id)?.displayName ?? id
 
+/**
+ * The rules before any way to change them: the three things they decide, each with what it did lately. Read from the
+ * live version and the ledger only; nothing here is a model's opinion.
+ */
+function RulesAtAGlance({ warrant }: { warrant: Warrant }) {
+  const today = useToday()
+  const stats = today.data?.stats.last30Days
+  const stopped = today.data?.stopped
+  const standing = warrant.standing?.length ?? 0
+  const never = [
+    `paying anyone but ${warrant.payees.map((party) => party.displayName).join(', ') || 'the people on your list'}`,
+    `any single payment over ${dollars(warrant.perPaymentCeilingCents, warrant.currency)}`,
+    `work outside ${warrant.categories.join(', ')}`,
+    warrant.fundingRequired ? 'paying a contractor before the client’s money has arrived' : null,
+    `contractor payouts past ${dollars(warrant.monthlyCapCents, warrant.currency)} a month`,
+    warrant.evidenceRequired ? 'a request with no link to the work' : null,
+  ].filter((line): line is string => Boolean(line))
+  return (
+    <section className="rules-glance" aria-label="Your rules at a glance" data-testid="rules-glance">
+      <div className="glance-col glance-auto">
+        <span className="eyebrow">No tap needed</span>
+        <p>Under {dollars(warrant.autoSettleUnderCents, warrant.currency)}{standing > 0 ? `, and anything your ${standing === 1 ? 'standing rule covers' : `${standing} standing rules cover`}` : ''}.</p>
+        {stats ? <p className="glance-count"><b>{stats.automatic}</b> in the last 30 days</p> : null}
+      </div>
+      <div className="glance-col glance-tap">
+        <span className="eyebrow">Your tap</span>
+        <p>{dollars(warrant.autoSettleUnderCents, warrant.currency)} and above, unless a standing rule covers it. One tap seals the amount.</p>
+        {stats ? <p className="glance-count"><b>{stats.tapped}</b> in the last 30 days</p> : null}
+      </div>
+      <div className="glance-col glance-never">
+        <span className="eyebrow">Never, whoever asks</span>
+        <p>{never.join('; ')}.</p>
+        {stopped ? <p className="glance-count"><b>{stopped.count}</b> refused{stopped.cents > 0 ? `, ${dollars(stopped.cents)} kept safe` : ''}</p> : null}
+      </div>
+    </section>
+  )
+}
+
 function body(warrant: Warrant): Body {
   const { id: _id, version: _version, createdAt: _createdAt, ...rest } = warrant
   return rest
 }
 
 const LABELS: Array<{ key: keyof Body; label: string; show: (body: Body) => string }> = [
-  { key: 'autoSettleUnderCents', label: 'Automatic under', show: (b) => dollars(b.autoSettleUnderCents) },
-  { key: 'monthlyCapCents', label: 'Monthly contractor cap', show: (b) => dollars(b.monthlyCapCents) },
-  { key: 'perPaymentCeilingCents', label: 'Per-payment ceiling', show: (b) => dollars(b.perPaymentCeilingCents) },
+  { key: 'autoSettleUnderCents', label: 'Automatic under', show: (b) => dollars(b.autoSettleUnderCents, b.currency) },
+  { key: 'monthlyCapCents', label: 'Monthly contractor cap', show: (b) => dollars(b.monthlyCapCents, b.currency) },
+  { key: 'perPaymentCeilingCents', label: 'Per-payment ceiling', show: (b) => dollars(b.perPaymentCeilingCents, b.currency) },
   { key: 'contractorShareBps', label: 'Contractor share of client money', show: (b) => `${(b.contractorShareBps ?? 10000) / 100}%` },
   { key: 'clearingDays', label: 'Wait after a client pays', show: (b) => ((b.clearingDays ?? 0) === 0 ? 'no wait' : `${b.clearingDays} day${b.clearingDays === 1 ? '' : 's'} before a rule pays from it`) },
   { key: 'fundingRequired', label: 'Payouts need client money', show: (b) => (b.fundingRequired ? 'yes' : 'no') },
   { key: 'evidenceRequired', label: 'Proof link required', show: (b) => (b.evidenceRequired ? 'yes' : 'no') },
+  { key: 'allowPartialPayment', label: 'Clients may pay an invoice in part', show: (b) => (b.allowPartialPayment ? 'yes' : 'no') },
   { key: 'currency', label: 'Currency', show: (b) => b.currency },
   { key: 'timezone', label: 'Month boundary', show: (b) => b.timezone },
   { key: 'categories', label: 'Allowed work', show: (b) => b.categories.join(', ') },
@@ -57,14 +96,49 @@ export function Rules() {
   const location = useLocation()
   const versions = useVersions()
   const owner = useIsOwner()
+  const session = useSession()
+  const flags = useQuery({ queryKey: ['flags'], queryFn: api.flags })
+  const showPolicyBox = flags.data?.policyPaste === true || session.data?.demoReset === true
   const list = versions.data?.data ?? []
   const [selected, setSelected] = useState<number | null>(null)
   const [editing, setEditing] = useState(false)
   const [seed, setSeed] = useState<RulesDraft | null>(null)
+  // The rules in the owner's own words. They live on the server, so another browser finds them too.
+  const words = useQuery({ queryKey: ['rule-words'], queryFn: api.ruleWords, enabled: owner, staleTime: 30_000, retry: false })
   // Unpublished work survives leaving the screen and reloading (for this tab), and is set aside if the rules move on.
   const [resume, setResume] = useState<Body | null>(null)
   const [saved, setSaved] = useState<RulesWip | null>(() => wip.read())
   const [notice, setNotice] = useState<string | null>(null)
+  // The people on this studio. Their addresses may only come from the owner's own words, so the first version is
+  // written from these and the rule they said.
+  const brought = studioPeople()
+  const [payeeName, setPayeeName] = useState(brought.payeeName)
+  const [payeeEmail, setPayeeEmail] = useState(brought.payeeEmail)
+  const [clientName, setClientName] = useState(brought.clientName)
+  const [clientEmail, setClientEmail] = useState(brought.clientEmail)
+  // What the studio does, in the owner's words from the wizard: the first kind of work its rules allow.
+  const [work, setWork] = useState('')
+  // The wizard also keeps this cast on the server. A browser with no saved progress still starts from those names.
+  useEffect(() => {
+    const body = words.data?.words?.body
+    if (!body) return
+    const client = /The client on this studio is (.+?) \(([^)\n]+)\)\./.exec(body)
+    const payee = /The contractor on this studio is (.+?) \(([^)\n]+)\)\./.exec(body)
+    if (client) {
+      setClientName((value) => value.trim() ? value : client[1] ?? '')
+      setClientEmail((value) => value.trim() ? value : client[2] ?? '')
+    }
+    if (payee) {
+      setPayeeName((value) => value.trim() ? value : payee[1] ?? '')
+      setPayeeEmail((value) => value.trim() ? value : payee[2] ?? '')
+    }
+    const does = /This studio does (.+?)\.(?:\n|$)/.exec(body)
+    if (does) setWork((value) => value || (does[1] ?? ''))
+  }, [words.data])
+  const people = [
+    payeeName.trim() && payeeEmail.trim() ? `The contractor on this studio is ${payeeName.trim()} (${payeeEmail.trim()}).` : null,
+    clientName.trim() && clientEmail.trim() ? `The client on this studio is ${clientName.trim()} (${clientEmail.trim()}).` : null,
+  ].filter((line): line is string => Boolean(line)).join('\n')
   const liveVersion = list[0]?.version
   const keep = (patch: Partial<RulesWip>) => setSaved((before) => {
     const next: RulesWip = { baseVersion: liveVersion ?? 0, instruction: '', result: null, body: null, at: Date.now(), ...before, ...patch }
@@ -87,7 +161,89 @@ export function Rules() {
   const current = list[0]
   const shown = list.find((item) => item.version === selected) ?? current
   const previous = shown ? list.find((item) => item.version === shown.version - 1) ?? null : null
-  if (!current || !shown) return <div className="page"><ProblemCard error={versions.error} /></div>
+  // A studio with no rules yet: there is nothing to show, and everything to write. The owner's own words, if they
+  // wrote any, are the place to start.
+  if (!current || !shown) {
+    const own = words.data?.words?.body ?? ''
+    return (
+      <div className="page">
+        <PageHead eyebrow="Rules · none yet" title="The rules" />
+        <EmailNotice here />
+        {notice ? <div className="panel wip-note" role="status"><p className="fine">{notice}</p><button type="button" className="link" onClick={() => setNotice(null)}>Dismiss</button></div> : null}
+        <section className="panel panel-lime" data-testid="rules-first">
+          <h2 className="panel-title">Your studio has no rules yet</h2>
+          <p>Nothing can be asked for, approved or paid until the rules exist. They decide three things: what pays without your tap, what waits for it, and what never happens at all.</p>
+          <ul className="rules-why">
+            <li><b>Without your tap</b> — small requests, and anything a standing rule covers.</li>
+            <li><b>With your tap</b> — anything bigger, sealed and signed the moment you approve it.</li>
+            <li><b>Never</b> — over the cap, without proof, or before the client&rsquo;s money has arrived.</li>
+          </ul>
+          <div className="panel wip-note" data-testid="rules-example">
+            <span className="eyebrow">One job, and where the rules show up</span>
+            <p>A client pays you <b>$150</b> for a logo. Your rules say what happens next: the contractor&rsquo;s share comes out of that money (say <b>$90</b>), <b>$60</b> stays in the studio, and nothing is paid to anyone who is not on your list. If the client has not paid yet, nothing goes out at all &mdash; the rules say so before anyone is asked, and before any money moves.</p>
+            <p className="fine">Those numbers are an example. Yours will be the ones you write.</p>
+          </div>
+          {own ? (
+            <div className="panel wip-note" role="status" data-testid="rules-words-kept">
+              <p><strong>Your words are kept.</strong> You wrote them when you opened the studio, and they are waiting here.</p>
+              <p className="fine">“{own}”</p>
+            </div>
+          ) : null}
+          <fieldset className="parties" data-testid="rules-people">
+            <legend>Who is on your studio</legend>
+            <p className="fine">A rule needs names to talk about. Give the people here, and they may be used in your rules. An address only ever comes from your own words, so the model cannot invent one.</p>
+            <div className="party-row">
+              <input aria-label="Contractor name" value={payeeName} onChange={(e) => setPayeeName(e.target.value)} placeholder="Contractor name" />
+              <input aria-label="Contractor email" type="email" value={payeeEmail} onChange={(e) => setPayeeEmail(e.target.value)} placeholder="contractor@studio.com" />
+              <span className="muted small">may be paid</span>
+            </div>
+            <div className="party-row">
+              <input aria-label="Client name" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Client name" />
+              <input aria-label="Client email" type="email" value={clientEmail} onChange={(e) => setClientEmail(e.target.value)} placeholder="accounts@client.com" />
+              <span className="muted small">may be billed</span>
+            </div>
+          </fieldset>
+          {owner ? (
+            <>
+              {words.isPending ? <p className="fine">Looking for the words you wrote…</p> : null}
+              {!words.isPending ? (
+                <DraftBox
+                  prefill={(location.state as { draft?: string } | null)?.draft ?? own}
+                  initialInstruction={saved?.instruction ?? ''}
+                  initialResult={saved?.result ?? null}
+                  extra={people}
+                  autoDraft={false}
+                  onKeep={(instruction, result) => keep({ instruction, result })}
+                  onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }}
+                />
+              ) : null}
+              <div className="row gap-s wrap">
+                <button type="button" className="btn btn-ghost" onClick={() => { setSeed(null); setResume(peopleBody(payeeName, payeeEmail, clientName, clientEmail, work)); setEditing(true) }}>Write them myself</button>
+                <span className="fine">The form, without a model. The people you typed above are already on it. You set every number.</span>
+              </div>
+            </>
+          ) : (
+            <p className="fine">Only the owner can write the rules.</p>
+          )}
+        </section>
+        {editing ? (
+          <Editor
+            key={seed?.runId ?? 'blank'}
+            current={null}
+            seed={seed}
+            resume={resume}
+            onKeep={(next) => keep({ body: next })}
+            onDone={(version) => {
+              setEditing(false)
+              setSeed(null)
+              setResume(null)
+              if (version) { wip.clear(); setSaved(null); setSelected(version) } else keep({ body: null })
+            }}
+          />
+        ) : null}
+      </div>
+    )
+  }
 
   return (
     <div className="page">
@@ -110,6 +266,8 @@ export function Rules() {
         </div>
       ) : null}
 
+      {!editing ? <RulesAtAGlance warrant={current} /> : null}
+
       {owner && !editing ? (
         <DraftBox
           prefill={(location.state as { draft?: string } | null)?.draft}
@@ -119,7 +277,7 @@ export function Rules() {
           onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }}
         />
       ) : null}
-      {owner && !editing ? <PolicyBox onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }} /> : null}
+      {owner && !editing && showPolicyBox ? <PolicyBox onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }} /> : null}
       {editing ? (
         <Editor
           key={resume ? 'resume' : seed?.runId ?? 'blank'}
@@ -136,7 +294,13 @@ export function Rules() {
         />
       ) : null}
 
-      {owner && !editing ? <details className="try-details"><summary>Try a request, or check the rules with cases</summary><TryRules /></details> : null}
+      {owner && !editing ? (
+        <section className="panel" aria-labelledby="h-try-rules" data-testid="rules-dry-run">
+          <h2 className="panel-title" id="h-try-rules">See what your rules would do</h2>
+          <p className="fine">Type a request and the real rules answer it, without filing anything and without asking PayPal. The cases below are the boundaries of your rules: read down the column and check that each answer is what you meant.</p>
+          <TryRules />
+        </section>
+      ) : null}
 
       <div className="rules-grid">
         <section className="panel" data-tour="rules-words">
@@ -192,18 +356,111 @@ function Changes({ changes, first = false }: { changes: Change[]; first?: boolea
   )
 }
 
-function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; seed: RulesDraft | null; resume: Body | null; onKeep: (body: Body | null) => void; onDone: (version: number | null) => void }) {
+/** Names typed while opening the studio, so Rules starts with that client and that contractor. */
+function studioPeople(): { payeeName: string; payeeEmail: string; clientName: string; clientEmail: string } {
+  const empty = { payeeName: '', payeeEmail: '', clientName: '', clientEmail: '' }
+  try {
+    const raw = localStorage.getItem('mandate.studio.progress')
+    if (!raw) return empty
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const text = (key: string) => typeof parsed[key] === 'string' ? parsed[key] : ''
+    return { payeeName: text('payeeName'), payeeEmail: text('payeeEmail'), clientName: text('clientName'), clientEmail: text('clientEmail') }
+  } catch {
+    return empty
+  }
+}
+
+function partyId(prefix: string, name: string): string {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40)
+  return `${prefix}${slug || 'person'}`
+}
+
+/** The people typed above the form, carried into the blank so "write them myself" does not throw the names away. */
+function peopleBody(payeeName: string, payeeEmail: string, clientName: string, clientEmail: string, work = ''): Body | null {
+  const payee = payeeName.trim() && payeeEmail.trim()
+    ? { id: partyId('payee_', payeeName), displayName: payeeName.trim(), email: payeeEmail.trim(), aliases: [] as string[] }
+    : null
+  const client = clientName.trim() && clientEmail.trim()
+    ? { id: partyId('client_', clientName), displayName: clientName.trim(), email: clientEmail.trim(), aliases: [] as string[] }
+    : null
+  if (!payee && !client) return null
+  const kind = workCategory(work)
+  const made: Body = { ...BLANK, ...localDefaults(), categories: kind ? [kind] : [], payees: payee ? [payee] : [], clients: client ? [client] : [] }
+  FROM_PEOPLE.add(made)
+  return made
+}
+
+/** Bodies made from the people typed above the form: a starting point whose amounts the owner has not chosen yet. */
+const FROM_PEOPLE = new WeakSet<Body>()
+
+/** "Logo and brand design" becomes "logo-and-brand-design": the owner's own words, in the shape the rules keep a kind of work. */
+function workCategory(work: string): string | null {
+  const slug = work.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32).replace(/-+$/g, '')
+  return /^[a-z][a-z0-9_-]{0,31}$/.test(slug) ? slug : null
+}
+
+/** Currencies PayPal can move, in the order most studios would look for them. */
+const CURRENCIES = ['USD', 'EUR', 'GBP', 'INR', 'CAD', 'AUD', 'JPY', 'SGD', 'HKD', 'CHF', 'NZD', 'SEK', 'NOK', 'DKK', 'PLN', 'CZK', 'HUF', 'ILS', 'MXN', 'BRL', 'PHP', 'THB', 'MYR', 'TWD']
+
+/** The currency most businesses in a region bill in, from the browser's language tag. A starting choice, never a rule. */
+const REGION_CURRENCY: Record<string, string> = { US: 'USD', GB: 'GBP', IN: 'INR', CA: 'CAD', AU: 'AUD', JP: 'JPY', SG: 'SGD', HK: 'HKD', CH: 'CHF', NZ: 'NZD', SE: 'SEK', NO: 'NOK', DK: 'DKK', PL: 'PLN', CZ: 'CZK', HU: 'HUF', IL: 'ILS', MX: 'MXN', BR: 'BRL', PH: 'PHP', TH: 'THB', MY: 'MYR', TW: 'TWD', DE: 'EUR', FR: 'EUR', ES: 'EUR', IT: 'EUR', NL: 'EUR', IE: 'EUR', PT: 'EUR', BE: 'EUR', AT: 'EUR', FI: 'EUR', GR: 'EUR' }
+
+/** A new studio starts in the owner's own time zone and its region's currency, read from this browser. */
+function localDefaults(): { currency: string; timezone: string } {
+  let timezone = 'UTC'
+  let currency = 'USD'
+  try {
+    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+    const region = new Intl.Locale(navigator.language).maximize().region
+    if (region && REGION_CURRENCY[region]) currency = REGION_CURRENCY[region]!
+  } catch {
+    /* an old browser: UTC and USD, both shown and changeable */
+  }
+  return { currency, timezone }
+}
+
+/**
+ * The blank a studio starts from when it has no rules yet. Everything here is a starting point the owner changes:
+ * no one is named, nothing is allowed, and no amount is set until they say so.
+ */
+const BLANK: Body = {
+  currency: 'USD',
+  autoSettleUnderCents: 2000,
+  monthlyCapCents: 18000,
+  perPaymentCeilingCents: 50000,
+  evidenceRequired: true,
+  timezone: 'UTC',
+  payees: [],
+  categories: [],
+  clients: [],
+  fundingRequired: true,
+  contractorShareBps: 10000,
+  clearingDays: 0,
+  allowPartialPayment: false,
+  standing: [],
+  automation: { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 },
+}
+
+function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | null; seed: RulesDraft | null; resume: Body | null; onKeep: (body: Body | null) => void; onDone: (version: number | null) => void }) {
   const client = useQueryClient()
   const toast = useToast()
   const online = useOnline()
-  const start = useMemo(() => body(current), [current])
+  const start = useMemo(() => (current ? body(current) : { ...BLANK, ...localDefaults() }), [current])
   const from: Body = resume ?? seed?.draft ?? start
-  const [auto, setAuto] = useState(centsInput(from.autoSettleUnderCents))
-  const [cap, setCap] = useState(centsInput(from.monthlyCapCents))
-  const [ceiling, setCeiling] = useState(centsInput(from.perPaymentCeilingCents))
+  const version = (current?.version ?? 0) + 1
+  // The first version is the owner's to write: no amount is filled in for them, and the currency and the time zone
+  // the month is counted in are chosen here, once. Later versions keep both: a ledger does not change currency.
+  const firstVersion = !current
+  const blankAmounts = firstVersion && !seed && (!resume || FROM_PEOPLE.has(resume))
+  const [auto, setAuto] = useState(blankAmounts ? '' : centsInput(from.autoSettleUnderCents))
+  const [cap, setCap] = useState(blankAmounts ? '' : centsInput(from.monthlyCapCents))
+  const [ceiling, setCeiling] = useState(blankAmounts ? '' : centsInput(from.perPaymentCeilingCents))
+  const [currency, setCurrency] = useState(from.currency)
+  const [timezone, setTimezone] = useState(from.timezone)
   const [share, setShare] = useState(String((from.contractorShareBps ?? 10000) / 100))
   const [clearing, setClearing] = useState(String(from.clearingDays ?? 0))
   const [funding, setFunding] = useState(Boolean(from.fundingRequired))
+  const [partial, setPartial] = useState(Boolean(from.allowPartialPayment))
   const [evidence, setEvidence] = useState(from.evidenceRequired)
   const [categories, setCategories] = useState(from.categories.join(', '))
   const [payees, setPayees] = useState<Party[]>(from.payees)
@@ -222,8 +479,11 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
     const ce = parseCents(ceiling)
     const sh = Number(share)
     if (a === null || c === null || ce === null || !Number.isFinite(sh)) return null
+    // A studio that allows no kind of work can be asked for nothing: the rules need at least one.
+    if (categories.split(',').map((item) => item.trim()).filter(Boolean).length === 0) return null
     return {
       ...start,
+      ...(firstVersion ? { currency, timezone: timezone.trim() || 'UTC' } : {}),
       autoSettleUnderCents: a,
       monthlyCapCents: c,
       perPaymentCeilingCents: ce,
@@ -231,6 +491,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
       clearingDays: Math.max(0, Math.min(60, Math.round(Number(clearing)) || 0)),
       fundingRequired: funding,
       evidenceRequired: evidence,
+      allowPartialPayment: partial,
       categories: categories.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean),
       payees,
       clients,
@@ -246,9 +507,9 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
   })()
   const problem = draft && draft.automation?.payOnSettle && draft.standing.length === 0 ? 'Paying when the client pays needs at least one standing rule, to say whom to pay.' : null
   const changes = draft ? diff(start, draft) : []
-  // Keep the work: leave the screen or reload and it is still here, marked unpublished.
+  // Keep the work before paint. A later effect can lose the race with a fast leave, and the banner never appears.
   const snapshot = draft ? JSON.stringify(draft) : null
-  useEffect(() => {
+  useLayoutEffect(() => {
     onKeep(draft && changes.length > 0 ? draft : null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshot])
@@ -257,9 +518,9 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
     setStanding((list) => [...list, { id: `standing_${list.length + 1}`, payeeId: payees[0]?.id ?? '', clientIds: clients[0] ? [clients[0].id] : [], requireDeal: true }])
   }
   const publish = useMutation({
-    mutationFn: (next: Body) => api.publishWarrant(next, current.version),
+    mutationFn: (next: Body) => api.publishWarrant(next, current?.version ?? 0),
     onSuccess: async (saved) => {
-      await Promise.all([client.invalidateQueries({ queryKey: ['versions'] }), client.invalidateQueries({ queryKey: ['warrant'] })])
+      await Promise.all([client.invalidateQueries({ queryKey: ['versions'] }), client.invalidateQueries({ queryKey: ['warrant'] }), client.invalidateQueries({ queryKey: ['rule-words'] })])
       toast({ title: 'Rules published', body: `Version ${saved.version} is signed and in force. Open requests keep the version they were decided against.` })
       onDone(saved.version)
     },
@@ -267,22 +528,30 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
 
   return (
     <section className="panel panel-lime editor">
-      <div className="row between"><h2 className="panel-title">Write version {current.version + 1}</h2><button type="button" className="link" onClick={() => onDone(null)}>Cancel</button></div>
+      <div className="row between"><h2 className="panel-title">Write version {version}</h2><button type="button" className="link" onClick={() => onDone(null)}>Cancel</button></div>
       {seed ? <DraftNote result={seed} replay={false} /> : null}
       {!review ? (
         <div className="stack">
+          {firstVersion ? (
+            <div className="field-row">
+              <label className="field"><span>Currency</span><select value={currency} onChange={(e) => setCurrency(e.target.value)}>{[...new Set([currency, ...CURRENCIES])].map((code) => <option key={code} value={code}>{code}</option>)}</select><small>Every bill and payout is in this currency. It is set once, with the first version.</small></label>
+              <label className="field"><span>Time zone the month is counted in</span><input value={timezone} onChange={(e) => setTimezone(e.target.value)} list="time-zones" /><datalist id="time-zones">{timeZones().map((zone) => <option key={zone} value={zone} />)}</datalist><small>The monthly cap resets at midnight here. Read from this browser; change it if your studio keeps another.</small></label>
+            </div>
+          ) : null}
           <div className="field-row three">
-            <label className="field"><span>Automatic under</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={auto} onChange={(e) => setAuto(e.target.value)} /></span></label>
-            <label className="field"><span>Monthly contractor cap</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={cap} onChange={(e) => setCap(e.target.value)} /></span></label>
-            <label className="field"><span>Per-payment ceiling</span><span className="dollar-input"><span>$</span><input inputMode="decimal" value={ceiling} onChange={(e) => setCeiling(e.target.value)} /></span></label>
+            <label className="field"><span>Automatic under</span><span className="dollar-input"><span>{currency}</span><input inputMode="decimal" value={auto} onChange={(e) => setAuto(e.target.value)} placeholder={blankAmounts ? 'You choose' : undefined} /></span><small>Requests under this need no tap.</small></label>
+            <label className="field"><span>Monthly contractor cap</span><span className="dollar-input"><span>{currency}</span><input inputMode="decimal" value={cap} onChange={(e) => setCap(e.target.value)} placeholder={blankAmounts ? 'You choose' : undefined} /></span><small>The most paid to contractors in a month.</small></label>
+            <label className="field"><span>Per-payment ceiling</span><span className="dollar-input"><span>{currency}</span><input inputMode="decimal" value={ceiling} onChange={(e) => setCeiling(e.target.value)} placeholder={blankAmounts ? 'You choose' : undefined} /></span><small>No single payment above it.</small></label>
           </div>
           <div className="field-row three">
             <label className="field"><span>Contractor share of client money</span><span className="dollar-input"><input inputMode="decimal" value={share} onChange={(e) => setShare(e.target.value)} /><span>%</span></span></label>
             <label className="check"><input type="checkbox" checked={funding} onChange={(e) => setFunding(e.target.checked)} /> Payouts need client money first</label>
             <label className="check"><input type="checkbox" checked={evidence} onChange={(e) => setEvidence(e.target.checked)} /> Proof link required</label>
+            <label className="check"><input type="checkbox" checked={partial} onChange={(e) => setPartial(e.target.checked)} /> Clients may pay an invoice in part</label>
+            <p className="fine">A part payment settles the request for what actually arrived, and contractors can only be funded up to their share of that. PayPal offers part payment to sellers in some countries only, so this is a request to PayPal, not a guarantee.</p>
           </div>
           <label className="field"><span>Wait after a client pays, before a rule pays a contractor from it</span><span className="dollar-input"><input inputMode="numeric" aria-label="Days to wait after a client pays" value={clearing} onChange={(e) => setClearing(e.target.value)} /><span>days</span></span><small>0 means no wait. A client can still take money back for a while, so a rule or autopilot waits this long. You can still tap to pay earlier.</small></label>
-          <label className="field"><span>Allowed work, comma separated</span><input value={categories} onChange={(e) => setCategories(e.target.value)} /></label>
+          <label className="field"><span>Allowed work, comma separated</span><input value={categories} onChange={(e) => setCategories(e.target.value)} placeholder="logo-design, photography" /><small>{categories.trim() ? 'Every request names one of these.' : 'Add at least one: every request must name the kind of work it is for.'}</small></label>
           <Parties title="Who can be paid" prefix="payee_" list={payees} onChange={setPayees} />
           <Parties title="Who can be billed" prefix="client_" list={clients} onChange={setClients} />
           <StandingRules list={standing} payees={payees} clients={clients} enabled={funding} onChange={setStanding} />
@@ -313,14 +582,14 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant; s
         </div>
       ) : (
         <div className="stack">
-          <p>Version {current.version} → {current.version + 1}. Open requests stay judged by version {current.version}.</p>
+          <p>{current ? `Version ${current.version} → ${current.version + 1}. Open requests stay judged by version ${current.version}.` : 'This is version 1. Nothing can be asked for, approved or paid until you publish it.'}</p>
           <Changes changes={changes} />
           {draft ? <ReplayPanel rules={draft} seed={seed?.replay ?? null} /> : null}
           {draft ? <TryRules rules={draft} /> : null}
           <div className="row gap-s wrap">
             <button type="button" className="btn btn-ghost" onClick={() => setReview(false)}>Back</button>
             <button type="button" className="btn btn-lime btn-big" disabled={!draft || !online || publish.isPending} onClick={() => draft && publish.mutate(draft)}>
-              {publish.isPending ? 'Publishing…' : `Publish version ${current.version + 1}`}
+              {publish.isPending ? 'Publishing…' : `Publish version ${version}`}
             </button>
           </div>
           <ProblemCard error={publish.error} />
@@ -385,7 +654,7 @@ function Parties({ title, prefix, list, onChange }: { title: string; prefix: str
 }
 
 /** Describe a change in your own words. A model drafts it; you read the before-and-after and publish it yourself. */
-function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult }: { onUse: (result: RulesDraft) => void; onKeep: (instruction: string, result: RulesDraft | null) => void; prefill?: string; initialInstruction: string; initialResult: RulesDraft | null }) {
+function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult, extra, autoDraft = true }: { onUse: (result: RulesDraft) => void; onKeep: (instruction: string, result: RulesDraft | null) => void; prefill?: string; initialInstruction: string; initialResult: RulesDraft | null; /** The people the owner named on this studio. An address may only come from the owner's own words, so it travels with the request. */ extra?: string; autoDraft?: boolean }) {
   const agents = useAgentsOn()
   const online = useOnline()
   const [text, setText] = useState(prefill ?? initialInstruction)
@@ -393,12 +662,13 @@ function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult }:
   const toast = useToast()
   // The steps the server really takes to make a draft, shown as they happen.
   const [stages, setStages] = useState<Array<DraftStage & { at: number }>>([])
+  const withPeople = (instruction: string) => [instruction, extra].filter((part) => part && part.trim().length > 0).join('\n\n')
   const make = useMutation({
     mutationFn: async (instruction: string) => {
       setStages([])
       let draft: RulesDraft | null = null
       let failure: ApiError | null = null
-      await api.streamDraft(instruction, (event) => {
+      await api.streamDraft(withPeople(instruction), (event) => {
         if (event.type === 'stage') setStages((current) => [...current, { ...event, at: Date.now() }])
         else if (event.type === 'done') draft = event.draft
         else if (event.type === 'error') failure = new ApiError(422, event.code, event.title, event.message, {})
@@ -417,9 +687,9 @@ function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult }:
   })
   const ran = useRef(false)
   useEffect(() => {
-    if (prefill && agents && !ran.current) { ran.current = true; make.mutate(prefill) }
+    if (prefill && agents && autoDraft && !ran.current) { ran.current = true; make.mutate(prefill) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prefill, agents])
+  }, [prefill, agents, autoDraft])
   if (!agents) return null
   const result = make.data ?? restored
   const blocked = Boolean(result && result.added.length > 0)
@@ -429,7 +699,7 @@ function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult }:
       <ol className="draft-steps" aria-label="How a change is made"><li>Say it</li><li>See it</li><li>Check it</li><li>Replay it</li><li>Sign it</li></ol>
       <form className="draft-form" onSubmit={(event) => { event.preventDefault(); if (text.trim().length >= 3) make.mutate(text.trim()) }}>
         <label className="sr-only" htmlFor="draft-text">Describe the change you want to the rules</label>
-        <textarea id="draft-text" rows={2} maxLength={1000} value={text} placeholder="e.g. pay Priya 60% of what Northwind pays, never more than $180 a month, and only after the client accepts" onChange={(event) => { setText(event.target.value); onKeep(event.target.value, make.data ?? restored) }} />
+        <textarea id="draft-text" rows={2} maxLength={1000} value={text} placeholder="e.g. pay your contractor their share of what your client pays, and only after the work is delivered" onChange={(event) => { setText(event.target.value); onKeep(event.target.value, make.data ?? restored) }} />
         <button type="submit" className="btn btn-ink" disabled={!online || text.trim().length < 3 || make.isPending}>{make.isPending ? 'Drafting…' : 'Draft it'}</button>
       </form>
       <p className="fine">A model drafts the change. It cannot publish. Code, not the model, checks the draft against your words, lists what it loosens and replays your history under it. Then you publish.</p>
@@ -456,7 +726,7 @@ const POLICY_STATUS: Record<SentenceStatus, { label: string; tone: 'deny' | 'aut
   unchecked: { label: 'Not checked', tone: 'need' },
 }
 
-const POLICY_LIMIT = 12_000
+const POLICY_LIMIT = 20_000
 
 /**
  * Paste your written policy. Code sorts it into sentences, sets aside what is not yours or not a rule, a model drafts the
@@ -588,8 +858,20 @@ function DraftNote({ result, replay = true }: { result: RulesDraft; replay?: boo
           <ul>{result.readBack.map((line) => <li key={line}>{line}</li>)}</ul>
         </div>
       ) : null}
+      {result.secondReader ? (
+        <div className={`draft-second draft-second-${result.secondReader.status}`} role="status" data-testid="second-reader">
+          <strong>{result.secondReader.status === 'agreed' ? 'A second model read it and agrees' : result.secondReader.status === 'concerns' ? 'A second model read it and is not sure' : 'No second reading'}</strong>
+          <p className="fine">{result.secondReader.verdict} <span className="mono">{result.secondReader.model}</span></p>
+          {result.secondReader.concerns.length > 0 ? <ul>{result.secondReader.concerns.map((concern) => <li key={concern.change}><b>{concern.text}</b> — {concern.why}</li>)}</ul> : null}
+          {result.secondReader.missing ? <p className="fine"><b>Possibly missing:</b> {result.secondReader.missing}</p> : null}
+        </div>
+      ) : null}
       {replay ? <ReplayBody replay={result.replay} /> : null}
-      <p className="fine">The model’s summary: “{result.summary}”</p>
+      {result.summaryBy === 'code' ? (
+        <p className="fine">The model’s own summary said something the code disagreed with, so it was left out. This is the change, said by code: “{result.summary}”</p>
+      ) : (
+        <p className="fine">The model’s summary: “{result.summary}”</p>
+      )}
     </div>
   )
 }
@@ -623,7 +905,7 @@ function stageViews(stages: Array<DraftStage & { at: number }>): StageView[] {
       case 'patch': return { label: 'The model proposed a change', detail: `“${stage.summary}”` }
       case 'retry': return { label: 'The draft did not fit the rules, so it was sent back', detail: stage.reason }
       case 'checking': return { label: 'Code is checking the draft against your words', detail: 'What it loosens, what it leaves out, what it adds' }
-      case 'auditing': return { label: 'A second reading is checking the draft against each sentence', detail: 'Every claim is checked against the rules' }
+      case 'second_reading': return { label: 'Second reader reviewing draft', detail: stage.model }
       case 'replaying': return { label: 'Replaying your history under the new rules' }
       case 'reading_back': return { label: 'Writing the read-back in plain words' }
       case 'reading_policy': return { label: 'A model is reading your policy', detail: `${stage.sentences} sentence${stage.sentences === 1 ? '' : 's'}${stage.parts > 1 ? `, in ${stage.parts} parts` : ''}: rule, judgment, someone else’s words, or something Mandate cannot do` }
@@ -632,4 +914,13 @@ function stageViews(stages: Array<DraftStage & { at: number }>): StageView[] {
     }
   }
   return stages.map((stage, index) => ({ key: `${index}:${stage.stage}`, ...label(stage), state: stage.stage === 'retry' ? 'retry' : index === stages.length - 1 ? 'active' : 'done' }))
+}
+
+/** Every time zone this browser knows, for the picker. An older browser offers none, and the field takes free text. */
+function timeZones(): string[] {
+  try {
+    return (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.('timeZone') ?? []
+  } catch {
+    return []
+  }
 }

@@ -10,6 +10,14 @@ const phrases = (flags: Array<{ phrase: string }>) => flags.map((flag) => flag.p
 describe('reading the numbers the owner wrote', () => {
   it('finds dollars, percents, days and counts, in digits and in words', () => {
     expect(quantitiesIn('Pay Priya 60% of what Northwind pays, never more than $180 a month, remind after 3 days, twice, max 2 times, $1.5k').map((q) => [q.kind, q.value])).toEqual(expect.arrayContaining([['percent', 60], ['money', 18_000], ['days', 3], ['count', 2], ['money', 150_000]]))
+    // Money in any common currency counts as money the owner wrote, not as a number the model invented.
+    const money = (words: string) => quantitiesIn(words).filter((q) => q.kind === 'money').map((q) => q.value)
+    expect(money('never more than €500 a month')).toEqual([50_000])
+    expect(money('cap it at ₹50,000')).toEqual([5_000_000])
+    expect(money('a ceiling of 1,00,000 rupees')).toEqual([10_000_000])
+    expect(money('EUR 750 per payment, or 900 GBP')).toEqual([75_000, 90_000])
+    expect(money('anything under 20 dollars')).toEqual([2_000])
+    expect(money('in 3 days')).toEqual([])
     expect(quantitiesIn('remind after two weeks').map((q) => [q.kind, q.value])).toEqual([['days', 14]])
     expect(quantitiesIn('nothing numeric here')).toEqual([])
   })

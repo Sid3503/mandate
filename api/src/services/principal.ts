@@ -11,8 +11,18 @@ export type Role = 'owner' | 'proposer'
  * the per-agent breaker counts, so one misbehaving agent can be stopped without pausing anyone else.
  */
 export type AgentScope = 'read' | 'propose' | 'stream' | 'mcp' | 'deals'
-export type AgentLimits = { proposalsPerHour: number; centsPerHour: number }
-export const DEFAULT_AGENT_LIMITS: AgentLimits = { proposalsPerHour: 60, centsPerHour: 250_000 }
+export type AgentLimits = {
+  proposalsPerHour: number
+  centsPerHour: number
+  proposalsPerDay?: number
+  centsPerDay?: number
+}
+export const DEFAULT_AGENT_LIMITS: AgentLimits = {
+  proposalsPerHour: 60,
+  centsPerHour: 250_000,
+  proposalsPerDay: 500,
+  centsPerDay: 1_000_000,
+}
 
 export type Principal =
   | { role: 'owner'; side: null; buyerId: null }

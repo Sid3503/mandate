@@ -2,7 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RETRY_WINDOW_MS } from '../src/mcp/http'
-import { agree, call, closeAll, collect, confirmPrices, EVIDENCE, harness, idem, JOB, STUDIO_KEY, terms, type Requester } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, confirmPrices, EVIDENCE, harness, idem, JOB, STUDIO_KEY, terms, type Requester } from './support'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -49,14 +49,14 @@ const rpc = (app: App, key: string, body: string, headers: Record<string, string
   app.request('http://mandate.test/mcp', { method, headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', ...headers }, body: method === 'POST' ? body : undefined })
 
 describe('the scopes on an agent key decide which tools it gets', () => {
-  const SIX = ['explain', 'get_jobs', 'get_rules', 'list_ledger', 'offer_deal', 'propose']
+  const SIX = ['accept_offer', 'explain', 'get_jobs', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'walk_away']
 
   it('gives each combination of scopes exactly the tools it allows, and the full set when the owner allows everything', async () => {
     const { app } = harness()
     const cases: Array<[Scope[], string[]]> = [
       [['mcp', 'read'], ['explain', 'get_jobs', 'get_rules', 'list_ledger']],
       [['mcp', 'propose'], ['propose']],
-      [['mcp', 'deals'], ['explain', 'offer_deal']],
+      [['mcp', 'deals'], ['accept_offer', 'explain', 'get_negotiation', 'offer_deal', 'walk_away']],
       [['mcp', 'read', 'propose'], ['explain', 'get_jobs', 'get_rules', 'list_ledger', 'propose']],
       [['mcp', 'read', 'propose', 'deals'], SIX],
       [['mcp', 'read', 'propose', 'deals', 'stream'], SIX],
@@ -96,7 +96,7 @@ describe('the scopes on an agent key decide which tools it gets', () => {
   it('explains a request only with read, and a deal only with deals', async () => {
     const { app } = harness()
     await confirmPrices(app)
-    const deal = (await call(app, 'POST', '/v1/deals/offers', { idem: idem('deal'), body: { buyer: 'Northwind', terms: terms(30_000, { jobId: JOB }) } })).json.id as string
+    const deal = (await agree(app)).id
     const asked = (await call(app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: { ...payout, payee: 'P. Shah' } })).json.id as string
     const reader = await connect(app, (await issue(app, ['mcp', 'read'])).apiKey)
     const negotiator = await connect(app, (await issue(app, ['mcp', 'deals'])).apiKey)
@@ -188,14 +188,17 @@ describe('an issued key through the door: who it is, how much it may ask, when i
     expect((await rpc(app, '', '{}')).status).toBe(401)
   })
 
-  it('lets an agent with the deals scope negotiate the frozen deal: $450 no, $200 no, $300 yes', async () => {
+  it('lets an agent with the deals scope negotiate for the studio, and the client\'s acceptance make the deal', async () => {
     const { app } = harness()
     await confirmPrices(app)
     const { use } = await connect(app, (await issue(app, ['mcp', 'deals', 'read'], {}, 'Sales')).apiKey)
-    const offer = (total: number) => use('offer_deal', { buyer: 'Northwind', terms: terms(total, { jobId: JOB }) })
-    expect((await offer(45_000)).data).toMatchObject({ result: 'REFUSED', violations: [{ ruleCode: 'deal.over_buyer_limit' }] })
-    expect((await offer(20_000)).data).toMatchObject({ result: 'REFUSED', violations: [{ ruleCode: 'deal.under_seller_minimum' }] })
-    expect((await offer(30_000)).data).toMatchObject({ result: 'AGREED', violations: [] })
+    const opening = await use('offer_deal', { buyer: 'Northwind', terms: terms(45_000, { jobId: JOB }) })
+    expect(opening.data).toMatchObject({ result: 'OFFERED', status: 'open' })
+    // The client counters with its own key; the studio's agent accepts, and that makes the deal.
+    const counter = await call(app, 'POST', '/v1/deals/offers', { key: BUYER_KEY, idem: idem('c'), body: { buyer: 'Northwind', threadId: opening.data.threadId, terms: terms(30_000, { jobId: JOB }) } })
+    expect(counter.json.status).toBe('open')
+    const agreed = await use('accept_offer', { dealId: counter.json.id })
+    expect(agreed.data).toMatchObject({ result: 'AGREED', total: '$300.00' })
   })
 })
 

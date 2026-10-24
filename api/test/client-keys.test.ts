@@ -1,5 +1,7 @@
+import { createHash, randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { call, closeAll, harness } from './support'
+import { machineKeyHash } from '../src/services/machine-key'
+import { call, closeAll, harness, NOW, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
 
@@ -47,6 +49,14 @@ describe('client keys', () => {
     expect((await call(app, 'GET', '/v1/party-rules', { key: northwind })).status).toBe(403)
   })
 
+  it('keeps a key\'s end date when it is rotated: a new secret, not a longer life', async () => {
+    const { app } = harness()
+    const created = await issue(app, { name: 'Northwind buyer', partyId: 'client_northwind', expiryDays: 30 })
+    expect(created.json.key.expiresAt).toBeTruthy()
+    const rotated = await call(app, 'POST', `/v1/client-keys/${created.json.key.id}/rotate`)
+    expect(rotated.json.key.expiresAt).toBe(created.json.key.expiresAt)
+  })
+
   it('revokes a key at once, and rotates it without a gap', async () => {
     const { app } = harness()
     const created = await issue(app, { name: 'Northwind buyer', partyId: 'client_northwind' })
@@ -67,5 +77,74 @@ describe('client keys', () => {
     expect(dead.json.code).toBe('client-key.revoked')
     expect((await call(app, 'POST', `/v1/client-keys/${rotated.json.key.id}/rotate`)).status).toBe(409)
     expect((await call(app, 'POST', '/v1/client-keys/nope/revoke')).status).toBe(404)
+  })
+
+  it('upgrades an old mnd_cl_ secret and keeps the same client', async () => {
+    const { app, repo } = harness()
+    const secret = 'legacyclientsecretlegacyclient'
+    const apiKey = `mnd_cl_${secret}`
+    const id = randomUUID()
+    repo.createClientKey({
+      id,
+      name: 'Northwind buyer',
+      party_id: 'client_northwind',
+      status: 'active',
+      key_hash: createHash('sha256').update(secret).digest('hex'),
+      created_at: NOW.toISOString(),
+      last_seen_at: null,
+    })
+    expect((await call(app, 'GET', '/v1/party-rules/mine', { key: apiKey })).status).toBe(200)
+    expect(repo.getClientKey(id)?.key_hash).toBe(machineKeyHash(apiKey))
+    const upgraded = await call(app, 'POST', `/v1/client-keys/${id}/upgrade`)
+    expect(upgraded.status).toBe(200)
+    expect(upgraded.json.apiKey).toMatch(/^mnd_cl_[A-Za-z0-9_-]+$/)
+    expect(upgraded.json.key.id).toBe(id)
+    expect(upgraded.json.key.partyId).toBe('client_northwind')
+    expect((await call(app, 'GET', '/v1/party-rules/mine', { key: apiKey })).status).toBe(401)
+    expect((await call(app, 'GET', '/v1/party-rules/mine', { key: upgraded.json.apiKey })).status).toBe(200)
+    expect((await call(app, 'POST', `/v1/client-keys/${id}/upgrade`, { key: STUDIO_KEY })).status).toBe(403)
+    expect(JSON.stringify((await call(app, 'GET', '/v1/client-keys')).json)).not.toContain(upgraded.json.apiKey)
+  })
+
+  it('issues client keys in mnd_cl_<workspace_id>_<secret> format with HMAC-SHA256, prefix, and expiry', async () => {
+    const { app, repo, setNow } = harness()
+    const created = await issue(app, { name: 'Northwind Buyer New', partyId: 'client_northwind', expiryDays: 14 })
+    expect(created.status).toBe(201)
+    expect(created.json.apiKey).toMatch(/^mnd_cl_ws_default_[A-Za-z0-9_-]+$/)
+    expect(created.json.key.keyPrefix).toMatch(/^mnd_cl_ws_default_/)
+    expect(created.json.key.expiresAt).toBeTruthy()
+
+    // Key hash in database is HMAC-SHA256 with pepper
+    const row = repo.getClientKey(created.json.key.id)
+    expect(row).toBeDefined()
+    expect(row?.key_hash).toBe(machineKeyHash(created.json.apiKey))
+
+    // Valid before expiry
+    expect((await call(app, 'GET', '/v1/party-rules/mine', { key: created.json.apiKey })).status).toBe(200)
+
+    // Last used / seen updated
+    const list = await call(app, 'GET', '/v1/client-keys')
+    const found = list.json.find((k: { id: string }) => k.id === created.json.key.id)
+    expect(found.lastUsedAt).toBeTruthy()
+    expect(found.keyPrefix).toMatch(/^mnd_cl_ws_default_/)
+
+    // Expired key returns 403 client-key.expired
+    setNow(new Date(Date.now() + 15 * 86_400_000))
+    const expired = await call(app, 'GET', '/v1/party-rules/mine', { key: created.json.apiKey })
+    expect(expired.status).toBe(403)
+    expect(expired.json.code).toBe('client-key.expired')
+  })
+})
+
+describe('what a client\'s key learns about the studio', () => {
+  it('knows the studio is paused, never why, by whom, or how its systems are', async () => {
+    const { app } = harness()
+    const created = await call(app, 'POST', '/v1/client-keys', { body: { name: 'Northwind buyer', partyId: 'client_northwind' } })
+    await call(app, 'POST', '/v1/safety/pause', { body: { reason: 'Cash is tight until Friday' } })
+    const seen = await call(app, 'GET', '/v1/status', { key: created.json.apiKey })
+    expect(seen.status).toBe(200)
+    expect(seen.json.paused).toMatchObject({ reason: null, by: null })
+    expect(seen.json.ai).toBeNull()
+    expect(JSON.stringify(seen.json)).not.toContain('Cash is tight')
   })
 })

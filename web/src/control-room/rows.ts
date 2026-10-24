@@ -51,11 +51,11 @@ function howApproved(row: Proposal): string {
 
 export function toLedgerRows(proposals: Proposal[], nameOf: (id: string | null) => string, now: Date = new Date()): LedgerRow[] {
   return proposals.map((row) => {
-    const settledCents = row.phase === 'captured' ? (row.capturedAmountCents ?? row.amountCents) : row.phase === 'refunded' ? row.amountCents : 0
+    const settledCents = row.phase === 'captured' ? (row.capturedAmountCents ?? row.amountCents) : row.phase === 'settled_short' ? (row.settledCents ?? 0) : row.phase === 'refunded' ? row.amountCents : 0
     const inCents = row.kind === 'charge' ? settledCents : 0
     const outCents = row.kind === 'charge' ? 0 : settledCents
     const asked = new Date(row.createdAt)
-    const owed = row.kind === 'charge' && (row.phase === 'invoice_sent' || row.phase === 'invoice_draft') ? row.amountCents : 0
+    const owed = row.kind === 'charge' && (row.phase === 'invoice_sent' || row.phase === 'invoice_draft') ? row.amountCents : row.kind === 'charge' && row.phase === 'settled_short' ? Math.max(0, row.amountCents - (row.settledCents ?? 0)) : 0
     return {
       id: row.id,
       asked,

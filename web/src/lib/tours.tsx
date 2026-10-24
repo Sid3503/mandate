@@ -1,12 +1,13 @@
 import type { ReactNode } from 'react'
 import type { TourStep } from '../components/ui/product-tour'
 
-export type TourId = 'welcome' | 'inbox' | 'proof' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk' | 'control-room'
+export type TourId = 'welcome' | 'coach' | 'inbox' | 'proof' | 'new' | 'jobs' | 'job' | 'ledger' | 'rules' | 'receipt' | 'system' | 'deals' | 'clerk' | 'control-room'
 
 const p = (children: ReactNode) => <p>{children}</p>
 
 export const TOUR_LABEL: Record<TourId, string> = {
   welcome: 'the console',
+  coach: 'Quick tour',
   inbox: 'Today',
   proof: 'Proof',
   new: 'New request',
@@ -37,7 +38,7 @@ export function tourFor(pathname: string): TourId {
   return 'inbox'
 }
 
-const FLOW: TourStep = {
+export const FLOW: TourStep = {
   title: 'How one payment moves',
   placement: 'center',
   content: (
@@ -132,6 +133,30 @@ export const TOURS: Record<TourId, TourStep[]> = {
           {p('That is the tour. Try New request next: ask for a lunch and see the rules say no.')}
         </>
       ),
+    },
+  ],
+
+  coach: [
+    {
+      target: '[data-tour="nav-waiting"]',
+      title: 'What needs you',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: p('Where you land. Requests waiting for your approval appear here. Only your tap or signed standing rules move money.'),
+    },
+    {
+      target: '[data-tour="nav-clerk"]',
+      title: 'Agents can ask',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: p('Staff and AI agents can ask in plain words. They never hold the PayPal key and can never approve.'),
+    },
+    {
+      target: '[data-tour="nav-rules"]',
+      title: 'Rules guard every dollar',
+      placement: 'right',
+      mobilePlacement: 'top',
+      content: p('Limits, payee rules, and client-money ceilings judge every request in code before anything reaches PayPal.'),
     },
   ],
 

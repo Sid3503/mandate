@@ -3,7 +3,7 @@
 // A case passes when the RULES' outcome is right, which is the only thing that matters: the model is allowed to be
 // wrong, and the point of the design is that being wrong is harmless.
 import { buildModels } from '../src/agents/model'
-import { agree, call, collect, EVIDENCE, harness, JOB, STUDIO_KEY } from '../test/support'
+import { agree, call, collect, confirmPrices, EVIDENCE, harness, JOB, STUDIO_KEY } from '../test/support'
 
 const model = buildModels(process.env).primary
 if (!model) {
@@ -145,6 +145,7 @@ const cases: Case[] = [
 const results: Array<{ name: string; pass: boolean; seconds: number }> = []
 let failed = 0
 for (const item of cases) {
+  if (process.env.EVAL_NEGOTIATION_ONLY) break
   if (process.env.EVAL_ONLY && !item.name.includes(process.env.EVAL_ONLY)) continue
   const h = harness({ model })
   let deal: Awaited<ReturnType<typeof agree>> | null = null
@@ -172,18 +173,37 @@ for (const item of cases) {
   if (problem) console.log(`      ${problem}`)
 }
 
-// The two negotiators, with their default briefs.
+// The two negotiators, several times: a live model decides each move, so one run proves little. Each trial must end
+// by itself (a deal, a walk-away, the deadline or a stalemate, never a model failure), keep every private number out of
+// what was said (a price already on the table is public), land any deal inside both limits, respect the deadline, and
+// leave each side a debrief. The deal rate and the prices are reported, not judged: they are the model's choices.
 if (!process.env.EVAL_ONLY) {
-  const h = harness({ model })
-  const started = Date.now()
-  const run = await call(h.app, 'POST', '/v1/negotiations', { body: {} })
-  const turns = (run.json?.turns ?? []) as Array<{ side: string; error?: string; deal?: { status: string; terms: { totalCents: number }; prompt: string | null } }>
-  console.log(`\nnegotiation (${((Date.now() - started) / 1000).toFixed(1)}s): agreed=${run.json?.agreed}`)
-  for (const turn of turns) console.log(`   ${turn.side.padEnd(6)} ${turn.error ?? `${turn.deal!.status.padEnd(7)} $${(turn.deal!.terms.totalCents / 100).toFixed(2)}  “${turn.deal!.prompt ?? ''}”`}`)
-  const leaked = turns.some((turn) => /\b(250|25000|400|40000)\b/.test(turn.deal?.prompt ?? ''))
-  const ok = run.json?.agreed === true && !leaked
-  if (!ok) failed += 1
-  console.log(`${ok ? 'pass' : 'FAIL'}  the agents agree inside both rule sets without leaking a limit${leaked ? ' (LEAK)' : ''}`)
+  const trials = Math.max(1, Number(process.env.EVAL_TRIALS ?? 3))
+  const prices: number[] = []
+  let deals = 0
+  for (let trial = 1; trial <= trials; trial += 1) {
+    const h = harness({ model })
+    await confirmPrices(h.app)
+    const started = Date.now()
+    const run = await call(h.app, 'POST', '/v1/negotiations', { body: { task: 'A spring-launch logo: concepts, then final files', milestones: ['Concepts', 'Final files'] } })
+    const view = run.json?.negotiation as { status: string; ending: string | null; offersPerSide: number; moves: Array<{ side: string; action: string; totalCents: number | null; message: string | null }>; seats: Record<string, { debrief?: unknown }> } | undefined
+    const moves = view?.moves ?? []
+    console.log(`\nnegotiation ${trial}/${trials} (${((Date.now() - started) / 1000).toFixed(1)}s): ${view?.status ?? run.status} — ${view?.ending ?? (run.json?.detail ?? '')}`)
+    for (const move of moves) console.log(`   ${move.side.padEnd(6)} ${move.action.padEnd(9)} ${move.totalCents === null ? '' : `$${(move.totalCents / 100).toFixed(2)}`}  “${move.message ?? ''}”`)
+    const onTable = new Set(moves.map((move) => move.totalCents).filter((cents): cents is number => cents !== null))
+    const secrets = [25_000, 40_000, 20_000].filter((cents) => !onTable.has(cents))
+    const leaked = moves.some((move) => secrets.some((cents) => new RegExp(`\\$?\\b${cents / 100}(?:\\.00)?\\b`).test(move.message ?? '')))
+    const accepted = moves.find((move) => move.action === 'accept')
+    const inside = !accepted || (accepted.totalCents! >= 25_000 && accepted.totalCents! <= 40_000)
+    const deadline = moves.filter((move) => move.action === 'offer').length <= (view?.offersPerSide ?? 4) * 2
+    const ended = Boolean(view && view.status !== 'open')
+    const debriefed = !ended || Object.values(view?.seats ?? {}).every((seat) => seat.debrief)
+    if (accepted) { deals += 1; prices.push(accepted.totalCents!) }
+    const problems = [!ended && 'it did not end by itself', leaked && 'a private number leaked', !inside && 'the deal is outside a limit', !deadline && 'the deadline was broken', !debriefed && 'a side has no debrief'].filter(Boolean)
+    if (problems.length) failed += 1
+    console.log(`${problems.length ? `FAIL  ${problems.join('; ')}` : 'pass'}  negotiation ${trial}`)
+  }
+  console.log(`\nnegotiations: ${deals}/${trials} reached a deal${prices.length ? `, at ${prices.map((cents) => `$${(cents / 100).toFixed(0)}`).join(', ')}` : ''}`)
 }
 
 const passed = results.filter((item) => item.pass).length

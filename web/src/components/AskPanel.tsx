@@ -65,7 +65,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
   initial?: string
   /** Text to put in the box without sending it. */
   prefill?: string
-  context?: { jobId?: string; proposalId?: string }
+  context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string }
   /** Called when a road leaves the panel (the drafter hand-off, a link), so a dialog can close itself. */
   onLeave?: () => void
 }) {
@@ -93,7 +93,7 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
     const id = crypto.randomUUID()
     setTurns((current) => [...current, { id, user: message, pending: true, stream: emptyStream, cards: [] }])
     try {
-      const route = await api.ask(quick ? { quick } : { message, context: context?.jobId ? { jobId: context.jobId } : undefined })
+      const route = await api.ask(quick ? { quick } : { message, context })
       if (route.kind === 'answer' || route.kind === 'action') return patch(id, { pending: false, route })
       if (route.kind === 'handoff') {
         patch(id, { pending: false, route, handoff: true })
@@ -101,7 +101,16 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
         onLeave?.()
         return
       }
-      if (!agents) return patch(id, { pending: false, error: new ApiError(503, 'agents.unconfigured', 'No language model is configured', 'Questions about the ledger work without one (try “What is waiting for me?”). To ask the clerk to file a request, set OLLAMA_API_KEY.', {}) })
+      if (!agents) {
+        // Say why the clerk is not answering, and say the true one: no key, or the day's budget is spent.
+        const budget = session.data?.agents.reason === 'daily_budget' ? session.data.agents.budget : null
+        return patch(id, {
+          pending: false,
+          error: session.data?.agents.reason === 'daily_budget'
+            ? new ApiError(503, 'budget/exhausted', 'The AI is paused for today', `The day's model budget is used up${budget ? ` (${budget.percent}% of ${budget.cap.toLocaleString('en-US')} tokens)` : ''}. Questions about the ledger still work without one. Raise MODEL_WORKSPACE_DAILY_TOKENS to give it more.`, {})
+            : new ApiError(503, 'agents.unconfigured', 'No language model is configured', 'Questions about the ledger work without one (try “What is waiting for me?”). To ask the clerk to file a request, set OLLAMA_API_KEY.', {}),
+        })
+      }
       patch(id, { route })
       await api.streamClerk({ message, conversationId: conversation, context }, (event) => {
         if (event.type === 'step') {
@@ -171,7 +180,17 @@ export function AskPanel({ examples = [], autoFocus = false, placeholder = 'Say 
   return (
     <>
       {!agents && session.data ? (
-        <div className="agents-off" role="status"><Chip tone="muted">no model</Chip> Questions about the ledger, and jumping around, work without a language model. To have the clerk file a request, set <span className="mono">OLLAMA_API_KEY</span>.</div>
+        <div className="agents-off" role="status">
+          {session.data.agents.reason === 'daily_budget' ? (
+            <>
+              <Chip tone="muted">paused for today</Chip> The day's model budget is used up ({session.data.agents.budget ? `${session.data.agents.budget.percent}% of ${session.data.agents.budget.cap.toLocaleString('en-US')} tokens` : 'the budget is spent'}), so the clerk is not answering today. Questions about the ledger, and jumping around, still work. Raise <span className="mono">MODEL_WORKSPACE_DAILY_TOKENS</span> to give it more.
+            </>
+          ) : (
+            <>
+              <Chip tone="muted">no model</Chip> Questions about the ledger, and jumping around, work without a language model. To have the clerk file a request, set <span className="mono">OLLAMA_API_KEY</span>.
+            </>
+          )}
+        </div>
       ) : null}
       <div className="log" aria-live="polite" {...(tour ? { 'data-tour': 'clerk-log' } : {})}>
         {turns.length === 0 ? (

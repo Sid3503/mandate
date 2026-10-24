@@ -101,6 +101,37 @@
           ]
         },
         {
+          "name": "Healthz",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/healthz"
+          }
+        },
+        {
+          "name": "Flags",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/v1/flags"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('owner can read the switches', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "  pm.expect(pm.response.json().passkeys).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "OpenAPI",
           "request": {
             "auth": {
@@ -1073,6 +1104,280 @@
               "raw": "{ \"note\": \"paste the full rules body here, as in PUT /v1/warrant\" }"
             },
             "url": "{{baseUrl}}/v1/rules/replay"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sessions",
+      "item": [
+        {
+          "name": "List sessions",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/auth/sessions",
+            "description": "Cookie session. The response has no token and no token hash."
+          }
+        },
+        {
+          "name": "Sign-in history",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/auth/events",
+            "description": "Owner cookie only. A proposer is 403."
+          }
+        },
+        {
+          "name": "End one session",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"publicId\":\"\"}" },
+            "url": "{{baseUrl}}/auth/sessions/revoke",
+            "description": "Another member's id is 404. A call without the web client header is 403."
+          }
+        },
+        {
+          "name": "End other sessions",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{baseUrl}}/auth/sessions/revoke-others"
+          }
+        },
+        {
+          "name": "Issue recovery codes",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{baseUrl}}/auth/recovery/issue",
+            "description": "Codes are returned once. A missing session is 401."
+          }
+        },
+        {
+          "name": "I saved these",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"saved\":true}" },
+            "url": "{{baseUrl}}/auth/recovery/ack",
+            "description": "saved false is 400 with the words I saved these. The codes are not returned."
+          }
+        },
+        {
+          "name": "Replace recovery codes",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" },
+              { "key": "x-mandate-stepup", "value": "" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{baseUrl}}/auth/recovery/regenerate",
+            "description": "Needs a fresh passkey grant. A second use of the same grant is 401."
+          }
+        },
+        {
+          "name": "List passkeys",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/auth/credentials",
+            "description": "This member's passkeys. The public key is not returned. A missing session is 401."
+          }
+        },
+        {
+          "name": "Remove a passkey",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"id\":\"\"}" },
+            "url": "{{baseUrl}}/auth/credentials/revoke",
+            "description": "The last passkey stays (409). Another member's id is 404. A call without the web client header is 403."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Invites",
+      "item": [
+        {
+          "name": "Create an invite",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" },
+              { "key": "x-mandate-stepup", "value": "" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"role\":\"proposer\",\"label\":null}" },
+            "url": "{{baseUrl}}/v1/invites",
+            "description": "Owner cookie. When the passkey rule is on, a missing grant is 401. A proposer is 403."
+          }
+        },
+        {
+          "name": "Revoke an invite",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"token\":\"\"}" },
+            "url": "{{baseUrl}}/v1/invites/revoke",
+            "description": "Owner cookie. A proposer is 403. An unknown token is 404. A call without the web client header is 403."
+          }
+        },
+        {
+          "name": "Preview an invite",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"token\":\"\"}" },
+            "url": "{{baseUrl}}/join/preview",
+            "description": "Returns the studio name, the role, and the inviter. A used or revoked invite is 400."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Members",
+      "item": [
+        {
+          "name": "List members",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" }
+            ],
+            "url": "{{baseUrl}}/v1/members",
+            "description": "Owner cookie. A proposer is 403."
+          }
+        },
+        {
+          "name": "Change a member role",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" },
+              { "key": "x-mandate-stepup", "value": "" }
+            ],
+            "body": { "mode": "raw", "raw": "{\"role\":\"viewer\"}" },
+            "url": "{{baseUrl}}/v1/members/{{memberId}}/role",
+            "description": "Owner cookie. The last owner stays (409). Unknown role is 400. Another studio is 404. When the passkey rule is on, a missing grant is 401."
+          }
+        },
+        {
+          "name": "Revoke a member",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "content-type", "value": "application/json" },
+              { "key": "origin", "value": "{{baseUrl}}" },
+              { "key": "x-mandate-client", "value": "web" },
+              { "key": "x-mandate-stepup", "value": "" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{baseUrl}}/v1/members/{{memberId}}/revoke",
+            "description": "Owner cookie. Sessions and passkeys end. The body lists open request ids. The last owner stays (409)."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Machine keys",
+      "item": [
+        {
+          "name": "Connect an agent",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Invoice clerk\",\n  \"scopes\": [\"mcp\", \"read\", \"propose\"],\n  \"expiryDays\": 90\n}"
+            },
+            "url": "{{baseUrl}}/v1/agents",
+            "description": "Owner. Creates an agent key with template scopes and optional expiry. Returns the key once."
+          }
+        },
+        {
+          "name": "Upgrade an agent key",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/agents/{{agentId}}/upgrade",
+            "description": "Owner. Replaces the mnd_ag_ secret. The same agent stays. The old key is then 401. A proposer is 403. When the passkey rule is on, a missing grant is 401."
+          }
+        },
+        {
+          "name": "Agent scorecard",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/v1/agents/{{agentId}}/scorecard",
+            "description": "Owner. Returns requests, refusals, auto, needs-tap, last seen, and breaker status."
+          }
+        },
+        {
+          "name": "Upgrade a client key",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "url": "{{baseUrl}}/v1/client-keys/{{clientKeyId}}/upgrade",
+            "description": "Owner. Replaces the mnd_cl_ secret. The same client binding stays. The old key is then 401."
           }
         }
       ]

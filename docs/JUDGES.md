@@ -9,7 +9,7 @@ Open the hosted URL (or run it, see the [README](../README.md#run-it-real-paypal
 
 ## The five-minute path
 1. **Today → Try to break it.** Press the three buttons. Each runs a bad request through the real rules as a dry run: refused, with a rule code, and *PayPal was never called*.
-2. **Deals → Let the agents negotiate.** Two companies' agents trade offers. $450 and $200 are refused; $300 in two milestones is agreed and signed.
+2. **Deals → Let the negotiators negotiate.** Two companies' negotiators trade offers, move by move, each deciding on its own judgement inside its own company's private limits. It ends when one accepts the other's exact offer (then the deal is signed), a side walks away, or the deadline passes. Each side is then told how the price compares with its own walk-away and target, and its negotiator writes it a debrief. How it works: [docs/NEGOTIATION.md](NEGOTIATION.md).
 3. **Jobs → open the job.** The track shows where it is and the one next step. Bill a milestone, approve it, and pay the invoice as the sandbox buyer. The page updates by itself when PayPal says it was paid.
 4. **Pay the contractor.** $90 goes out through PayPal Payouts, only from the settled $150. Try the same payout *before* the client paid, and it is refused (`funding.missing`).
 5. **System → Connect an agent.** Name it, keep *Read and ask*, press **Create the key**, then **Check the connection from here**. Paste the Claude Code command (the key is already in it) into your own MCP agent and tell it to ignore its rules. It can only ask.

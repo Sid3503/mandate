@@ -294,22 +294,26 @@ describe('money in releases money out', () => {
     expect(paypal!.captureCalls).toBe(0)
   })
 
-  it('funds Priya $90 from the $150 capture and refuses a second $90 against it', async () => {
+  it('funds Priya $90 from the $150 capture and refuses anything more against it', async () => {
     const { app, paypal } = harness()
     const fundingCaptureId = await fund(app, paypal)
     const first = await (await propose(app, { ...priya, fundingCaptureId })).json()
     await app.request(`http://mandate.test/v1/proposals/${first.id}/approve`, { method: 'POST', headers: auth() })
-    const second = await (await propose(app, { ...priya, description: 'Northwind logo milestone 1 again', fundingCaptureId })).json()
-    expect(second.gate).toBe('DENY')
-    expect(second.clause).toBe('funding.exceeds')
-    expect(second.detail).toContain('0 more cents')
+    // The same ask again is refused for being the same ask, before the funding rule is ever reached.
+    const again = await (await propose(app, { ...priya, description: 'Northwind logo milestone 1 again', fundingCaptureId })).json()
+    expect(again).toMatchObject({ gate: 'DENY', clause: 'duplicate.open' })
+    // A different ask, for any amount at all, is refused because the share is used up.
+    const more = await (await propose(app, { ...priya, amountCents: 1_050, description: 'a little more', fundingCaptureId })).json()
+    expect(more.gate).toBe('DENY')
+    expect(more.clause).toBe('funding.exceeds')
+    expect(more.detail).toContain('0 more cents')
   })
 
   it('re-checks funding when Meera taps', async () => {
     const { app, paypal } = harness()
     const fundingCaptureId = await fund(app, paypal)
     const a = await (await propose(app, { ...priya, fundingCaptureId })).json()
-    const b = await (await propose(app, { ...priya, description: 'duplicate share', fundingCaptureId })).json()
+    const b = await (await propose(app, { ...priya, amountCents: 5_000, description: 'second share', fundingCaptureId })).json()
     expect(a.gate).toBe('NEEDS_APPROVAL')
     expect(b.gate).toBe('NEEDS_APPROVAL')
     expect((await app.request(`http://mandate.test/v1/proposals/${a.id}/approve`, { method: 'POST', headers: auth() })).status).toBe(200)
