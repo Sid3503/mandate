@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { EmailNotice } from '../components/EmailNotice'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
 import { api, ApiError, type DraftStage } from '../lib/api'
@@ -94,6 +94,14 @@ export function diff(before: Body | null, after: Body): Change[] {
 
 export function Rules() {
   const location = useLocation()
+  const navigate = useNavigate()
+  // The sentence Ask Mandate handed over is drafted once. It rides in the navigation state, and the draft box is rebuilt
+  // after every publish, so without this it would draft the same sentence again over the rules just published.
+  const [handedOver, setHandedOver] = useState<string | undefined>(() => (location.state as { draft?: string } | null)?.draft)
+  const handedOverDrafted = () => {
+    setHandedOver(undefined)
+    if ((location.state as { draft?: string } | null)?.draft) navigate(location.pathname, { replace: true, state: null })
+  }
   const versions = useVersions()
   const owner = useIsOwner()
   const session = useSession()
@@ -151,12 +159,14 @@ export function Rules() {
     if (selected === null && list[0]) setSelected(list[0].version)
   }, [list, selected])
   useEffect(() => {
-    if (saved && liveVersion !== undefined && saved.baseVersion !== liveVersion) {
+    // Not while the editor is open: publishing refetches the live version a moment before the editor hands back, and the
+    // draft that "fell behind" is then the one just published, not a stranger's change.
+    if (!editing && saved && liveVersion !== undefined && saved.baseVersion !== liveVersion) {
       wip.clear()
       setSaved(null)
       setNotice(`The rules moved to version ${liveVersion} after you started that draft (it began from version ${saved.baseVersion}), so it was set aside rather than undo the newer change. Say it again to start from the live rules.`)
     }
-  }, [saved, liveVersion])
+  }, [saved, liveVersion, editing])
   if (versions.isLoading) return <div className="page"><Loading /></div>
   const current = list[0]
   const shown = list.find((item) => item.version === selected) ?? current
@@ -208,7 +218,7 @@ export function Rules() {
               {words.isPending ? <p className="fine">Looking for the words you wrote…</p> : null}
               {!words.isPending ? (
                 <DraftBox
-                  prefill={(location.state as { draft?: string } | null)?.draft ?? own}
+                  prefill={handedOver ?? own}
                   initialInstruction={saved?.instruction ?? ''}
                   initialResult={saved?.result ?? null}
                   extra={people}
@@ -270,7 +280,8 @@ export function Rules() {
 
       {owner && !editing ? (
         <DraftBox
-          prefill={(location.state as { draft?: string } | null)?.draft}
+          prefill={handedOver}
+          onDrafted={handedOverDrafted}
           initialInstruction={saved?.instruction ?? ''}
           initialResult={saved?.result ?? null}
           onKeep={(instruction, result) => keep({ instruction, result })}
@@ -654,7 +665,7 @@ function Parties({ title, prefix, list, onChange }: { title: string; prefix: str
 }
 
 /** Describe a change in your own words. A model drafts it; you read the before-and-after and publish it yourself. */
-function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult, extra, autoDraft = true }: { onUse: (result: RulesDraft) => void; onKeep: (instruction: string, result: RulesDraft | null) => void; prefill?: string; initialInstruction: string; initialResult: RulesDraft | null; /** The people the owner named on this studio. An address may only come from the owner's own words, so it travels with the request. */ extra?: string; autoDraft?: boolean }) {
+function DraftBox({ onUse, onKeep, onDrafted, prefill, initialInstruction, initialResult, extra, autoDraft = true }: { onUse: (result: RulesDraft) => void; /** Called once a sentence handed over to this box has been sent off to draft, so it is not drafted again. */ onDrafted?: () => void; onKeep: (instruction: string, result: RulesDraft | null) => void; prefill?: string; initialInstruction: string; initialResult: RulesDraft | null; /** The people the owner named on this studio. An address may only come from the owner's own words, so it travels with the request. */ extra?: string; autoDraft?: boolean }) {
   const agents = useAgentsOn()
   const online = useOnline()
   const [text, setText] = useState(prefill ?? initialInstruction)
@@ -687,7 +698,7 @@ function DraftBox({ onUse, onKeep, prefill, initialInstruction, initialResult, e
   })
   const ran = useRef(false)
   useEffect(() => {
-    if (prefill && agents && autoDraft && !ran.current) { ran.current = true; make.mutate(prefill) }
+    if (prefill && agents && autoDraft && !ran.current) { ran.current = true; make.mutate(prefill); onDrafted?.() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill, agents, autoDraft])
   if (!agents) return null

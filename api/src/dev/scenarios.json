@@ -164,6 +164,7 @@
     "clientSlide": "Pays for a new online store, in milestones.",
     "payeeRole": "Your freelance developer",
     "payeeSlide": "Keeps half of what Coastline pays.",
-    "attackAmount": "$980"
+    "attackAmount": "$980",
+    "attackTotal": "$2,040"
   }
 }

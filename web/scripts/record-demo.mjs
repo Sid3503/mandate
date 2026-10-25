@@ -6,7 +6,8 @@
 //       code checks it, and she reviews and publishes it
 //   ->  the card pays milestone 1 here, and that pays the contractor's share with no tap
 //   ->  connect an agent, and an outside agent on a live model is fooled by its inbox:
-//       three refusals, and the breaker suspends its key  ->  verify a receipt.
+//       three refusals, and the breaker suspends its key  ->  the ledger (AG Grid) and the control room (AG Studio)
+//       ->  verify a receipt.
 // Navigation is done by clicking the real sidebar and links, then smooth-scrolling
 // to the target, so the video never hard-cuts to a pre-scrolled card.
 import { chromium } from 'playwright'
@@ -433,6 +434,7 @@ function mark(id) {
 }
 
 async function chapter(text) {
+  if (CLEAN) return
   await page.evaluate((text) => {
     let el = document.getElementById('demo-chapter')
     if (!el) {
@@ -633,7 +635,18 @@ async function fitScale(locator, want) {
   return Math.max(1.1, Math.min(want, capped))
 }
 
+// CLEAN (the default) keeps the page exactly as the product draws it: no zoom of the page, no callout card, no chapter pill.
+// The finished video adds its own spotlight and captions over the footage, so nothing here competes with them. A "show" is then
+// only a still moment (so a caption and the narration have a screen to sit on), and the edit trims it to what it needs. CLEAN=0
+// brings the old on-page callouts back.
+const CLEAN = process.env.CLEAN !== '0'
 async function show(locator, noteOpts, { scale = 1.32, markId } = {}) {
+  if (CLEAN) {
+    if (!(await isVisible(locator))) await smoothScrollTo(locator, { ms: 750, align: 'center' })
+    if (markId) mark(markId)
+    await pause(Math.min(noteOpts.hold ?? 3000, 5200))
+    return
+  }
   await clearNote()
   if (!(await isVisible(locator))) await smoothScrollTo(locator, { ms: 750, align: 'center' })
   const fitted = await fitScale(locator, scale)
@@ -797,100 +810,8 @@ for (const title of Object.keys(breakNotes)) {
   await show(breakIt.locator('.break-result'), { kicker, title: head, body, hold }, { scale, markId })
 }
 
-// ---------------------------------------------------------------- agents negotiate
-log('deals: let the agents negotiate')
-await navTo('Deals')
-await page.getByRole('heading', { name: 'Deals', exact: true }).waitFor()
-await pause(500)
-await click(page.getByRole('button', { name: 'Keep these numbers' }), 800)
-await page.getByRole('button', { name: 'Let the negotiators negotiate' }).waitFor()
-const band = page.locator('[data-tour="deal-band"]')
-await band.waitFor()
-await chapter('Both companies’ rules')
-await show(band, {
-  kicker: 'Where a deal can exist',
-  title: 'A floor and a ceiling',
-  body: `${SC.studio} will not take a job under ${usd(SC.seller.minTotalCents, 0)}. ${CLIENT} will not pay over ${usd(SC.buyer.maxTotalCents, 0)}. Each keeps its number private; a deal can only be accepted inside the overlap.`,
-  hold: 6200,
-}, { scale: 1.16, markId: 'deals-band' })
-mark('negotiate-start')
-const negotiate = page.locator('[data-tour="deal-negotiate"]')
-await negotiate.getByLabel('The job').fill(SC.job.task)
-await negotiate.getByLabel('Paid in milestones').fill(SC.job.milestones.join(', '))
-await negotiate.getByLabel('Deadline').selectOption(String(SC.job.offersPerSide))
-await click(page.getByRole('button', { name: 'Let the negotiators negotiate' }), 600)
-const stage = page.locator('[data-tour="deal-story"]')
-await stage.waitFor()
-await stage.getByTestId('negotiation-end').waitFor({ timeout: 300000 })
-// The negotiators pick every number, so every amount from here on is read from what the server recorded and signed.
-const negotiation = (await (await page.request.get(`${BASE}/v1/negotiations`, { headers: { authorization: `Bearer ${OWNER}` } })).json()).data[0]
-if (!negotiation || negotiation.status !== 'agreed') throw new Error(`the negotiation ended with no deal: ${negotiation?.ending ?? 'nothing came back'}`)
-const agreed = (await (await page.request.get(`${BASE}/v1/deals/${negotiation.agreedDealId}`, { headers: { authorization: `Bearer ${OWNER}` } })).json())
-const total = (deal) => deal.terms.milestones.reduce((sum, m) => sum + m.amountCents, 0)
-const offers = negotiation.moves.filter((move) => move.action === 'offer').map((move) => move.totalCents)
-M1 = agreed.terms.milestones[0].amountCents
-SHARE = Math.round(M1 * SHARE_RATE)
-log(`deal: agreed ${usd(total(agreed))} after ${offers.map((c) => usd(c)).join(', ')}; milestone 1 ${usd(M1)}, ${PAYEE_SHORT} ${usd(SHARE)}`)
-writeFileSync(`${OUT}/deal.json`, JSON.stringify({ agreedCents: total(agreed), milestoneCents: M1, shareCents: SHARE, offerCents: offers, ending: negotiation.ending }))
-await chapter('The negotiators negotiate')
-await show(stage, {
-  kicker: `${offers.length} offers, then a yes`,
-  title: `${offers.map((c) => usd(c, 0)).join(' → ')} · ${usd(total(agreed), 0)} accepted`,
-  body: 'Each negotiator decides its own moves inside its own company’s private limits. A deal exists only when one side accepts the other’s exact offer: then both companies’ rules are checked and the server signs it.',
-  hold: 11000,
-}, { scale: 1.08, markId: 'negotiate' })
-// Then each negotiator tells its own company how it went: the outcome worked out by code, the debrief by the model.
-const debriefed = stage.locator('.seat-result .debrief')
-await debriefed.nth(1).waitFor({ timeout: 180000 }).catch(() => log('debrief: both did not arrive in time'))
-const ended = (await (await page.request.get(`${BASE}/v1/negotiations/${negotiation.id}`, { headers: { authorization: `Bearer ${OWNER}` } })).json())
-const debriefs = { seller: ended.seats?.seller?.debrief ?? null, buyer: ended.seats?.buyer?.debrief ?? null }
-const outcomes = { seller: ended.seats?.seller?.outcome?.summary ?? null, buyer: ended.seats?.buyer?.outcome?.summary ?? null }
-writeFileSync(`${OUT}/deal.json`, JSON.stringify({ agreedCents: total(agreed), milestoneCents: M1, shareCents: SHARE, offerCents: offers, moves: negotiation.moves.map((move) => ({ side: move.side, action: move.action, totalCents: move.totalCents, message: move.message })), ending: negotiation.ending, outcomes, debriefs }))
-if (debriefs.seller && debriefs.buyer) {
-  const feel = { satisfied: 'satisfied', acceptable: 'acceptable', dissatisfied: 'not satisfied' }
-  await show(stage.locator('.seat-results'), {
-    kicker: 'Was each side happy?',
-    title: `${SC.studio}: ${feel[debriefs.seller.satisfaction]} · ${CLIENT}: ${feel[debriefs.buyer.satisfaction]}`,
-    body: 'Code measures each side against its own walk-away and target. Each negotiator then writes its own company a debrief: how the outcome, the process and the relationship went, and one lesson for next time.',
-    hold: 9000,
-  }, { scale: 1.06, markId: 'debrief' })
-}
-mark('deliver')
-await click(stage.getByRole('button', { name: /Go to the signed deal/ }), 800)
-const proof = page.getByLabel('Link to the delivered work for the next milestone')
-await proof.waitFor()
-await proof.fill(SC.proof)
-await pause(400)
-await click(page.getByRole('button', { name: /Deliver milestone 1/ }), 1000)
-await page.waitForURL(/\/p\//)
-await pause(600)
-
-// Arrive at Today at the top, then roll down to the card.
-log('approve the milestone, paid on our page')
-await navTo('Today')
-await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
-await quiet()
-await pause(700)
-const charge = page.locator('.approval').filter({ hasText: `Bill ${CLIENT}` }).filter({ hasText: usd(M1) })
-await charge.waitFor()
-await click(charge.getByText('On our page'), 450)
-await chapter('Pay on our page')
-await show(charge.locator('[data-testid="instrument"]'), {
-  kicker: `How ${CLIENT} pays`,
-  title: 'A card form here',
-  body: 'Not a PayPal invoice, and not a redirect to the sandbox. The card stays on this page. The amount is still the lock.',
-  hold: 6200,
-}, { scale: 1.28, markId: 'instrument' })
-const approveCharge = charge.getByRole('button', { name: /Approve/ })
-await settleOnWithCursor(charge, approveCharge)
-mark('approve')
-await clickOnly(approveCharge, 900)
-await charge.getByText('Approved · locked').waitFor()
-await chapter('Locked to the cent')
-await show(charge, { kicker: 'Signed lock', title: 'The cents are frozen', body: 'A later retry with a different amount is refused. PayPal only sees this lock.', hold: 7800 }, { scale: 1.22, markId: 'lock' })
-
-// The standing rule has to be live before the $150 settles. Publishing does not
-// go back and pay a charge that already settled.
+// The standing rule has to be live before the first bill settles (publishing does not go back and pay one that already
+// has), so it is written first, before the job: the real order, and nothing interrupts bill -> pay -> paid afterwards.
 // She says the change in a sentence. Ask Mandate (⌘K) sees a rule, not a payment, and
 // hands the words to the rules drafter; a model drafts, code checks it against her words,
 // and she reviews and publishes. No form filling.
@@ -956,14 +877,125 @@ await chapter('Version 2 is live')
 await show(page.getByTestId('rules-glance'), {
   kicker: 'Signed',
   title: 'The standing rule is in force',
-  body: `Under ${usd(SC.rules.autoSettleUnderCents, 0)}, no tap. And now whatever this rule covers, no tap either. The ${usd(M1, 0)} bill still needs a tap.`,
+  body: `Under ${usd(SC.rules.autoSettleUnderCents, 0)}, no tap. And now whatever this rule covers, no tap either. A bill to the client still needs a tap.`,
   hold: 5800,
 }, { scale: 1.12, markId: 'rules-live' })
 
-log(`settle ${usd(M1)} — ${PAYEE_SHORT} is paid by the rule`)
+
+// ---------------------------------------------------------------- agents negotiate
+log('deals: let the agents negotiate')
+await navTo('Deals')
+await page.getByRole('heading', { name: 'Deals', exact: true }).waitFor()
+await pause(500)
+await click(page.getByRole('button', { name: 'Keep these numbers' }), 800)
+await page.getByRole('button', { name: 'Let the negotiators negotiate' }).waitFor()
+const band = page.locator('[data-tour="deal-band"]')
+await band.waitFor()
+await chapter('Both companies’ rules')
+await show(band, {
+  kicker: 'Where a deal can exist',
+  title: 'A floor and a ceiling',
+  body: `${SC.studio} will not take a job under ${usd(SC.seller.minTotalCents, 0)}. ${CLIENT} will not pay over ${usd(SC.buyer.maxTotalCents, 0)}. Each keeps its number private; a deal can only be accepted inside the overlap.`,
+  hold: 6200,
+}, { scale: 1.16, markId: 'deals-band' })
+mark('negotiate-start')
+const negotiate = page.locator('[data-tour="deal-negotiate"]')
+await negotiate.getByLabel('The job').fill(SC.job.task)
+await negotiate.getByLabel('Paid in milestones').fill(SC.job.milestones.join(', '))
+await negotiate.getByLabel('Deadline').selectOption(String(SC.job.offersPerSide))
+await click(page.getByRole('button', { name: 'Let the negotiators negotiate' }), 600)
+const stage = page.locator('[data-tour="deal-story"]')
+await stage.waitFor()
+// The negotiators are live models, and a turn can end with no usable move (the product never moves for them). That is a
+// real outcome, not something to patch: say so after 90 s of no new offer, so the take can be started again at once.
+await Promise.race([
+  stage.getByTestId('negotiation-end').waitFor({ timeout: 300000 }),
+  (async () => {
+    let moves = 0
+    let changed = Date.now()
+    for (;;) {
+      await pause(4000)
+      const now = (await (await page.request.get(`${BASE}/v1/negotiations`, { headers: { authorization: `Bearer ${OWNER}` } })).json()).data?.[0]
+      if (!now) continue
+      if (now.status !== 'open') return new Promise(() => undefined) // the end is on its way; the waiter above takes it
+      if ((now.moves?.length ?? 0) !== moves) { moves = now.moves?.length ?? 0; changed = Date.now() }
+      if (Date.now() - changed > 90000) throw new Error(`the negotiation stalled after ${moves} moves (turn: ${now.turn}); record again`)
+    }
+  })(),
+])
+// The negotiators pick every number, so every amount from here on is read from what the server recorded and signed.
+const negotiation = (await (await page.request.get(`${BASE}/v1/negotiations`, { headers: { authorization: `Bearer ${OWNER}` } })).json()).data[0]
+if (!negotiation || negotiation.status !== 'agreed') throw new Error(`the negotiation ended with no deal: ${negotiation?.ending ?? 'nothing came back'}`)
+const agreed = (await (await page.request.get(`${BASE}/v1/deals/${negotiation.agreedDealId}`, { headers: { authorization: `Bearer ${OWNER}` } })).json())
+const total = (deal) => deal.terms.milestones.reduce((sum, m) => sum + m.amountCents, 0)
+const offers = negotiation.moves.filter((move) => move.action === 'offer').map((move) => move.totalCents)
+M1 = agreed.terms.milestones[0].amountCents
+SHARE = Math.round(M1 * SHARE_RATE)
+log(`deal: agreed ${usd(total(agreed))} after ${offers.map((c) => usd(c)).join(', ')}; milestone 1 ${usd(M1)}, ${PAYEE_SHORT} ${usd(SHARE)}`)
+writeFileSync(`${OUT}/deal.json`, JSON.stringify({ agreedCents: total(agreed), milestoneCents: M1, shareCents: SHARE, offerCents: offers, ending: negotiation.ending }))
+await chapter('The negotiators negotiate')
+await show(stage, {
+  kicker: `${offers.length} offers, then a yes`,
+  title: `${offers.map((c) => usd(c, 0)).join(' → ')} · ${usd(total(agreed), 0)} accepted`,
+  body: 'Each negotiator decides its own moves inside its own company’s private limits. A deal exists only when one side accepts the other’s exact offer: then both companies’ rules are checked and the server signs it.',
+  hold: 11000,
+}, { scale: 1.08, markId: 'negotiate' })
+// Then each negotiator tells its own company how it went: the outcome worked out by code, the debrief by the model.
+const debriefed = stage.locator('.seat-result .debrief')
+// A model-written debrief that fails the product's own checks twice is simply not shown for that side (by design), and the
+// video says each negotiator writes one. So a missing debrief is a take to do again, not one to wait three minutes on.
+await debriefed.nth(1).waitFor({ timeout: 100000 }).catch(() => { throw new Error('a negotiator\'s debrief did not arrive; record again') })
+const ended = (await (await page.request.get(`${BASE}/v1/negotiations/${negotiation.id}`, { headers: { authorization: `Bearer ${OWNER}` } })).json())
+const debriefs = { seller: ended.seats?.seller?.debrief ?? null, buyer: ended.seats?.buyer?.debrief ?? null }
+const outcomes = { seller: ended.seats?.seller?.outcome?.summary ?? null, buyer: ended.seats?.buyer?.outcome?.summary ?? null }
+writeFileSync(`${OUT}/deal.json`, JSON.stringify({ agreedCents: total(agreed), milestoneCents: M1, shareCents: SHARE, offerCents: offers, moves: negotiation.moves.map((move) => ({ side: move.side, action: move.action, totalCents: move.totalCents, message: move.message })), ending: negotiation.ending, outcomes, debriefs }))
+if (debriefs.seller && debriefs.buyer) {
+  const feel = { satisfied: 'satisfied', acceptable: 'acceptable', dissatisfied: 'not satisfied' }
+  await show(stage.locator('.seat-results'), {
+    kicker: 'Was each side happy?',
+    title: `${SC.studio}: ${feel[debriefs.seller.satisfaction]} · ${CLIENT}: ${feel[debriefs.buyer.satisfaction]}`,
+    body: 'Code measures each side against its own walk-away and target. Each negotiator then writes its own company a debrief: how the outcome, the process and the relationship went, and one lesson for next time.',
+    hold: 9000,
+  }, { scale: 1.06, markId: 'debrief' })
+}
+mark('deliver')
+await click(stage.getByRole('button', { name: /Go to the signed deal/ }), 800)
+const proof = page.getByLabel('Link to the delivered work for the next milestone')
+await proof.waitFor()
+await proof.fill(SC.proof)
+await pause(400)
+mark('deliver-click')
+await click(page.getByRole('button', { name: /Deliver milestone 1/ }), 1000)
+await page.waitForURL(/\/p\//)
+mark('billed')
+await pause(600)
+
+// Arrive at Today at the top, then roll down to the card.
+log('approve the milestone, paid on our page')
 await navTo('Today')
 await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
 await quiet()
+await pause(700)
+const charge = page.locator('.approval').filter({ hasText: `Bill ${CLIENT}` }).filter({ hasText: usd(M1) })
+await charge.waitFor()
+await click(charge.getByText('On our page'), 450)
+await chapter('Pay on our page')
+await show(charge.locator('[data-testid="instrument"]'), {
+  kicker: `How ${CLIENT} pays`,
+  title: 'A card form here',
+  body: 'Not a PayPal invoice, and not a redirect to the sandbox. The card stays on this page. The amount is still the lock.',
+  hold: 6200,
+}, { scale: 1.28, markId: 'instrument' })
+const approveCharge = charge.getByRole('button', { name: /Approve/ })
+await settleOnWithCursor(charge, approveCharge)
+mark('approve')
+await clickOnly(approveCharge, 900)
+await charge.getByText('Approved · locked').waitFor()
+await chapter('Locked to the cent')
+await show(charge, { kicker: 'Signed lock', title: 'The cents are frozen', body: 'A later retry with a different amount is refused. PayPal only sees this lock.', hold: 7800 }, { scale: 1.22, markId: 'lock' })
+
+log(`settle ${usd(M1)} — ${PAYEE_SHORT} is paid by the rule`)
+// Still on Today: the locked bill is already there with its Settle link, so this goes straight on, with no reload.
 const ready = page.locator('.item-ready').filter({ hasText: CLIENT })
 await ready.waitFor()
 await smoothScrollTo(ready, { ms: 800, align: 'center' })
@@ -1002,6 +1034,9 @@ await show(card, {
 mark('pay')
 await click(page.getByTestId('pay-submit'), 1200)
 await lockCard().waitFor({ timeout: REAL_PAYPAL ? 90000 : 20000 })
+// The receipt can sit on "Not settled" for several seconds while PayPal settles. The callout says PayPal confirmed the lock, so it
+// waits for the page to say so too (CENTS MATCH), not just for the card to be there.
+await lockCard().getByText(/cents match/i).waitFor({ timeout: REAL_PAYPAL ? 120000 : 30000 })
 await chapter(`${CLIENT} paid`)
 await show(lockCard(), { kicker: 'Settled', title: 'PayPal confirmed the lock', body: `What arrived matches what was signed. That payment is what releases ${PAYEE_SHORT}’s share.`, hold: 6400 }, { scale: 1.16, markId: 'settled' })
 await page.evaluate(() => {
@@ -1020,6 +1055,7 @@ if (!RECEIPT_JSON) throw new Error('receipt download did not produce a file')
 await navTo('Today')
 await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
 await quiet()
+mark('payout-wait')
 const done = page.locator('[data-tour="today-done"]')
 const priya = done.locator('.item').filter({ hasText: `${PAYEE} was paid ${usd(SHARE)}` })
 // A real payout settles on PayPal's side a little later; the server looks every few seconds.
@@ -1109,6 +1145,58 @@ await show(row, {
   body: `Three refusals in two minutes, so this key is stopped. Mandate carries on, and ${OWNER_NAME} decides whether it comes back.`,
   hold: 7400,
 }, { scale: 1.2, markId: 'suspended' })
+
+// ---------------------------------------------------------------- the owner's books: the ledger, then the control room
+// Everything above is now rows. The ledger is an AG Grid of every request, refused ones included; the control room is an
+// AG Studio dashboard built from the same rows, with an analyst that can only change the dashboard.
+log('the ledger and the control room')
+mark('ledger-open')
+await navTo('Activity')
+const ledgerGrid = page.locator('[data-tour="ledger-grid"]')
+await ledgerGrid.waitFor()
+await chapter('The ledger')
+await pause(900)
+await show(ledgerGrid, {
+  kicker: 'Every attempt, in one grid',
+  title: 'Nothing is left out',
+  body: 'Each request is a row: the ones that went through and the ones the rules refused. The grid is append-only.',
+  hold: 4200,
+}, { scale: 1.1, markId: 'ledger' })
+await click(page.getByRole('button', { name: 'Refused', exact: true }), 700)
+await page.locator('[data-tour="ledger-foot"]').getByText(/asked for and refused/).waitFor()
+mark('ledger-refused')
+await show(page.locator('[data-tour="ledger-foot"]'), {
+  kicker: 'Filter: Refused',
+  title: 'The three asks from the email',
+  body: 'Stored, never sent. The footer adds them up: what was asked for, and refused, with PayPal never called.',
+  hold: 6200,
+}, { scale: 1.3, markId: 'ledger-foot' })
+await click(page.getByRole('button', { name: 'Settled', exact: true }), 700)
+mark('ledger-settled')
+await pause(1700)
+// A real export: AG Grid writes the filtered rows to a file, and the console says so.
+await click(page.getByRole('button', { name: 'Export CSV' }), 800)
+mark('ledger-export')
+await pause(1500)
+await click(page.getByRole('link', { name: /Open in the control room/ }), 1000)
+const controlRoom = page.getByTestId('control-room')
+await controlRoom.waitFor()
+await chapter('The control room')
+await pause(3200) // Studio draws its widgets a moment after it is handed the rows
+await smoothScrollTo(controlRoom, { ms: 1000, align: 'top', margin: 60 })
+mark('control-room')
+await pause(2400)
+await click(controlRoom.getByText('Show what the rules refused').first(), 500)
+mark('analyst-asked')
+// A live model answers: the analyst filters the page and reads the totals from the rows. It may be quick, so the
+// "Thinking" light is waited for if it shows, and then for it to go out.
+await controlRoom.getByText('Thinking...').first().waitFor({ timeout: 8000 }).catch(() => undefined)
+await controlRoom.getByText('Thinking...').first().waitFor({ state: 'hidden', timeout: 120000 })
+await pause(900)
+mark('analyst-answered')
+const analystSaid = await controlRoom.innerText().catch(() => '')
+writeFileSync(`${OUT}/analyst.json`, JSON.stringify({ text: analystSaid.split('\n').filter((line) => /request|refused|\$/.test(line) && line.length > 24).slice(-4) }))
+await pause(5200)
 
 // ---------------------------------------------------------------- proof
 log('verify a receipt')
