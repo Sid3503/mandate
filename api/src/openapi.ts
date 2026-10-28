@@ -456,6 +456,41 @@ export function buildOpenApi(publicUrl: string) {
   })
   registry.registerPath({
     method: 'get',
+    path: '/v1/proposals/{id}/mandate',
+    tags: ['proposals'],
+    security: bearer,
+    summary: 'The closed mandate of one locked payment: a signed verifiable credential (compact JWS over EdDSA, vct mandate.payment.closed.1) whose sub is the cart hash. 409 mandate.not_locked when the payment was never locked: a mandate exists only for something the rules authorized.',
+    request: { params: idParam },
+    responses: { 200: { description: 'The mandate token and how to verify it' }, 401: problem, 404: problem, 409: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/standing/{ruleId}/mandate',
+    tags: ['proposals'],
+    security: bearer,
+    summary: 'The open mandate of one standing rule: payee, funding clients, share and monthly cap, signed once (vct mandate.payment.open.1).',
+    request: { params: z.object({ ruleId: z.string().min(1).max(64) }) },
+    responses: { 200: { description: 'The mandate token and how to verify it' }, 401: problem, 404: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/mandates/verify',
+    tags: ['proposals'],
+    security: bearer,
+    summary: 'Check a mandate token against the server\'s keyring. Pure checking: no state, no PayPal, no decision. Answers whether the signature verifies and what the mandate authorizes.',
+    request: { body: { content: { 'application/json': { schema: z.object({ mandate: z.string().min(20).max(20_000) }) } } } },
+    responses: { 200: { description: 'ok true with the payload, or ok false with a reason' }, 400: problem, 401: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/refusals/export',
+    tags: ['proposals'],
+    security: bearer,
+    summary: 'Every refusal in the ledger with the rule that said it and the server\'s own sentence, as one signed artifact (mandate.refusals.v1). The signature is over the canonical bundle; anyone with the public keys can check it.',
+    responses: { 200: { description: 'The signed refusal corpus' }, 401: problem },
+  })
+  registry.registerPath({
+    method: 'get',
     path: '/.well-known/mandate-keys.json',
     tags: ['ops'],
     summary: 'Public keys the server signs locks and deals with, including retired ones, so old receipts stay verifiable. No credential.',

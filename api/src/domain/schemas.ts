@@ -45,6 +45,31 @@ export const AutomationSchema = z.object({
 export type Automation = z.infer<typeof AutomationSchema>
 export const NO_AUTOMATION: Automation = { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 }
 
+/**
+ * The risk engine's config: when a signal may add friction to a request the rules were about to send on their own.
+ * Every switch defaults to off, so a warrant written before this existed behaves exactly as it did. A signal can
+ * only raise friction (AUTO becomes NEEDS_APPROVAL); it can never lower one, and it never touches a refusal.
+ */
+export const RiskConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  /** More proposals filed inside the window than this, and every automatic decision needs a tap. 0 disables the check. */
+  velocityMaxPerHour: z.number().int().min(0).max(10_000).default(20),
+  velocityWindowMinutes: z.number().int().min(1).max(1_440).default(60),
+  /** Proof hosted somewhere no earlier request pointed at needs a person to look before money moves. */
+  escalateNewEvidenceHost: z.boolean().default(false),
+  /** A raw payee that shares words with a known party without matching one is treated as a lookalike. */
+  patternMatchPayees: z.boolean().default(false),
+}).strict()
+
+export const DEFAULT_RISK: RiskConfig = {
+  enabled: false,
+  velocityMaxPerHour: 20,
+  velocityWindowMinutes: 60,
+  escalateNewEvidenceHost: false,
+  patternMatchPayees: false,
+}
+export type RiskConfig = z.infer<typeof RiskConfigSchema>
+
 export const WarrantBodySchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
   autoSettleUnderCents: z.number().int().positive().max(100_000_000),
@@ -67,6 +92,7 @@ export const WarrantBodySchema = z.object({
   allowPartialPayment: z.boolean().default(false),
   standing: z.array(StandingRuleSchema).max(20).default([]),
   automation: AutomationSchema.default(NO_AUTOMATION),
+  risk: RiskConfigSchema.default(DEFAULT_RISK),
 }).strict().superRefine((warrant, ctx) => {
   if (warrant.autoSettleUnderCents > warrant.perPaymentCeilingCents) {
     ctx.addIssue({ code: 'custom', path: ['autoSettleUnderCents'], message: 'auto settle must be at or under the per-payment ceiling' })
@@ -137,6 +163,7 @@ export const BLANK_WARRANT: WarrantBody = {
   allowPartialPayment: false,
   standing: [],
   automation: { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 },
+  risk: DEFAULT_RISK,
 }
 export type Payee = z.infer<typeof PayeeSchema>
 
@@ -200,6 +227,7 @@ export const LINE_STUDIO_WARRANT: WarrantBody = {
   contractorShareBps: 6000,
   clearingDays: 0,
   allowPartialPayment: false,
+  risk: DEFAULT_RISK,
 }
 
 export const DEMO_JOB_ID = 'job_northwind_logo'

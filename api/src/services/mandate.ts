@@ -9,7 +9,7 @@ import { arrivedCents, fullPhase, fundedPhase, PAID_PHASES, paidPhase, watchedIn
 import { ATTRIBUTED_REASONS, explainDelta, explainTotal, SOURCE_OF, type InvoiceMoney } from '../domain/settlement'
 import { DealTermsSchema, type DealTerms } from '../domain/deal'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
-import { NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
+import { NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema, DEFAULT_RISK } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
 import { PayPalError, type CardOnOrder, type CreatedOrder, type LivePayout, type PayPalPort } from '../paypal/port'
 import { cardAuthDecision } from '../domain/cardAuth'
@@ -20,6 +20,7 @@ import { Problem } from '../http/problem'
 import { paypalProblem } from './paypalProblem'
 import { applyPayeeBook, type PayeeView } from '../domain/payee-book'
 import { applyPause, NOT_PAUSED } from '../domain/safety'
+import { assessRisk, riskEnabled, type RiskSignal } from '../domain/risk'
 import type { SafetyService } from './safety'
 import { runIdempotent } from './idempotency'
 
@@ -1415,22 +1416,23 @@ export class MandateService {
       parentCaptureId: input.parentCaptureId ?? null,
     })
     const safety = this.options.safety?.state() ?? NOT_PAUSED
+    const risk: RiskSignal | null = riskEnabled(warrant.body)
+      ? assessRisk(warrant.body, {
+          recentProposalCount: this.repo.recentProposalCount(
+            new Date(Date.parse(now) - (warrant.body.risk?.velocityWindowMinutes ?? 60) * 60_000).toISOString(),
+          ),
+          knownEvidenceHosts: this.repo.evidenceHosts(),
+        }, { evidenceUrl: evidenceUrl })
+      : null
     const decision = decide(warrant.body, {
       kind: input.kind,
       payeeId: payee?.id ?? null,
+      rawPayee: input.payee,
       amountCents: input.amountCents,
       currency: input.currency,
       category,
       evidenceUrl,
-      parent: parent ? {
-        payeeId: parent.payee_id ?? '',
-        amountCents: arrivedCents(parent),
-        heldCents: this.repo.heldRefundCents(parent.capture_id!),
-        currency: parent.currency,
-        category: parent.category ?? '',
-        evidenceUrl: parent.evidence_url,
-        phase: parent.phase,
-      } : null,
+      parent: parent ? this.parentForGate(parent, arrivedCents(parent)) : null,
       jobId,
       fundingCaptureId,
       funding: fundingRow ? this.fundingState(fundingRow, payee?.id ?? null) : null,
@@ -1440,6 +1442,7 @@ export class MandateService {
       openDuplicate: openDuplicate ? { id: openDuplicate.id } : null,
       safety,
       actor,
+      risk,
     }, { ...cap, nowMs: Date.parse(now) })
     const withPayee = this.options.payeeBook && input.kind === 'payment'
       ? applyPayeeBook(decision, this.payeeView(payee?.id ?? null, Date.parse(now)))
@@ -1539,6 +1542,7 @@ export class MandateService {
     })
     this.repo.insertEvent(randomUUID(), id, 'proposal.created', decision.clause, {
       actor,
+      payee: input.payee,
       gate: decision.gate,
       prompt: input.prompt ?? null,
       runId,
@@ -1773,6 +1777,19 @@ export class MandateService {
     return null
   }
 
+  private parentForGate(parent: ProposalRow, amountCents: number) {
+    return {
+      payeeId: parent.payee_id ?? '',
+      amountCents,
+      heldCents: this.repo.heldRefundCents(parent.capture_id!),
+      payoutCommittedCents: this.repo.heldPayoutCents(parent.capture_id!),
+      currency: parent.currency,
+      category: parent.category ?? '',
+      evidenceUrl: parent.evidence_url,
+      phase: parent.phase,
+    }
+  }
+
   private isClient(warrant: WarrantBody, partyId: string | null): boolean {
     return partyId !== null && warrant.clients.some((client) => client.id === partyId)
   }
@@ -1838,7 +1855,7 @@ export class MandateService {
       currency: row.currency,
       category: over.category !== undefined ? over.category : row.category,
       evidenceUrl,
-      parent: parent ? { payeeId: parent.payee_id ?? '', amountCents: parent.amount_cents, heldCents: this.repo.heldRefundCents(parent.capture_id!), currency: parent.currency, category: parent.category ?? '', evidenceUrl: parent.evidence_url, phase: parent.phase } : null,
+      parent: parent ? this.parentForGate(parent, parent.amount_cents) : null,
       jobId: row.job_id,
       fundingCaptureId: row.funding_capture_id,
       funding,
@@ -2028,5 +2045,6 @@ function emptyWarrant(): WarrantBody {
     contractorShareBps: 10_000,
     clearingDays: 0,
     allowPartialPayment: false,
+    risk: DEFAULT_RISK,
   }
 }

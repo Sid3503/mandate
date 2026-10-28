@@ -23,7 +23,7 @@ Line Studio (Bengaluru) bills Northwind $300 in two $150 milestones. Priya Shah,
 | Refusals | $18 team lunch (`category.missing`). Fake vendor "P. Shah" $480 (`payee.unknown`). Payout before the client paid (`funding.missing`). Retry at $250 after the tap (`cart.immutable`). A third $90 past the $180 monthly cap (`cap.monthly`). | built |
 | Receipt | One record per payment and per job: request, rule, approval, lock, PayPal ids, cents match. | built |
 | Deal | Two companies' negotiators (Mandate's, a person, or the company's own agent over MCP) trade offers move by move. A deal exists only when one side accepts the other's exact offer, inside **both** companies' private rules; it is then signed. It ends on acceptance, a walk-away, a known deadline or a stalemate, and each side gets its own outcome and its negotiator's debrief ([how](docs/NEGOTIATION.md)). The agreed deal is signed. | built |
-| Agents | A clerk Arun can talk to, and two negotiators, on Ollama Cloud (`gpt-oss:20b`) through an MCP server whose six tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
+| Agents | A clerk Arun can talk to, and two negotiators, on Ollama Cloud (`gpt-oss:20b`) through an MCP server whose eleven tools cannot pay. A fooled agent is refused by the same rules. | built, evaluated against the real model |
 | Control room | A second screen built with AG Studio (`/app/control-room`): tiles, charts and grids on a copy of the ledger, a layout the owner can save, and a chat analyst that can change the dashboard and nothing else. The Ledger is an AG Grid with CSV export. | built, tested in the browser |
 | Autopilot | With the owner's rules signed, the job runs itself: proof attached → PayPal invoice sent; client pays → the contractor's share is asked for and paid; unpaid invoices get PayPal's reminder. The server re-reads PayPal every few seconds while money is in flight (instantly with a webhook), and the console updates live, so it finishes without anyone pressing or reloading anything. | built, tested in the browser and in pieces live |
 | Client acceptance | Optionally, the studio's delivery waits for the client's own agent to accept it (signed over the exact proof link) before the invoice goes out. | built, tested |
@@ -96,7 +96,7 @@ The console is four places: **Today** (what needs you), **Jobs** (money in relea
 - **Console:** `web/` is an installable React app at `/app/` with an AG Grid ledger. It works read-only offline and never caches money calls. A first-time visitor gets a guided tour, and every screen has a **Guide** button that walks through exactly what is on it.
 - **Three keys:** the owner key approves and settles. The studio key (staff and agents) can only ask and read. A client's agent key can only offer deals for its own client.
 - **The lock is signed.** When the owner taps, the server signs the exact payee, cents, proof and funding with Ed25519. Edit the database after that, even with a matching hash, and PayPal is never called. The receipt has a **Verify** button.
-- **The agent door is `/mcp`.** Six tools, none of which can approve, pay or change rules. An agent that is tricked can only ask, and the rules say no. Which tools a key gets is decided by its scopes (read, ask, deals), so a read-only agent cannot ask at all.
+- **The agent door is `/mcp`.** Eleven tools for the studio's agents, nine for a client's agent, none of which can approve, pay or change rules. An agent that is tricked can only ask, and the rules say no. Which tools a key gets is decided by its scopes (read, ask, deals), so a read-only agent cannot ask at all. Two of the new ones are checks: `verify_mandate` checks a signed mandate token, `get_metrics` reads the month in money.
 - **Money out is Payouts, never Orders.** Checkout collects money for the studio, so it cannot pay a contractor. Pending, unclaimed and failed payouts are shown as such, never as paid.
 
 ## Repository
@@ -111,11 +111,11 @@ The console is four places: **Today** (what needs you), **Jobs** (money in relea
 | `KT.md` | Handover notes and the sandbox accounts |
 | `docs/KT-STUDIO.md` | The "Create your studio" door: what a studio owns, the flags it needs, the traps (localhost, the service worker, per-tab storage) and how to test it |
 
-Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests then Playwright), `npm run demo`. Before pushing: `npm run check` (about 20 seconds; the same checks CI starts with), or `npm run ci` for everything CI runs.
+Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests, then the console is built, then Playwright — so the browser tests never run against a stale bundle), `npm run demo`. Before pushing: `npm run check` (about 20 seconds; the same checks CI starts with), or `npm run ci` for everything CI runs.
 
 ## Quality
  
-891 API tests (across 75 test files, including fast-check property sequences, 46 red-team cases, and chaos tests). 150 Playwright browser tests in 23 specs, on desktop, a Pixel 7 and a passkey profile, with axe WCAG 2.1 AA scans on every signed-in screen. Mobile Lighthouse audit: Welcome 90, Unlock 88, Today 80. 23 verified cryptographic guarantees in docs/guarantees.json.
+919 API tests (across 77 test files, including fast-check property sequences, 46 red-team cases, and chaos tests). 152 Playwright browser tests in 23 specs, on desktop, a Pixel 7 and a passkey profile, with axe WCAG 2.1 AA scans on every signed-in screen. Mobile Lighthouse audit: Welcome 90, Unlock 88, Today 80. 24 verified cryptographic guarantees in docs/guarantees.json.
 
 ## Where to read next
 

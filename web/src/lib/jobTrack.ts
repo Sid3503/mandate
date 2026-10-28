@@ -36,7 +36,7 @@ export function jobStages(job: Job): Stage[] {
 export function jobNext(job: Job, owner: boolean): NextStep {
   const milestones = job.deal?.milestones ?? []
   const unbilled = milestones.find((item) => !item.chargeId)
-  const waitingForYou = job.charges.find((charge) => charge.phase === 'pending_approval') ?? job.payouts.find((payout) => payout.phase === 'pending_approval')
+  const waitingForYou = job.charges.find((charge) => charge.phase === 'pending_approval') ?? job.payouts.find((payout) => payout.phase === 'pending_approval') ?? job.refunds.find((refund) => refund.phase === 'pending_approval')
   if (waitingForYou) return { text: owner ? 'A request on this job is waiting for your tap.' : 'A request on this job is waiting for the owner.', to: owner ? '/' : null, cta: owner ? 'Open it on Today' : null, owner: true, waiting: !owner }
   const fundable = job.charges.find((charge) => fundedPhase(charge.phase) && charge.fundableCents > 0 && Boolean(charge.captureId))
   const billing = job.charges.find((charge) => CLIENT_BUSY.includes(charge.phase))
@@ -51,5 +51,6 @@ export function jobNext(job: Job, owner: boolean): NextStep {
   if (fundable) return { text: `The client’s payment can still fund ${(fundable.fundableCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} for the contractor.`, to: owner ? `/new?kind=payment&funding=${encodeURIComponent(fundable.captureId ?? '')}` : null, cta: owner ? 'Pay the contractor' : null, owner: true, waiting: !owner }
   if (unbilled) return { text: `Next milestone: ${unbilled.title}.`, to: job.deal ? '/deals' : `/new?kind=charge&job=${encodeURIComponent(job.jobId)}`, cta: `Bill milestone ${unbilled.index + 1}`, owner: false, waiting: false }
   if (job.charges.length === 0) return { text: 'Nothing has been billed yet.', to: `/new?kind=charge&job=${encodeURIComponent(job.jobId)}`, cta: 'Bill the client', owner: false, waiting: false }
+  if (job.totals.keptCents < 0) return { text: 'The studio is short. The client was refunded after the contractor was paid, and PayPal cannot pull that payout back.', to: null, cta: null, owner: false, waiting: false }
   return { text: 'Everything on this job is settled and paid.', to: null, cta: null, owner: false, waiting: false }
 }

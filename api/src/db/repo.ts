@@ -465,6 +465,26 @@ export class Repo {
     ).all(warrantId, start, end) as Array<{ amountCents: number; captureId: string | null }>
   }
 
+  /** How many proposals of any kind were filed since this moment, across every payee and actor. The risk engine's velocity slice. */
+  recentProposalCount(windowStartIso: string): number {
+    const row = this.db.prepare('SELECT COUNT(*) AS count FROM proposals WHERE created_at >= ?').get(windowStartIso) as { count: number }
+    return row.count
+  }
+
+  /** Every evidence host any earlier proposal pointed at. Empty when the studio has no history yet. */
+  evidenceHosts(): string[] {
+    const rows = this.db.prepare('SELECT DISTINCT evidence_url AS url FROM proposals WHERE evidence_url IS NOT NULL').all() as Array<{ url: string }>
+    const hosts = new Set<string>()
+    for (const row of rows) {
+      try {
+        hosts.add(new URL(row.url).host.toLowerCase())
+      } catch {
+        // A malformed stored URL is not a host anyone asked about again.
+      }
+    }
+    return [...hosts]
+  }
+
   heldRefundCents(captureId: string): number {
     const row = this.db.prepare(
       `SELECT COALESCE(SUM(amount_cents), 0) AS cents FROM proposals

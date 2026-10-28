@@ -115,6 +115,11 @@ export function factsOf(body: WarrantBody): Fact[] {
     { key: 'automation.payOnSettle', label: 'autopilot pays contractors when a client payment settles', value: yes(body.automation.payOnSettle) },
     { key: 'automation.remindUnpaidAfterDays', label: 'an unpaid invoice gets PayPal\'s reminder after this many days', value: body.automation.remindUnpaidAfterDays === null ? 'off' : `${body.automation.remindUnpaidAfterDays} days` },
     { key: 'automation.maxReminders', label: 'the most reminders for one invoice', value: String(body.automation.maxReminders) },
+    { key: 'risk.enabled', label: 'adaptive friction (signals that ask for a tap when a request looks off) is on', value: yes(body.risk.enabled) },
+    { key: 'risk.velocityMaxPerHour', label: 'more requests than this inside the velocity window and every automatic decision waits for a tap (0 turns the check off)', value: body.risk.velocityMaxPerHour === 0 ? 'off' : String(body.risk.velocityMaxPerHour) },
+    { key: 'risk.velocityWindowMinutes', label: 'the window the velocity check counts requests in', value: `${body.risk.velocityWindowMinutes} minute${body.risk.velocityWindowMinutes === 1 ? '' : 's'}` },
+    { key: 'risk.escalateNewEvidenceHost', label: 'proof hosted somewhere no earlier request pointed at needs a tap', value: yes(body.risk.escalateNewEvidenceHost) },
+    { key: 'risk.patternMatchPayees', label: 'a payee name that looks like a known party without being one waits for a tap', value: yes(body.risk.patternMatchPayees) },
   ]
   for (const person of body.payees) facts.push({ key: `payee:${person.id}`, label: `${person.displayName} can be paid`, value: person.email })
   for (const person of body.clients) facts.push({ key: `client:${person.id}`, label: `${person.displayName} can be billed`, value: person.email })

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeInvoices } from '../src/paypal/fake'
-import { parseKeys, verifyPasskey, verifyReceipt, type PasskeyMaterial, type Receipt } from '../../web/src/lib/verify'
+import { parseKeys, verifyMandateToken, verifyPasskey, verifyReceipt, type PasskeyMaterial, type Receipt } from '../../web/src/lib/verify'
 import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, STUDIO_KEY } from './support'
 
 afterEach(closeAll)
@@ -88,6 +88,33 @@ describe('the receipt verifier in the browser agrees with the server', () => {
     const verdict = await verifyReceipt(receipt, keys)
     expect(verdict.ok).toBe(false)
     expect(verdict.checks[0]!.detail).toContain('never locked')
+  })
+
+  it('verifies a server-minted mandate with the browser checker, and catches a tampered one', async () => {
+    const h = harness()
+    const deal = await agree(h.app)
+    const charge = await collect(h.app, deal.id, 0)
+    const keys = parseKeys((await call(h.app, 'GET', '/.well-known/mandate-keys.json')).json)
+    const mandate = (await call(h.app, 'GET', `/v1/proposals/${charge.proposalId}/mandate`)).json as { mandate: string; vct: string }
+    const verdict = await verifyMandateToken(mandate.mandate, keys)
+    expect(verdict.ok).toBe(true)
+    expect(verdict.check.label).toContain('closed mandate')
+    expect(verdict.payload).toMatchObject({ vct: 'mandate.payment.closed.1', jti: charge.proposalId, kind: 'charge', amountCents: 15_000 })
+    // One character off and the browser refuses it, exactly as the server would.
+    const flipped = mandate.mandate.slice(0, -2) + (mandate.mandate.endsWith('AA') ? 'BB' : 'AA')
+    expect((await verifyMandateToken(flipped, keys)).ok).toBe(false)
+    expect((await verifyMandateToken(mandate.mandate, [])).ok).toBe(false)
+    expect((await verifyMandateToken('garbage', keys)).ok).toBe(false)
+    // An open mandate verifies too.
+    const rule = { id: 'priya_from_northwind', payeeId: 'payee_priya', clientIds: ['client_northwind'], requireDeal: true }
+    const current = (await call(h.app, 'GET', '/v1/warrant')).json
+    const { id: _id, version: _version, createdAt: _createdAt, ...body } = current
+    await call(h.app, 'PUT', '/v1/warrant', { body: { ...body, standing: [rule] } })
+    const open = (await call(h.app, 'GET', `/v1/standing/${rule.id}/mandate`)).json as { mandate: string }
+    const openVerdict = await verifyMandateToken(open.mandate, keys)
+    expect(openVerdict.ok).toBe(true)
+    expect(openVerdict.check.label).toContain('open mandate')
+    expect(openVerdict.payload).toMatchObject({ vct: 'mandate.payment.open.1', payee: { id: 'payee_priya' } })
   })
 
   it('checks a Chromium virtual-authenticator vector and five one-bit changes', async () => {

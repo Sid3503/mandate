@@ -233,7 +233,7 @@ function MonthStrip({ data }: { data: TodayData }) {
         <div className="month-num kept"><span className="eyebrow">Kept</span><Money cents={month.keptCents} size="xl" currency={month.currency} /></div>
       </div>
       <dl className="month-value" data-testid="month-value" aria-label="What Mandate did for you in the last 30 days">
-        <div><dt>Handled with no tap</dt><dd>{stats.automatic}</dd></div>
+        <div><dt>Handled with no tap</dt><dd>{stats.automatic}{stats.automaticCents > 0 ? <small> · {dollars(stats.automaticCents)} asked</small> : null}</dd></div>
         <div><dt>Your taps</dt><dd>{stats.tapped}</dd></div>
         <div className={data.stopped.count > 0 ? 'is-stopped' : undefined}><dt>Stopped by your rules</dt><dd>{data.stopped.count}{data.stopped.cents > 0 ? <small> · {dollars(data.stopped.cents)} kept safe</small> : null}</dd></div>
       </dl>
@@ -242,6 +242,7 @@ function MonthStrip({ data }: { data: TodayData }) {
         <div className="cap-bar" role="img" aria-label={`${used}% of the monthly contractor cap is used`}><span style={{ width: `${used}%` }} /></div>
         <p className="fine">
           {stats.automaticShare !== null ? <><strong>{stats.automaticShare}%</strong> of the last {stats.requests} requests needed no tap{stats.refused > 0 ? <> · <strong>{stats.refused}</strong> refused</> : null}. </> : null}
+          {stats.autoPaidCents > 0 ? <>PayPal confirmed <strong>{dollars(stats.autoPaidCents)}</strong> of the no-tap money actually moved. </> : null}
           {on.length > 0 ? <>Autopilot {on.join(', ')}.</> : <>Autopilot is off. <Link to="/rules" className="link">Switch it on in Rules</Link>.</>}
         </p>
         <BalanceNote />
@@ -585,7 +586,7 @@ function ApprovalCard({ proposal, names, funding, why, onLocked }: {
       </div>
       <dl className="approval-facts">
         <div><dt>For</dt><dd>{proposal.category} · {proposal.description}</dd></div>
-        <div><dt>Proof</dt><dd className="one-line">{proposal.evidenceUrl ? <a href={proposal.evidenceUrl} target="_blank" rel="noreferrer noopener">{proposal.evidenceUrl.replace(/^https:\/\/(www\.)?/, '')}</a> : '—'}</dd></div>
+        <div><dt>Proof</dt><dd>{proposal.evidenceUrl ? <a href={proposal.evidenceUrl} target="_blank" rel="noreferrer noopener">{proposal.evidenceUrl.replace(/^https:\/\/(www\.)?/, '')}</a> : '—'}</dd></div>
         {proposal.kind === 'payment' ? (
           <div><dt>Funded by</dt><dd>{funding ? <>{names(funding.payeeId)} <Money cents={funding.capturedAmountCents} size="sm" /> settled ✓</> : <span className="mono">{proposal.fundingCaptureId ?? 'none'}</span>}</dd></div>
         ) : null}

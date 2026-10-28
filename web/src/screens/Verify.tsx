@@ -3,12 +3,12 @@ import { Link, useLocation } from 'react-router-dom'
 import { BadgeCheck, ShieldAlert } from 'lucide-react'
 import { Mark } from '../components/Shell'
 import { Chip } from '../components/ui'
-import { parseKeys, verifyReceipt, type PublicKey, type Receipt, type Verdict } from '../lib/verify'
+import { parseKeys, verifyMandateToken, verifyReceipt, type MandateVerdict, type PublicKey, type Receipt, type Verdict } from '../lib/verify'
 
 /**
- * Check a receipt without asking Mandate. No key is needed and nothing is sent anywhere: the receipt is read in the
- * browser, the lock is recomputed, and the signatures are checked against the public keys. This page is public on
- * purpose: an accountant or a client should be able to check a receipt they were sent.
+ * Check a receipt or a mandate without asking Mandate. No key is needed and nothing is sent anywhere: the receipt
+ * is read in the browser, the lock is recomputed, and the signatures are checked against the public keys. This page
+ * is public on purpose: an accountant or a client should be able to check a receipt or a mandate they were sent.
  */
 export function Verify() {
   const location = useLocation()
@@ -18,6 +18,8 @@ export function Verify() {
   const [keys, setKeys] = useState<PublicKey[] | null>(null)
   const [keysNote, setKeysNote] = useState('Fetching this server’s public keys…')
   const [verdict, setVerdict] = useState<Verdict | null>(null)
+  const [mandateText, setMandateText] = useState('')
+  const [mandateVerdict, setMandateVerdict] = useState<MandateVerdict | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [fingerprint, setFingerprint] = useState('')
@@ -77,6 +79,40 @@ export function Verify() {
     void run(content)
   }
 
+  const runMandate = async (source = mandateText) => {
+    setError(null)
+    setMandateVerdict(null)
+    let use = keys ?? []
+    if (keysText.trim()) {
+      try {
+        use = parseKeys(JSON.parse(keysText))
+      } catch {
+        setError('The public keys are not valid JSON. Paste the body of /.well-known/mandate-keys.json.')
+        return
+      }
+    }
+    setBusy(true)
+    try {
+      setMandateVerdict(await verifyMandateToken(source, use))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const mandateClaims = (verdict: MandateVerdict): Array<[string, string]> => {
+    const payload = verdict.payload
+    if (!payload) return []
+    const closed = payload.vct === 'mandate.payment.closed.1'
+    const payee = payload.payee as { displayName?: string; id?: string } | undefined
+    const lines: Array<[string, string]> = [
+      [closed ? 'It authorizes' : 'It is the standing rule for', `${payee?.displayName ?? payee?.id ?? 'unknown'}${closed ? ` · ${payload.amountCents as number} ${String(payload.currency ?? '')}` : ''}`],
+      ['Signed', `key ${String((verdict.check.detail.match(/key (\S+)\./) ?? [])[1] ?? 'on the mandate')}`],
+    ]
+    if (closed) lines.push(['The payment it came from', `cart hash ${String(payload.sub ?? 'none').slice(0, 16)}…`])
+    else lines.push(['Its limits', `share ${((payload.limits as { shareBps?: number } | undefined)?.shareBps ?? 0) / 100}% · monthly cap ${(payload.limits as { monthlyCapCents?: number } | undefined)?.monthlyCapCents ?? 0} cents`])
+    return lines
+  }
+
   return (
     <div className="verify-page">
       <header className="verify-top">
@@ -121,6 +157,36 @@ export function Verify() {
           </section>
         ) : null}
 
+        <section className="panel" aria-labelledby="h-mandate">
+          <h2 className="panel-title" id="h-mandate">Or verify a mandate</h2>
+          <p className="fine">A mandate is the signed statement of what was authorized: a <strong>closed mandate</strong> is one exact locked payment, an <strong>open mandate</strong> is a standing rule with its limits. An agent that hands you a token can be checked the same way as a receipt: your browser checks the EdDSA signature against the public keys and shows the claims. Nothing is uploaded.</p>
+          <label className="sr-only" htmlFor="mandate-token">Mandate token</label>
+          <textarea id="mandate-token" rows={4} value={mandateText} spellCheck={false} placeholder="eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCIsImtpZCI6IuKApn0.eyJ2Y3QiOiLigKZ9.…" onChange={(event) => setMandateText(event.target.value)} />
+          <div className="row gap-s wrap">
+            <button type="button" className="btn btn-ink btn-big" disabled={!mandateText.trim() || busy} onClick={() => void runMandate()}>{busy ? 'Checking…' : 'Verify this mandate'}</button>
+          </div>
+          {mandateVerdict ? (
+            <section className={`verdict ${mandateVerdict.ok ? 'ok' : 'bad'}`} role="status" data-testid="mandate-verdict">
+              <div>
+                <span className="eyebrow">{mandateVerdict.ok ? 'Verified' : 'Does not verify'}</span>
+                <h2>{mandateVerdict.ok ? 'This mandate is genuine.' : 'Do not rely on this mandate.'}</h2>
+                <ul className="verify-checks">
+                  <li className={mandateVerdict.check.ok ? 'ok' : 'bad'}>
+                    {mandateVerdict.check.ok ? <BadgeCheck size={18} aria-hidden="true" /> : <ShieldAlert size={18} aria-hidden="true" />}
+                    <div><strong>{mandateVerdict.check.label}</strong><span>{mandateVerdict.check.detail}</span></div>
+                  </li>
+                </ul>
+                {mandateVerdict.ok && mandateClaims(mandateVerdict).length > 0 ? (
+                  <dl className="mandate-claims">
+                    {mandateClaims(mandateVerdict).map(([term, detail]) => <div key={term}><dt>{term}</dt><dd>{detail}</dd></div>)}
+                  </dl>
+                ) : null}
+              </div>
+              <Chip tone={mandateVerdict.ok ? 'auto' : 'deny'}>{mandateVerdict.ok ? 'verified' : 'failed'}</Chip>
+            </section>
+          ) : null}
+        </section>
+
         <section className="panel">
           <h2 className="panel-title">The public keys</h2>
           <p className="fine">{keysNote} To be sure a server is not lying to you about its own keys, paste the keys you were given separately, or published somewhere else (for example in the repository or the Devpost page). If you paste any, they are used instead.</p>
@@ -130,7 +196,7 @@ export function Verify() {
 
         <section className="panel">
           <h2 className="panel-title">What this proves, and what it does not</h2>
-          <p className="fine"><strong>It proves</strong> that the payee, amount, currency, category, proof link, job and funding on the receipt are exactly what was locked, that the Mandate server’s key signed that, and (when present) that the client’s own agent signed its acceptance of exactly the proof that was billed. A passkey line, when the receipt has one, is checked as a signature by the key on the receipt. An algorithm this page does not know says "cannot verify here".</p>
+          <p className="fine"><strong>It proves</strong> that the payee, amount, currency, category, proof link, job and funding on the receipt are exactly what was locked, that the Mandate server’s key signed that, and (when present) that the client’s own agent signed its acceptance of exactly the proof that was billed. A passkey line, when the receipt has one, is checked as a signature by the key on the receipt. A mandate token is checked the same way: the EdDSA signature against the public keys, with the claims it carries shown above. An algorithm this page does not know says "cannot verify here".</p>
           <p className="fine"><strong>It does not prove</strong> that PayPal moved the money. Check the PayPal ids on the receipt in PayPal. The checker is one short file, <code>web/src/lib/verify.ts</code>, and it runs in your browser.</p>
         </section>
       </main>

@@ -50,7 +50,7 @@ export function Flow({ totals, compact = false }: { totals: Job['totals']; compa
       <div className="flow-row"><span>In</span><div className="bar"><i className="bar-in" style={{ width: pct(totals.inCents) }} /></div><b>{dollars(totals.inCents)}</b></div>
       <div className="flow-row"><span>Out</span><div className="bar"><i className="bar-out" style={{ width: pct(totals.outCents) }} /><i className="bar-held" style={{ width: pct(totals.heldCents) }} /></div><b>{dollars(totals.outCents)}</b></div>
       {totals.heldCents > 0 ? <div className="flow-row"><span>Held</span><div className="bar"><i className="bar-held" style={{ width: pct(totals.heldCents) }} /></div><b>{dollars(totals.heldCents)}</b></div> : null}
-      <div className="flow-row"><span>Kept</span><div className="bar"><i className="bar-kept" style={{ width: pct(totals.keptCents) }} /></div><b>{dollars(totals.keptCents)}</b></div>
+      <div className="flow-row"><span>{totals.keptCents < 0 ? 'Short' : 'Kept'}</span><div className="bar"><i className="bar-kept" style={{ width: pct(totals.keptCents) }} /></div><b>{dollars(totals.keptCents)}</b></div>
     </div>
   )
 }
@@ -112,10 +112,11 @@ export function JobScreen() {
         <div className="total total-in"><span>Money in</span><CountMoney cents={data.totals.inCents} size="xl" /></div>
         <div className="total total-out"><span>Money out</span><CountMoney cents={data.totals.outCents} size="xl" /></div>
         <div className="total"><span>Approved · not yet paid</span><CountMoney cents={data.totals.heldCents} size="xl" /></div>
-        <div className="total total-kept"><span>Kept by the studio</span><CountMoney cents={data.totals.keptCents} size="xl" /></div>
+        <div className="total total-kept"><span>{data.totals.keptCents < 0 ? 'Studio is short' : 'Kept by the studio'}</span><CountMoney cents={data.totals.keptCents} size="xl" /></div>
       </section>
       <Flow totals={data.totals} />
-      <p className="fine">Contractors are paid only from a client payment that settled on this job, up to {share} of it.</p>
+      <p className="fine">Contractors are paid only from a client payment that settled on this job, up to {share} of what the client paid. PayPal’s fee comes out of what the studio keeps.</p>
+      {data.totals.keptCents < 0 ? <p className="fine">The studio is short {dollars(-data.totals.keptCents)}. A contractor was already paid from client money that was later given back. PayPal cannot pull that payout back.</p> : null}
 
       <section className="section">
         <h2 className="section-title">Client payments and what they fund</h2>

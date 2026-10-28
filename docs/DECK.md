@@ -66,7 +66,7 @@
 
 - 891 Vitest tests and 150 Playwright browser tests in 23 specs, passing clean
 - 23 verified cryptographic guarantees validated on every commit
-- Mobile Lighthouse scores of 90 on Welcome, 88 on Unlock, and sub-50ms p95 read latency
+- Mobile Lighthouse scores of 90 on Welcome and 88 on Unlock
 
 **Speaker note**: Our code is hardened with property-based testing, chaos simulations, and strict multi-tenant isolation.
 
@@ -75,7 +75,7 @@
 ## Slide 8: The Vision: Safe Autonomous Commerce
 
 - Model Context Protocol (MCP) connects any AI agent safely in minutes
-- Scoped machine keys with daily spending limits and expiration dates
+- Scoped machine keys with monthly caps and expiration dates
 - The standard financial operating system for the agentic economy
 
 **Speaker note**: With Mandate, enterprises and studios can unleash autonomous AI agents without risking their bank accounts.

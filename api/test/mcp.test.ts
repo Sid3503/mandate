@@ -28,12 +28,12 @@ describe('the MCP door', () => {
     const { app } = harness()
     const { client } = await connect(app, STUDIO_KEY)
     const tools = (await client.listTools()).tools
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'walk_away'])
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'verify_mandate', 'walk_away'])
     for (const name of ['approve', 'capture', 'reject', 'refund', 'send_payout', 'publish_rules', 'pay']) {
       expect(tools.map((tool) => tool.name)).not.toContain(name)
     }
     const readOnly = tools.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name).sort()
-    expect(readOnly).toEqual(['explain', 'get_jobs', 'get_negotiation', 'get_rules', 'list_ledger'])
+    expect(readOnly).toEqual(['explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'verify_mandate'])
     for (const tool of tools) expect(tool.description!.length, tool.name).toBeGreaterThan(60)
     await client.close()
   })
@@ -41,7 +41,7 @@ describe('the MCP door', () => {
   it('offers a client\'s agent eight tools, none of which can pay, and only its own rules', async () => {
     const { app } = harness()
     const { client, use } = await connect(app, BUYER_KEY)
-    expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(['accept_offer', 'decide_delivery', 'explain', 'get_deliveries', 'get_negotiation', 'get_rules', 'offer_deal', 'walk_away'])
+    expect((await client.listTools()).tools.map((tool) => tool.name).sort()).toEqual(['accept_offer', 'decide_delivery', 'explain', 'get_deliveries', 'get_negotiation', 'get_rules', 'offer_deal', 'verify_mandate', 'walk_away'])
     const rules = await use('get_rules')
     expect(rules.data.yourDealRules).toMatchObject({ role: 'buyer', partyId: 'client_northwind' })
     expect(JSON.stringify(rules.data)).not.toContain('minTotalCents')
@@ -109,7 +109,7 @@ describe('the MCP door', () => {
     await call(app, 'PUT', '/v1/warrant', { body: { ...body, standing: [{ id: 'priya_from_northwind', payeeId: 'payee_priya', clientIds: ['client_northwind'], requireDeal: true }] } })
     const { client, use } = await connect(app, STUDIO_KEY)
     // Still no tool that can pay: the agent asks, exactly as before.
-    expect((await client.listTools()).tools).toHaveLength(9)
+    expect((await client.listTools()).tools).toHaveLength(11)
     const asked = await use('propose', { ...payout, jobId: JOB, fundingCaptureId: captureId, prompt: 'pay Priya her share for Northwind milestone 1' })
     expect(asked.data).toMatchObject({ decision: 'AUTO', ruleCode: 'standing.matched', phase: 'captured', moneyMoved: '$90.00' })
     expect(asked.data.inPlainWords).toContain('standing rule')
@@ -261,7 +261,7 @@ describe('MCP_EXPOSE_READ_TOOLS wiring (P11.T3)', () => {
       .filter(([, t]: any) => t.enabled !== false)
       .map(([name]) => name)
       .sort()
-    expect(hiddenTools).toEqual(['accept_offer', 'offer_deal', 'propose', 'walk_away'])
+    expect(hiddenTools).toEqual(['accept_offer', 'offer_deal', 'propose', 'verify_mandate', 'walk_away'])
 
     const exposed = createMandateMcpServer({
       services,
@@ -274,7 +274,7 @@ describe('MCP_EXPOSE_READ_TOOLS wiring (P11.T3)', () => {
       .filter(([, t]: any) => t.enabled !== false)
       .map(([name]) => name)
       .sort()
-    expect(exposedTools).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'walk_away'])
+    expect(exposedTools).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'verify_mandate', 'walk_away'])
   })
 
   it('drops read tools over HTTP when x-mandate-expose-read is 0', async () => {
@@ -286,7 +286,7 @@ describe('MCP_EXPOSE_READ_TOOLS wiring (P11.T3)', () => {
     const client = new Client({ name: 'test-agent', version: '1.0.0' })
     await client.connect(transport)
     const tools = (await client.listTools()).tools
-    expect(tools.map((t) => t.name).sort()).toEqual(['accept_offer', 'offer_deal', 'propose', 'walk_away'])
+    expect(tools.map((t) => t.name).sort()).toEqual(['accept_offer', 'offer_deal', 'propose', 'verify_mandate', 'walk_away'])
     await client.close()
   })
 })

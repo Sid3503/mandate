@@ -18,14 +18,16 @@ Mandate is the third option. An agent gets a wallet of authority, not a wallet o
 
 Mandate is a spend-authority layer that sits in front of PayPal. Staff and AI agents *ask*; a pure function of the owner's signed rules decides; PayPal moves exactly the cents that were locked.
 
-1. **Anyone can ask, nobody can pay.** Agents connect over MCP with keys that carry six tools and none that approve, pay or change a rule. A proposer key can file a request and watch it; it cannot move a cent.
+1. **Anyone can ask, nobody can pay.** Agents connect over MCP with keys that carry eleven tools and none that approve, pay or change a rule. A proposer key can file a request and watch it; it cannot move a cent.
 2. **A pure function decides.** Every charge, payout and refund gets `DENY`, `AUTO` or `NEEDS_APPROVAL` from `decide()` — no model call in the decision. It checks payees, categories, monthly caps, milestone limits, funding coverage and duplicate asks.
 3. **Say yes to the rule, not the payment.** A signed standing rule ("Priya is paid from settled Northwind money, up to her 60% share") makes matching payouts go with no tap. Everything else still waits for one.
 4. **Autopilot runs the job.** With the rules signed, a delivered milestone is accepted, billed, paid by the client and paid out to the contractor without anyone tapping. Today shows only the exceptions.
 5. **Two companies negotiate for real.** An offer stands until the other side accepts *that exact offer*, counters it, or walks away. Each side has a private walk-away, target, style and brief. A deal is signed only after both sides' **current** rules are re-checked. Once a client writes its own numbers with its own key, the studio's owner cannot read them, overwrite them or answer offers for it.
 6. **Money in releases money out.** A contractor is paid only from client money PayPal confirmed settled on the same job, never above their share, never twice, never past the monthly cap.
-7. **The client pays on our own page.** PayPal's card fields render *inside* Mandate: no PayPal account, no redirect. The order is created from the lock; the server re-reads it and refuses to capture if the amount, currency or reference differ. 3-D Secure is verified against PayPal, not trusted from the browser.
+7. **The client pays on our own page.** PayPal's card fields render *inside* Mandate; card data never reaches our server. The order is created from the lock; the server re-reads it and refuses to capture if the amount, currency or reference differ. The buyer still approves the order in PayPal — Mandate cannot do it for them. 3-D Secure is verified against PayPal, not trusted from the browser.
 8. **Every dollar has a receipt.** A SHA-256 lock signed with Ed25519, PayPal's ids, the fee and a cents match. The Proof page re-verifies the whole ledger on demand, and any receipt can be checked in a browser without trusting the server.
+
+*Note on the demo cast: the recorded video uses Ironbark Labs (Ananya, Coastline Coffee, Mateo Silva); the seeded console opens with Line Studio (Meera, Northwind, Priya Shah). Same engine, same rules, same gate — only the story cast differs.*
 
 ---
 

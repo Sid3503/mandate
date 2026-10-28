@@ -3,7 +3,7 @@ import type { ProposalRow, Repo } from '../db/repo'
 import type { DealTerms } from '../domain/deal'
 import { explainClause } from '../domain/explain'
 import { monthWindow } from '../domain/period'
-import { arrivedCents, fullPhase } from '../domain/phases'
+import { arrivedCents, fullPhase, paidPhase } from '../domain/phases'
 import { DEMO_JOB_ID, WARRANT_ID, type WarrantBody } from '../domain/schemas'
 import type { DealService } from './deals'
 import type { MandateService } from './mandate'
@@ -155,7 +155,12 @@ export class TodayService {
       })),
     }
     const decided = recent.filter((row) => row.gate !== 'DENY')
-    const automatic = decided.filter((row) => row.gate === 'AUTO').length
+    const automaticRows = decided.filter((row) => row.gate === 'AUTO')
+    const automatic = automaticRows.length
+    // What the owner was spared: every automatic decision is a tap that never happened, and the money that moved
+    // that way is the part of the month nobody had to press for. PayPal-confirmed phases only.
+    const automaticCents = automaticRows.reduce((sum, row) => sum + row.amount_cents, 0)
+    const autoPaidCents = automaticRows.filter((row) => paidPhase(row.phase)).reduce((sum, row) => sum + arrivedCents(row), 0)
 
     return {
       asOf: now.toISOString(),
@@ -167,7 +172,7 @@ export class TodayService {
       stopped,
       readyToBill: this.deals.readyToBill(),
       watcher: this.mandate.watcher(),
-      stats: { last30Days: { requests: recent.length, refused: refused.length + recent.filter((row) => row.gate === 'DENY' && createdBy.get(row.id) === 'autopilot').length, automatic, tapped: decided.length - automatic, automaticShare: decided.length === 0 ? null : Math.round((automatic / decided.length) * 100) } },
+      stats: { last30Days: { requests: recent.length, refused: refused.length + recent.filter((row) => row.gate === 'DENY' && createdBy.get(row.id) === 'autopilot').length, automatic, tapped: decided.length - automatic, automaticShare: decided.length === 0 ? null : Math.round((automatic / decided.length) * 100), automaticCents, autoPaidCents } },
       next: this.frozenNext(body),
       setup: this.setup(body),
     }

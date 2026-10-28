@@ -253,6 +253,16 @@
       ],
       "status": "pass",
       "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+    },
+    {
+      "id": "mandate",
+      "promise": "A mandate you were handed \u2014 one locked payment or a standing rule \u2014 can be checked by anyone, in a browser, with the public keys and no help from the server; and editing one cent breaks it.",
+      "tests": [
+        "test/mandate-vc.test.ts",
+        "test/verify.test.ts"
+      ],
+      "status": "pass",
+      "lastVerifiedAt": "2026-10-26T15:35:00.000Z"
     }
   ],
   "deepRun": {

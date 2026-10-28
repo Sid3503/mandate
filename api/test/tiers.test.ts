@@ -39,7 +39,7 @@ describe('PayPal tool tiers', () => {
     const { services } = harness()
     const server = createMandateMcpServer({ services, principal: { role: 'proposer', side: 'studio' } as never, runId: 'r', budget: { asks: 1 } })
     const registered = Object.keys((server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools)
-    expect(registered.length).toBe(9)
+    expect(registered.length).toBe(11)
     expect(registered.filter((name) => name in TOOL_TIERS)).toEqual([])
   })
 

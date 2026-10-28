@@ -107,6 +107,24 @@ describe('gate', () => {
     expect(decision.clause).toBe(Clause.refundUnlinked)
   })
 
+  it('will not auto-refund client money that already paid the contractor', () => {
+    const parent = {
+      payeeId: 'client_northwind',
+      amountCents: 15000,
+      heldCents: 0,
+      payoutCommittedCents: 9000,
+      currency: 'USD',
+      category: 'design',
+      evidenceUrl: 'https://www.figma.com/file/northwind-logo',
+      phase: 'captured',
+    }
+    const small = decide(warrant, { ...charge, kind: 'refund', amountCents: 100, parent }, { reservedCents: 0, priorCaptureIds: [] })
+    expect(small).toMatchObject({ gate: 'NEEDS_APPROVAL', clause: Clause.refundUnfunds })
+    expect(small.detail).toContain('short')
+    const studioShare = decide(warrant, { ...charge, kind: 'refund', amountCents: 6000, parent: { ...parent, payoutCommittedCents: 0 } }, { reservedCents: 0, priorCaptureIds: [] })
+    expect(studioShare.clause).not.toBe(Clause.refundUnfunds)
+  })
+
   it('pins the cart hash to a canonical document', () => {
     const fields = {
       proposalId: '11111111-1111-4111-8111-111111111111',

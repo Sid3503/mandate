@@ -1,5 +1,7 @@
 import { payableIn } from './money'
 import { fundedPhase } from './phases'
+import type { RiskSignal } from './risk'
+import { isLookalike } from './risk'
 import type { WarrantBody } from './schemas'
 
 export const Clause = {
@@ -11,6 +13,7 @@ export const Clause = {
   amountCeiling: 'amount.ceiling',
   refundUnlinked: 'refund.unlinked',
   refundExceeds: 'refund.exceeds',
+  refundUnfunds: 'refund.unfunds',
   capMonthly: 'cap.monthly',
   amountAuto: 'amount.auto',
   amountNeedsApproval: 'amount.needs_approval',
@@ -32,6 +35,9 @@ export const Clause = {
   dealMilestoneBilled: 'deal.milestone_billed',
   duplicateOpen: 'duplicate.open',
   systemPaused: 'system.paused',
+  riskVelocity: 'risk.velocity',
+  riskNewEvidenceHost: 'risk.new_evidence_host',
+  riskPayeeImpersonation: 'risk.payee_impersonation',
 } as const
 
 export type GateName = 'DENY' | 'AUTO' | 'NEEDS_APPROVAL'
@@ -46,6 +52,8 @@ export type ParentPayment = {
   payeeId: string
   amountCents: number
   heldCents: number
+  /** Contractor cents already locked or paid from this client payment. A refund that drops the share below this cannot go by itself. */
+  payoutCommittedCents?: number
   currency: string
   category: string
   evidenceUrl: string | null
@@ -111,12 +119,33 @@ export type GateProposal = {
   openDuplicate?: { id: string } | null
   safety?: GateSafety | null
   actor?: string
+  /** The payee exactly as the caller wrote it, before resolution. The lookalike check reads the raw words. */
+  rawPayee?: string | null
+  /** A risk signal gathered by the service from the ledger. It may only add friction to an automatic decision. */
+  risk?: RiskSignal | null
 }
 
 /** Cents a settled client charge can still fund for contractors under the share rule. */
 export function fundableCents(warrant: WarrantBody, funding: FundingCharge): number {
   const net = Math.max(0, funding.capturedCents - funding.refundHeldCents)
   return Math.max(0, Math.floor((net * warrant.contractorShareBps) / 10_000) - funding.payoutHeldCents)
+}
+
+/**
+ * A refund of client money that has already funded a contractor. PayPal will not pull a sent payout back, so the
+ * studio would be short by the difference. The owner may still refund. A rule, an agent, or the automatic line may not.
+ */
+export function refundUnfunds(
+  warrant: WarrantBody,
+  parent: { amountCents: number; heldCents: number; payoutCommittedCents?: number },
+  refundCents: number,
+): { leftCents: number; shareCents: number; shortCents: number } | null {
+  const committed = parent.payoutCommittedCents ?? 0
+  if (committed <= 0) return null
+  const leftCents = Math.max(0, parent.amountCents - parent.heldCents - refundCents)
+  const shareCents = Math.floor((leftCents * warrant.contractorShareBps) / 10_000)
+  if (committed <= shareCents) return null
+  return { leftCents, shareCents, shortCents: committed - shareCents }
 }
 
 /**
@@ -172,6 +201,12 @@ function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context:
     return deny(Clause.shapeInvalid, 'amount must be a positive integer number of cents')
   }
   if (!proposal.payeeId) {
+    // A name that resolves to nobody is refused either way. With the lookalike check on, the refusal names the
+    // attempt instead of shrugging "unknown" - the one place a risk feature sharpens a refusal rather than
+    // escalating a decision. The class never changes: refused is refused, PayPal is never called either way.
+    if (proposal.rawPayee && isLookalike(proposal.rawPayee, warrant)) {
+      return deny(Clause.riskPayeeImpersonation, `the name given ("${proposal.rawPayee.trim()}") is not on the rules, and it shares words with a party who is without matching any of them exactly, which is what a lookalike vendor looks like`)
+    }
     return deny(Clause.payeeUnknown, proposal.kind === 'charge' ? 'client is not on the warrant' : 'payee is not on the warrant')
   }
   if (!proposal.category || !warrant.categories.includes(proposal.category)) {
@@ -194,6 +229,14 @@ function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context:
     const remaining = parent.amountCents - parent.heldCents
     if (proposal.amountCents > remaining) {
       return deny(Clause.refundExceeds, `refund exceeds the ${remaining} cents still available on the capture`)
+    }
+    const hole = refundUnfunds(warrant, parent, proposal.amountCents)
+    if (hole) {
+      return {
+        gate: 'NEEDS_APPROVAL',
+        clause: Clause.refundUnfunds,
+        detail: `refunding ${proposal.amountCents} cents would leave ${hole.leftCents} cents settled, which funds ${hole.shareCents} cents at the contractor share, but ${parent.payoutCommittedCents} cents is already committed to a contractor, so the studio would be short ${hole.shortCents} cents. PayPal cannot pull that payout back. A rule cannot send this refund. The owner can.`,
+      }
     }
   }
   if (proposal.kind === 'charge' && !proposal.jobId) {
@@ -292,7 +335,17 @@ function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context:
 }
 
 export function decide(warrant: WarrantBody, proposal: GateProposal, context: GateContext): Decision {
-  const result = evaluateProposal(warrant, proposal, context)
+  const judged = evaluateProposal(warrant, proposal, context)
+  // The risk engine's one move: a decision the rules were about to make on their own (AUTO) needs a tap after all.
+  // It never touches a refusal, never lowers a tap, and applies to every actor, the owner included - a second look
+  // is cheap, and "AI may only add friction" has no exception for who asked.
+  const result = judged.gate === 'AUTO' && proposal.risk?.escalate
+    ? {
+        gate: 'NEEDS_APPROVAL' as const,
+        clause: proposal.risk.code,
+        detail: `the rules would have sent this with no tap, but the risk engine adds friction: ${proposal.risk.detail}`,
+      }
+    : judged
   if (proposal.safety?.autopilotPaused && (proposal.actor ?? 'proposer') === 'autopilot' && result.gate !== 'DENY') {
     return {
       gate: 'DENY',

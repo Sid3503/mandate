@@ -496,12 +496,27 @@ describe('money in releases money out', () => {
     await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
     await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
     const refund = await (await propose(app, { ...northwind, kind: 'refund', parentCaptureId: fundingCaptureId, description: 'Northwind cancelled', prompt: 'Refund Northwind milestone 1' })).json()
+    expect(refund).toMatchObject({ gate: 'NEEDS_APPROVAL', clause: 'refund.unfunds' })
     await app.request(`http://mandate.test/v1/proposals/${refund.id}/approve`, { method: 'POST', headers: auth() })
     await app.request(`http://mandate.test/v1/proposals/${refund.id}/capture`, { method: 'POST', headers: auth() })
     paypal.settlePayouts('SUCCESS')
     const done = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })).json()
     expect(done).toMatchObject({ phase: 'captured', payoutStatus: 'SUCCESS' })
     expect(paypal.payoutCalls).toBe(1)
+    const job = await (await app.request(`http://mandate.test/v1/jobs/${JOB}`, { headers: auth() })).json()
+    expect(job.totals).toMatchObject({ inCents: 0, outCents: 9000, keptCents: -9000 })
+  })
+
+  it('will not auto-refund a dollar once the contractor share has already left', async () => {
+    const paypal = new FakePayPal()
+    const { app } = harness({ paypal })
+    const fundingCaptureId = await fund(app, paypal)
+    const payout = await (await propose(app, { ...priya, fundingCaptureId })).json()
+    await app.request(`http://mandate.test/v1/proposals/${payout.id}/approve`, { method: 'POST', headers: auth() })
+    await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
+    const slip = await (await propose(app, { ...northwind, kind: 'refund', amountCents: 100, parentCaptureId: fundingCaptureId, description: 'A dollar back', prompt: 'Refund a dollar' })).json()
+    expect(slip).toMatchObject({ gate: 'NEEDS_APPROVAL', clause: 'refund.unfunds' })
+    expect(paypal.refundCalls).toBe(0)
   })
 
   it('refreshes a payout from a PayPal webhook by re-reading PayPal, never from the webhook body', async () => {

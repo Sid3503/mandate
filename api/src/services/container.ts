@@ -13,6 +13,7 @@ import { DEFAULT_SAFETY, SafetyService, type SafetyConfig } from './safety'
 import { AgentService } from './agents'
 import { ClientKeyService } from './client-keys'
 import { ShareService } from './shares'
+import { ProjectionService } from './projections'
 
 export type Services = {
   repo: Repo
@@ -26,6 +27,7 @@ export type Services = {
   agents: AgentService
   clientKeys: ClientKeyService
   shares: ShareService
+  projections: ProjectionService
 }
 
 import type { ControlStore } from '../control/store'
@@ -49,5 +51,6 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   const audit = new AuditService(repo, mandate, deals, deps.now, safety, signer, deps.control, deps.workspaceId)
   const ask = new AskService(today)
   const shares = new ShareService(repo, mandate, deps.now)
-  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares }
+  const projections = new ProjectionService(repo, signer, deps.now)
+  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares, projections }
 }

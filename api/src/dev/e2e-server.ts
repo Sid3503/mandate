@@ -13,6 +13,7 @@ import { loadFlags } from '../flags'
 import { demoModel } from './demo-model'
 import { PartyRulesSchema } from '../domain/deal'
 import { WARRANT_ID } from '../domain/schemas'
+import { adoptPayment } from './adopt'
 
 const port = Number(process.env.PORT ?? 8799)
 
@@ -93,6 +94,12 @@ const watch = new FakeWatch()
 const drafterModel = process.env.E2E_LIVE_DRAFTER ? createAgentModel({ apiKey: process.env.OLLAMA_API_KEY, baseUrl: process.env.OLLAMA_BASE_URL, name: process.env.DRAFTER_MODEL ?? DEFAULT_OLLAMA_MODEL }) : null
 // The breaker is off for the tests (they make many refused requests on purpose). E2E_TRIP_AFTER=3 turns the real one on.
 const services = buildServices({ db, paypal, invoices, watch, publicUrl: `http://127.0.0.1:${port}`, now: () => new Date(), safety: { tripAfter: Number(process.env.E2E_TRIP_AFTER ?? 0) } })
+// E2E_ADOPT=<paypal-record.json> brings a payment PayPal already holds into this ledger (see adopt.ts), to film what happens
+// to it next. With E2E_REAL_PAYPAL=1 a refund then goes to the real capture.
+if (process.env.E2E_ADOPT) {
+  const cast = { client: scenario.client, payee: scenario.payee, categories: scenario.categories, proof: (scenario as unknown as { proof: string }).proof }
+  console.log(JSON.stringify({ message: 'adopted', ...adoptPayment(services, process.env.E2E_ADOPT, cast) }))
+}
 const app = createApp({
   db,
   paypal,

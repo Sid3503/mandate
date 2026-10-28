@@ -175,6 +175,15 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
     case 'cap.monthly': return `Contractor payouts this month would pass ${cap}. The earlier payouts are cited.`
     case 'refund.unlinked': return 'A refund must point at a payment that was actually settled.'
     case 'refund.exceeds': return 'That is more than is left to refund on the payment.'
+    case 'refund.unfunds': {
+      // The server's sentence carries the cents already committed to a contractor; say them as a person would, with the contractor's name.
+      const committed = Number(proposal?.detail?.match(/(\d+) cents is already committed/)?.[1])
+      const payees = warrant?.payees ?? []
+      const mate = payees.length === 1 ? payees[0]!.displayName.split(' ')[0] : 'The contractor'
+      return Number.isFinite(committed) && committed > 0
+        ? `A rule cannot send this refund. ${mate} already has ${dollars(committed)} of this payment, and PayPal cannot pull that payout back. The studio would be short ${dollars(committed)}. Only you can send it.`
+        : 'This refund would leave the contractor already paid more than the client money still covers. PayPal cannot pull that payout back, so the studio would be short. A rule cannot send it. You can.'
+    }
     case 'job.missing': return 'Money in has to name the job it pays for.'
     case 'funding.missing': return 'No client payment has money left to fund this payout.'
     case 'funding.job_mismatch': return 'That client payment belongs to a different job.'
@@ -192,6 +201,9 @@ export function explain(clause: string, proposal: Partial<Proposal> | null, warr
     case 'deal.party_mismatch': return 'That deal was made with a different client.'
     case 'lock.signature_invalid': return 'The lock’s signature does not verify, so nothing was sent to PayPal.'
     case 'cart.immutable': return 'The lock holds. A different amount was refused, and PayPal was not asked.'
+    case 'risk.payee_impersonation': return 'That name is not on the rules, and it looks like a deliberate lookalike of someone who is: it shares words with a known party without matching one. Nothing moves, and the refusal says why.'
+    case 'risk.velocity': return 'A burst of requests arrived inside the risk window, so what would have gone automatically now waits for a tap.'
+    case 'risk.new_evidence_host': return 'The proof is hosted somewhere no earlier request pointed, so a person looks at the work before money moves.'
     case 'shape.invalid': return 'The amount must be a whole number of cents above zero.'
     default: return clause
   }

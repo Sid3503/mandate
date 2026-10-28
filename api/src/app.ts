@@ -1040,6 +1040,17 @@ export function createApp(deps: AppDeps) {
   app.get('/v1/proposals/:id', (c) => c.json(service.packet(c.req.param('id')).proposal))
   app.get('/v1/proposals/:id/packet', (c) => c.json(service.packet(c.req.param('id'))))
   app.get('/v1/proposals/:id/verify', (c) => c.json(service.verifyLock(c.req.param('id'))))
+  app.get('/v1/proposals/:id/mandate', (c) => c.json(services.projections.closedMandate(c.req.param('id'))))
+  app.get('/v1/standing/:ruleId/mandate', (c) => c.json(services.projections.openMandate(c.req.param('ruleId'))))
+  app.get('/v1/refusals/export', (c) => c.json(services.projections.refusalExport()))
+  app.post('/v1/mandates/verify', async (c) => {
+    assertJson(c)
+    const body = await readJson(c) as { mandate?: unknown }
+    if (typeof body.mandate !== 'string' || body.mandate.trim() === '') {
+      throw new Problem(400, 'mandate.missing', 'No mandate in the body', 'Send { "mandate": "<token>" }.')
+    }
+    return c.json(services.projections.verifyMandate(body.mandate.trim()))
+  })
 
   app.post('/v1/proposals/:id/approve', async (c) => {
     const id = c.req.param('id')

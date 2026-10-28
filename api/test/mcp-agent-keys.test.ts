@@ -49,17 +49,17 @@ const rpc = (app: App, key: string, body: string, headers: Record<string, string
   app.request('http://mandate.test/mcp', { method, headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', ...headers }, body: method === 'POST' ? body : undefined })
 
 describe('the scopes on an agent key decide which tools it gets', () => {
-  const SIX = ['accept_offer', 'explain', 'get_jobs', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'walk_away']
+  const FULL = ['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'verify_mandate', 'walk_away']
 
   it('gives each combination of scopes exactly the tools it allows, and the full set when the owner allows everything', async () => {
     const { app } = harness()
     const cases: Array<[Scope[], string[]]> = [
-      [['mcp', 'read'], ['explain', 'get_jobs', 'get_rules', 'list_ledger']],
+      [['mcp', 'read'], ['explain', 'get_jobs', 'get_metrics', 'get_rules', 'list_ledger', 'verify_mandate']],
       [['mcp', 'propose'], ['propose']],
       [['mcp', 'deals'], ['accept_offer', 'explain', 'get_negotiation', 'offer_deal', 'walk_away']],
-      [['mcp', 'read', 'propose'], ['explain', 'get_jobs', 'get_rules', 'list_ledger', 'propose']],
-      [['mcp', 'read', 'propose', 'deals'], SIX],
-      [['mcp', 'read', 'propose', 'deals', 'stream'], SIX],
+      [['mcp', 'read', 'propose'], ['explain', 'get_jobs', 'get_metrics', 'get_rules', 'list_ledger', 'propose', 'verify_mandate']],
+      [['mcp', 'read', 'propose', 'deals'], FULL],
+      [['mcp', 'read', 'propose', 'deals', 'stream'], FULL],
     ]
     for (const [scopes, expected] of cases) {
       const key = await issue(app, scopes)
@@ -109,7 +109,7 @@ describe('the scopes on an agent key decide which tools it gets', () => {
   it('does not narrow the keys the owner did not issue as agent keys', async () => {
     const { app } = harness()
     const { client, tools } = await connect(app, STUDIO_KEY)
-    expect(await tools()).toEqual(SIX)
+    expect(await tools()).toEqual(FULL)
     await client.close()
   })
 

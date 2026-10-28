@@ -22,7 +22,7 @@ If the page looks stale or another judge has been here first, an owner can use *
 Invoicing (Agent Toolkit: create, send, get, remind, cancel), Orders v2 (checkout fallback), Payouts v1 (pay the contractor, status read back, unclaimed cancel), Payments v2 refunds, transaction search, disputes (read), webhook signature verification, idempotent requests. The Agent Toolkit has no Payouts tool, so Payouts uses the REST API directly. Details: [docs/REFERENCE.md](REFERENCE.md#paypal-integration).
 
 ## Where AI is used, and what it cannot do
-A clerk, two negotiators, a rules drafter with an auditor, and a client-side acceptance agent, on Ollama Cloud. The model reads rules and writes requests. Authority lives in code: the agent door has six tools and none can approve, pay or change rules. Forty-six red-team cases assume a fully compromised model and check that PayPal is never asked.
+A clerk, two negotiators, a rules drafter with an auditor, and a client-side acceptance agent, on Ollama Cloud. The model reads rules and writes requests. Authority lives in code: the agent door has eleven tools and none can approve, pay or change rules. Forty-six red-team cases assume a fully compromised model and check that PayPal is never asked.
 
 ## Honest limits
 Sandbox only. A single-process SQLite database, so share a hosted copy sparingly. Refunds ran live (`12C310409G863064M`); signed webhook deliveries and an open-dispute hold are fake-tested, not yet proven on the live sandbox. A free hosted instance is ephemeral: it sleeps and wipes its ledger on restart. See [PRODUCT.md](../PRODUCT.md#11-honest-limits).

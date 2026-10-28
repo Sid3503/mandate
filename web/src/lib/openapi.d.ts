@@ -1071,6 +1071,27 @@ export interface paths {
                             /** @default 2 */
                             maxReminders?: number;
                         };
+                        /**
+                         * @default {
+                         *       "enabled": false,
+                         *       "velocityMaxPerHour": 20,
+                         *       "velocityWindowMinutes": 60,
+                         *       "escalateNewEvidenceHost": false,
+                         *       "patternMatchPayees": false
+                         *     }
+                         */
+                        risk?: {
+                            /** @default false */
+                            enabled?: boolean;
+                            /** @default 20 */
+                            velocityMaxPerHour?: number;
+                            /** @default 60 */
+                            velocityWindowMinutes?: number;
+                            /** @default false */
+                            escalateNewEvidenceHost?: boolean;
+                            /** @default false */
+                            patternMatchPayees?: boolean;
+                        };
                     };
                 };
             };
@@ -4805,6 +4826,224 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/proposals/{id}/mandate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The closed mandate of one locked payment: a signed verifiable credential (compact JWS over EdDSA, vct mandate.payment.closed.1) whose sub is the cart hash. 409 mandate.not_locked when the payment was never locked: a mandate exists only for something the rules authorized. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The mandate token and how to verify it */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Problem details (RFC 9457) */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/standing/{ruleId}/mandate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The open mandate of one standing rule: payee, funding clients, share and monthly cap, signed once (vct mandate.payment.open.1). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    ruleId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The mandate token and how to verify it */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Problem details (RFC 9457) */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mandates/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check a mandate token against the server's keyring. Pure checking: no state, no PayPal, no decision. Answers whether the signature verifies and what the mandate authorizes. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        mandate: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description ok true with the payload, or ok false with a reason */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Problem details (RFC 9457) */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/refusals/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every refusal in the ledger with the rule that said it and the server's own sentence, as one signed artifact (mandate.refusals.v1). The signature is over the canonical bundle; anyone with the public keys can check it. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The signed refusal corpus */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Problem details (RFC 9457) */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/.well-known/mandate-keys.json": {
         parameters: {
             query?: never;
@@ -6155,6 +6394,27 @@ export interface components {
                 remindUnpaidAfterDays: number | null;
                 /** @default 2 */
                 maxReminders: number;
+            };
+            /**
+             * @default {
+             *       "enabled": false,
+             *       "velocityMaxPerHour": 20,
+             *       "velocityWindowMinutes": 60,
+             *       "escalateNewEvidenceHost": false,
+             *       "patternMatchPayees": false
+             *     }
+             */
+            risk: {
+                /** @default false */
+                enabled: boolean;
+                /** @default 20 */
+                velocityMaxPerHour: number;
+                /** @default 60 */
+                velocityWindowMinutes: number;
+                /** @default false */
+                escalateNewEvidenceHost: boolean;
+                /** @default false */
+                patternMatchPayees: boolean;
             };
             id: string;
             version: number;

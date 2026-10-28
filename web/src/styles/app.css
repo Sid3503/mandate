@@ -75,6 +75,8 @@ h1, h2, h3 { margin: 0; }
 .money-md { font-size: 22px; }
 .money-lg { font-size: 34px; line-height: 1; }
 .money-xl { font-size: clamp(56px, 9vw, 92px); line-height: 0.9; font-weight: 800; }
+/* One waiting card on a wide Today page used to sit in a 440px auto-fill column, so $1,250.00 ran off the ticket. */
+.approval .money-xl { font-size: clamp(40px, 4.4vw, 64px); }
 .hash { font: 500 13px/1.6 var(--mono); word-break: break-all; display: inline-flex; flex-wrap: wrap; gap: 0 0.6ch; }
 .hash-reveal span:last-child::after { content: '▍'; animation: blink 0.9s steps(2) 3; color: var(--ink); }
 @keyframes blink { 50% { opacity: 0; } }
@@ -276,7 +278,7 @@ h1, h2, h3 { margin: 0; }
 .unlock-status { display: grid; gap: 10px; }
 
 /* ---------- approvals ---------- */
-.approvals { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 24px; }
+.approvals { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 560px), 1fr)); gap: 24px; }
 .approval { background: var(--sheet); border: 2px solid var(--ink); box-shadow: var(--shadow); padding: 22px; display: grid; gap: 18px; align-content: start; animation: rise 0.25s ease both; }
 .approval.is-locked { background: var(--lime-soft); }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
@@ -457,7 +459,7 @@ h1, h2, h3 { margin: 0; }
   .approval { box-shadow: 4px 4px 0 var(--ink); padding: 18px; gap: 14px; }
   .approval-facts .opt { display: none; }
   .approval-facts div { grid-template-columns: 84px 1fr; padding: 7px 0; }
-  .approval .money-xl { font-size: 64px; }
+  .approval .money-xl { font-size: 48px; }
   .approval-actions { grid-template-columns: 1fr; }
   .list-row { grid-template-columns: auto 1fr auto; }
   .list-row .chip, .list-go { display: none; }
@@ -930,6 +932,10 @@ html { scroll-behavior: smooth; }
 .verify-checks li div { display: grid; gap: 2px; }
 .verify-checks li span { color: var(--mute); font-size: 14px; }
 .verify-checks li.bad strong { text-decoration: underline wavy; }
+.mandate-claims { margin: 12px 0 0; display: grid; gap: 4px; font-size: 14px; }
+.mandate-claims div { display: grid; grid-template-columns: 180px 1fr; gap: 10px; }
+.mandate-claims dt { color: var(--mute); }
+.mandate-claims dd { margin: 0; font-weight: 600; }
 
 /* Ask: palette, cards, live steps */
 .palette { list-style: none; margin: 0; padding: 0; border-top: 2px solid var(--ink); background: var(--sheet); }

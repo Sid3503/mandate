@@ -536,7 +536,7 @@ Meaning: *Priya is paid, with no tap, from settled Northwind payments that came 
 - **The server sends it.** A matching payout is sent as soon as it is asked (`POST /v1/proposals`, and the MCP `propose` tool). If PayPal cannot be reached, or a dispute check cannot be answered, it stays locked with a `standing.waiting` event and a once-a-minute sweep sends it when it can. If the lock, the funding or the state is wrong it is refused for good (`capture.refused`), so a broken payout never holds the money or clogs the sweep.
 - **The automation is visible.** Today's *In flight* list says when the server last asked PayPal and how much it looked at (`watcher` in `GET /v1/today`), and a settlement that the server's own check found carries `by: "server"` on its event, so *Done for you* says "found by Mandate's own check, with nobody pressing anything". Pressing **Check PayPal** is the same read, just sooner: if you press it before the minute is up, you did the server's job for it.
 - **It finishes by itself.** Once a minute the server also re-reads PayPal for payouts still processing and invoices still out (the read the **Check PayPal** button does), so a payout or an invoice settles without anyone pressing anything and without needing a webhook. PayPal's word is still the only thing that marks it paid.
-- **What an agent sees:** the same six MCP tools. `propose` now answers `AUTO` / `standing.matched`, and `moneyMoved` shows only what PayPal has confirmed.
+- **What an agent sees:** the same MCP tools (eleven for the studio's agents, nine for a client's agent, plus the two delivery tools only a client key is offered). `propose` now answers `AUTO` / `standing.matched`, and `moneyMoved` shows only what PayPal has confirmed.
 - **Bounds that stay:** an attack that asks for one dollar over the share, a different payee, no proof, a foreign currency, no client payment, a different job or lunch is refused exactly as without the rule. See the [red team](#testing-and-quality).
 
 ### Autopilot: the whole job, under rules you signed
@@ -572,7 +572,7 @@ deal (signed) → delivery (proof link) → client's agent accepts (signed) → 
 - `POST /v1/deals/:id/milestones/:n/deliver` (studio or owner) records the delivery. If `requireAcceptance` is off it bills at once, as before. If it is on, the delivery **waits** (`mode: "awaiting"`) and nothing is billed. Delivering again replaces an unaccepted or rejected delivery.
 - `POST /v1/deals/:id/milestones/:n/decision` (**only the key bound to that client**: not the studio, not the owner) accepts or rejects the awaiting delivery, with a short note. The server signs the decision with Ed25519 over the delivery id, deal, milestone, **the hash of the exact proof link** and the decision. An acceptance for one link therefore cannot bill another, and a row edited afterwards stops verifying.
 - An acceptance bills the milestone through the same gate as any bill, by `autopilot`, with `delivery.accepted` on the charge's timeline. A rejection bills nothing and is shown to the owner with the client's reason.
-- The client's agent does this over MCP with two extra tools that only a client key is offered: `get_deliveries` (read-only) and `decide_delivery`. The studio's six tools are unchanged, so no studio agent can accept its own delivery. Neither tool can change an amount, a deal or a proof.
+- The client's agent does this over MCP with two extra tools that only a client key is offered: `get_deliveries` (read-only) and `decide_delivery`. The studio's tools are unchanged by this, so no studio agent can accept its own delivery. Neither tool can change an amount, a deal or a proof.
 - **Ask the client's agent to review** (console: Today → Ready to bill → `POST /v1/deals/:id/milestones/:n/review`, owner only) runs the hosted stand-in for the client's agent with only those two tools, as the negotiation does. It sees the milestone, the amount and the proof link, **and cannot open the link**, so it judges whether the link plausibly fits, not whether the work is good. In production the client's own agent calls `decide_delivery` with its own key. The proof link is text from the other company, and the reviewer is told to treat it as data.
 - **The hosted stand-in can answer by itself.** With `CLIENT_AGENT=auto` (the default) it reviews a delivery as soon as it arrives and again on a 30-second sweep for any it missed, the way an outside agent polling `get_deliveries` would. `CLIENT_AGENT=manual` makes it answer only when asked. Today shows a waiting delivery at the top, under *Waiting for the client*.
 - **If the client never answers,** nothing is billed. The owner can still bill the milestone by hand (`POST …/bill`), which needs their tap.
@@ -776,6 +776,8 @@ A hash can be recomputed by anyone who can write the database. So the lock is al
 | `list_ledger` | yes | `read` | no | reads |
 | `offer_deal` | yes | `deals` | yes | **asks** |
 | `explain` | yes | `read` (requests) or `deals` (deals) | yes (its own deals only) | reads |
+| `verify_mandate` | yes | `read` | yes | reads (a token the caller already holds) |
+| `get_metrics` | yes | `read` | no | reads |
 
 **There is no approve, capture, send, refund or publish-rules tool.** The owner key is accepted at `/mcp` but downgraded to a proposer, so the agent door never carries owner authority. Design choices worth knowing:
 
@@ -878,6 +880,10 @@ The base URL is `http://127.0.0.1:8787` locally. Everything under `/v1` needs a 
 | `POST /v1/proposals/:id/reject` | owner | Reject a pending proposal |
 | `POST /v1/proposals/:id/capture` | owner | Settle with PayPal from the lock. Optional `claimedAmountCents`. |
 | `GET /v1/proposals/:id/verify` | any key | Re-check a lock: hash and Ed25519 signature |
+| `GET /v1/proposals/:id/mandate` | any key | The closed mandate of one locked payment: a signed verifiable credential (AP2 payment mandate shape). 409 `mandate.not_locked` when nothing was authorized. |
+| `GET /v1/standing/:ruleId/mandate` | any key | The open mandate of one standing rule: payee, funding clients, share and cap, signed. |
+| `POST /v1/mandates/verify` | any key | Check any mandate token against the keyring. Body `{ "mandate": "<token>" }`. Pure checking. |
+| `GET /v1/refusals/export` | any key | Every refusal in the ledger with the rule that said it, signed, as the corpus artifact. |
 | `GET /.well-known/mandate-keys.json` | public | Public signing keys, including retired ones |
 | `POST /v1/deals/offers` | studio, client agent, owner | Offer deal terms. Needs `Idempotency-Key`. |
 | `GET /v1/deals`, `GET /v1/deals/:id` | any key | Offers and deals (a client agent sees its own) |
@@ -980,6 +986,9 @@ Import `api/postman/Mandate.postman_collection.json` and `api/postman/Mandate.lo
 | `lock.signature_invalid` | 409 | The lock is not signed by the server, or changed after signing. PayPal was not called. |
 | `cart.immutable` | 409 | The lock holds. A different amount or body was refused, and PayPal was not asked. |
 | `shape.invalid` | DENY | The amount must be a whole number of cents above zero. |
+| `risk.payee_impersonation` | DENY | The name given is not on the rules, and it shares words with a party who is without matching any of them exactly — what a lookalike vendor looks like. Off unless the owner switched the risk engine and the pattern check on; with them off the same ask is refused as `payee.unknown`. |
+| `risk.velocity` | NEEDS_APPROVAL | More requests were filed inside the risk window than the warrant allows, so what would have gone automatically waits for a tap. Only ever raises friction: a refusal stays refused. |
+| `risk.new_evidence_host` | NEEDS_APPROVAL | The proof is hosted somewhere no earlier request pointed, so a person looks at the work before money moves. A first request is never punished for arriving first. |
 
 HTTP problems that are not rule decisions: `funding.unverifiable` (503, PayPal could not say whether the client payment is disputed, so the payout waits), `payout.batch_processing` (409, PayPal will not cancel an unclaimed payout until its batch has finished), `toolkit_tool_not_allowed` (500, the server refused to run a PayPal tool that is not written down as its own), `auth.unauthorized` (401), `auth.forbidden` (403), `idempotency.missing` (400), `idempotency.mismatch` (422), `idempotency.inflight` (409), `proposal.state` (409), `capture.inflight` (409), `paypal.buyer_pending` (409), `paypal.unconfigured` (503), `paypal.upstream` (502), `rate.limited` (429), `request.invalid` (400), `request.unsupported_media_type` (415), `route.not_found` (404), `job.missing` (404 on `/v1/jobs`).
 
@@ -1279,7 +1288,7 @@ Not used, and why: **Bryntum** and **Elastic** need trial keys that would expire
 3. ✅ **Payouts** (Payouts v1, with unpaid and failed states and a webhook that re-reads PayPal).
 4. ✅ **Deal check** between two companies' rules, with private limits.
 5. ✅ **Signed locks and deals** (Ed25519, verifiable from a public key endpoint, rotation-safe).
-6. ✅ **MCP agent door** (`/mcp` and stdio), six tools, none can pay.
+6. ✅ **MCP agent door** (`/mcp` and stdio), eleven tools, none can pay.
 7. ✅ **AI agents**: the clerk and the two negotiators on `gpt-oss:20b` and `gemma4:31b` on Ollama Cloud, evaluated against the real model against the real model.
 8. ✅ **PayPal invoices** through the Agent Toolkit, behind the gate, with a checkout fallback. Live in the sandbox: created, sent, paid and settled.
 9. ✅ **AG Grid ledger, job view, guided tour.** ⬜ The read-only agent query over the grid.
@@ -1290,8 +1299,11 @@ Not used, and why: **Bryntum** and **Elastic** need trial keys that would expire
 14. ✅ **PayPal depth:** feature readiness, cancel an unclaimed payout, return URL, invoice remind and cancel, dispute hold, reconciliation, balance, webhook verification, tool tiers.
 15. ✅ **Red team:** 42 deterministic cases against a fully compromised model, plus live cases on the real model.
 16. ⬜ **Prove a real open dispute** (needs a buyer-side dispute; see [the note](#what-has-and-has-not-been-proven-against-a-real-dispute)). A real refund has run: `12C310409G863064M`.
+17. ✅ **AP2 mandate projection:** every locked payment and every standing rule is also a signed verifiable credential (compact JWS, EdDSA), verifiable in the browser at `/app/verify` with the same public keys that verify locks.
+18. ✅ **Adaptive friction:** a pure risk engine that can only add friction — a lookalike payee is refused by name, a burst of asks and proof on a never-seen host wait for a tap. Off by default, so every existing warrant behaves exactly as it did.
+19. ✅ **The refusal export:** every refusal in the ledger, with the rule that said it, signed as one artifact anyone can check.
 
-Cut on purpose: the 90-day backtest, KERNEL, Elastic, Zapier, Channel3, Bryntum.
+Cut on purpose: the 90-day backtest, KERNEL, Elastic, Zapier, Channel3, Bryntum, and subscription billing agreements (recurring invoices against a PayPal billing agreement would be real PayPal surface, but it adds demo area without sharpening the argument — it is documented as what's next in [docs/PASS.md](PASS.md)).
 
 ---
 

@@ -35,10 +35,14 @@ export function explainClause(input: ExplainInput): string {
     case 'cap.monthly': return `Contractor payouts this month would pass ${cap}.`
     case 'refund.unlinked': return 'A refund must point at a payment that was actually settled.'
     case 'refund.exceeds': return 'That is more than is left to refund on the payment.'
+    case 'refund.unfunds': return 'This refund would leave the contractor already paid more than the client money still covers. PayPal cannot pull that payout back, so the studio would be short. A rule cannot send it. The owner can.'
     case 'job.missing': return 'Money in has to name the job it pays for.'
     case 'funding.missing': return 'No client payment has money left to fund this payout.'
     case 'funding.job_mismatch': return 'That client payment belongs to a different job.'
     case 'system.paused': return 'Mandate is paused. Nothing automatic runs and no agent is served until the owner resumes it; the owner’s own requests wait for a tap.'
+    case 'risk.payee_impersonation': return 'The name given is not on the rules, and it looks like a deliberate lookalike of someone who is: it shares words with a known party without matching one. Nothing moves, and the refusal says why.'
+    case 'risk.velocity': return 'A burst of requests arrived inside the risk window, so what would have gone automatically now waits for a tap.'
+    case 'risk.new_evidence_host': return 'The proof is hosted somewhere no earlier request pointed, so a person looks at the work before money moves.'
     case 'funding.disputed': return 'The client has disputed that payment with PayPal, so it cannot fund a payout until the dispute is resolved.'
     case 'funding.exceeds': return `That client payment cannot fund this much at a ${share} contractor share.`
     case 'deal.required': return 'This job has an agreed deal, so a charge on it must bill one of the deal’s milestones.'

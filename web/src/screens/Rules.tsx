@@ -24,6 +24,12 @@ const automationWords = (a: Body['automation'] | undefined) => {
   return on.length > 0 ? on.join(', ') : 'off'
 }
 
+const riskWords = (r: Body['risk'] | undefined) => {
+  if (!r?.enabled) return 'off'
+  const on = [r.patternMatchPayees ? 'a lookalike payee is refused by name' : null, r.escalateNewEvidenceHost ? 'proof on a never-seen host waits for a tap' : null, (r.velocityMaxPerHour ?? 0) > 0 ? `more than ${r.velocityMaxPerHour} requests in ${r.velocityWindowMinutes} minutes waits for a tap` : null].filter(Boolean)
+  return on.length > 0 ? `on: ${on.join(', ')}` : 'on, with no signals switched on'
+}
+
 const nameOf = (b: Body, id: string) => [...b.payees, ...(b.clients ?? [])].find((party) => party.id === id)?.displayName ?? id
 
 /**
@@ -84,6 +90,7 @@ const LABELS: Array<{ key: keyof Body; label: string; show: (body: Body) => stri
   { key: 'payees', label: 'Who can be paid', show: (b) => b.payees.map((p) => `${p.displayName} (${p.id}) · ${p.email}`).join(', ') },
   { key: 'standing', label: 'Standing rules (no tap)', show: (b) => (b.standing ?? []).map((r) => `${nameOf(b, r.payeeId)} from ${r.clientIds.map((id) => nameOf(b, id)).join(' or ')}${r.requireDeal ? ', signed deal only' : ''}${r.shareBps ? `, ${r.shareBps / 100}% share` : ''}`).join('; ') || 'none' },
   { key: 'automation', label: 'Autopilot', show: (b) => automationWords(b.automation) },
+  { key: 'risk', label: 'Adaptive friction', show: (b) => riskWords(b.risk) },
   { key: 'clients', label: 'Who can be billed', show: (b) => (b.clients ?? []).map((p) => `${p.displayName} (${p.id}) · ${p.email}`).join(', ') || 'nobody' },
 ]
 
@@ -450,6 +457,7 @@ const BLANK: Body = {
   allowPartialPayment: false,
   standing: [],
   automation: { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 },
+  risk: { enabled: false, velocityMaxPerHour: 20, velocityWindowMinutes: 60, escalateNewEvidenceHost: false, patternMatchPayees: false },
 }
 
 function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | null; seed: RulesDraft | null; resume: Body | null; onKeep: (body: Body | null) => void; onDone: (version: number | null) => void }) {
@@ -482,6 +490,9 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
   const [paySettle, setPaySettle] = useState(from.automation?.payOnSettle ?? false)
   const [remindDays, setRemindDays] = useState(from.automation?.remindUnpaidAfterDays ? String(from.automation.remindUnpaidAfterDays) : '')
   const [maxReminders, setMaxReminders] = useState(String(from.automation?.maxReminders ?? 2))
+  const [riskOn, setRiskOn] = useState(from.risk?.enabled ?? false)
+  const [riskPattern, setRiskPattern] = useState(from.risk?.patternMatchPayees ?? false)
+  const [riskHost, setRiskHost] = useState(from.risk?.escalateNewEvidenceHost ?? false)
   const [review, setReview] = useState(false)
 
   const draft: Body | null = (() => {
@@ -513,6 +524,12 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
         payOnSettle: paySettle,
         remindUnpaidAfterDays: remindDays.trim() === '' ? null : Math.max(1, Math.min(60, Math.round(Number(remindDays)) || 1)),
         maxReminders: Math.max(0, Math.min(5, Math.round(Number(maxReminders)) || 0)),
+      },
+      risk: {
+        ...(from.risk ?? { velocityMaxPerHour: 20, velocityWindowMinutes: 60 }),
+        enabled: riskOn,
+        patternMatchPayees: riskPattern,
+        escalateNewEvidenceHost: riskHost,
       },
     }
   })()
@@ -576,6 +593,14 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
               <label className="field"><span>Remind unpaid invoices after (days)</span><input inputMode="numeric" value={remindDays} placeholder="off" onChange={(e) => setRemindDays(e.target.value)} /></label>
               <label className="field"><span>At most this many reminders</span><input inputMode="numeric" value={maxReminders} onChange={(e) => setMaxReminders(e.target.value)} /></label>
             </div>
+          </fieldset>
+          <fieldset className="parties autopilot" data-tour="rules-risk">
+            <legend>Adaptive friction · when a request looks off</legend>
+            <p className="fine">Signals can only add friction: an automatic payment can be made to wait for your tap, and a refusal can name why. Nothing here can approve anything the rules refuse, and off means every request is judged exactly as it was before.</p>
+            <label className="check"><input type="checkbox" checked={riskOn} onChange={(e) => setRiskOn(e.target.checked)} /> Turn the risk engine on</label>
+            <label className="check sub"><input type="checkbox" checked={riskPattern} disabled={!riskOn} onChange={(e) => setRiskPattern(e.target.checked)} /> A payee name that shares words with a party on the rules without matching one is refused as a lookalike, by name</label>
+            <label className="check sub"><input type="checkbox" checked={riskHost} disabled={!riskOn} onChange={(e) => setRiskHost(e.target.checked)} /> Proof hosted somewhere no earlier request pointed at waits for your tap (never the first request)</label>
+            <p className="fine">A burst of asks inside a window can also wait for a tap. It has a number to tune, so it stays off here: <code>PUT /v1/warrant</code> with <code>risk.velocityMaxPerHour</code> sets it.</p>
           </fieldset>
           {problem ? (
             <div className="editor-problem" role="alert">

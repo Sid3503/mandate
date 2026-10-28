@@ -500,7 +500,7 @@ export type Today = {
   next: { step: string | null; rules: string | null }
   clientAgent: { mode: 'auto' | 'manual'; ready: boolean }
   watcher: { everySeconds: number; lastLook: { at: string; payouts: number; invoices: number; reminded: number } | null }
-  stats: { last30Days: { requests: number; refused: number; automatic: number; tapped: number; automaticShare: number | null } }
+  stats: { last30Days: { requests: number; refused: number; automatic: number; tapped: number; automaticShare: number | null; automaticCents: number; autoPaidCents: number } }
   setup: { complete: boolean; steps: Array<{ id: string; label: string; hint: string; href: string; done: boolean }> }
 }
 

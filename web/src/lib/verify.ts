@@ -25,7 +25,7 @@ export type Receipt = {
   approval?: { payload?: PasskeyMaterial } | null
 }
 
-export type Check = { id: 'hash' | 'lock' | 'acceptance' | 'passkey'; label: string; ok: boolean; detail: string }
+export type Check = { id: 'hash' | 'lock' | 'acceptance' | 'passkey' | 'mandate'; label: string; ok: boolean; detail: string }
 
 export type PasskeyMaterial = {
   method?: string
@@ -236,4 +236,49 @@ export function parseKeys(input: unknown): PublicKey[] {
   const list = Array.isArray(input) ? input : (input as { data?: unknown })?.data
   if (!Array.isArray(list)) return []
   return list.filter((item): item is PublicKey => Boolean(item) && typeof item.keyId === 'string' && typeof item.publicKeyBase64Url === 'string')
+}
+
+/**
+ * Checks a mandate token (a compact JWS over EdDSA) against the public keys, in the browser. A mandate is the
+ * signed statement of what was authorized: a closed mandate is one exact locked payment, an open mandate is a
+ * standing rule with its limits. The signature is checked the same way as a lock's; the claims are returned so the
+ * page can show what the mandate authorizes. This must stay compatible with api/src/domain/mandate-vc.ts.
+ */
+export type MandateVerdict = { ok: boolean; check: Check; payload: Record<string, unknown> | null }
+
+export const CLOSED_MANDATE_VCT = 'mandate.payment.closed.1'
+export const OPEN_MANDATE_VCT = 'mandate.payment.open.1'
+
+export async function verifyMandateToken(token: string, keys: PublicKey[]): Promise<MandateVerdict> {
+  const parts = token.trim().split('.')
+  if (parts.length !== 3) {
+    return { ok: false, payload: null, check: { id: 'mandate', label: 'This is a mandate token', ok: false, detail: 'A mandate is three dot-separated parts (header.payload.signature). This is not one.' } }
+  }
+  const [head, body, signature] = parts as [string, string, string]
+  let header: Record<string, unknown>
+  let payload: Record<string, unknown>
+  try {
+    header = JSON.parse(new TextDecoder().decode(fromBase64Url(head))) as Record<string, unknown>
+    payload = JSON.parse(new TextDecoder().decode(fromBase64Url(body))) as Record<string, unknown>
+  } catch {
+    return { ok: false, payload: null, check: { id: 'mandate', label: 'This is a mandate token', ok: false, detail: 'The header or payload is not readable JSON.' } }
+  }
+  if (header.alg !== 'EdDSA') {
+    return { ok: false, payload, check: { id: 'mandate', label: 'This is a mandate token', ok: false, detail: `This mandate asks for the ${String(header.alg)} algorithm, and only EdDSA is checked here.` } }
+  }
+  const vct = payload.vct
+  const form = vct === CLOSED_MANDATE_VCT
+    ? 'closed mandate (one exact payment)'
+    : vct === OPEN_MANDATE_VCT
+      ? 'open mandate (a standing rule)'
+      : null
+  if (!form) {
+    return { ok: false, payload, check: { id: 'mandate', label: 'This is a mandate token', ok: false, detail: 'The vct claim does not name a Mandate payment mandate, so this is not one.' } }
+  }
+  const signed = await verifyEd25519(`${head}.${body}`, signature, typeof header.kid === 'string' ? header.kid : null, keys)
+  return {
+    ok: signed.ok,
+    payload,
+    check: { id: 'mandate', label: `The ${form} was signed by the server`, ok: signed.ok, detail: signed.detail },
+  }
 }
