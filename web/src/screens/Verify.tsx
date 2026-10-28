@@ -142,12 +142,7 @@ export function Verify() {
         {verdict ? (
           <section className={`verdict ${verdict.ok ? 'ok' : 'bad'}`} role="status" data-testid="verdict">
             <div>
-              <div className="row gap-s" style={{ alignItems: 'center', marginBottom: '0.25rem' }}>
-                <span className="eyebrow">{verdict.ok ? 'Cryptographic Proof Valid' : 'Verification Failed'}</span>
-                <span style={{ fontWeight: 800, letterSpacing: '0.05em', color: verdict.ok ? '#22c55e' : '#ef4444' }}>
-                  {verdict.ok ? '✓ GENUINE' : '✗ TAMPERED'}
-                </span>
-              </div>
+              <span className="eyebrow">{verdict.ok ? 'Verified · Genuine' : 'Does not verify · Tampered'}</span>
               <h2>{verdict.ok ? 'This receipt is genuine.' : 'Do not rely on this receipt.'}</h2>
               <ul className="verify-checks">
                 {verdict.checks.map((check) => (
@@ -158,7 +153,7 @@ export function Verify() {
                 ))}
               </ul>
             </div>
-            <Chip tone={verdict.ok ? 'auto' : 'deny'}>{verdict.ok ? 'GENUINE' : 'TAMPERED'}</Chip>
+            <Chip tone={verdict.ok ? 'auto' : 'deny'}>{verdict.ok ? 'genuine' : 'tampered'}</Chip>
           </section>
         ) : null}
 
