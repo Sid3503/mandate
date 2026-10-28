@@ -88,27 +88,8 @@ export function Receipt() {
             {settlementLine(p) && p.deltaCents ? <p className="fine">{settlementLine(p)}</p> : null}
           </section>
 
-          <section className="panel" data-tour="receipt-verify-offline">
-            <div className="row between">
-              <h2 className="panel-title">Cryptographic Proof Anchor</h2>
-              <Link to={`/verify?proposal=${p.id}`} className="btn btn-primary btn-sm">Verify Receipt →</Link>
-            </div>
-            <p className="fine">
-              The public key is never trusted from the receipt itself. Trust is anchored out-of-band at <code className="mono">/.well-known/mandate-keys.json</code>.
-            </p>
-            <div className="kvs">
-              <KV label="Key Fingerprint" mono>{p.lockKeyId ?? '—'}</KV>
-              <KV label="Key Set URL"><a href="/.well-known/mandate-keys.json" target="_blank" rel="noreferrer">/.well-known/mandate-keys.json</a></KV>
-              <KV label="Verify Artifact"><a href={`/v1/proposals/${p.id}/receipt`} target="_blank" rel="noreferrer">GET /v1/proposals/{p.id}/receipt</a></KV>
-            </div>
-            <div className="panel-sub" style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: 'var(--panel-ink-sub, #111)', borderRadius: '6px' }}>
-              <span className="mono muted small">CLI Offline Check:</span>
-              <pre className="mono small" style={{ margin: '0.25rem 0 0 0', overflowX: 'auto' }}>npx tsx scripts/verify-receipt.ts {p.id}</pre>
-            </div>
-          </section>
-
           {p.gate === 'DENY' ? (
-            <section className="panel panel-warn" data-tour="receipt-refusal-proof">
+            <section className="panel panel-warn">
               <div className="row between">
                 <h2 className="panel-title">Proof of Refusal</h2>
                 <a href={`/v1/proposals/${p.id}/refusal-receipt`} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">Download Refusal JSON →</a>
