@@ -30,6 +30,9 @@ export const GUARANTEES: Guarantee[] = [
   { id: 'verify', promise: 'A receipt can be checked in a browser without asking this server.', tests: ['test/verify.test.ts'] },
   { id: 'studio', promise: 'The dashboard has no path to PayPal: it is handed rows, and its agent module imports nothing of Mandate\'s.', tests: ['test/studio.test.ts', 'test/control-room.test.ts'] },
   { id: 'down', promise: 'When PayPal is slow or down, a repeatable call is retried, an unrepeatable one is not, and a person is told which.', tests: ['test/resilience.test.ts', 'test/robust.test.ts'] },
+  { id: 'chain', promise: 'The ledger export is hash-chained: any tampered entry breaks the chain at that entry, detectable without asking this server.', tests: ['test/ledger-chain.test.ts'] },
+  { id: 'friction', promise: 'When the friction budget floor is set, an agent proposal can never receive an automatic decision: the system enforces the tap and logs the override attempt as a verifiable ledger event.', tests: ['test/friction.test.ts'] },
+  { id: 'dual_tap', promise: 'When two rule sheets disagree on a proposal, money is frozen as DUAL_TAP and no payment moves until both parties ratify or 48 hours elapse and a signed refusal receipt is issued.', tests: ['test/dual_tap.test.ts'] },
 ]
 
 /** The deepest randomised run recorded for this build. `PROPERTY_RUNS=3000 npm test -- property` repeats it. */

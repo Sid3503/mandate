@@ -1040,9 +1040,12 @@ export function createApp(deps: AppDeps) {
   app.get('/v1/proposals/:id', (c) => c.json(service.packet(c.req.param('id')).proposal))
   app.get('/v1/proposals/:id/packet', (c) => c.json(service.packet(c.req.param('id'))))
   app.get('/v1/proposals/:id/verify', (c) => c.json(service.verifyLock(c.req.param('id'))))
+  app.get('/v1/proposals/:id/receipt', (c) => c.json(services.receipt.receiptArtifact(c.req.param('id'))))
+  app.get('/v1/proposals/:id/refusal-receipt', (c) => c.json(services.receipt.refusalReceipt(c.req.param('id'))))
   app.get('/v1/proposals/:id/mandate', (c) => c.json(services.projections.closedMandate(c.req.param('id'))))
   app.get('/v1/standing/:ruleId/mandate', (c) => c.json(services.projections.openMandate(c.req.param('ruleId'))))
   app.get('/v1/refusals/export', (c) => c.json(services.projections.refusalExport()))
+  app.get('/v1/ledger/export', (c) => c.json(services.projections.ledgerExport()))
   app.post('/v1/mandates/verify', async (c) => {
     assertJson(c)
     const body = await readJson(c) as { mandate?: unknown }

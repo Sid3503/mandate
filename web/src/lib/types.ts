@@ -27,7 +27,7 @@ export type ServerFlags = {
 }
 export type Deal = components['schemas']['Deal']
 export type Kind = Proposal['kind']
-export type Gate = Proposal['gate']
+export type Gate = Proposal['gate'] | 'DUAL_TAP'
 export type Party = Warrant['payees'][number]
 
 export type PayeeBookEntry = {

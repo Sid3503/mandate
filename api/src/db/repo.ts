@@ -27,7 +27,7 @@ export type ProposalRow = {
   description: string
   evidence_url: string | null
   prompt: string | null
-  gate: 'DENY' | 'AUTO' | 'NEEDS_APPROVAL'
+  gate: 'DENY' | 'AUTO' | 'NEEDS_APPROVAL' | 'DUAL_TAP'
   clause: string
   detail: string
   phase: string
@@ -1284,6 +1284,12 @@ export class Repo {
 
   refuse(id: string, now: string): void {
     this.db.prepare(`UPDATE proposals SET phase = 'capture_refused', updated_at = ? WHERE id = ?`).run(now, id)
+  }
+
+  updateProposalGate(id: string, gate: ProposalRow['gate'], clause: string, detail: string, now: string): void {
+    this.db.prepare(
+      `UPDATE proposals SET gate = ?, clause = ?, detail = ?, phase = ?, updated_at = ? WHERE id = ?`,
+    ).run(gate, clause, detail, gate === 'DENY' ? 'denied' : 'pending_approval', now, id)
   }
 
   idempotency(key: string): IdempotencyRow | null {

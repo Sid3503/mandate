@@ -38,9 +38,12 @@ export const Clause = {
   riskVelocity: 'risk.velocity',
   riskNewEvidenceHost: 'risk.new_evidence_host',
   riskPayeeImpersonation: 'risk.payee_impersonation',
+  frictionFloor: 'friction.floor',
+  constitutionConflict: 'constitution.conflict',
+  constitutionExpired: 'constitution.expired',
 } as const
 
-export type GateName = 'DENY' | 'AUTO' | 'NEEDS_APPROVAL'
+export type GateName = 'DENY' | 'AUTO' | 'NEEDS_APPROVAL' | 'DUAL_TAP'
 
 export type Decision = {
   gate: GateName
@@ -165,6 +168,11 @@ export type GateContext = {
   priorCaptureIds: string[]
   /** The time the request is judged at, in milliseconds. The gate has no clock of its own. */
   nowMs?: number
+  /**
+   * Counterparty warrant for multi-agent or signed deal transactions.
+   * If provided and the two sheets disagree on the gate, the decision resolves to DUAL_TAP.
+   */
+  counterpartyWarrant?: WarrantBody | null
 }
 
 const DAY_MS = 86_400_000
@@ -371,6 +379,43 @@ export function decide(warrant: WarrantBody, proposal: GateProposal, context: Ga
       }
     }
   }
+
+  // Friction floor enforcement: "AI may only add friction, never reduce it."
+  const isAgent = typeof proposal.actor === 'string' && (proposal.actor.startsWith('agent:') || proposal.actor === 'agent')
+  if (isAgent && result.gate === 'AUTO') {
+    const floor = (warrant as any).frictionBudget?.modelFloor ?? 'needs_approval'
+    if (floor === 'deny') {
+      return {
+        gate: 'DENY',
+        clause: Clause.frictionFloor,
+        detail: 'the friction budget denies all agent proposals: automatic spend is disabled for AI actors',
+      }
+    }
+    if (floor !== 'auto') {
+      return {
+        gate: 'NEEDS_APPROVAL',
+        clause: Clause.frictionFloor,
+        detail: 'the friction budget requires a tap for all agent proposals: the rules allow this amount, but AI may only add friction, never reduce it',
+      }
+    }
+  }
+
+  // DUAL_TAP Constitution check: if a counterparty sheet is present, evaluate under both.
+  if (context.counterpartyWarrant && result.gate !== 'DENY') {
+    const counterJudged = evaluateProposal(context.counterpartyWarrant, proposal, {
+      reservedCents: context.reservedCents,
+      priorCaptureIds: context.priorCaptureIds,
+      nowMs: context.nowMs,
+    })
+    if (counterJudged.gate !== result.gate) {
+      return {
+        gate: 'DUAL_TAP',
+        clause: Clause.constitutionConflict,
+        detail: `the owner's rules say ${result.gate} but the counterparty's rules say ${counterJudged.gate} — both must agree before money moves`,
+      }
+    }
+  }
+
   return result
 }
 
