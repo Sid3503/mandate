@@ -91,6 +91,7 @@ const LABELS: Array<{ key: keyof Body; label: string; show: (body: Body) => stri
   { key: 'standing', label: 'Standing rules (no tap)', show: (b) => (b.standing ?? []).map((r) => `${nameOf(b, r.payeeId)} from ${r.clientIds.map((id) => nameOf(b, id)).join(' or ')}${r.requireDeal ? ', signed deal only' : ''}${r.shareBps ? `, ${r.shareBps / 100}% share` : ''}`).join('; ') || 'none' },
   { key: 'automation', label: 'Autopilot', show: (b) => automationWords(b.automation) },
   { key: 'risk', label: 'Adaptive friction', show: (b) => riskWords(b.risk) },
+  { key: 'frictionBudget', label: 'AI friction floor', show: (b) => b.frictionBudget?.modelFloor === 'needs_approval' ? 'Needs approval' : b.frictionBudget?.modelFloor === 'deny' ? 'Deny' : 'Standard' },
   { key: 'clients', label: 'Who can be billed', show: (b) => (b.clients ?? []).map((p) => `${p.displayName} (${p.id}) · ${p.email}`).join(', ') || 'nobody' },
 ]
 
@@ -458,6 +459,7 @@ const BLANK: Body = {
   standing: [],
   automation: { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 },
   risk: { enabled: false, velocityMaxPerHour: 20, velocityWindowMinutes: 60, escalateNewEvidenceHost: false, patternMatchPayees: false },
+  frictionBudget: { modelFloor: 'auto' },
 }
 
 function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | null; seed: RulesDraft | null; resume: Body | null; onKeep: (body: Body | null) => void; onDone: (version: number | null) => void }) {
