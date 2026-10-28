@@ -148,7 +148,7 @@ export function Verify() {
                   {verdict.ok ? '✓ GENUINE' : '✗ TAMPERED'}
                 </span>
               </div>
-              <h2>{verdict.ok ? 'This receipt is authentic and unmodified.' : 'Do not rely on this receipt.'}</h2>
+              <h2>{verdict.ok ? 'This receipt is genuine.' : 'Do not rely on this receipt.'}</h2>
               <ul className="verify-checks">
                 {verdict.checks.map((check) => (
                   <li key={check.id} className={check.ok ? 'ok' : 'bad'}>
