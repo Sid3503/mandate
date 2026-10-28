@@ -11,6 +11,7 @@ export const GATE: Record<Gate, { label: string; tone: 'deny' | 'auto' | 'need' 
   DENY: { label: 'Refused', tone: 'deny' },
   AUTO: { label: 'Automatic', tone: 'auto' },
   NEEDS_APPROVAL: { label: 'Needs you', tone: 'need' },
+  DUAL_TAP: { label: 'Dual tap', tone: 'need' },
 }
 
 export const PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'need' | 'ink' | 'muted' }> = {
@@ -114,6 +115,9 @@ export const EVENT: Record<string, string> = {
   'proposal.approved': 'Approved · lock signed',
   'proposal.rejected': 'Rejected',
   'proposal.approval_blocked': 'Approval blocked',
+  'model.override_attempt': 'AI override blocked · forced human approval',
+  'dual_tap.conflict': 'Constitution conflict · dual tap required',
+  'dual_tap.expired': 'Dual tap expired · money never moved',
   'cart.mutation_refused': 'Changed request refused',
   'capture.refused': 'Settlement refused',
   'order.created': 'PayPal order created',

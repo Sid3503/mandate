@@ -7,7 +7,7 @@ import { acceptanceMessage, lockMessage, proofHash, type Signer } from '../domai
 import { monthWindow } from '../domain/period'
 import { arrivedCents, fullPhase, fundedPhase, PAID_PHASES, paidPhase, watchedInvoicePhase } from '../domain/phases'
 import { ATTRIBUTED_REASONS, explainDelta, explainTotal, SOURCE_OF, type InvoiceMoney } from '../domain/settlement'
-import { DealTermsSchema, type DealTerms } from '../domain/deal'
+import { DealTermsSchema, type DealTerms, type PartyRules } from '../domain/deal'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
 import { NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema, DEFAULT_RISK } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
@@ -1424,6 +1424,13 @@ export class MandateService {
           knownEvidenceHosts: this.repo.evidenceHosts(),
         }, { evidenceUrl: evidenceUrl })
       : null
+    let counterpartyWarrant: WarrantBody | null = null
+    if (dealId && deal?.agreed?.buyerId) {
+      const partyRulesRecord = this.repo.partyRules(deal.agreed.buyerId)
+      if (partyRulesRecord) {
+        counterpartyWarrant = partyRulesToWarrant(partyRulesRecord.body, warrant.body)
+      }
+    }
     const decision = decide(warrant.body, {
       kind: input.kind,
       payeeId: payee?.id ?? null,
@@ -1443,7 +1450,7 @@ export class MandateService {
       safety,
       actor,
       risk,
-    }, { ...cap, nowMs: Date.parse(now) })
+    }, { ...cap, nowMs: Date.parse(now), counterpartyWarrant })
     const withPayee = this.options.payeeBook && input.kind === 'payment'
       ? applyPayeeBook(decision, this.payeeView(payee?.id ?? null, Date.parse(now)))
       : decision
@@ -1548,6 +1555,20 @@ export class MandateService {
       runId,
       priorCaptureIds: decision.clause === Clause.capMonthly ? cap.priorCaptureIds : undefined,
     }, now)
+    if (decision.clause === Clause.frictionFloor) {
+      this.repo.insertEvent(randomUUID(), id, 'model.override_attempt', Clause.frictionFloor, {
+        attemptedGate: 'AUTO',
+        enforcedGate: decision.gate,
+        actor: String(actor),
+        frictionFloor: (warrant.body as any).frictionBudget?.modelFloor ?? 'needs_approval',
+      }, now)
+    }
+    if (decision.gate === 'DUAL_TAP') {
+      this.repo.insertEvent(randomUUID(), id, 'dual_tap.conflict', Clause.constitutionConflict, {
+        dealId: dealId ?? null,
+        detail: decision.detail,
+      }, now)
+    }
     // Anyone but the owner who keeps asking for things the rules never allow trips the breaker.
     if (decision.gate === 'DENY' && actor !== 'owner') this.options.safety?.noteRefusal(String(actor), decision.clause)
     const view = toView(this.require(id))
@@ -2046,5 +2067,17 @@ function emptyWarrant(): WarrantBody {
     clearingDays: 0,
     allowPartialPayment: false,
     risk: DEFAULT_RISK,
+    frictionBudget: { modelFloor: 'needs_approval' },
+  }
+}
+
+function partyRulesToWarrant(party: PartyRules, seller: WarrantBody): WarrantBody {
+  return {
+    ...seller,
+    perPaymentCeilingCents: party.maxMilestoneCents ?? seller.perPaymentCeilingCents,
+    monthlyCapCents: party.maxTotalCents ?? seller.monthlyCapCents,
+    categories: party.categories.length > 0 ? party.categories : seller.categories,
+    evidenceRequired: party.requireProof || seller.evidenceRequired,
+    currency: party.currency || seller.currency,
   }
 }

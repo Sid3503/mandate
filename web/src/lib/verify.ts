@@ -282,3 +282,14 @@ export async function verifyMandateToken(token: string, keys: PublicKey[]): Prom
     check: { id: 'mandate', label: `The ${form} was signed by the server`, ok: signed.ok, detail: signed.detail },
   }
 }
+
+export const refusalMessage = (proposalId: string, clause: string, refusedAt: string): string =>
+  `mandate:refusal:v1\n${proposalId}\n${clause}\n${refusedAt}`
+
+export async function verifyRefusalReceipt(
+  receipt: { proposalId: string; refusedAt: string; clause: string; signature: { signature: string; keyId: string } },
+  keys: PublicKey[],
+): Promise<{ ok: boolean; detail: string }> {
+  const message = refusalMessage(receipt.proposalId, receipt.clause, receipt.refusedAt)
+  return verifyEd25519(message, receipt.signature.signature, receipt.signature.keyId, keys)
+}

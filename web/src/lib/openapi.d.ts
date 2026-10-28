@@ -1092,6 +1092,18 @@ export interface paths {
                             /** @default false */
                             patternMatchPayees?: boolean;
                         };
+                        /**
+                         * @default {
+                         *       "modelFloor": "auto"
+                         *     }
+                         */
+                        frictionBudget?: {
+                            /**
+                             * @default auto
+                             * @enum {string}
+                             */
+                            modelFloor?: "auto" | "needs_approval" | "deny";
+                        };
                     };
                 };
             };
@@ -6415,6 +6427,18 @@ export interface components {
                 escalateNewEvidenceHost: boolean;
                 /** @default false */
                 patternMatchPayees: boolean;
+            };
+            /**
+             * @default {
+             *       "modelFloor": "auto"
+             *     }
+             */
+            frictionBudget: {
+                /**
+                 * @default auto
+                 * @enum {string}
+                 */
+                modelFloor: "auto" | "needs_approval" | "deny";
             };
             id: string;
             version: number;

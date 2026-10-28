@@ -22,3 +22,5 @@ web/openapi.json
 KT-auth-login-etc
 docs/KT-THIS-PASS.md
 docs/ZORD_PASS.md
+.build-mandate/
+*.zip

@@ -120,6 +120,7 @@ export function factsOf(body: WarrantBody): Fact[] {
     { key: 'risk.velocityWindowMinutes', label: 'the window the velocity check counts requests in', value: `${body.risk.velocityWindowMinutes} minute${body.risk.velocityWindowMinutes === 1 ? '' : 's'}` },
     { key: 'risk.escalateNewEvidenceHost', label: 'proof hosted somewhere no earlier request pointed at needs a tap', value: yes(body.risk.escalateNewEvidenceHost) },
     { key: 'risk.patternMatchPayees', label: 'a payee name that looks like a known party without being one waits for a tap', value: yes(body.risk.patternMatchPayees) },
+    { key: 'frictionBudget.modelFloor', label: 'the minimum friction floor enforced for AI agents', value: body.frictionBudget?.modelFloor ?? 'auto' },
   ]
   for (const person of body.payees) facts.push({ key: `payee:${person.id}`, label: `${person.displayName} can be paid`, value: person.email })
   for (const person of body.clients) facts.push({ key: `client:${person.id}`, label: `${person.displayName} can be billed`, value: person.email })

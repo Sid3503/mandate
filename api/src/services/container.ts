@@ -14,6 +14,7 @@ import { AgentService } from './agents'
 import { ClientKeyService } from './client-keys'
 import { ShareService } from './shares'
 import { ProjectionService } from './projections'
+import { ReceiptService } from './receipt'
 
 export type Services = {
   repo: Repo
@@ -28,6 +29,7 @@ export type Services = {
   clientKeys: ClientKeyService
   shares: ShareService
   projections: ProjectionService
+  receipt: ReceiptService
 }
 
 import type { ControlStore } from '../control/store'
@@ -52,5 +54,6 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   const ask = new AskService(today)
   const shares = new ShareService(repo, mandate, deps.now)
   const projections = new ProjectionService(repo, signer, deps.now)
-  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares, projections }
+  const receipt = new ReceiptService(repo, signer, deps.now, deps.publicUrl ?? 'http://localhost:3000')
+  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares, projections, receipt }
 }

@@ -88,6 +88,18 @@ export function Receipt() {
             {settlementLine(p) && p.deltaCents ? <p className="fine">{settlementLine(p)}</p> : null}
           </section>
 
+          {p.gate === 'DENY' ? (
+            <section className="panel panel-warn">
+              <div className="row between">
+                <h2 className="panel-title">Proof of Refusal</h2>
+                <a href={`/v1/proposals/${p.id}/refusal-receipt`} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">Download Refusal JSON →</a>
+              </div>
+              <p className="fine">
+                This refusal is an immutable, signed artifact. The signature proves to auditors that the rules refused this payment and money never reached PayPal.
+              </p>
+            </section>
+          ) : null}
+
           {data.funding ? (
             <section className="panel" data-tour="receipt-funding">
               <h2 className="panel-title">Funded by</h2>

@@ -70,6 +70,22 @@ export const DEFAULT_RISK: RiskConfig = {
 }
 export type RiskConfig = z.infer<typeof RiskConfigSchema>
 
+/**
+ * The friction budget: what the owner formally permits AI agents to do.
+ *
+ * Invariant: "AI may only add friction, never reduce it."
+ * If the friction budget sets modelFloor: 'needs_approval' (the default), an AI agent (actor: 'agent:...')
+ * can never settle a payment automatically, even if the amount is under autoSettleUnderCents.
+ * When the friction floor raises a decision from AUTO to NEEDS_APPROVAL, the gate logs a
+ * 'model.override_attempt' ledger event.
+ */
+export const FrictionBudgetSchema = z.object({
+  modelFloor: z.enum(['auto', 'needs_approval', 'deny']).default('auto'),
+}).strict()
+
+export type FrictionBudget = z.infer<typeof FrictionBudgetSchema>
+export const DEFAULT_FRICTION_BUDGET: FrictionBudget = { modelFloor: 'auto' }
+
 export const WarrantBodySchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
   autoSettleUnderCents: z.number().int().positive().max(100_000_000),
@@ -93,6 +109,7 @@ export const WarrantBodySchema = z.object({
   standing: z.array(StandingRuleSchema).max(20).default([]),
   automation: AutomationSchema.default(NO_AUTOMATION),
   risk: RiskConfigSchema.default(DEFAULT_RISK),
+  frictionBudget: FrictionBudgetSchema.default(DEFAULT_FRICTION_BUDGET),
 }).strict().superRefine((warrant, ctx) => {
   if (warrant.autoSettleUnderCents > warrant.perPaymentCeilingCents) {
     ctx.addIssue({ code: 'custom', path: ['autoSettleUnderCents'], message: 'auto settle must be at or under the per-payment ceiling' })
@@ -164,6 +181,7 @@ export const BLANK_WARRANT: WarrantBody = {
   standing: [],
   automation: { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 },
   risk: DEFAULT_RISK,
+  frictionBudget: DEFAULT_FRICTION_BUDGET,
 }
 export type Payee = z.infer<typeof PayeeSchema>
 
@@ -228,6 +246,7 @@ export const LINE_STUDIO_WARRANT: WarrantBody = {
   clearingDays: 0,
   allowPartialPayment: false,
   risk: DEFAULT_RISK,
+  frictionBudget: DEFAULT_FRICTION_BUDGET,
 }
 
 export const DEMO_JOB_ID = 'job_northwind_logo'

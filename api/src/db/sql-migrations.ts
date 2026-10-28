@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS schema_migrations_mark (id TEXT PRIMARY KEY);
 ALTER TABLE warrants ADD COLUMN signature_json TEXT;
 `,
   },
+  {
+    id: '0003_dual_tap',
+    sql: `
+ALTER TABLE proposals ADD COLUMN dual_tap_expires_at TEXT;
+`,
+  },
 ]
 
 /**

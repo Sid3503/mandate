@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { Repo } from '../db/repo'
 import { proofHash, type Signer } from '../domain/signing'
 import { mintClosedMandate, mintOpenMandate, verifyMandate, CLOSED_MANDATE_VCT, OPEN_MANDATE_VCT } from '../domain/mandate-vc'
@@ -164,6 +165,46 @@ export class ProjectionService {
       signature: { signature: signature.signature, keyId: signature.keyId, algorithm: signature.algorithm },
       signedMessage: message,
       verify: 'Recompute stableHash of the bundle without the signature fields, hash it, and check the Ed25519 signature with the public keys at /.well-known/mandate-keys.json. /app/verify does this in the browser.',
+    }
+  }
+
+  /**
+   * The full event log, hash-chained and signed.
+   *
+   * Each entry's hash covers: seq, proposalId, eventType, clause, at, prevHash.
+   * Verifying the chain requires recomputing each hash and checking it matches.
+   * The bundle is signed so the chain itself is authentic.
+   */
+  ledgerExport() {
+    const events = this.repo.allEvents()
+    let prevHash = 'genesis'
+    const entries = events.map((event, seq) => {
+      const entryFields = {
+        seq,
+        proposalId: event.proposal_id,
+        eventType: event.type,
+        clause: event.clause ?? '',
+        at: event.created_at,
+        prevHash,
+      }
+      const hash = createHash('sha256').update(JSON.stringify(entryFields)).digest('hex')
+      prevHash = hash
+      return { ...entryFields, hash }
+    })
+    const generatedAt = this.now().toISOString()
+    const bundle = {
+      format: 'mandate.ledger.v1',
+      generatedAt,
+      count: entries.length,
+      entries,
+    }
+    const message = `mandate:ledger:v1\n${generatedAt}\n${stableHash(bundle)}`
+    const signature = this.signer.sign(message)
+    return {
+      ...bundle,
+      signature: { signature: signature.signature, keyId: signature.keyId, algorithm: signature.algorithm },
+      signedMessage: message,
+      verify: 'Verify bundle signature with /.well-known/mandate-keys.json, then walk entries verifying entry.hash = sha256(JSON.stringify({seq,proposalId,eventType,clause,at,prevHash})).',
     }
   }
 }

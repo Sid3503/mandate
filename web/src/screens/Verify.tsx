@@ -142,7 +142,7 @@ export function Verify() {
         {verdict ? (
           <section className={`verdict ${verdict.ok ? 'ok' : 'bad'}`} role="status" data-testid="verdict">
             <div>
-              <span className="eyebrow">{verdict.ok ? 'Verified' : 'Does not verify'}</span>
+              <span className="eyebrow">{verdict.ok ? 'Verified · Genuine' : 'Does not verify · Tampered'}</span>
               <h2>{verdict.ok ? 'This receipt is genuine.' : 'Do not rely on this receipt.'}</h2>
               <ul className="verify-checks">
                 {verdict.checks.map((check) => (
@@ -153,7 +153,7 @@ export function Verify() {
                 ))}
               </ul>
             </div>
-            <Chip tone={verdict.ok ? 'auto' : 'deny'}>{verdict.ok ? 'verified' : 'failed'}</Chip>
+            <Chip tone={verdict.ok ? 'auto' : 'deny'}>{verdict.ok ? 'genuine' : 'tampered'}</Chip>
           </section>
         ) : null}
 

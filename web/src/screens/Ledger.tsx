@@ -56,10 +56,13 @@ export function Ledger() {
     <div className="page page-wide">
       <ActivityTabs />
       <PageHead eyebrow="Append-only · every attempt, including the refused ones" title="Ledger">
-        <div className="segmented small" role="tablist" data-tour="ledger-tabs">
-          <button type="button" role="tab" aria-selected={tab === 'requests'} className={tab === 'requests' ? 'on' : ''} onClick={() => setTab('requests')}>Requests</button>
-          <button type="button" role="tab" aria-selected={tab === 'events'} className={tab === 'events' ? 'on' : ''} onClick={() => setTab('events')}>Events</button>
-          <button type="button" role="tab" aria-selected={tab === 'paypal'} className={tab === 'paypal' ? 'on' : ''} onClick={() => setTab('paypal')}>PayPal activity</button>
+        <div className="row gap-s" style={{ alignItems: 'center' }}>
+          <a href="/v1/ledger/export" target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" title="Download signed hash-chained event log">Export Hash Chain →</a>
+          <div className="segmented small" role="tablist" data-tour="ledger-tabs">
+            <button type="button" role="tab" aria-selected={tab === 'requests'} className={tab === 'requests' ? 'on' : ''} onClick={() => setTab('requests')}>Requests</button>
+            <button type="button" role="tab" aria-selected={tab === 'events'} className={tab === 'events' ? 'on' : ''} onClick={() => setTab('events')}>Events</button>
+            <button type="button" role="tab" aria-selected={tab === 'paypal'} className={tab === 'paypal' ? 'on' : ''} onClick={() => setTab('paypal')}>PayPal activity</button>
+          </div>
         </div>
       </PageHead>
       {tab === 'requests' ? <Requests /> : tab === 'events' ? <Events /> : <PayPalActivity />}
