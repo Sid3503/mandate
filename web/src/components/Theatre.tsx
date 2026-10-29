@@ -58,7 +58,7 @@ const CHAPTERS: Chapter[] = [
     short: 'Agents',
     title: 'Give your AI agent a key that can only ask',
     feature: 'One MCP door · ask-only keys',
-    caption: 'Your AI agent connects through one door with six tools. Four read, two ask. None of them can approve, send money or change the rules.',
+    caption: 'Your AI agent connects through one door with eleven tools. Seven read, four ask. None of them can approve, send money or change the rules.',
     view: 'agent',
     beats: [0, 2000, 4600, 7200],
     ms: 10_500,

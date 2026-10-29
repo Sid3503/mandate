@@ -2,6 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { cookieWriteAllowed, readSessionCookie } from './auth/cookies'
+import { OAuthService, type AuthorizeRequest, type OauthGrant } from './auth/oauth'
 import { es256PublicJwk, passkeyRuleBinding, stepBinding } from './auth/passkeys'
 import type { ControlStore } from './control/store'
 import { mountExtra, type ProductCtx } from './http/extra'
@@ -28,7 +29,7 @@ import { webCsp, webAsset } from './http/web'
 import { buildOpenApi } from './openapi'
 import type { InvoicePort } from './paypal/invoices'
 import { PayPalError, type PayPalPort } from './paypal/port'
-import { handleMcp } from './mcp/http'
+import { handleMcp, READONLY_TOOLS } from './mcp/http'
 import { AgentService, logReviewFailure } from './agents/service'
 import { live } from './services/live'
 import { acceptLegacyMachineKey, machineKeyHash, workspaceFromMachineKey } from './services/machine-key'
@@ -165,6 +166,14 @@ const NegotiationSchema = z.object({
 
 const PUBLIC = new Set(['/', '/health', '/ready', '/healthz', '/readyz', '/openapi.json', '/v1/webhooks/paypal', '/.well-known/mandate-keys.json', '/demo/start', '/workspaces', '/join', '/join/preview', '/ops/metrics', '/ops/model/kill', '/ops/model/resume', '/__fake/session'])
 
+/** A tool with one of these names could move money. The connection test fails if the door ever offered one. */
+const MONEY_MOVING_TOOLS = ['approve', 'reject', 'capture', 'pay', 'send_payout', 'refund', 'publish_rules', 'cancel', 'settle']
+
+/** RFC 9728: where a client learns how this door is protected. Public, because a client reads it before it has a key. */
+const PRM_PATH = '/.well-known/oauth-protected-resource'
+/** RFC 8414: where a client learns the authorization server's endpoints. */
+const AS_PATH = '/.well-known/oauth-authorization-server'
+
 /** Routes only the owner key may call. A proposer, such as an agent, can ask but never decide or move money. */
 const OWNER_ONLY = [
   { method: 'PUT', pattern: /^\/v1\/warrant$/ },
@@ -184,6 +193,10 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/agents\/health$/ },
   { method: 'GET', pattern: /^\/v1\/agents(\/[^/]+\/scorecard)?$/ },
   { method: 'POST', pattern: /^\/v1\/agents$/ },
+  { method: 'POST', pattern: /^\/v1\/agents\/test-connection$/ },
+  { method: 'GET', pattern: /^\/v1\/agents\/activity$/ },
+  { method: 'GET', pattern: /^\/v1\/oauth\/request$/ },
+  { method: 'POST', pattern: /^\/v1\/oauth\/decision$/ },
   { method: 'POST', pattern: /^\/v1\/agents\/[^/]+\/(revoke|resume|upgrade|pause|suspend)$/ },
   { method: 'GET', pattern: /^\/v1\/client-keys$/ },
   { method: 'POST', pattern: /^\/v1\/client-keys$/ },
@@ -272,7 +285,7 @@ function isWeb(path: string): boolean {
 }
 
 function isAnonymous(path: string): boolean {
-  return PUBLIC.has(path) || path.startsWith('/auth/')
+  return PUBLIC.has(path) || path.startsWith('/auth/') || path.startsWith('/oauth/') || path === AS_PATH || path === PRM_PATH || path.startsWith(`${PRM_PATH}/`)
 }
 
 const AgentCreateSchema = z.object({
@@ -317,6 +330,14 @@ const ClientErrorSchema = z.object({
 
 export function createApp(deps: AppDeps) {
   const app = new Hono<{ Variables: { requestId: string; principal: Principal; viaCookie?: boolean; memberRole?: string; memberId?: string; approvalLimit?: number | null } }>()
+  /** The address a client should use for this server: the configured public URL when there is one, otherwise the one it called. */
+  const publicOrigin = (requestUrl: string): string => {
+    try {
+      return new URL(deps.config.publicUrl || requestUrl).origin
+    } catch {
+      return new URL(requestUrl).origin
+    }
+  }
   const services = deps.services ?? buildServices({
     ...deps,
     publicUrl: deps.config.publicUrl,
@@ -415,6 +436,32 @@ export function createApp(deps: AppDeps) {
       }
     }
     await next()
+  })
+
+  // RFC 9728 / MCP authorization: a door that refuses for want of a valid key says where it is described, so a client
+  // that has no key can find out how to get one. It rides on the 401 only; the answer body is unchanged.
+  app.use('*', async (c, next) => {
+    await next()
+    if (c.res.status === 401 && (c.req.path === '/mcp' || c.req.path.startsWith('/mcp/'))) {
+      c.res.headers.set('www-authenticate', `Bearer resource_metadata="${publicOrigin(c.req.url)}${PRM_PATH}${c.req.path}"`)
+    }
+  })
+
+  // An agent turned away at the door (over its rate or value limit, or outside its scope) leaves a row the owner can
+  // read. Without this a runaway agent hitting a limit looked, from the console, like an agent that had gone quiet.
+  app.use('*', async (c, next) => {
+    await next()
+    const principal = c.get('principal')
+    if (principal?.role !== 'agent' || (c.res.status !== 429 && c.res.status !== 403)) return
+    try {
+      const problem = await c.res.clone().json() as { code?: string; detail?: string }
+      if (typeof problem.code !== 'string' || !problem.code.startsWith('agent.')) return
+      // Revoked, suspended and expired keys are the owner's own doing, and already show on the agent's row.
+      if (['agent.revoked', 'agent.suspended', 'agent.expired'].includes(problem.code)) return
+      services.repo.insertAgentRefusal({ agent_id: principal.agentId, at: deps.now().toISOString(), code: problem.code, tool: null, detail: typeof problem.detail === 'string' ? problem.detail.slice(0, 300) : null })
+    } catch {
+      /* the answer was not a problem document; nothing to record */
+    }
   })
 
   app.use('*', async (c, next) => {
@@ -629,6 +676,84 @@ export function createApp(deps: AppDeps) {
     requireStep(c, deps, 'agent.issue', stepBinding('agent.issue', JSON.stringify(parsed.data)))
     const created = services.agents.create(parsed.data)
     return c.json(created, 201)
+  })
+  // The owner pastes a key and the server walks the same three steps a real client would: initialize, list the tools,
+  // read the rules. It answers what that key can reach and whether any of it could move money. The key is not echoed.
+  app.post('/v1/agents/test-connection', async (c) => {
+    assertJson(c)
+    const parsed = z.object({ key: z.string().min(8).max(400), door: z.enum(['/mcp', '/mcp/readonly']).optional() }).strict().safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const door = parsed.data.door ?? '/mcp'
+    const started = Date.now()
+    const rpc = async (id: number, method: string, params?: unknown) => {
+      const response = await app.fetch(new Request(new URL(door, c.req.url), {
+        method: 'POST',
+        headers: { authorization: `Bearer ${parsed.data.key}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id, method, ...(params ? { params } : {}) }),
+      }))
+      const text = await response.text()
+      let body: { result?: Record<string, any>; error?: { message?: string }; detail?: string; title?: string } = {}
+      try { body = JSON.parse(text) } catch { /* the failure below names the status */ }
+      return { status: response.status, body }
+    }
+    const fail = (step: string, status: number, detail: string) => c.json({ ok: false, step, status, detail, ms: Date.now() - started })
+    const init = await rpc(1, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'mandate-connection-test', version: '1.0.0' } })
+    if (init.status !== 200) return fail('initialize', init.status, init.body.detail ?? init.body.title ?? 'The door did not accept this key.')
+    const listed = await rpc(2, 'tools/list')
+    if (listed.status !== 200) return fail('tools/list', listed.status, listed.body.detail ?? listed.body.title ?? 'The tool list could not be read.')
+    const tools = ((listed.body.result?.tools ?? []) as Array<{ name: string; annotations?: { readOnlyHint?: boolean } }>).map((tool) => ({ name: tool.name, readOnly: tool.annotations?.readOnlyHint === true }))
+    const canPay = tools.filter((tool) => MONEY_MOVING_TOOLS.includes(tool.name)).map((tool) => tool.name)
+    let rulesVersion: number | null = null
+    if (tools.some((tool) => tool.name === 'get_rules')) {
+      const rules = await rpc(3, 'tools/call', { name: 'get_rules', arguments: {} })
+      const structured = rules.body.result?.structuredContent as { version?: number } | undefined
+      if (rules.status === 200 && typeof structured?.version === 'number') rulesVersion = structured.version
+    }
+    return c.json({ ok: canPay.length === 0, door, server: String(init.body.result?.serverInfo?.name ?? 'mandate'), tools, toolCount: tools.length, canPay, rulesVersion, ms: Date.now() - started })
+  })
+  // What the outside agents have been asking, newest first: one row per request an agent key filed, with what the rules said.
+  app.get('/v1/agents/activity', (c) => {
+    const names = new Map(services.agents.list().map((agent) => [agent.id, agent.name]))
+    const rows: Array<Record<string, unknown>> = []
+    for (const event of services.repo.listEvents(300, null)) {
+      if (event.type !== 'proposal.created') continue
+      const payload = JSON.parse(event.payload_json) as { actor?: string; payee?: string; gate?: string }
+      if (typeof payload.actor !== 'string' || !payload.actor.startsWith('agent:')) continue
+      const proposal = services.repo.proposal(event.proposal_id)
+      if (!proposal) continue
+      const agentId = payload.actor.slice('agent:'.length)
+      rows.push({
+        at: event.created_at,
+        agentId,
+        agentName: names.get(agentId) ?? 'An agent that was removed',
+        proposalId: proposal.id,
+        kind: proposal.kind,
+        payee: payload.payee ?? null,
+        amountCents: proposal.amount_cents,
+        gate: payload.gate ?? proposal.gate,
+        clause: event.clause,
+        phase: proposal.phase,
+      })
+      if (rows.length >= 30) break
+    }
+    // Turned away, not filed: over budget, over a limit, outside a scope. They have no proposal, so they come from their own table.
+    for (const refusal of services.repo.listAgentRefusals(30)) {
+      rows.push({
+        at: refusal.at,
+        agentId: refusal.agent_id,
+        agentName: names.get(refusal.agent_id) ?? 'An agent that was removed',
+        proposalId: null,
+        kind: 'refused',
+        payee: null,
+        amountCents: null,
+        gate: null,
+        clause: null,
+        phase: null,
+        refusal: { code: refusal.code, tool: refusal.tool, detail: refusal.detail },
+      })
+    }
+    rows.sort((a, b) => String(b.at).localeCompare(String(a.at)))
+    return c.json({ data: rows.slice(0, 30) })
   })
   app.post('/v1/agents/:id/revoke', (c) => {
     requireStep(c, deps, 'agent.revoke', stepBinding('agent.revoke', c.req.param('id')))
@@ -1259,6 +1384,109 @@ export function createApp(deps: AppDeps) {
 
   // ---------- the agent door ----------
   app.all('/mcp', (c) => handleMcp(c.req.raw, services, c.get('principal'), deps.config.flags ?? defaultFlags()))
+  // The same door with only the four tools that look. A client that wants to try an agent safely points here.
+  app.all('/mcp/readonly', (c) => handleMcp(c.req.raw, services, c.get('principal'), deps.config.flags ?? defaultFlags(), { onlyTools: READONLY_TOOLS }))
+
+  // RFC 9728 Protected Resource Metadata. Names this server as its own authorization server, so a client that
+  // finds a 401 can follow it to /oauth/register and sign in. A key in the Authorization header still works.
+  const resourceMetadata = (c: { req: { url: string; path: string } }) => {
+    const tail = c.req.path.slice(PRM_PATH.length)
+    const door = tail === '/mcp/readonly' ? '/mcp/readonly' : '/mcp'
+    return {
+      resource: `${publicOrigin(c.req.url)}${door}`,
+      resource_name: 'Mandate agent door',
+      ...(oauthHere ? { authorization_servers: [publicOrigin(c.req.url)] } : {}),
+      bearer_methods_supported: ['header'],
+      scopes_supported: ['mcp:look', 'mcp:ask'],
+      resource_documentation: `${publicOrigin(c.req.url)}/app/connect`,
+    }
+  }
+
+  // ---------- OAuth for the agent door ----------
+  // Keys still work. This is for clients that sign in with a browser and have nowhere to paste one. The owner
+  // approves on the console; what the client gets back is an ordinary agent key, listed and revocable like any other.
+  // Only the main workspace signs clients in. A studio's own door lives under /w/<id>, which these root-level
+  // addresses do not name, so a token issued here for a studio would be issued for the wrong place.
+  const oauthHere = (deps.workspace?.id ?? 'ws_default') === 'ws_default'
+  const oauthFor = (requestUrl: string) => {
+    if (!oauthHere) throw new Problem(404, 'oauth.unavailable', 'Not available here', 'Sign-in by browser is offered on the main address. Use a key for this studio.')
+    const origin = publicOrigin(requestUrl)
+    return { origin, oauth: new OAuthService(services.repo, services.agents, deps.now, [`${origin}/mcp`, `${origin}/mcp/readonly`]) }
+  }
+  // These answer other sites' scripts (a browser-based client reads them), so they allow any origin. None of them uses
+  // a cookie, and the console's own routes under /v1 get no such header.
+  app.use('/oauth/*', async (c, next) => {
+    if (c.req.method === 'OPTIONS') return c.body(null, 204, { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, GET, OPTIONS', 'access-control-allow-headers': 'content-type, authorization, mcp-protocol-version', 'access-control-max-age': '600' })
+    await next()
+    c.res.headers.set('access-control-allow-origin', '*')
+  })
+  app.use(`${AS_PATH}`, async (c, next) => {
+    await next()
+    c.res.headers.set('access-control-allow-origin', '*')
+  })
+  app.get(AS_PATH, (c) => {
+    const { origin, oauth } = oauthFor(c.req.url)
+    return c.json(oauth.metadata(origin))
+  })
+  app.post('/oauth/register', async (c) => {
+    assertJson(c)
+    const body = await readJson(c)
+    return c.json(oauthFor(c.req.url).oauth.register(typeof body === 'object' && body ? body as Record<string, unknown> : {}), 201, { 'cache-control': 'no-store' })
+  })
+  const authorizeParams = (get: (name: string) => string | undefined): AuthorizeRequest => ({
+    clientId: get('client_id') ?? '',
+    redirectUri: get('redirect_uri') ?? '',
+    state: get('state') || undefined,
+    challenge: get('code_challenge') ?? '',
+    resource: get('resource') ?? '',
+    scope: get('scope') || undefined,
+  })
+  // The browser lands here from the client. Nothing is decided here: it checks the request is one this server could
+  // honour, then hands the browser to the console, where the owner is signed in and can say yes or no.
+  app.get('/oauth/authorize', (c) => {
+    const query = new URL(c.req.url).searchParams
+    if (query.get('response_type') !== 'code') throw new Problem(400, 'oauth.unsupported_response_type', 'unsupported_response_type', 'Use response_type=code.')
+    if (query.get('code_challenge_method') !== 'S256') throw new Problem(400, 'oauth.invalid_request', 'invalid_request', 'PKCE with code_challenge_method=S256 is required.')
+    const { origin, oauth } = oauthFor(c.req.url)
+    const request = authorizeParams((name) => query.get(name) ?? undefined)
+    oauth.inspect(request)
+    return c.redirect(`${origin}/app/connect/authorize?${query.toString()}`, 302)
+  })
+  app.get('/v1/oauth/request', (c) => {
+    const query = new URL(c.req.url).searchParams
+    return c.json(oauthFor(c.req.url).oauth.inspect(authorizeParams((name) => query.get(name) ?? undefined)))
+  })
+  app.post('/v1/oauth/decision', async (c) => {
+    assertJson(c)
+    const parsed = z.object({
+      client_id: z.string().max(200), redirect_uri: z.string().max(2000), code_challenge: z.string().max(200), state: z.string().max(2000).optional(),
+      resource: z.string().max(2000).optional(), scope: z.string().max(200).optional(),
+      decision: z.enum(['approve', 'deny']), grant: z.enum(['look', 'ask']).optional(),
+    }).strict().safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const { oauth } = oauthFor(c.req.url)
+    const request = authorizeParams((name) => ({ client_id: parsed.data.client_id, redirect_uri: parsed.data.redirect_uri, code_challenge: parsed.data.code_challenge, state: parsed.data.state, resource: parsed.data.resource, scope: parsed.data.scope } as Record<string, string | undefined>)[name])
+    if (parsed.data.decision === 'deny') return c.json({ redirectTo: oauth.deny(request) })
+    const grant: OauthGrant = parsed.data.grant ?? 'look'
+    requireStep(c, deps, 'connection.approve', stepBinding('connection.approve', JSON.stringify(parsed.data)))
+    return c.json({ redirectTo: oauth.approve(request, grant) })
+  })
+  app.post('/oauth/token', async (c) => {
+    const type = c.req.header('content-type') ?? ''
+    let form: Record<string, string> = {}
+    const text = await c.req.text()
+    if (text.length > 20_000) throw new Problem(413, 'oauth.invalid_request', 'invalid_request', 'That request is too large.')
+    try {
+      form = /json/i.test(type) ? Object.fromEntries(Object.entries(JSON.parse(text) as Record<string, unknown>).map(([k, v]) => [k, String(v)])) : Object.fromEntries(new URLSearchParams(text))
+    } catch {
+      throw new Problem(400, 'oauth.invalid_request', 'invalid_request', 'The body could not be read.')
+    }
+    return c.json(oauthFor(c.req.url).oauth.token(form), 200, { 'cache-control': 'no-store', pragma: 'no-cache' })
+  })
+
+  app.get(PRM_PATH, (c) => c.json(resourceMetadata(c)))
+  app.get(`${PRM_PATH}/mcp`, (c) => c.json(resourceMetadata(c)))
+  app.get(`${PRM_PATH}/mcp/readonly`, (c) => c.json(resourceMetadata(c)))
 
   // ---------- the agents: a clerk for staff, and two negotiators ----------
   app.post('/v1/clerk/messages', async (c) => {

@@ -74,7 +74,7 @@ The console is four places: **Today** (what needs you), **Jobs** (money in relea
 - Rows on Today read **Your tap** or **Your … rule · no tap**, so it is always clear who decided.
 - **Share a job.** On a job, give the client or a contractor a read-only status link: they see only their own part, expire it, withdraw it. No more "has the client paid yet?".
 - **Clearing window** (Rules → *Wait after a client pays*). A client can still take money back for a while, so a rule or autopilot waits N days after a client pays before paying a contractor from it. You can still tap to pay sooner.
-- **Connect an agent** (System, or the More group in the sidebar): name it, choose what it may do, and get a key with the Claude Code and Cursor commands already filled in. The page can check the connection itself, and `npm run check:mcp` (in `api/`) does the same from a terminal.
+- **Connect an agent** (System, or the More group in the sidebar): name it, choose what it may do, and get a key with the Claude Code and Cursor commands already filled in. The page can check the connection itself, and `npm run check:mcp` (in `api/`) does the same from a terminal. Apps that sign in with a browser (Claude.ai, ChatGPT) can use the address as a custom connector with no key: they register, you approve on the console, and they get a key that you can revoke.
 - **Tell me when something needs me.** Set `NOTIFY_WEBHOOK_URL` to a Slack, Discord or Zapier incoming webhook. The message links to the console; it cannot approve or pay.
 - **Onboarding guide.** See [docs/ONBOARDING.md](docs/ONBOARDING.md) for complete instructions on the three entry doors (Demo, Studio, Unlock), passkey biometrics, and AI agent integration.
 - **Hosted demo.** `DEMO_RESET=on` (sandbox only) adds a typed-confirmation *Start the demo over* on System.
@@ -96,7 +96,7 @@ The console is four places: **Today** (what needs you), **Jobs** (money in relea
 - **Console:** `web/` is an installable React app at `/app/` with an AG Grid ledger. It works read-only offline and never caches money calls. A first-time visitor gets a guided tour, and every screen has a **Guide** button that walks through exactly what is on it.
 - **Three keys:** the owner key approves and settles. The studio key (staff and agents) can only ask and read. A client's agent key can only offer deals for its own client.
 - **The lock is signed.** When the owner taps, the server signs the exact payee, cents, proof and funding with Ed25519. Edit the database after that, even with a matching hash, and PayPal is never called. The receipt has a **Verify** button.
-- **The agent door is `/mcp`.** Eleven tools for the studio's agents, nine for a client's agent, none of which can approve, pay or change rules. An agent that is tricked can only ask, and the rules say no. Which tools a key gets is decided by its scopes (read, ask, deals), so a read-only agent cannot ask at all. Two of the new ones are checks: `verify_mandate` checks a signed mandate token, `get_metrics` reads the month in money.
+- **The agent door is `/mcp`.** Eleven tools for the studio's agents, nine for a client's agent, none of which can approve, pay or change rules. An agent that is tricked can only ask, and the rules say no. Which tools a key gets is decided by its scopes (read, ask, deals), so a read-only agent cannot ask at all. `/mcp/readonly` is the same door with only the four tools that look. Apps that sign in with a browser use OAuth 2.1 (`/oauth/register`, `/oauth/authorize`, `/oauth/token`, PKCE S256): the owner approves on the console and the app is handed an ordinary agent key, so Revoke ends it. An agent that runs out of budget, hits a limit, or reaches outside its scope shows on the Connect page. Two of the new ones are checks: `verify_mandate` checks a signed mandate token, `get_metrics` reads the month in money.
 - **Money out is Payouts, never Orders.** Checkout collects money for the studio, so it cannot pay a contractor. Pending, unclaimed and failed payouts are shown as such, never as paid.
 
 ## Repository
@@ -115,7 +115,7 @@ Commands: `npm run setup`, `npm run build`, `npm start`, `npm test` (API tests, 
 
 ## Quality
  
-919 API tests (across 77 test files, including fast-check property sequences, 46 red-team cases, and chaos tests). 152 Playwright browser tests in 23 specs, on desktop, a Pixel 7 and a passkey profile, with axe WCAG 2.1 AA scans on every signed-in screen. Mobile Lighthouse audit: Welcome 90, Unlock 88, Today 80. 24 verified cryptographic guarantees in docs/guarantees.json.
+974 API tests (across 83 test files, including fast-check property sequences, 46 red-team cases, and chaos tests). 160 Playwright browser tests in 24 specs, on desktop, a Pixel 7 and a passkey profile, with axe WCAG 2.1 AA scans on every signed-in screen. Mobile Lighthouse audit: Welcome 90, Unlock 88, Today 80. 24 verified cryptographic guarantees in docs/guarantees.json.
 
 ## Where to read next
 

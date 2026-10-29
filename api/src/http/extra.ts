@@ -394,6 +394,8 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       binding = stepBinding('member-revoke', body.memberId)
     } else if (kind === 'agent.issue') {
       binding = stepBinding('agent.issue', JSON.stringify(body.input ?? body.payload ?? body))
+    } else if (kind === 'connection.approve') {
+      binding = stepBinding('connection.approve', JSON.stringify(body.input ?? body.payload ?? body))
     } else if (kind === 'passkey-rule') {
       if (typeof body.enabled === 'boolean') binding = passkeyRuleBinding(body.enabled)
       else if (body.binding === passkeyRuleBinding(true) || body.binding === passkeyRuleBinding(false)) binding = body.binding

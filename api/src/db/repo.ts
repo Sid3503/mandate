@@ -98,6 +98,10 @@ export type DealRow = {
   created_at: string
 }
 
+export type OauthClientRow = { client_id: string; name: string; redirect_uris_json: string; created_at: string }
+export type OauthCodeRow = { code_hash: string; client_id: string; redirect_uri: string; challenge: string; scopes_json: string; resource: string; expires_at: string }
+export type OauthRefreshRow = { token_hash: string; client_id: string; agent_id: string; status: string; expires_at: string }
+
 export type AgentRow = {
   id: string
   name: string
@@ -1090,6 +1094,62 @@ export class Repo {
 
   getAgentByKeyHash(keyHash: string): AgentRow | null {
     return (this.db.prepare('SELECT * FROM agents WHERE key_hash = ?').get(keyHash) as AgentRow | undefined) ?? null
+  }
+
+  setAgentExpiry(id: string, expiresAt: string | null): void {
+    this.db.prepare('UPDATE agents SET expires_at = ? WHERE id = ?').run(expiresAt, id)
+  }
+
+  insertOauthClient(row: OauthClientRow): void {
+    this.db.prepare('INSERT INTO oauth_clients (client_id, name, redirect_uris_json, created_at) VALUES (?, ?, ?, ?)').run(row.client_id, row.name, row.redirect_uris_json, row.created_at)
+  }
+
+  oauthClient(clientId: string): OauthClientRow | null {
+    return (this.db.prepare('SELECT * FROM oauth_clients WHERE client_id = ?').get(clientId) as OauthClientRow | undefined) ?? null
+  }
+
+  countOauthClients(): number {
+    return (this.db.prepare('SELECT COUNT(*) AS n FROM oauth_clients').get() as { n: number }).n
+  }
+
+  insertOauthCode(row: OauthCodeRow): void {
+    this.db.prepare('INSERT INTO oauth_codes (code_hash, client_id, redirect_uri, challenge, scopes_json, resource, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(row.code_hash, row.client_id, row.redirect_uri, row.challenge, row.scopes_json, row.resource, row.expires_at)
+  }
+
+  /** Reads and deletes in one step: a code works once, and a second try finds nothing. */
+  takeOauthCode(codeHash: string): OauthCodeRow | null {
+    const row = (this.db.prepare('SELECT * FROM oauth_codes WHERE code_hash = ?').get(codeHash) as OauthCodeRow | undefined) ?? null
+    if (row) this.db.prepare('DELETE FROM oauth_codes WHERE code_hash = ?').run(codeHash)
+    this.db.prepare('DELETE FROM oauth_codes WHERE expires_at < ?').run(new Date(Date.now() - 3_600_000).toISOString())
+    return row
+  }
+
+  insertOauthRefresh(row: OauthRefreshRow): void {
+    this.db.prepare('INSERT INTO oauth_refresh (token_hash, client_id, agent_id, status, expires_at) VALUES (?, ?, ?, ?, ?)').run(row.token_hash, row.client_id, row.agent_id, row.status, row.expires_at)
+  }
+
+  oauthRefresh(tokenHash: string): OauthRefreshRow | null {
+    return (this.db.prepare('SELECT * FROM oauth_refresh WHERE token_hash = ?').get(tokenHash) as OauthRefreshRow | undefined) ?? null
+  }
+
+  setOauthRefreshStatus(tokenHash: string, status: string): void {
+    this.db.prepare('UPDATE oauth_refresh SET status = ? WHERE token_hash = ?').run(status, tokenHash)
+  }
+
+  /** Every refresh token the agent holds stops working. Used when one is replayed, which means it leaked. */
+  killOauthRefreshForAgent(agentId: string): void {
+    this.db.prepare("UPDATE oauth_refresh SET status = 'revoked' WHERE agent_id = ?").run(agentId)
+  }
+
+  insertAgentRefusal(row: { agent_id: string; at: string; code: string; tool: string | null; detail: string | null }): void {
+    this.db.prepare('INSERT INTO agent_refusals (agent_id, at, code, tool, detail) VALUES (?, ?, ?, ?, ?)').run(row.agent_id, row.at, row.code, row.tool, row.detail)
+    // Keep the table small: a runaway agent could otherwise write a row per request forever.
+    this.db.prepare('DELETE FROM agent_refusals WHERE id <= (SELECT MAX(id) FROM agent_refusals) - 2000').run()
+  }
+
+  listAgentRefusals(limit: number): Array<{ agent_id: string; at: string; code: string; tool: string | null; detail: string | null }> {
+    return this.db.prepare('SELECT agent_id, at, code, tool, detail FROM agent_refusals ORDER BY id DESC LIMIT ?').all(limit) as Array<{ agent_id: string; at: string; code: string; tool: string | null; detail: string | null }>
   }
 
   setAgentStatus(id: string, status: string, at: string): void {

@@ -18,7 +18,7 @@ Mandate is the third option. An agent gets a wallet of authority, not a wallet o
 
 Mandate is a spend-authority layer that sits in front of PayPal. Staff and AI agents *ask*; a pure function of the owner's signed rules decides; PayPal moves exactly the cents that were locked.
 
-1. **Anyone can ask, nobody can pay.** Agents connect over MCP with keys that carry eleven tools and none that approve, pay or change a rule. A proposer key can file a request and watch it; it cannot move a cent.
+1. **Anyone can ask, nobody can pay.** Agents connect over MCP, with a key or by signing in with a browser (OAuth 2.1 with PKCE, approved by the owner on the console), and carry eleven tools and none that approve, pay or change a rule. A proposer key can file a request and watch it; it cannot move a cent.
 2. **A pure function decides.** Every charge, payout and refund gets `DENY`, `AUTO` or `NEEDS_APPROVAL` from `decide()` — no model call in the decision. It checks payees, categories, monthly caps, milestone limits, funding coverage and duplicate asks.
 3. **Say yes to the rule, not the payment.** A signed standing rule ("Priya is paid from settled Northwind money, up to her 60% share") makes matching payouts go with no tap. Everything else still waits for one.
 4. **Autopilot runs the job.** With the rules signed, a delivered milestone is accepted, billed, paid by the client and paid out to the contractor without anyone tapping. Today shows only the exceptions.
@@ -51,11 +51,12 @@ Mandate is a spend-authority layer that sits in front of PayPal. Staff and AI ag
 5. **The card form that reset itself.** The client page refreshed every 15 seconds and re-keyed each bill on its last change — and opening the form changed it, wiping what the buyer typed. It is keyed by bill id now.
 
 ---
+6. **Letting an app sign in without giving it a way to pay.** A browser sign-in (OAuth 2.1, PKCE, dynamic registration) hands the app an ordinary agent key, so scopes, limits, the breaker and Revoke already cover it, and no scope that approves or pays exists to be granted. The owner chooses look-only or look-and-ask on the console. A refresh token that comes back twice closes the whole connection.
 
 ## Accomplishments That We Are Proud Of
 
-- **891 API tests across 75 files** passing clean in CI, including fast-check property sequences, 46 red-team cases and the chaos suite.
-- **150 browser tests in 23 specs** on desktop, a Pixel 7 and a passkey profile, with an axe WCAG 2.1 AA scan on every signed-in screen.
+- **974 API tests across 83 files** passing clean in CI, including fast-check property sequences, 46 red-team cases and the chaos suite.
+- **160 browser tests in 24 specs** on desktop, a Pixel 7 and a passkey profile, with an axe WCAG 2.1 AA scan on every signed-in screen.
 - **23 verified cryptographic guarantees** in machine-readable JSON, checked on every build — including *no payout is larger than the contractor's share*, *nothing is paid from money that has not arrived*, *no AI can reach PayPal*, and *a buyer cannot change what is paid*.
 - **Real PayPal sandbox proof, end to end**: a bill paid **by card on our own page** (captures `16863006RF678602F`, `79204140TH113652R`), an invoice paid by the sandbox buyer and settled only when PayPal said `PAID` (`INV2-76H8-5LLT-E4P4-C2HD`), contractor payouts through Payouts v1 (`SJ5B3GGM7UBAU`, `DKPZEQ87HG8MU`), and a second payout sent by **autopilot under a signed standing rule, with no tap** (`9Z37SHHD8E598`, `SUCCESS`). A partial refund (`12C310409G863064M`) ran through the gated route.
 - **A refusal that tells you what would pass** — only variants re-run through the real gate, never a model's guess.
@@ -127,5 +128,6 @@ The recorded demo uses the **Ironbark Labs** cast (`E2E_SCENARIO=ironbark` in `a
 - **Single-process SQLite.** Right for one studio, not a payment gateway.
 - **The hosted demo is ephemeral.** A free Render instance sleeps and wipes its disk on restart, so a hosted copy shows a fresh ledger. The repo path above always works.
 - **An open PayPal dispute cannot be demonstrated.** The sandbox does not list a first-stage case, so the hold is fake-tested only.
+- **Browser sign-in (OAuth) is tested with the official MCP SDK client over a public https tunnel, not yet with Claude.ai or ChatGPT themselves.** It follows the MCP authorization spec (discovery, dynamic registration, PKCE S256, rotating refresh tokens), so those apps should connect, but we have not watched them do it. A key always works. It is also not in the demo video: the video's three minutes belong to the spend-authority story, and the sign-in is shown live instead.
 - **The agents need a model.** The rules, the gate, the lock and PayPal do not.
 - **One currency per studio.** A studio picks its currency and time zone; there is no conversion.

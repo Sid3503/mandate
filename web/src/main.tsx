@@ -34,6 +34,7 @@ import { System } from './screens/System'
 import { SharedStatus } from './screens/SharedStatus'
 import { Unlock } from './screens/Unlock'
 import { Connect } from './screens/Connect'
+import { OAuthConsent } from './screens/OAuthConsent'
 import { LiveProof } from './screens/LiveProof'
 import { PayeePayments } from './screens/PayeePayments'
 import { Payees } from './screens/Payees'
@@ -135,6 +136,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="sessions" element={<Sessions />} />
             <Route path="members" element={<Members />} />
             <Route path="connect" element={<Connect />} />
+            <Route path="connect/authorize" element={<OAuthConsent />} />
             <Route path="live-proof" element={<LiveProof />} />
             <Route path="payments" element={<PayeePayments />} />
             <Route path="payees" element={<Payees />} />

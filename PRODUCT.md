@@ -12,7 +12,7 @@ This file is the product story: what it is, why it exists, what we built, how it
 
 ## Where the product is today (25 October 2026)
 
-Every number below was re-run on 25 October 2026: 891 API tests across 75 files, 150 browser tests in 23 specs, and 23 verified guarantees.
+Every number below was re-run on 30 October 2026: 974 API tests across 83 files, 160 browser tests in 24 specs, and 23 verified guarantees.
 
 **What runs on the PayPal sandbox, end to end:** staff and AI agents ask; a pure function of the owner's signed rules decides; the owner says yes once (standing rules, autopilot) and taps for exceptions; PayPal moves exactly the locked cents. The whole chain has run live: a bill paid by card **on Mandate's own page** (captures `16863006RF678602F`, `79204140TH113652R`), an invoice paid by the sandbox buyer and settled only when PayPal said `PAID` (`INV2-76H8-5LLT-E4P4-C2HD`), Payouts v1 to Priya (`SJ5B3GGM7UBAU`, `DKPZEQ87HG8MU`), and a second payout sent by **autopilot under a signed standing rule, with no tap** (`9Z37SHHD8E598`, `SUCCESS`).
 
@@ -24,7 +24,7 @@ Every number below was re-run on 25 October 2026: 891 API tests across 75 files,
 
 **A second screen, built with AG Studio** (`/app/control-room`, desktop). The Ledger page is the table of requests (AG Grid); the control room is the dashboard the owner builds from them: money in and out, refusals by rule, how each request was approved, who still owes what. Studio is handed plain rows copied from the ledger and can only display them: it has no connection to PayPal or to Mandate, and the tiles count only what PayPal confirmed. A chat analyst inside Studio reads the ledger copy, sets filters and asks Studio's page and widget agents to draw. It runs on Mandate's own model through one route that holds no ledger service and no PayPal client, so the worst it can do is change the dashboard.
 
-**Numbers:** 891 API tests (across 75 test files, including 46 red-team cases and the chaos suite), 150 browser tests in 23 specs on desktop, a Pixel 7 and a passkey profile, an axe accessibility scan on every signed-in screen, and 23 verified cryptographic guarantees.
+**Numbers:** 974 API tests (across 83 test files, including 46 red-team cases and the chaos suite), 160 browser tests in 24 specs on desktop, a Pixel 7 and a passkey profile, an axe accessibility scan on every signed-in screen, and 23 verified cryptographic guarantees.
 
 **Not yet:** a real open dispute (the sandbox cannot create one), and a hosted demo that stays up through judging (the free Render instance sleeps and wipes its ledger). The demo video (`pitch/video/mandate-pitch.mp4`, 2:53) and the Devpost text are written; the webhook id and the deploy hook are host settings in §11.
 
@@ -98,7 +98,9 @@ One frozen scenario drives every test, screenshot and demo. Nothing in the repo 
 ### Deals and agents
 - **Negotiation**: alternating offers. On its turn a side offers, accepts the other's exact standing offer, or walks away; it ends on acceptance, a walk-away, a deadline both sides know, or a stalemate. An offer must fit the offerer's own rules; an acceptance is checked against *both* companies' rules (a pure function) before the deal is signed. Each side keeps **private limits, a target, a style and a brief** that the other never sees; a client that set its own numbers with its own key is sealed from the studio on the server. Each side is told its own outcome (margin over its walk-away, progress to its target) and its negotiator's debrief. See [docs/NEGOTIATION.md](docs/NEGOTIATION.md).
 - **Signed deals**: an agreed deal is Ed25519-signed, and a charge on that job must bill one of its milestones, once, for exactly the agreed cents (`deal.*` rules).
-- **MCP agent door** (`/mcp` and stdio): six tools (rules, jobs, propose, ledger, offer a deal, explain). **None can approve, pay or change rules.** The owner key is downgraded on this door.
+- **Browser sign-in for agents (OAuth 2.1).** Claude.ai, ChatGPT and other apps that sign in with a browser can connect with no key pasted: they register, the owner approves on the console (look only, or look and ask), and the app receives an ordinary agent key that rotates on refresh. Revoke ends it. A leaked refresh token closes the whole connection. PKCE S256 on every grant, one-shot codes, exact redirect match.
+- **Refusals are visible.** An agent that runs out of its request budget, hits its hourly or daily limit, or reaches outside its scope shows on Connect an agent beside what it asked for, so a runaway agent no longer looks like one that went quiet.
+- **MCP agent door** (`/mcp`, a read-only `/mcp/readonly`, and stdio): 11 tools (rules, jobs, propose, ledger, metrics, verify a mandate, offer or accept a deal, walk away, explain). A scoped agent key sees only the tools its scopes allow. **None can approve, pay or change rules.** The owner key is downgraded on this door.
 - **The clerk and two negotiators**: run on Ollama Cloud (`gpt-oss:20b`), with guards (the payee must appear in the request text, a provider error is retried only while nothing has happened, every run is traced with its prompt version and tokens). Evaluated against the real model: the script has 14 cases and then a negotiation.
 - **Live negotiation**: streamed to the console move by move, each with what the negotiator said, its private note (to its own side only) and the tool calls it made, a chart of both sides' concessions, a Stop button, and the end: how it ended, each side's outcome and debrief. Each move is the model's decision; code holds the walk-away, the turn order, the deadline and the arithmetic, and never moves on the model's behalf.
 
@@ -180,7 +182,7 @@ An installable React app served at `/app/`.
 | Console | React 19, Vite 8, React Router 7, TanStack Query 5, AG Grid Community 36, framer-motion, lucide-react | A fast installable app. AG Grid gives the ledger filtering and search without hand-rolled tables. |
 | PWA | `vite-plugin-pwa` / Workbox | Installable, with an app shell that works offline read-only. Money calls are never cached or queued. |
 | API types | `openapi-typescript` | The console's types come from the server's own contract. |
-| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 891 API tests across 75 test files (including 46 red-team cases) and 150 browser tests in 23 specs on desktop, a Pixel 7 and a passkey profile, with an accessibility scan on every signed-in screen. |
+| Tests | Vitest 5 (API), Playwright 1.63 with `@axe-core/playwright` (console) | 974 API tests across 83 test files (including 46 red-team cases) and 160 browser tests in 24 specs on desktop, a Pixel 7 and a passkey profile, with an accessibility scan on every signed-in screen. |
 | Hosting | Render blueprint (`render.yaml`) | One web service serves the API and the console at `/app/`. |
 | Docs and tooling | Postman collection with assertions, OpenAPI 3.1 | Postman walks the frozen job. |
 
@@ -217,13 +219,13 @@ Repository layout: `api/` (server, PayPal adapters, agents, tests), `web/` (cons
 | Four agents | The **clerk** (a chat for the producer, and the Ask Mandate dialog: "pay Priya her share…"), two **negotiators**, one per company, that trade offers until a deal is agreed or refused, and the **rules drafter**, which turns "let Priya be paid automatically" into a reviewable draft. |
 | The drafter is different on purpose | It gets one tool that takes a small patch in dollars, percent and names, not the rules. The server merges and validates it against the same schema as a hand edit, retries with the validation message, and lists what the draft **loosens** in code, so the model's reassurance is never the thing you read. It runs on `gemma4:31b`, the drafter named in the Model row (`DRAFTER_MODEL` picks another), and must call its one tool. Measured on `gemma4:31b`: 25 of 25 wordings, 0 hidden loosenings. |
 | The only door is MCP | The model never sees HTTP routes or PayPal. It reaches Mandate through an MCP server (`/mcp` for outside agents, stdio with `npm run mcp`, and an in-process connection for Mandate's own agents). An agent of ours has exactly the powers an outside agent would. |
-| Six tools, none can pay | `get_rules`, `get_jobs`, `propose`, `list_ledger`, `offer_deal`, `explain`. There is no approve, capture, refund or rule-change tool. The owner key is deliberately downgraded on this door. |
+| Eleven tools, none can pay | `get_rules`, `get_jobs`, `propose`, `list_ledger`, `get_metrics`, `verify_mandate`, `offer_deal`, `accept_offer`, `walk_away`, `get_negotiation`, `explain`. There is no approve, capture, refund or rule-change tool. The owner key is deliberately downgraded on this door. |
 | Bounded runs | Temperature 0 so a message gets a repeatable answer. Capped by steps (8 for the clerk, 3 for a negotiator), by the number of asks (4 and 1), and by wall-clock (60 s and 45 s). A model error is retried once. A negotiator's run stops as soon as it calls `offer_deal`. |
 | Grounding | The payee in a request must appear in the person's own words (`payee.not_in_request`). This defeats an injected or hallucinated vendor. `get_jobs` ranks jobs that can be funded first and says when payouts become possible. |
 | Facts, not prose | The reply shown to a person is built from the rules' own answers. If the model writes a sentence claiming money moved, an output guard replaces it, because an agent that can only ask can never know that. |
 | Traced | Every run stores its input, its reply, each tool call and each tool result. A receipt from an agent has a "Show every step the agent took" view. |
 | Evaluated | `npm run eval:agents` runs 14 cases against the real model, including ones built to fool it: the fake-vendor email, "the owner already agreed", a lookalike payee, an instruction hidden in a pasted invoice, "split it into five $18 payments", and a request to approve. See the table in `docs/REFERENCE.md`. |
-| Red team | 56 deterministic cases assume a *fully compromised* model and check one invariant: PayPal is never asked and nothing reads as paid. |
+| Red team | 46 deterministic cases assume a *fully compromised* model and check one invariant: PayPal is never asked and nothing reads as paid. |
 | Streaming | Everything an AI layer does is streamed: the clerk's tool calls (announced, called with arguments, answered with the rules' answer and milliseconds) and its words as they are written; a rules draft as its real stages; the client agent's review as it happens; and a negotiation turn by turn, each turn with its own tool calls, with a Stop button that cancels the model call. The words pass a guard that takes them back if they claim money moved or state a figure nobody supplied. |
 | Harness | One runner for every agent: forced single tool call where the job is one decision, a retry only when nothing has happened yet, a per-model circuit breaker with a fallback, token and latency counts per model, versioned and fenced prompts behind snapshot tests, and a proof check in code before the client's reviewer is asked. See `docs/REFERENCE.md`. |
 
@@ -266,7 +268,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 | A changed amount after approval | The lock is hashed and signed. Any difference is refused and PayPal is not asked. |
 | Paying a contractor from money you do not have yet | A payout must cite settled client money on the same job, within the share. |
 | Software called "paid" too early | Pending, unclaimed and failed states are real and never counted as paid. Settlement is confirmed by re-reading PayPal. |
-| A fooled agent | Six MCP tools, none can pay. A fake vendor or an injected instruction gets a rule code. 42 red-team cases assume the model is fully compromised and check that PayPal is never asked. |
+| A fooled agent | Eleven MCP tools, none can pay. A fake vendor or an injected instruction gets a rule code. 46 red-team cases assume the model is fully compromised and check that PayPal is never asked. |
 | The owner becomes an approval button | A standing rule: say yes to a kind of payout once. Matching payouts need no tap, and everything else still does. |
 | Giving an agent PayPal's tools | All 47 Agent Toolkit tools are tiered. An agent reaches none; the server runs nine, and refuses the rest. |
 | Two companies agreeing on a price through agents | A deal check against both sides' private limits, and a signed agreement that billing must follow. |
@@ -281,7 +283,7 @@ Of the Agent Toolkit's 47 tools, Mandate uses nine, all server-side and never ex
 
 ## 10. Proof
 
-- **891 API tests** (Vitest across 75 files, including 46 red-team cases and the chaos suite) and **150 browser tests in 23 specs** (Playwright on desktop, a Pixel 7 and a passkey profile, with an axe WCAG 2.1 AA scan on every signed-in screen). Mobile Lighthouse scores: Welcome 90, Unlock 88, Today 80.
+- **974 API tests** (Vitest across 83 files, including 46 red-team cases and the chaos suite) and **160 browser tests in 24 specs** (Playwright on desktop, a Pixel 7 and a passkey profile, with an axe WCAG 2.1 AA scan on every signed-in screen). Mobile Lighthouse scores: Welcome 90, Unlock 88, Today 80.
 - The agents are evaluated against the real model (`npm run eval:agents`, 14 cases plus a negotiation).
 - **What ran live on the real PayPal sandbox:** the unbroken chain — a $150 bill paid by card **on our own page** (capture `79204140TH113652R`; another card capture `16863006RF678602F`), an invoice created, sent and paid by the sandbox buyer and settled only when PayPal said `PAID` (`INV2-76H8-5LLT-E4P4-C2HD`, $150), Priya's $90 through Payouts v1 (`SJ5B3GGM7UBAU`, then `DKPZEQ87HG8MU`), and the second $90 sent by **autopilot with no tap** (`9Z37SHHD8E598`, `standing.matched`, `SUCCESS`). A partial refund (`12C310409G863064M`, $1.00) ran through the gated route against capture `6GX18294LL7579630`.
 - **Proof** checks `locks.valid`, `moved.authorised`, `amounts.match`, `payouts.funded`, `cap.respected`, `jobs.in_covers_out`, `history.complete`, `deals.signed`, `billing.accepted`, `agents.no_reach` and `safety.respected`, and `paypal.agrees` when PayPal is asked. The tests tamper with the database eight ways to check the right one fails.

@@ -189,6 +189,23 @@ export type AgentScorecard = {
   breakerTripped: boolean
 }
 export type AgentRow = { id: string; name: string; scopes: AgentScope[]; limits: { proposalsPerHour: number; centsPerHour: number; proposalsPerDay?: number; centsPerDay?: number }; status: 'active' | 'suspended' | 'revoked'; keyPrefix?: string; createdAt: string; lastSeenAt: string | null; lastUsedAt?: string | null; expiresAt?: string | null; scorecard?: AgentScorecard }
+/** One request an outside agent's key filed, with what the rules answered. */
+export type AgentActivityRow = {
+  at: string
+  agentId: string
+  agentName: string
+  /** Null for a request the door turned away: nothing was filed, so there is no receipt. */
+  proposalId: string | null
+  /** `refused` when the door turned the agent away; otherwise what it asked to do. */
+  kind: string
+  payee: string | null
+  amountCents: number | null
+  gate: Gate | null
+  clause: string | null
+  phase: string | null
+  refusal?: { code: string; tool: string | null; detail: string | null }
+}
+export type OauthRequestInfo = { clientName: string; redirectHost: string; resource: string; asked: 'look' | 'ask' }
 export type ClientKeyRow = { id: string; name: string; partyId: string; status: 'active' | 'revoked'; keyPrefix?: string; createdAt: string; lastSeenAt: string | null; lastUsedAt?: string | null; expiresAt?: string | null }
 
 export type Suggestion = { id: string; payeeId: string; payeeName: string; clientId: string; clientName: string; approved: number; totalCents: number; largestCents: number; firstAt: string; draft: string }

@@ -23,6 +23,7 @@ A studio's rules decide whether money may move. PayPal moves only the locked cen
 - A counter that moves backwards is refused on login and on step-up. The passkey is revoked only when that member has another one. The last passkey is marked suspect, an auth event is written, and the credential stays.
 - A passkey prompt does not show the payment. The screen shows the amount, payee, category, and evidence before the prompt. The prompt itself does not.
 - Demo and studio workspaces use a fake PayPal. The banner says so. They are not a live sandbox payment.
+- **Browser sign-in for agents (OAuth).** `POST /oauth/register` is open, because dynamic registration has to be. A registration grants nothing: only the owner, on the console, turns a client into a key. Mitigations: public clients only, a redirect must be https, a loopback address or an app's own scheme (never `javascript:` or `data:`) and is matched exactly, at most 500 clients are kept, and the global rate limiter applies. A consent screen shows the client's *self-declared* name, so a hostile client can call itself "Claude"; the screen therefore also shows the host the browser will be sent to, and the approval is one the owner has to start. Not built: client secrets, the client-credentials grant, client ID metadata documents. Tests: `api/test/oauth.test.ts`, `web/e2e/oauth-connect.spec.ts`.
 - A stolen server can still lie. A receipt that a person can check reduces that risk. It does not remove it.
 - The admin key compare is a hash compare. Ops routes stay 404 until `ADMIN_KEY` is set.
 - `npm audit` highs in `api/` on 12 October 2026, after pinning `@hono/node-server` to 1.19.17. The Hono moderate is gone. These highs remain. They were not force-fixed. `api/src/paypal/toolkit.ts` imports `PayPalAgentToolkit`. `main.ts` loads that module because `paypal/client.ts` imports its helpers, so the packages are in the server process.
@@ -39,7 +40,7 @@ A studio's rules decide whether money may move. PayPal moves only the locked cen
 
 Workspaces, passkeys, cookie sessions, step-up on money, invites, the payee book, and the model kill switch are in the server. `POST /ops/model/resume` clears the kill with the admin key. It is 404 until `ADMIN_KEY` is set and 401 when the key is wrong. Their flags default to off, except the model, which stays on, and the legacy owner key, which stays on for the default studio.
 
-## 14-Item Security Checklist & Verification Evidence
+## 15-Item Security Checklist & Verification Evidence
 
 Every control listed below is enforced in code, verified in automated test suites, and audited by `AuditService` and `npm run guarantees`.
 
@@ -126,3 +127,9 @@ Every control listed below is enforced in code, verified in automated test suite
 - **Enforcement:** Secrets are encapsulated in `SecretString` wrappers that mask values in string serialization and error dumps. `scripts/check-secrets.mjs` scans all tracked files during every gate execution. Production credentials are strictly barred.
 - **Code Evidence:** `api/src/security/secrets.ts`, `scripts/check-secrets.mjs`.
 - **Test Proof:** `api/test/ops-readyz-secret.test.ts` (Case 35: "secret and canary log redaction sweep across all log outputs"), `scripts/check-secrets.mjs` (0 violations across 375 tracked files).
+
+### 15. Agent Sign-in Cannot Widen Authority
+- **Requirement & Invariant:** Signing in with a browser must never give an agent more than a pasted key could.
+- **Enforcement:** An OAuth grant is an ordinary agent key with scope `mcp` + `read` (look only) or + `propose` (look and ask), chosen by the owner. The `/mcp/readonly` resource is always look-only. The grant has no scope that approves, captures, pays or changes rules. PKCE S256 is required, the code is one-shot and lasts 5 minutes, and a refresh token that returns twice revokes the whole connection.
+- **Code Evidence:** `api/src/auth/oauth.ts`, `api/src/app.ts` (`/oauth/*`, `/v1/oauth/decision`), `api/src/services/agents.ts`.
+- **Test Proof:** `api/test/oauth.test.ts` (look-only default, read-only door, single-use code, wrong verifier, refresh rotation and replay, revoke), `web/e2e/oauth-connect.spec.ts`.

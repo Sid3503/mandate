@@ -32,6 +32,10 @@ export type McpContext = {
   runId: string
   /** The most requests one connection may make. A runaway model stops here. */
   budget: { asks: number }
+  /** Told when a call is turned away for want of budget, so the owner can see a runaway agent hit its ceiling. */
+  onRefused?: (refusal: { code: string; tool: string | null; detail: string }) => void
+  /** The tool being called right now (set as each tool starts). Only used to say which tool was refused. */
+  tool?: string
   /**
    * What the person actually wrote (an agent run only). When set, `propose` refuses a payee the person never named.
    * A model that "helpfully" swaps an unknown name for a known one would otherwise put the wrong name on the ledger.
@@ -82,6 +86,7 @@ function asResult(error: unknown): CallToolResult {
 
 function spend(context: McpContext): CallToolResult | null {
   if (context.budget.asks <= 0) {
+    context.onRefused?.({ code: 'budget.exceeded', tool: context.tool ?? null, detail: 'This connection used all the requests it is allowed in one run.' })
     return failure('budget.exceeded', 'This connection has used all the requests it is allowed. Stop and report what you have.')
   }
   context.budget.asks -= 1
@@ -170,7 +175,10 @@ export function createMandateMcpServer(context: McpContext): McpServer {
   const mayUse = (scope: AgentScope) => principal.role !== 'agent' || principal.scopes.includes(scope)
   // A tool the key's scopes do not allow is switched off before the connection opens: it is not listed and cannot be called.
   const register: typeof server.registerTool = (name, config, callback) => {
-    const tool = server.registerTool(name, config, callback)
+    const tool = server.registerTool(name, config, ((...args: unknown[]) => {
+      context.tool = name
+      return (callback as (...a: unknown[]) => unknown)(...args)
+    }) as typeof callback)
     const needed = TOOL_SCOPES[name]
     if (needed && !needed.some(mayUse)) tool.disable()
     if (context.exposeReadTools === false && READ_TOOLS.has(name)) {

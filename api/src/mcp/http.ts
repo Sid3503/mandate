@@ -8,6 +8,9 @@ import { createMandateMcpServer } from './server'
 
 export const DEFAULT_BUDGET = 12
 
+/** The tools /mcp/readonly offers. Looking only: no ask, no offer. A key with a tool's scope still sees nothing outside this list. */
+export const READONLY_TOOLS = ['get_rules', 'get_jobs', 'list_ledger', 'explain']
+
 /**
  * Requests left per agent run. The transport is stateless, so the count lives here, keyed by the run id the
  * agent sends. Entries expire so an attacker cannot grow the map by inventing run ids.
@@ -76,7 +79,7 @@ const rpcError = (status: number, message: string, headers: Record<string, strin
  * server without a stream does. (An empty 200 made real clients reconnect over and over.) The Accept header is
  * filled in when a plain HTTP client leaves it out, because every answer here is JSON anyway.
  */
-export async function handleMcp(request: Request, services: Services, caller: Principal, flags?: ServerFlags): Promise<Response> {
+export async function handleMcp(request: Request, services: Services, caller: Principal, flags?: ServerFlags, options: { onlyTools?: string[] } = {}): Promise<Response> {
   if (request.method !== 'POST') return rpcError(405, 'This door answers POST only. It keeps no session and has no event stream.', { allow: 'POST' })
   const text = await request.text()
   if (text.length > MAX_BODY) return rpcError(413, 'That request is too large.')
@@ -94,7 +97,7 @@ export async function handleMcp(request: Request, services: Services, caller: Pr
   const exposeReadTools = exposeHeader !== null
     ? (exposeHeader === '1' || exposeHeader === 'true')
     : undefined
-  const server = createMandateMcpServer({ services, principal, runId, budget: budgetFor(runId), flags, exposeReadTools })
+  const server = createMandateMcpServer({ services, principal, runId, budget: budgetFor(runId), onRefused: principal.role === 'agent' ? (refusal) => services.repo.insertAgentRefusal({ agent_id: principal.agentId, at: new Date().toISOString(), code: refusal.code, tool: refusal.tool, detail: refusal.detail }) : undefined, flags, exposeReadTools, onlyTools: options.onlyTools })
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
   await server.connect(transport)
   try {

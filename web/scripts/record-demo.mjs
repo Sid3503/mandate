@@ -842,6 +842,76 @@ if (process.env.BEAT === 'refund') {
   await browser.close()
   process.exit(0)
 }
+// BEAT=connect records only the outside-agent beat on the current Connect page: the name typed, the key made, and the page's
+// own "What your agents are asking" feed filling as a live model, fooled by its inbox, is refused three times; then the
+// System scorecard once the breaker has stopped its key. It is made to replace the older take's version of that beat.
+if (process.env.BEAT === 'connect') {
+  await page.getByLabel('API key').fill(OWNER)
+  await page.getByRole('button', { name: 'Unlock console' }).click()
+  await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
+  await navTo('Connect an agent')
+  await page.getByTestId('connect-agent').waitFor()
+  await quiet()
+  await client.send('Page.startScreencast', SCREENCAST)
+  await pause(450)
+  mark('connect-page')
+  await pause(900)
+  await click(page.getByPlaceholder('e.g. Nightly invoice sweep'), 400)
+  await page.getByPlaceholder('e.g. Nightly invoice sweep').pressSequentially(SC.agentName, { delay: 45 })
+  await pause(600)
+  await smoothScrollTo(page.getByTestId('can-and-cannot-preview'), { ms: 900, align: 'center' })
+  await pause(1500)
+  const created = page.waitForResponse((res) => /\/v1\/agents$/.test(new URL(res.url()).pathname) && res.request().method() === 'POST')
+  mark('create-key')
+  await click(page.getByTestId('create-agent-button'), 900)
+  const AGENT_KEY = (await (await created).json()).apiKey
+  if (!AGENT_KEY) throw new Error('no agent key came back')
+  await page.getByTestId('connect-reveal').waitFor()
+  await pause(900)
+  const feed = page.getByTestId('agent-activity')
+  await smoothScrollTo(feed, { ms: 1100, align: 'top', margin: 120 })
+  await pause(500)
+  await chapter('An outside agent, fooled')
+  await termOpen('Outside agent · live model · MCP door, its own key')
+  mark('attack')
+  const API_DIR = new URL('../../api/', import.meta.url).pathname
+  const agentRun = spawn(process.execPath, ['./node_modules/tsx/dist/cli.mjs', 'scripts/outside-agent.ts', `${BASE}/mcp`], {
+    cwd: API_DIR,
+    env: { ...process.env, MANDATE_AGENT_KEY: AGENT_KEY, SCENARIO: SCENARIO_NAME },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  agentRun.stderr.on('data', (chunk) => process.stderr.write(`[agent] ${chunk}`))
+  let refusals = 0
+  for await (const raw of createInterface({ input: agentRun.stdout })) {
+    let line
+    try { line = JSON.parse(raw) } catch { continue }
+    console.log(`[agent] ${ts()}s ${line.kind} ${line.text}`)
+    await termLine(line.kind, line.text)
+    if (line.kind === 'refused') mark(`attack-refused-${++refusals}`)
+    if (line.kind === 'suspended') mark('attack-suspended')
+  }
+  await page.getByTestId('agent-activity-row').nth(2).waitFor({ timeout: 15000 })
+  await pause(2400)
+  await termClose()
+  mark('feed-full')
+  await pause(1200)
+  await smoothScrollTo(page.getByTestId('agent-scorecard-table'), { ms: 1100, align: 'top', margin: 600 })
+  const scorecard = page.getByTestId('agent-scorecard-table')
+  const row = scorecard.locator('tr', { hasText: SC.agentName })
+  await row.getByText('suspended', { exact: false }).first().waitFor({ timeout: 15000 })
+  await pause(900)
+  mark('suspended')
+  await pause(3600)
+  await client.send('Page.stopScreencast')
+  await pause(600)
+  await flushFrames()
+  writeFileSync(`${OUT}/frames.json`, JSON.stringify(frames))
+  writeFileSync(`${OUT}/marks.json`, JSON.stringify({ t0: frames[0] ?? null, marks }))
+  log(`frames ${frames.length}, span ${(frames[frames.length - 1] - frames[0]).toFixed(2)}s`)
+  await context.close()
+  await browser.close()
+  process.exit(0)
+}
 await paintIntro('principle')
 await client.send('Page.startScreencast', SCREENCAST)
 await pause(450)

@@ -825,7 +825,7 @@ test('a visitor with no key sees what Mandate is first, and can reach the unlock
   await expect(page.getByTestId('whos-who')).toContainText('You are the studio.')
   await expect(page.getByRole('heading', { level: 2, name: /Ask\. Check\. Tap\. Pay\. Prove\./ })).toBeVisible()
   await expect(page.locator('.land-table tbody tr')).toHaveCount(6)
-  await expect(page.locator('.land-tools li')).toHaveCount(7)
+  await expect(page.locator('.land-tools li')).toHaveCount(12)
   await shots(page, '30-landing')
   // Deep links to the console still ask for a key rather than showing the landing page.
   await page.goto('/app/jobs')
@@ -1510,6 +1510,8 @@ test('refunding the client after the contractor was paid waits for the owner, th
   await expect(card).toContainText('PayPal cannot pull that payout back')
   await card.getByRole('button', { name: /Approve \$150\.00/ }).click()
   await card.getByRole('link', { name: 'Settle →' }).click()
+  // Today lists other approved $150 items with the same button, so wait to be on this receipt before pressing it.
+  await expect(page).toHaveURL(/\/app\/p\//)
   await page.getByRole('button', { name: /Settle \$150\.00/ }).click()
   await expect(page.getByText(/Refund/).first()).toBeVisible()
 
@@ -1628,6 +1630,8 @@ test('an agent key made on Connect an agent works at /mcp, is refused what the r
   const reveal = panel.getByTestId('connect-reveal')
   await expect(reveal).toContainText(`claude mcp add --transport http mandate`)
   await expect(reveal).toContainText(`Authorization: Bearer ${key}`)
+  await expect(reveal).toContainText('.mcp.json')
+  await reveal.getByRole('tab', { name: 'Cursor' }).click()
   await expect(reveal).toContainText('.cursor/mcp.json')
   await expect(panel).not.toContainText('YOUR_AGENT_KEY')
   expect(await panel.innerText()).not.toContain(OWNER)
