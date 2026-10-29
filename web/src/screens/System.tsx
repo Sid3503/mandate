@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useGuide } from '../components/GuidedTour'
-import { ConnectAgent } from '../components/ConnectAgent'
+import { AgentActivity, ConnectAgent } from '../components/ConnectAgent'
 import { DemoReset } from '../components/DemoReset'
 import { NotifyPanel } from '../components/NotifyPanel'
 import { FeaturePanel, ToolTiers } from '../components/PayPalFeatures'
@@ -325,7 +325,7 @@ export function System() {
           )}
         </section>
       ) : null}
-      {owner ? <ConnectAgent /> : null}
+      {owner ? <><ConnectAgent /><AgentActivity /></> : null}
       {owner ? <AgentKeys /> : null}
       {owner ? <NotifyPanel /> : null}
       {owner ? <ClientKeys /> : null}

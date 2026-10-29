@@ -198,8 +198,21 @@ npm run render:env
   2. Warm up the hosted demo environment by visiting `/demo/start`.
   3. Record the screen at 1920x1080 resolution following the exact shots.
   4. Ensure audio voice-over matches the scripted lines (all <= 20 words per shot).
-  5. Verify total video duration is under 3 minutes (target: 2:45).
+  5. Verify total video duration is under 3 minutes (the current film, `pitch/video/mandate-pitch.mp4`, is 2:57.5).
   6. Upload the video to YouTube as Unlisted or Public.
+
+---
+
+## 9b. Try the browser sign-in with Claude.ai (optional, worth doing before judging)
+- **Estimated time**: 15 minutes
+- **Why**: The OAuth flow is checked with the official MCP SDK client (`cd api && MANDATE_OWNER_KEY=<owner key> npm run check:oauth -- <https address>`), but not with Claude.ai or ChatGPT themselves. They need a public https address.
+- **Steps**:
+  1. Serve Mandate on a public https address (the hosted demo, or `ngrok http 8787` with the server started with `E2E_PUBLIC_URL=<that address>` and your own `E2E_OWNER_KEY` for a throwaway demo server).
+  2. In Claude.ai, add a custom connector with `<address>/mcp` and leave the key blank.
+  3. When it opens the approval page, unlock the console on the same address and approve **Look only**.
+  4. Ask Claude "What are my rules?" It should answer, and it should not be able to propose a payment.
+  5. Check Connect an agent: the connection shows as "Claude (sign-in)". Revoke it.
+- **If it fails**: note the step and the error, and it is a bug to fix before judging. It is not in the demo video, so the video does not depend on it.
 
 ---
 

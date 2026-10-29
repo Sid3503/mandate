@@ -264,6 +264,45 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 CREATE INDEX IF NOT EXISTS agents_status ON agents(status);
 
+-- OAuth 2.1 for the agent door. A client registers itself (RFC 7591); the owner approves it on the console; what it
+-- is handed is an ordinary agent key, so revoking the agent revokes the connection. Codes and refresh tokens are
+-- stored as hashes, like every other secret here.
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  redirect_uris_json TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  code_hash TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  challenge TEXT NOT NULL,
+  scopes_json TEXT NOT NULL,
+  resource TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_refresh (
+  token_hash TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS oauth_refresh_agent ON oauth_refresh(agent_id);
+
+-- Requests an outside agent made that the door turned away: over its budget, over its limit, outside its scope.
+-- The proposals table only holds what was filed, so a refusal would otherwise leave no trace the owner could see.
+CREATE TABLE IF NOT EXISTS agent_refusals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id TEXT NOT NULL,
+  at TEXT NOT NULL,
+  code TEXT NOT NULL,
+  tool TEXT,
+  detail TEXT
+);
+CREATE INDEX IF NOT EXISTS agent_refusals_at ON agent_refusals(at);
+
 CREATE TABLE IF NOT EXISTS client_keys (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,

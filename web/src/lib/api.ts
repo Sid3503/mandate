@@ -1,6 +1,7 @@
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 import { session, workspaceFromKey } from './session'
-import type { NegotiationView, ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
+import type { ConnectionCheck } from './connect'
+import type { AgentActivityRow, OauthRequestInfo, NegotiationView, ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -357,6 +358,23 @@ export const api = {
   replayRules: (rules: unknown) => request<Replay>('/v1/rules/replay', { method: 'POST', body: rules }),
   replayHistory: (rules?: unknown) => request<Replay>('/v1/replay', { method: 'POST', body: rules ?? {} }),
   agents: () => request<AgentRow[]>('/v1/agents'),
+  /** The owner's check that a key opens the door: the server walks initialize, the tool list and the rules with it. */
+  testConnection: (key: string, door: '/mcp' | '/mcp/readonly') => request<ConnectionCheck | { ok: false; step: string; status: number; detail: string; ms: number }>('/v1/agents/test-connection', { method: 'POST', body: { key, door } }),
+  agentActivity: () => request<{ data: AgentActivityRow[] }>('/v1/agents/activity'),
+  /** What a browser client is asking for, checked by the server. Throws if it is a request the server would never honour. */
+  oauthRequest: (query: string) => request<OauthRequestInfo>(`/v1/oauth/request?${query}`),
+  /** The owner's answer to a client's sign-in. Approving asks for a passkey tap when the studio requires one. */
+  oauthDecision: async (input: { client_id: string; redirect_uri: string; code_challenge: string; state?: string; resource?: string; scope?: string; decision: 'approve' | 'deny'; grant?: 'look' | 'ask' }) => {
+    try {
+      return await request<{ redirectTo: string }>('/v1/oauth/decision', { method: 'POST', body: input })
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'oauth.approve', input } })
+      const signed = await startAuthentication({ optionsJSON: started.options as never })
+      const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+      return request<{ redirectTo: string }>('/v1/oauth/decision', { method: 'POST', body: input, headers: { 'x-mandate-stepup': verified.grant } })
+    }
+  },
   createAgent: async (input: { name: string; scopes: AgentScope[]; limits?: { proposalsPerHour?: number; centsPerHour?: number }; expiryDays?: number | null }) => {
     try {
       return await request<{ agent: AgentRow; apiKey: string }>('/v1/agents', { method: 'POST', body: input })

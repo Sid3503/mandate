@@ -88,8 +88,23 @@ export function Receipt() {
             {settlementLine(p) && p.deltaCents ? <p className="fine">{settlementLine(p)}</p> : null}
           </section>
 
+          <section className="panel" data-tour="receipt-verify-offline">
+            <div className="row between">
+              <h2 className="panel-title">Check it without asking Mandate</h2>
+              <Link to="/verify" state={{ receipt: data }} className="btn btn-ink btn-sm">Verify in your browser →</Link>
+            </div>
+            <p className="fine">
+              The public key is never trusted from the receipt itself. Keys are published at <code className="mono">/.well-known/mandate-keys.json</code>, so keep a copy somewhere other than this server.
+            </p>
+            <div className="kvs">
+              <KV label="Key fingerprint" mono>{p.lockKeyId ?? '—'}</KV>
+              <KV label="Public keys"><a href="/.well-known/mandate-keys.json" target="_blank" rel="noreferrer">/.well-known/mandate-keys.json</a></KV>
+              <KV label="From a terminal"><span className="mono">cd api &amp;&amp; npx tsx scripts/verify-receipt.ts {p.id}</span></KV>
+            </div>
+          </section>
+
           {p.gate === 'DENY' ? (
-            <section className="panel panel-warn">
+            <section className="panel panel-warn" data-tour="receipt-refusal-proof">
               <div className="row between">
                 <h2 className="panel-title">Proof of Refusal</h2>
                 <a href={`/v1/proposals/${p.id}/refusal-receipt`} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm">Download Refusal JSON →</a>

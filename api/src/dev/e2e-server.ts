@@ -16,6 +16,10 @@ import { WARRANT_ID } from '../domain/schemas'
 import { adoptPayment } from './adopt'
 
 const port = Number(process.env.PORT ?? 8799)
+// To try this server through a tunnel (ngrok), say its address and pick keys of your own: the tests' keys are public.
+const publicUrl = process.env.E2E_PUBLIC_URL?.trim().replace(/\/$/, '') || `http://127.0.0.1:${port}`
+const ownerKey = process.env.E2E_OWNER_KEY?.trim() || 'owner-e2e-key-0123456789'
+const keyTail = process.env.E2E_OWNER_KEY ? ownerKey.slice(-12) : 'e2e-key-0123456789'
 
 // A test server that dies takes every later test down with "connection refused", which hides the cause. Say why,
 // synchronously (an exiting process can lose buffered output), and to a file as well when E2E_CRASH_LOG names one.
@@ -93,7 +97,7 @@ const watch = new FakeWatch()
 // (DRAFTER_MODEL beside AGENT_MODEL). E2E_LIVE_DRAFTER=1 with OLLAMA_API_KEY turns it on.
 const drafterModel = process.env.E2E_LIVE_DRAFTER ? createAgentModel({ apiKey: process.env.OLLAMA_API_KEY, baseUrl: process.env.OLLAMA_BASE_URL, name: process.env.DRAFTER_MODEL ?? DEFAULT_OLLAMA_MODEL }) : null
 // The breaker is off for the tests (they make many refused requests on purpose). E2E_TRIP_AFTER=3 turns the real one on.
-const services = buildServices({ db, paypal, invoices, watch, publicUrl: `http://127.0.0.1:${port}`, now: () => new Date(), safety: { tripAfter: Number(process.env.E2E_TRIP_AFTER ?? 0) } })
+const services = buildServices({ db, paypal, invoices, watch, publicUrl, now: () => new Date(), safety: { tripAfter: Number(process.env.E2E_TRIP_AFTER ?? 0) } })
 // E2E_ADOPT=<paypal-record.json> brings a payment PayPal already holds into this ledger (see adopt.ts), to film what happens
 // to it next. With E2E_REAL_PAYPAL=1 a refund then goes to the real capture.
 if (process.env.E2E_ADOPT) {
@@ -110,16 +114,16 @@ const app = createApp({
   drafterModel,
   now: () => new Date(),
   config: {
-    apiKey: 'owner-e2e-key-0123456789',
-    proposerKey: 'proposer-e2e-key-0123456789',
-    buyerAgentKey: 'buyer-agent-e2e-key-0123456789',
+    apiKey: ownerKey,
+    proposerKey: process.env.E2E_OWNER_KEY ? `proposer-${keyTail}-${ownerKey.slice(0, 8)}` : 'proposer-e2e-key-0123456789',
+    buyerAgentKey: process.env.E2E_OWNER_KEY ? `buyer-agent-${keyTail}-${ownerKey.slice(0, 8)}` : 'buyer-agent-e2e-key-0123456789',
     buyerAgentParty: scenario.client.id,
     webDist: process.env.WEB_DIST ?? fileURLToPath(new URL('../../../web/dist', import.meta.url)),
     rateLimitPerMinute: 0,
     paypalConfigured: true,
     paypalMode: realPayPal ? 'sandbox' : 'fake',
     log: false,
-    publicUrl: `http://127.0.0.1:${port}`,
+    publicUrl,
     // Lets the deploy smoke test be rehearsed against this server (GIT_COMMIT=<sha> pretends to be that build).
     commit: process.env.GIT_COMMIT?.trim() || null,
     // The tests run against a fake PayPal, so the reset a hosted demo uses is safe to offer here.

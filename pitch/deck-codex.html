@@ -652,7 +652,7 @@
         <h2>Agents talk. Rules decide. PayPal moves money.</h2>
         <section class="flow" data-od-id="flow-diagram">
           <div class="node"><strong>Agents</strong><span class="micro">buyer · seller · clerk<br />gpt-oss:20b</span></div>
-          <div class="node"><strong>Mandate MCP</strong><span class="micro">6 tools · none can pay</span></div>
+          <div class="node"><strong>Mandate MCP</strong><span class="micro">11 tools · none can pay</span></div>
           <div class="node"><strong>Rules gate</strong><span class="micro">pure code · both sides’ rules</span></div>
           <div class="node lime-panel"><strong>DENY<br />AUTO<br />NEEDS_&#8203;APPROVAL</strong><span class="micro">decision</span></div>
           <div class="node"><strong>Owner’s tap</strong><span class="micro">server signs the lock · Ed25519</span></div>
@@ -662,7 +662,7 @@
           <div class="node"><strong>Receipt</strong><span class="micro">every dollar explained</span></div>
           <div class="no-path">LOCKED: no agent holds the PayPal token</div>
         </section>
-        <p class="speaker-note">The whole system in one line. Agents, ours or anyone’s, connect only to Mandate’s MCP server, which has six tools to read and ask. Nothing that pays. Every proposal hits a rules gate written in plain code, checked against both sides’ rules, with three possible answers. If the owner needs to approve, her tap makes the server sign a lock with Ed25519 that fixes the payee, the cents and the proof. Only then does Mandate call PayPal: Orders for money in and Payouts for money out are live today, and invoices through PayPal’s Agent Toolkit are built, with checkout as the fallback. A PayPal webhook makes the server re-read the payout from PayPal, and the receipt explains every dollar. No agent ever holds the token.</p>
+        <p class="speaker-note">The whole system in one line. Agents, ours or anyone’s, connect only to Mandate’s MCP server, which has eleven tools to read and ask. Nothing that pays. Every proposal hits a rules gate written in plain code, checked against both sides’ rules, with three possible answers. If the owner needs to approve, her tap makes the server sign a lock with Ed25519 that fixes the payee, the cents and the proof. Only then does Mandate call PayPal: Orders for money in and Payouts for money out are live today, and invoices through PayPal’s Agent Toolkit are built, with checkout as the fallback. A PayPal webhook makes the server re-read the payout from PayPal, and the receipt explains every dollar. No agent ever holds the token.</p>
       </article>
 
       
@@ -883,10 +883,10 @@
           <article class="card lime-panel" style="min-height:250px"><div class="money" style="font-size:120px">110</div><h3>API tests</h3><p class="small">The rules, the lock and its signature, the deal check, the agent door, Payouts, invoices.</p></article>
           <article class="card" style="min-height:250px"><div class="money" style="font-size:120px">34</div><h3>Browser tests</h3><p class="small">Desktop and phone, with an accessibility scan on every screen.</p></article>
           <article class="card" style="min-height:250px"><div class="money" style="font-size:120px">8/8</div><h3>Live-model cases</h3><p class="small">Including a fooled clerk and a full negotiation, on the real model. The latest runs all pass.</p></article>
-          <article class="card black-panel" style="min-height:250px"><div class="money" style="font-size:120px;color:var(--accent)">0</div><h3>Agent tools that can pay</h3><p class="small">Six tools. Four read, two ask. No approve, send or change-the-rules.</p></article>
+          <article class="card black-panel" style="min-height:250px"><div class="money" style="font-size:120px;color:var(--accent)">0</div><h3>Agent tools that can pay</h3><p class="small">Eleven tools. Seven read, four ask. No approve, send or change-the-rules.</p></article>
         </section>
         <div class="job-foot"><span class="chip deny">Rule</span><p>A case passes when the rules’ outcome is right. We tested that the model obeys “ignore your rules”. It does, and $0 moves.</p></div>
-        <p class="speaker-note">What we tested. A hundred and ten API tests cover the rules, the signed lock, the deal check, the agent door, Payouts and invoices. Thirty-four browser tests run on desktop and phone with an accessibility scan on every screen. Against the real model we run eight cases, including being fooled by the vendor email and a full negotiation. A case passes when the rules’ outcome is right, because the model is allowed to be wrong. We tested that: told to ignore the rules, the model obeys, and the rules still say no. And there are zero agent tools that can pay: six tools, four that read and two that ask.</p>
+        <p class="speaker-note">What we tested. Nearly a thousand API tests cover the rules, the signed lock, the deal check, the agent door, Payouts and invoices. A hundred and sixty browser tests run on desktop, phone and a passkey profile with an accessibility scan on every screen. Against the real model we run eight cases, including being fooled by the vendor email and a full negotiation. A case passes when the rules’ outcome is right, because the model is allowed to be wrong. We tested that: told to ignore the rules, the model obeys, and the rules still say no. And there are zero agent tools that can pay: eleven tools, seven that read and four that ask.</p>
       </article>
 
       <article class="slide" data-slide="22" data-od-id="slide-built-on-paypal">
@@ -928,7 +928,7 @@
             <div class="bx"><b>Vercel AI SDK</b><span>tool calls · structured output · MCP client</span></div>
             <div class="bx"><b>Zod</b><span>every model output re-checked</span></div></div></div>
           <div class="layer"><span class="lbl">One door</span><div class="boxes">
-            <div class="bx lime"><b>Mandate MCP server</b><span>@modelcontextprotocol/sdk · 6 tools: get_rules · get_jobs · propose · list_ledger · offer_deal · explain</span></div></div></div>
+            <div class="bx lime"><b>Mandate MCP server</b><span>@modelcontextprotocol/sdk · 11 tools: get_rules · get_jobs · propose · list_ledger · offer_deal · explain · and five more</span></div></div></div>
           <div class="layer"><span class="lbl">Authority</span><div class="boxes">
             <div class="bx dark"><b>Rules gate</b><span>pure TypeScript</span></div>
             <div class="bx dark"><b>Deal check</b><span>both sides’ rules</span></div>
@@ -982,7 +982,7 @@
           <table class="mini-table">
             <thead><tr><th>PayPal MCP server</th><th>Mandate MCP server</th></tr></thead>
             <tbody>
-              <tr><td>Agent gets payment tools + token</td><td>Agent gets six tools, none can pay</td></tr>
+              <tr><td>Agent gets payment tools + token</td><td>Agent gets eleven tools, none can pay</td></tr>
               <tr><td>Model action can reach money</td><td>Warrant gate decides first</td></tr>
               <tr><td>Approval lives after creation</td><td>Authority lives before PayPal</td></tr>
               <tr><td>No notion of the other side</td><td>Deals only inside both owners’ rules</td></tr>

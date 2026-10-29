@@ -188,7 +188,7 @@ Each one shows **PayPal was never called · $0 moved**. **Ledger → Refused** h
 | Receipts | Per proposal (`/packet`) and per job (`/jobs/:jobId`). |
 | Keys | Owner and proposer. The proposer gets 403 on approve, reject, capture and rule changes. Each request records which key asked. |
 | Owner console | `web/`: an installable React web app served at `/app/`. Today, Jobs, Deals, Ledger, Rules, Payees, Members, Sessions, Connect, System and Proof, an AG Grid ledger, offline read-only mode, a strict CSP. |
-| Tests | 891 API tests (Vitest across 75 files, including 46 red-team cases), plus 150 Playwright tests in 23 specs on desktop, a Pixel 7 and a passkey profile, with an axe WCAG 2.1 AA scan. Lighthouse mobile: 90 / 88 / 80 (Welcome, Unlock, Today). |
+| Tests | 974 API tests (Vitest across 83 files, including 46 red-team cases), plus 160 Playwright tests in 24 specs on desktop, a Pixel 7 and a passkey profile, with an axe WCAG 2.1 AA scan. Lighthouse mobile: 90 / 88 / 80 (Welcome, Unlock, Today). |
 | Postman | A collection that walks the frozen job, with assertions. |
 | Deploy | A `render.yaml` blueprint. One service serves the API and the console. |
 | Pitch | A deck and a demo video script in `pitch/`. |
@@ -224,7 +224,7 @@ Also built: the deal check, Ed25519 signed locks and deals, the MCP agent door, 
    web/  React + Vite         or any outside MCP client                  any HTTP client
    served at /app/                  │ proposer key, MCP                        │
         │                           ▼                                          │
-        │                   /mcp  (6 tools, none can pay)                      │
+        │                   /mcp  (11 tools, none can pay)                     │
         ▼                           │                                          ▼
    api/  Hono on Node 24  ── owner, studio or client-agent bearer key ─────────┘
      │  auth → rate limit → routes → MandateService / DealService / AgentService
@@ -764,6 +764,24 @@ A hash can be recomputed by anyone who can write the database. So the lock is al
 - **Rotation.** Every public key the server has signed with is remembered in the ledger, so changing `SIGNING_KEY` does not invalidate old receipts. Locks made before signing existed are signed once at boot, and only if their hash still recomputes.
 - **Keys.** Production needs `SIGNING_KEY` (PKCS8 PEM; base64 of the PEM also works). Development creates `api/data/signing-key.pem` (mode 0600, gitignored).
 
+### Signing in with OAuth
+
+A key is still the simplest way in. OAuth is for an app that signs in with a browser and has nowhere to paste one (Claude.ai, ChatGPT, a hosted IDE). It follows the MCP authorization spec: OAuth 2.1, PKCE with S256 on every grant, public clients, dynamic registration, resource indicators.
+
+1. The app reads `/.well-known/oauth-protected-resource/mcp`, finds this server as the authorization server, and reads `/.well-known/oauth-authorization-server`.
+2. It registers itself at `/oauth/register` and gets a `client_id` (no secret).
+3. It sends the browser to `/oauth/authorize`. The server checks the request (registered redirect, exact match; `code_challenge_method=S256`; a `resource` that is this server's own door) and hands the browser to the console at `/app/connect/authorize`. A redirect that was not registered is refused and never redirected to, so this cannot be used as an open redirect.
+4. **The owner decides** on the console, where they are already signed in: *Look only* (`mcp`, `read`) or *Look and ask* (`mcp`, `read`, `propose`). A grant for `/mcp/readonly` is always look-only, whatever was ticked. Approving needs a passkey tap when the studio requires one for money. Saying no sends `error=access_denied` back.
+5. The app trades the one-shot code (5 minutes, used once) and its PKCE verifier at `/oauth/token` and receives an ordinary agent key (`mnd_ag_…`, valid a day) and a refresh token.
+
+**What the app is handed is an agent key.** Nothing new guards it: it carries its scopes and limits, shows on the Connect page and the agent scorecard as *Name (sign-in)*, and **Revoke** ends the connection. Refresh tokens rotate: each use issues a new key and a new refresh token and the old key stops working. A refresh token that comes back a second time is treated as leaked, and the whole connection is revoked. Codes and refresh tokens are stored as hashes.
+
+Not built: client secrets, the client-credentials grant, and client ID metadata documents. It works on the main address only; a studio's own door (`/w/<id>`) answers `404 oauth.unavailable` and uses a key.
+
+### Refusals
+
+The proposals table only holds what was filed, so a request the door turned away would leave no trace. `agent_refusals` records them: `budget.exceeded` (the run's request budget, with the tool that was refused), `agent.over_limit` and `agent.rate_limit` (the key's hourly or daily limits and the breaker), and `agent.scope` (a route the key was not given). A revoked, suspended or expired key is not recorded, because that is the owner's doing and already shows on the agent's row. The table keeps the last 2,000 rows.
+
 ### The agent door: MCP
 
 `POST /mcp` is a Model Context Protocol server (Streamable HTTP, stateless: a fresh server per request, no session to leak). `npm run mcp` in `api/` serves the same tools over stdio for Claude Desktop, Cursor or the MCP Inspector.
@@ -783,7 +801,10 @@ A hash can be recomputed by anyone who can write the database. So the lock is al
 
 - Every answer has the rule code, the rules' sentence in plain words, the server's own words, the phase, the next step and `moneyMoved: "$0.00"`.
 - Tool errors come back as `isError` results the model can read and fix, not as protocol failures. Small models fill optional fields with placeholders (`""`, `0`, an invented id); the `propose` boundary treats those as absent, and never changes who, how much or what for.
-- A connection has a budget of requests that ask (12, keyed by the `x-mandate-run` header). A request that fails validation does not spend it.
+- A connection has a budget of requests that ask (12, keyed by the `x-mandate-run` header). A request that fails validation does not spend it. When the budget runs out the tool answers `budget.exceeded`, and the owner sees that on **Connect an agent → What your agents are asking** (see *Refusals* below).
+- **A read-only door.** `POST /mcp/readonly` offers only `get_rules`, `get_jobs`, `list_ledger` and `explain`, even to a key that may also ask. A client that wants to try an agent safely points here: `propose` is not offered, so it cannot be called.
+- **Discovery.** A missing or wrong key on `/mcp` answers `401` with `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"` (RFC 9728). That document names the resource, that a key goes in the `Authorization` header, the scopes (`mcp:look`, `mcp:ask`) and, on the main address, this server as its own authorization server.
+- **Check a connection from the console.** `POST /v1/agents/test-connection` (owner) walks `initialize`, `tools/list` and `get_rules` with a pasted key, and answers what it can reach and whether any listed tool could move money. The key is not echoed.
 - **An issued agent key** (System → Connect an agent, or `POST /v1/agents`) opens the door with the `mcp` scope, and `read`, `propose` and `deals` decide which tools are behind it. A tool the scopes do not allow is switched off before the connection opens: it is not listed and cannot be called. A key with the door and nothing behind it is refused when it is made (`agent.scopes`), so it can never connect to an empty room. The key's hourly request count and value limits apply to what it asks through `/mcp`, and the breaker counts refusals per agent: a key that keeps asking for what the rules never allow is suspended on its own (the next call gets `403 agent.suspended`), the others carry on, and the owner resumes it on System.
 - **Retries.** Most MCP clients send no `x-mandate-run`, so a retried call would look new. An identical tool call from the same caller inside 60 seconds is treated as a retry: it gets the first call's run id, and the idempotency key built from it replays the first answer instead of asking twice. After the window, the same ask is made and judged afresh. With the header, the run id is the client's own.
 - **Plain HTTP.** POST only: a `GET` or `DELETE` answers `405` with `Allow: POST` (there is no session and no event stream, and an empty `200` made real clients reconnect over and over). A client that leaves out `Accept`, or sends `Content-Type: text/plain`, is served anyway, since every answer is JSON. A body over 1 MB is `413`.
@@ -891,7 +912,14 @@ The base URL is `http://127.0.0.1:8787` locally. Everything under `/v1` needs a 
 | `POST /v1/deals/:id/milestones/:n/bill` | studio, owner | Propose a charge for one milestone, at exactly its agreed amount |
 | `GET /v1/party-rules` | owner | Both companies' private deal rules |
 | `PUT /v1/party-rules/:partyId` | owner **or** the company's own key | Writes that company's own sheet only (`mine` resolves to the caller); another party's sheet is refused; sample sheets count only once kept |
-| `POST /mcp` | any key | The agent door (Model Context Protocol) |
+| `POST /mcp`, `POST /mcp/readonly` | any key | The agent door (Model Context Protocol), and the same door with only the four tools that look |
+| `GET /.well-known/oauth-authorization-server`, `GET /.well-known/oauth-protected-resource[/mcp[/readonly]]` | none | OAuth discovery (RFC 8414, RFC 9728). Open to any origin, because a browser client reads them |
+| `POST /oauth/register` | none | Dynamic client registration (RFC 7591). Public clients only; a redirect must be https, loopback, or an app's own scheme |
+| `GET /oauth/authorize` | none | Checks the request, then sends the browser to the console to ask the owner. Decides nothing itself |
+| `POST /oauth/token` | none (PKCE) | Trades a one-shot code for a key, or a refresh token for the next key |
+| `GET /v1/oauth/request`, `POST /v1/oauth/decision` | owner | What the console shows the owner, and their answer. Approving asks for a passkey tap when the studio requires one |
+| `GET /v1/agents/activity` | owner | What outside agents asked and what the rules said, plus the requests the door turned away |
+| `POST /v1/agents/test-connection` | owner | Walks a key through the door and reports what it can reach |
 | `POST /v1/clerk/messages` | studio, owner | Talk to the clerk |
 | `POST /v1/negotiations` | owner | Have the two agents negotiate |
 | `GET /v1/agent-runs`, `GET /v1/agent-runs/:id` | owner | Every agent run, with its full trace |
@@ -1080,8 +1108,8 @@ Sandbox accounts used are listed in [KT.md](../KT.md). Passwords live only in th
 ## Testing and quality
 
 ```bash
-cd api && npm test && npm run typecheck        # 891 Vitest tests across 75 files
-cd web && npm run typecheck && npm run e2e     # 150 Playwright tests in 23 specs (desktop, Pixel 7, passkey)
+cd api && npm test && npm run typecheck        # 974 Vitest tests across 83 files
+cd web && npm run typecheck && npm run e2e     # 160 Playwright tests in 24 specs (desktop, Pixel 7, passkey)
 ```
 
 **API tests (`api/test/`)** cover:
@@ -1129,7 +1157,7 @@ cd web && npm run typecheck && npm run e2e     # 150 Playwright tests in 23 spec
 - **Today:** owner only; the setup checklist; waiting, ready-to-bill, in flight, done (with how), stopped, overdue, autopilot-blocked, held and disputed items; the month in money from PayPal-confirmed events.
 - **The audit:** passes on an empty ledger and on the whole frozen job; and turns the right check red for each of eight kinds of tampering.
 - **The rules drafter (scripted model):** a draft that is valid rules and lists what it loosens; a tightening; a hostile draft whose summary hides what the code reveals; unknown people, invalid rules, no model, no usable draft; owner only; a draft that is then published and followed by the gate.
-- **Red team (56 cases):** a *fully compromised* model calls `propose` with hostile arguments and the invariant is that PayPal is never asked and nothing reads as paid. The cases cover lookalike and smuggling payees, zero, negative, fractional and string amounts, euros, four kinds of bad proof link, SQL in strings, instructions hidden in the description and prompt, extra fields that try to set the decision, and a refund to the contractor. Also: a guessed-tool sweep (14 names) against the agent door, the owner key downgraded there, every money route closed to the studio and client-agent keys, and the output guard against six ways of boasting that money moved. A block repeats the attacks with a standing rule in force, and another with autopilot on (wrong amount, missing milestone, unknown deal, wrong client, no or insecure proof, other job, other currency, forbidden work; a milestone cannot be billed twice; a second payout out of a spent payment is refused; the audit is green afterwards).
+- **Red team (46 cases):** a *fully compromised* model calls `propose` with hostile arguments and the invariant is that PayPal is never asked and nothing reads as paid. The cases cover lookalike and smuggling payees, zero, negative, fractional and string amounts, euros, four kinds of bad proof link, SQL in strings, instructions hidden in the description and prompt, extra fields that try to set the decision, and a refund to the contractor. Also: a guessed-tool sweep (14 names) against the agent door, the owner key downgraded there, every money route closed to the studio and client-agent keys, and the output guard against six ways of boasting that money moved. A block repeats the attacks with a standing rule in force, and another with autopilot on (wrong amount, missing milestone, unknown deal, wrong client, no or insecure proof, other job, other currency, forbidden work; a milestone cannot be billed twice; a second payout out of a spent payment is refused; the audit is green afterwards).
 
 **Live agent evaluation (`npm run eval:agents`)** runs 14 clerk cases and the two-agent negotiation against the real model, on an in-memory ledger and a fake PayPal, so it costs tokens and nothing else. A case passes when the *rules'* outcome is right, which is what matters: the model may be wrong, and the design makes being wrong harmless. The cases include the fake-vendor email, "the owner already approved", a payee that uses a Cyrillic letter, an instruction hidden in a pasted invoice, "split it into five $18 payments", a stranger with a convincing story, a request to approve, and two cases under a standing rule. Set `AGENT_MODEL=<name>` to compare models, `EVAL_OUT=file.json` to save a result and `EVAL_ONLY="text"` to run cases whose name contains it.
 
@@ -1297,7 +1325,7 @@ Not used, and why: **Bryntum** and **Elastic** need trial keys that would expire
 12. ✅ **An open-source `LICENSE` file** (MIT).
 13. ✅ **Standing rules:** the owner signs a kind of payout once; matching payouts are sent with no tap.
 14. ✅ **PayPal depth:** feature readiness, cancel an unclaimed payout, return URL, invoice remind and cancel, dispute hold, reconciliation, balance, webhook verification, tool tiers.
-15. ✅ **Red team:** 42 deterministic cases against a fully compromised model, plus live cases on the real model.
+15. ✅ **Red team:** 46 deterministic cases against a fully compromised model, plus live cases on the real model.
 16. ⬜ **Prove a real open dispute** (needs a buyer-side dispute; see [the note](#what-has-and-has-not-been-proven-against-a-real-dispute)). A real refund has run: `12C310409G863064M`.
 17. ✅ **AP2 mandate projection:** every locked payment and every standing rule is also a signed verifiable credential (compact JWS, EdDSA), verifiable in the browser at `/app/verify` with the same public keys that verify locks.
 18. ✅ **Adaptive friction:** a pure risk engine that can only add friction — a lookalike payee is refused by name, a burst of asks and proof on a never-seen host wait for a tap. Off by default, so every existing warrant behaves exactly as it did.
