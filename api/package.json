@@ -22,23 +22,23 @@
     "eval:policy": "node --env-file=../.env ./node_modules/tsx/dist/cli.mjs scripts/eval-policy.ts"
   },
   "dependencies": {
-    "@ai-sdk/mcp": "^2.0.66",
+    "@ai-sdk/mcp": "^2.0.85",
     "@asteasolutions/zod-to-openapi": "^9.1.0",
     "@hono/node-server": "1.19.17",
-    "@modelcontextprotocol/sdk": "^1.32.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@paypal/agent-toolkit": "^1.11.0",
     "@simplewebauthn/server": "14.0.3",
-    "ai": "^7.0.127",
-    "ai-sdk-ollama": "^4.4.0",
-    "hono": "^4.13.12",
-    "zod": "^4.6.5"
+    "ai": "^7.0.154",
+    "ai-sdk-ollama": "^4.5.1",
+    "hono": "^4.13.14",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.9.1",
     "fast-check": "4.10.2",
-    "tsx": "^4.21.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.5"
   },
   "license": "MIT"
 }
