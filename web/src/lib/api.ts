@@ -369,7 +369,7 @@ export const api = {
       return await request<{ redirectTo: string }>('/v1/oauth/decision', { method: 'POST', body: input })
     } catch (error) {
       if (!(error instanceof ApiError) || error.code !== 'auth/stepup-required') throw error
-      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'oauth.approve', input } })
+      const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'connection.approve', input } })
       const signed = await startAuthentication({ optionsJSON: started.options as never })
       const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
       return request<{ redirectTo: string }>('/v1/oauth/decision', { method: 'POST', body: input, headers: { 'x-mandate-stepup': verified.grant } })

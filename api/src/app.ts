@@ -1468,7 +1468,7 @@ export function createApp(deps: AppDeps) {
     const request = authorizeParams((name) => ({ client_id: parsed.data.client_id, redirect_uri: parsed.data.redirect_uri, code_challenge: parsed.data.code_challenge, state: parsed.data.state, resource: parsed.data.resource, scope: parsed.data.scope } as Record<string, string | undefined>)[name])
     if (parsed.data.decision === 'deny') return c.json({ redirectTo: oauth.deny(request) })
     const grant: OauthGrant = parsed.data.grant ?? 'look'
-    requireStep(c, deps, 'oauth.approve', stepBinding('oauth.approve', JSON.stringify(parsed.data)))
+    requireStep(c, deps, 'connection.approve', stepBinding('connection.approve', JSON.stringify(parsed.data)))
     return c.json({ redirectTo: oauth.approve(request, grant) })
   })
   app.post('/oauth/token', async (c) => {
