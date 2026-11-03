@@ -18,7 +18,7 @@ Mandate is the third option. An agent gets a wallet of authority, not a wallet o
 
 Mandate is a spend-authority layer that sits in front of PayPal. Staff and AI agents *ask*; a pure function of the owner's signed rules decides; PayPal moves exactly the cents that were locked.
 
-1. **Anyone can ask, nobody can pay.** Agents connect over MCP, with a key or by signing in with a browser (OAuth 2.1 with PKCE, approved by the owner on the console), and carry eleven tools and none that approve, pay or change a rule. A proposer key can file a request and watch it; it cannot move a cent.
+1. **Anyone can ask, nobody can pay.** Agents connect over MCP, with a key or by signing in with a browser (OAuth 2.1 with PKCE, approved by the owner on the console), and carry thirteen tools and none that approve, pay or change a rule. A proposer key can file a request and watch it; it cannot move a cent.
 2. **A pure function decides.** Every charge, payout and refund gets `DENY`, `AUTO` or `NEEDS_APPROVAL` from `decide()` — no model call in the decision. It checks payees, categories, monthly caps, milestone limits, funding coverage and duplicate asks.
 3. **Say yes to the rule, not the payment.** A signed standing rule ("Priya is paid from settled Northwind money, up to her 60% share") makes matching payouts go with no tap. Everything else still waits for one.
 4. **Autopilot runs the job.** With the rules signed, a delivered milestone is accepted, billed, paid by the client and paid out to the contractor without anyone tapping. Today shows only the exceptions.
