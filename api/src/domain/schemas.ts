@@ -186,12 +186,24 @@ export const BLANK_WARRANT: WarrantBody = {
 export type Payee = z.infer<typeof PayeeSchema>
 
 /** Angle brackets are dropped so a description or note can never carry markup into an email, a page or a PayPal invoice. */
-export const stripMarkup = (value: string): string => value
-  // A whole tag (`<b>`, `</script>`, `<a href="...">`) is removed first, so `<b>for</b>` reads "for" and not "bfor/b".
-  .replace(/<\/?[A-Za-z!][^<>]*>/g, '')
-  // Then any angle bracket still left (a lone `<`, a `>` in prose) goes too: nothing that could open a tag survives.
-  .replace(/[<>]/g, '')
-  .trim()
+export const stripMarkup = (value: string): string => {
+  // One left-to-right pass, never a repeated substitution: a tag-shaped run (`<b>`, `</script>`, `<a href="...">`) is
+  // skipped whole, so `<b>for</b>` reads "for" and not "bfor/b", and no angle bracket is ever copied to the output.
+  // Because nothing is substituted and re-scanned, text on either side of a removed tag cannot join into a new tag.
+  let out = ''
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i]!
+    if (ch === '<' && /[A-Za-z!/]/.test(value[i + 1] ?? '')) {
+      const close = value.indexOf('>', i)
+      if (close !== -1) {
+        i = close
+        continue
+      }
+    }
+    if (ch !== '<' && ch !== '>') out += ch
+  }
+  return out.trim()
+}
 
 /** One line of a bill. Whole cents and whole units, so the total is exact and the signed hash is stable. */
 export const LineItemSchema = z.object({

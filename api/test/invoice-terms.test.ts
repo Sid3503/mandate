@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import fc from 'fast-check'
+import { stripMarkup } from '../src/domain/schemas'
 import { afterEach, describe, expect, it } from 'vitest'
 import { canonicalCart, cartHash, type CartFields } from '../src/domain/hash'
 import { ProposalCreateSchema } from '../src/domain/schemas'
@@ -40,6 +42,13 @@ describe('bill terms: the schema', () => {
       expect(JSON.stringify(ok.data)).not.toMatch(/[<>]/)
     }
   })
+  it('never emits an angle bracket, for any input at all', () => {
+    // The point of the function: nothing it returns can open a tag, however the input is built or split around tags.
+    fc.assert(fc.property(fc.string(), fc.constantFrom('<b>', '</b>', '<', '>', '<<', '>>', '<script>', '</scr', 'ipt>'), fc.string(), (a, piece, b) => {
+      for (const input of [a, `${a}${piece}${b}`, `${a}<${piece}>${b}`, `<${a}${piece}`]) expect(stripMarkup(input)).not.toMatch(/[<>]/)
+    }), { numRuns: 500 })
+  })
+
   it('removes whole tags, and any lone angle bracket, whatever the input', () => {
     const clean = (customerNote: string) => {
       const out = parse({ lineItems: [{ description: 'x', quantity: 1, unitCents: 15_000 }], customerNote })
