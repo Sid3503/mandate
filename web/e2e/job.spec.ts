@@ -1513,7 +1513,9 @@ test('refunding the client after the contractor was paid waits for the owner, th
   await card.getByRole('link', { name: 'Settle →' }).click()
   // Today lists other approved $150 items with the same button, so wait to be on this receipt before pressing it.
   await expect(page).toHaveURL(/\/app\/p\//)
-  await page.getByRole('button', { name: /Settle \$150\.00/ }).click()
+  // The address changes before the page does, and Today's list is still on screen for a moment with the same button.
+  // Press the one in the receipt's own settle panel, which only exists once the receipt has rendered.
+  await page.locator('[data-tour="receipt-action"]').getByRole('button', { name: /Settle \$150\.00/ }).click()
   await expect(page.getByText(/Refund/).first()).toBeVisible()
 
   await page.goto(`/app/jobs/${job}`)
