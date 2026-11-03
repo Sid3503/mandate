@@ -578,20 +578,23 @@ describe('step-up grants', () => {
     controlDb.close()
   })
 
-  it('puts step-up routes in the auth rate-limit class', async () => {
-    expect(rateClass('POST', '/auth/stepup/options')).toBe('auth')
-    expect(rateClass('POST', '/auth/stepup/verify')).toBe('auth')
+  it('counts step-ups per signed-in session, not with sign-ins, so an owner can approve several in a row', async () => {
+    // A step-up needs a signed-in session and a passkey signature over a server nonce: there is nothing to guess.
+    expect(rateClass('POST', '/auth/stepup/options')).toBe('write')
+    expect(rateClass('POST', '/auth/stepup/verify')).toBe('write')
+    // Signing in is still counted strictly, per address.
+    expect(rateClass('POST', '/auth/login/options')).toBe('auth')
     const h = harness({ classedRates: true, rateLimitPerMinute: 100, flags: loadFlags({ FLAG_PASSKEYS: '1' }), webauthn: WA })
-    let status = 0
+    const statuses: number[] = []
     for (let i = 0; i < 6; i += 1) {
       const response = await h.app.request('http://mandate.test/auth/stepup/options', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: '{}',
       })
-      status = response.status
+      statuses.push(response.status)
     }
-    expect(status).toBe(429)
+    expect(statuses).not.toContain(429)
   })
 })
 

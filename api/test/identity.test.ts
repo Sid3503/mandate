@@ -109,6 +109,10 @@ describe('sessions and sign-in history', () => {
     expect(rateClass('GET', '/auth/sessions')).toBe('auth')
     expect(rateClass('POST', '/auth/sessions/revoke')).toBe('auth')
     expect(rateClass('GET', '/auth/events')).toBe('auth')
+    // A signed-in owner approving several payments in a row must not be throttled like a password guesser.
+    expect(rateClass('POST', '/auth/stepup/options')).toBe('write')
+    expect(rateClass('POST', '/auth/stepup/verify')).toBe('write')
+    expect(rateClass('POST', '/auth/login/verify')).toBe('auth')
     const h = harness({ classedRates: true, rateLimitPerMinute: 100, flags: loadFlags({ FLAG_PASSKEYS: '1' }), webauthn: WA })
     let status = 0
     for (let i = 0; i < 6; i += 1) {

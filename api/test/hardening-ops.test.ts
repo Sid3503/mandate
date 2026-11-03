@@ -232,7 +232,7 @@ describe('backup and restore of the whole data root', () => {
     const main = join(data, 'mandate.sqlite')
     const ledger = openDatabase(main)
     migrate(ledger)
-    ledger.exec("INSERT INTO proposals (id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at) VALUES ('p_main', 'w1', 1, 'pay', 100, 'USD', 'd', 'allow', 'c', 'd', 'approved', 'now', 'now')")
+    ledger.exec("INSERT INTO proposals (id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at) VALUES ('p_main', 'w1', 1, 'payment', 100, 'USD', 'd', 'AUTO', 'c', 'd', 'locked', 'now', 'now')")
     ledger.close()
     const control = new DatabaseSync(join(data, 'control.sqlite'))
     control.exec("CREATE TABLE marker (v TEXT); INSERT INTO marker VALUES ('control')")
