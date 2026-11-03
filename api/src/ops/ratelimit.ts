@@ -71,6 +71,8 @@ export class RateLimiter {
 
 export function rateClass(method: string, path: string): RateClass {
   if (path.startsWith('/auth/')) return 'auth'
+  // Opening a studio needs no key and writes to disk: it is counted like a sign-in, per address.
+  if (method === 'POST' && path === '/workspaces') return 'auth'
   if (path === '/v1/session') return 'key-unlock'
   if (path === '/v1/ask' || path.startsWith('/v1/clerk')) return 'ask'
   if (/^\/v1\/share\/[^/]+\/pay\//.test(path) || path.startsWith('/v1/pay/')) return 'pay'

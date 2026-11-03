@@ -71,6 +71,7 @@ const product = openProduct({
   model,
   drafterModel,
   paypalFactory,
+  rateLimitPerMinute: config.rateLimitPerMinute,
 })
 const agents = new AgentService(services, model, () => new Date(), drafterModel, fallbackModel, product.budget, flags)
 
@@ -136,12 +137,12 @@ const server = serve({ fetch: app.fetch, hostname: config.host, port: config.por
 // Look at PayPal every few seconds while an invoice or payout is in flight, once a minute when nothing is. A webhook
 // (when the server has a public URL) makes it instant; this is what makes a payment show up without one.
 let lastSweep = 0
-let sweeping = false
+/** The default studio's sweep while it runs. Shutdown waits for it, so the database is never closed under a write. */
+let sweeping: Promise<unknown> | null = null
 const standingTimer = setInterval(() => {
   // Check every second whether it is time: 5 s apart while something is in flight, a minute apart otherwise.
-  if (sweeping || Date.now() - lastSweep < services.mandate.nextSweepMs()) return
-  sweeping = true
-  void services.mandate.sweepStanding().then(() => services.mandate.sweepPending()).catch(() => undefined).finally(() => { lastSweep = Date.now(); sweeping = false })
+  if (sweeping || draining || Date.now() - lastSweep < services.mandate.nextSweepMs()) return
+  sweeping = services.mandate.sweepStanding().then(() => services.mandate.sweepPending()).catch(() => undefined).finally(() => { lastSweep = Date.now(); sweeping = null })
 }, 1_000)
 standingTimer.unref()
 
@@ -160,8 +161,17 @@ http.keepAliveTimeout = 10_000
 
 /**
  * Shutting down without cutting anything off: say so on /ready (so traffic moves away), stop the timers, let requests
- * already running finish for up to 15 seconds, then close the database. A second signal exits at once.
+ * already running finish for up to 15 seconds, wait for a sweep that is still talking to PayPal (the default studio's
+ * and the studios' scheduler, up to 10 seconds more), then close every database: each studio's, the control file and
+ * the ledger. A second signal exits at once.
  */
+async function waitFor(work: Promise<unknown> | null, ms: number): Promise<void> {
+  if (!work) return
+  let timer: NodeJS.Timeout | undefined
+  await Promise.race([work.catch(() => undefined), new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); timer.unref() })])
+  if (timer) clearTimeout(timer)
+}
+
 let stopping = false
 function shutdown() {
   if (stopping) process.exit(1)
@@ -171,10 +181,16 @@ function shutdown() {
   clearInterval(standingTimer)
   if (reviewTimer) clearInterval(reviewTimer)
   console.log(JSON.stringify({ level: 'info', message: 'draining' }))
+  notifier.close()
+  let finished = false
   const done = () => {
-    try { product.close() } catch { /* already closed */ }
-    try { db.close() } catch { /* already closed */ }
-    process.exit(0)
+    if (finished) return
+    finished = true
+    void Promise.all([waitFor(sweeping, 10_000), product.drain(10_000)]).finally(() => {
+      try { product.close() } catch { /* already closed */ }
+      try { db.close() } catch { /* already closed */ }
+      process.exit(0)
+    })
   }
   http.close(done)
   http.closeIdleConnections?.()

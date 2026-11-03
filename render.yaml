@@ -34,6 +34,17 @@ services:
         value: production
       - key: HOST
         value: 0.0.0.0
+      # Render's proxy appends the address it received the request from to X-Forwarded-For, and keeps whatever the
+      # client sent before it. So the rightmost entry (one hop) is the real client and anything to its left can be
+      # forged. Without this every visitor is "direct" and shares one rate-limit bucket, and the per-class limits are off.
+      - key: TRUST_PROXY
+        value: '1'
+      - key: TRUSTED_PROXY_HOPS
+        value: '1'
+      # Peppers the hashes of agent and client keys. Without it the server uses a fallback that is public in the source
+      # (and says so at boot). Generated once by Render and kept across deploys, so issued keys keep working.
+      - key: KEY_PEPPER
+        generateValue: true
       - key: DATABASE_PATH
         value: /tmp/mandate.sqlite
       - key: API_KEY

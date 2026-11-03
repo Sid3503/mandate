@@ -18,6 +18,16 @@ import { seal } from '../tenancy/envelope'
 import type { TenantRegistry } from '../tenancy/registry'
 import { clientIp } from '../ops/client-ip'
 import { removeDatabaseFiles } from '../ops/scheduler'
+import { RateLimiter } from '../ops/ratelimit'
+import { FakePayPal } from '../paypal/fake'
+
+/** The roles an owner may invite. An owner is never made by invite: a new owner is promoted from inside the studio. */
+const INVITE_ROLES = new Set<MemberRole>(['approver', 'proposer', 'viewer', 'payee'])
+
+/** What an invite's passkey signature covers. The limit is part of it only when the owner set one. */
+export function inviteBinding(role: string, label: string | null, approvalLimitCents: number | null): string {
+  return JSON.stringify(approvalLimitCents === null ? { role, label } : { role, label, approvalLimitCents })
+}
 
 export type ProductCtx = {
   flags: ServerFlags
@@ -41,6 +51,11 @@ export type ProductCtx = {
   /** The PayPal this server really uses. A studio opened here moves money the same way the server does. */
   paypalMode: 'none' | 'fake' | 'sandbox' | 'live'
   paypal: { pay?: (invoiceId: string, cents?: number) => void; settlePayouts?: (status?: 'SUCCESS' | 'FAILED') => void } | null
+  /**
+   * The origins a cookie write may come from when passkeys are not configured: this server's own public address.
+   * With passkeys on, their origins are the list. Absent in a half-built app, which then accepts only same-origin.
+   */
+  origins?: string[]
   /** Pure rule try. Absent only in a half-built app. */
   tryOne?: (body: unknown) => unknown
   counts?: () => { proposals: number; events: number; payees: number }
@@ -98,6 +113,10 @@ function memberFromCookie(c: { req: { header: (name: string) => string | undefin
 
 export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request: Request) => Promise<Response> | Response): void {
   const flags = flagsOf(ctx)
+  const writeOrigins = ctx.webauthn?.origins ?? ctx.origins ?? []
+  // Opening a studio writes a file to disk and a row to the control database, with no key. It gets the sign-in class
+  // limit (a few a minute for each address) whether or not the classed limits are on for the rest of the server.
+  const studioOpens = new RateLimiter(() => ctx.now().getTime())
 
   app.get('/healthz', (c) => c.json({ status: 'pass' }))
 
@@ -194,6 +213,15 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       if (!flags.tenancy || !flags.passkeys) throw new Problem(404, 'flag/disabled', 'Not available', 'Creating a studio is off on this server.')
       const control = requireControl(ctx)
       if (!ctx.webauthn || !ctx.demo || !ctx.masterKey) throw new Problem(503, 'flag/disabled', 'Not configured', 'Passkeys need a site name and origin.')
+      // Anyone may open a studio here, and a studio moves money on this server's own PayPal account. That is fine on the
+      // sandbox, where the money is pretend. On a live account it would let a stranger send the operator's real money.
+      if (ctx.paypalMode === 'live') throw new Problem(403, 'tenant/live-refused', 'Not on a live account', 'Studios can only be opened here while the server runs on the PayPal sandbox.')
+      const ip = clientIp({ get: (name) => c.req.header(name) }, ctx.trustProxy, ctx.trustedProxyHops)
+      const limited = studioOpens.take({ className: 'auth', ip, principal: 'workspaces' })
+      if (!limited.ok) {
+        c.header('retry-after', String(limited.retryAfter))
+        throw new Problem(429, 'rate/limited', 'Too many studios', 'This network has opened enough studios for now. Try again after the stated wait.')
+      }
       const body = await c.req.json().catch(() => null) as { name?: string } | null
       const name = body?.name?.trim() ?? ''
       if (name.length < 2 || name.length > 80) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Give the studio a name.')
@@ -210,7 +238,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       // The studio moves money the way this server moves money: on a real PayPal account when there is one.
       // A record of what the server had at the time. At boot a studio always uses the server's PayPal as it is then
       // (or none), so this column never pins a studio to a stand-in.
-      const paypalMode = ctx.paypalMode === 'sandbox' || ctx.paypalMode === 'live' ? 'sandbox' : 'fake'
+      const paypalMode = ctx.paypalMode === 'sandbox' ? 'sandbox' : 'fake'
       control.insertWorkspace({
         id, slug: id, name, mode: 'studio', paypal_mode: paypalMode, db_path: dbPath, status: 'active', created_at: now, expires_at: null, last_active_at: now,
         signing_key_sealed: seal(ctx.masterKey, privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()),
@@ -318,6 +346,12 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
 
   app.post('/auth/paypal/callback', async (c) => {
     if (!flags.paypalLogin) throw new Problem(404, 'flag/disabled', 'Not available', 'PayPal login is off on this server.')
+    // This is a stand-in: it checks no code with PayPal and signs the caller in as the owner. It answers only on a
+    // server whose PayPal is the in-process fake (the tests, a local demo). With a real sandbox or live account, or none,
+    // it is not there at all. The server also refuses to start with it on in production.
+    if (!(ctx.paypal instanceof FakePayPal) || ctx.paypalMode === 'sandbox' || ctx.paypalMode === 'live') {
+      throw new Problem(404, 'flag/disabled', 'Not available', 'PayPal login is a test stand-in and is off on this server.')
+    }
     const control = requireControl(ctx)
     const body = await c.req.json().catch(() => ({})) as { code?: string; state?: string }
     if (!body.code || typeof body.code !== 'string') {
@@ -354,6 +388,10 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
   })
 
   app.post('/auth/logout', (c) => {
+    // Another site must not be able to sign this browser out behind the owner's back.
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, writeOrigins)) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
     const who = memberFromCookie(c, ctx)
     if (who && ctx.control) ctx.control.revokeSession(who.token, ctx.now().toISOString())
     c.header('set-cookie', clearSessionCookie(ctx.cookieSecure))
@@ -385,7 +423,8 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       binding = stepBinding('recovery', 'regenerate')
     } else if (kind === 'invite') {
       if (!body.role) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name a role.')
-      binding = stepBinding('invite', JSON.stringify({ role: body.role, label: body.label ?? null }))
+      const limit = (body as { approvalLimitCents?: unknown }).approvalLimitCents
+      binding = stepBinding('invite', inviteBinding(body.role, body.label ?? null, typeof limit === 'number' ? limit : null))
     } else if (kind === 'member-role') {
       if (!body.memberId || !body.role) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the member and the role.')
       binding = stepBinding('member-role', `${body.memberId}\n${body.role}`)
@@ -427,11 +466,15 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       binding = body.binding ?? ''
     }
     if (!kind || !binding) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Say what this signature is for.')
-    const digest = createHash('sha256').update(`mandate/stepup/v1\n${kind}\n${binding}`).digest('base64url')
+    // The challenge is a fresh random nonce, stored with what it is for and used once within two minutes. A challenge
+    // made from the request alone would be the same every time, so a signature over it (a synced passkey's counter
+    // stays at zero) could be replayed for the next request of the same kind. What the signature is for is still
+    // checked: the grant carries the binding stored here, and the route compares it with its own.
+    const nonce = randomBytes(32).toString('base64url')
     const options = await generateAuthenticationOptions({
       rpID: ctx.webauthn.rpID,
       userVerification: 'required',
-      challenge: digest,
+      challenge: nonce,
       allowCredentials: control.credentials(who.member.id).filter((row) => !row.revoked_at).map((row) => ({ id: row.credential_id })),
     })
     const challengeId = randomUUID()
@@ -486,8 +529,15 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     const who = memberFromCookie(c, ctx)
     const control = requireControl(ctx)
     if (!who) throw new Problem(401, 'auth/required', 'Sign in required', 'No session.')
+    // Recovery codes are a way in without the passkey. Whoever holds a session that came from a code, or a stolen
+    // cookie, must not be able to mint a fresh set: it takes a fresh passkey signature, exactly as replacing them does.
+    if (who.session.method === 'recovery') throw new Problem(403, 'auth/forbidden', 'Recovery cannot approve', 'A recovery session can only add a passkey.')
     if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
       throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
+    }
+    const grant = c.req.header('x-mandate-stepup')
+    if (!grant || !control.consumeGrant(grant, who.member.id, 'recovery', stepBinding('recovery', 'regenerate'), ctx.now().toISOString())) {
+      throw new Problem(401, 'auth/stepup-required', 'Sign this with your passkey', 'Recovery codes need a fresh passkey signature.')
     }
     const codes = Array.from({ length: 8 }, () => randomBytes(8).toString('base64url'))
     control.saveRecovery(who.member.id, codes)
@@ -684,16 +734,25 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, ctx.webauthn?.origins ?? [])) {
       throw new Problem(403, 'auth/csrf', 'Blocked', 'This browser was not the one that signed in.')
     }
-    const body = await c.req.json() as { role?: 'approver' | 'proposer' | 'viewer' | 'payee'; label?: string; delegationExpiresAt?: string | null }
-    if (!body.role) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name a role.')
-    ctx.requireStep?.(c, 'invite', stepBinding('invite', JSON.stringify({ role: body.role, label: body.label ?? null })))
+    const body = await c.req.json().catch(() => null) as { role?: string; label?: string; delegationExpiresAt?: string | null; approvalLimitCents?: unknown } | null
+    // Only the roles the server knows. A role it does not know would be stored as-is and, when the member signed in,
+    // land on whatever the session code does for "anything else".
+    if (!body?.role || !INVITE_ROLES.has(body.role as MemberRole)) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name a role: approver, proposer, viewer or payee.')
+    const role = body.role as MemberRole
+    // An approver may be given a ceiling: the most, in cents, they can approve on their own. Only an approver has one.
+    const limit = body.approvalLimitCents ?? null
+    if (limit !== null && (role !== 'approver' || typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0)) {
+      throw new Problem(400, 'request.invalid', 'Request is invalid', 'An approval limit is a whole number of cents, and only an approver has one.')
+    }
+    ctx.requireStep?.(c, 'invite', stepBinding('invite', inviteBinding(role, body.label ?? null, limit as number | null)))
     const token = randomBytes(32).toString('base64url')
     const now = ctx.now()
     ctx.control.createInvite({
       id: randomUUID(),
       workspaceId: who.member.workspace_id,
-      role: body.role,
+      role,
       token,
+      limit: limit as number | null,
       expiresAt: new Date(now.getTime() + flags.inviteTtlHours * 3_600_000).toISOString(),
       createdBy: who.member.id,
       now: now.toISOString(),
@@ -732,6 +791,11 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
 
   app.post('/join', async (c) => {
     if (!flags.invites) throw new Problem(404, 'flag/disabled', 'Not available', 'Invites are off on this server.')
+    // Joining sets a session cookie, so it must come from this console: another page must not sign this browser into a
+    // studio of its choosing with an invite it holds.
+    if (!cookieWriteAllowed({ get: (name) => c.req.header(name) }, writeOrigins)) {
+      throw new Problem(403, 'auth/csrf', 'Blocked', 'Open the invite in this console.')
+    }
     const control = requireControl(ctx)
     const body = await c.req.json() as { token?: string; name?: string }
     if (!body.token || !body.name) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Send the invite and a name.')
@@ -741,7 +805,8 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     const invite = control.takeInvite(body.token, now)
     if (!invite) throw new Problem(400, 'invite/invalid', 'Invite is not valid', 'That invite is used, expired, or for another studio.')
     const memberId = randomUUID()
-    control.addMember({ id: memberId, workspaceId: invite.workspace_id, name: body.name, role: invite.role, now: ctx.now().toISOString(), createdBy: 'invite', expiresAt: invite.delegation_expires_at })
+    if (!INVITE_ROLES.has(invite.role)) throw new Problem(400, 'invite/invalid', 'Invite is not valid', 'That invite names a role this server does not know.')
+    control.addMember({ id: memberId, workspaceId: invite.workspace_id, name: body.name, role: invite.role, now: ctx.now().toISOString(), createdBy: 'invite', expiresAt: invite.delegation_expires_at, limit: invite.approval_limit_cents ?? null })
     const sessionToken = randomBytes(32).toString('base64url')
     control.putSession({ token: sessionToken, memberId, workspaceId: invite.workspace_id, method: 'invite', now: ctx.now().toISOString(), idleHours: ctx.idleHours, absoluteDays: ctx.absoluteDays })
     c.header('set-cookie', writeSessionCookie(ctx.cookieSecure, sessionToken, ctx.absoluteDays * 86_400))

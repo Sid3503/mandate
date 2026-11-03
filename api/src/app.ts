@@ -10,11 +10,12 @@ import { clientIp } from './ops/client-ip'
 import { API_CSP, securityHeaders } from './ops/headers'
 import { Metrics } from './ops/metrics'
 import type { ModelBudget } from './ops/budget'
-import { MAX_RATE_BUCKETS, RateLimiter, pruneBuckets, rateClass } from './ops/ratelimit'
-import { redactText } from './ops/redact'
+import { MAX_RATE_BUCKETS, RateLimiter, pruneBuckets, rateClass, type TimedBucket } from './ops/ratelimit'
+import { redactPath, redactText } from './ops/redact'
 import { isWorkspaceId } from './tenancy/ids'
 import type { TenantRegistry } from './tenancy/registry'
 import { Hono, type Context } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { streamSSE } from 'hono/streaming'
 import type { DatabaseSync } from 'node:sqlite'
 import { VERSION } from './config'
@@ -31,8 +32,8 @@ import type { InvoicePort } from './paypal/invoices'
 import { PayPalError, type PayPalPort } from './paypal/port'
 import { handleMcp, READONLY_TOOLS } from './mcp/http'
 import { AgentService, logReviewFailure } from './agents/service'
-import { live } from './services/live'
-import { acceptLegacyMachineKey, machineKeyHash, workspaceFromMachineKey } from './services/machine-key'
+import { inWorkspace, live } from './services/live'
+import { acceptLegacyMachineKey, machineKeyHash, machineKeyHashKnown, workspaceFromMachineKey } from './services/machine-key'
 import type { Notifier } from './services/notify'
 import { StudioTurnSchema } from './agents/studio'
 import { DEEP_RUN, EVERY_CHANGE_RUN, GUARANTEES } from './domain/guarantees'
@@ -46,6 +47,7 @@ import type { WatchPort } from './paypal/watch'
 import { QUICK_IDS, type QuickId } from './services/ask'
 import { toolSummary } from './paypal/tiers'
 import { decodeCursor, type HttpResult } from './services/mandate'
+import { actorContext, type ActorStamp } from './db/repo'
 import { actorLabel, buyerPrincipal, OWNER, STUDIO, type AgentLimits, type AgentScope, type Principal } from './services/principal'
 
 export type AppDeps = {
@@ -350,16 +352,46 @@ export function createApp(deps: AppDeps) {
   }
   const { mandate: service, deals } = services
   const agents = deps.agents ?? new AgentService(services, deps.model ?? null, deps.now, deps.drafterModel ?? null, null, deps.budget ?? null, deps.config.flags)
-  const buckets = new Map<string, { count: number; reset: number }>()
+  const buckets = new Map<string, TimedBucket>()
   const classes = new RateLimiter(() => deps.now().getTime())
   const metrics = deps.metrics ?? new Metrics()
   const clientErrorWindow = new Map<string, number[]>()
   const openapi = buildOpenApi(deps.config.publicUrl)
 
+  const workspaceId = deps.workspace?.id ?? 'ws_default'
+  const preAuth = new Map<string, TimedBucket>()
+
+  // Everything this app does for a request is this studio's work: what it publishes on the live bus reaches this
+  // studio's screens only. A studio's app nested inside the main one sets its own studio, which wins.
+  app.use('*', (c, next) => inWorkspace(workspaceId, next))
+
+  // No body is read whole into memory until it is known to be small. Most routes take a few kilobytes of JSON; the
+  // PayPal webhook, the agent door and an AG Studio turn carry more, and get a larger (still finite) cap. A studio's
+  // routes under /w/<id> are capped by what they are inside the studio. An answer over the cap is a 413.
+  app.use('*', bodyLimitByPath())
+
   app.use('*', async (c, next) => {
     // A passkey is bound to localhost. Chrome refuses to create one on 127.0.0.1, so a page opened there moves across.
     const moved = loopbackPasskeyUrl(c.req.method, c.req.path, c.req.url, c.req.header('host'), c.req.header('sec-fetch-dest'))
     if (moved) return c.redirect(moved, 302)
+    // Checking an unknown machine key costs a PBKDF2 run (more for an old-format key), and it happens before any key is
+    // known, so it is the one thing a caller with no key can make expensive. Each address gets that many tries a
+    // minute, counted before any hashing. A key that already passed in this process is cheap and is not counted, so a
+    // flood of made-up keys cannot lock out an agent that is working.
+    if (!deps.nested && deps.config.rateLimitPerMinute > 0) {
+      const token = bearerToken(c.req.header('authorization'))
+      if (token !== '' && !staticKey(token, deps) && !verifiedKey(token) && !machineKeyHashKnown(token)) {
+        const now = Date.now()
+        pruneBuckets(preAuth, now, MAX_RATE_BUCKETS)
+        const key = `pre:${visitorIp(c)}`
+        const bucket = preAuth.get(key)
+        if (!bucket || now >= bucket.reset) preAuth.set(key, { count: 1, reset: now + 60_000 })
+        else if (bucket.count >= deps.config.rateLimitPerMinute) {
+          c.header('retry-after', String(Math.max(1, Math.ceil((bucket.reset - now) / 1000))))
+          throw new Problem(429, 'rate.limited', 'Too many requests', 'Too many unrecognised keys from this address. Try again after the stated wait.')
+        } else bucket.count += 1
+      }
+    }
     // A client or agent key carries its studio. A paste at the front door must not be judged against the default studio.
     if (!deps.nested && deps.registry) {
       const steered = await steerMachineKey(c, deps)
@@ -380,32 +412,32 @@ export function createApp(deps: AppDeps) {
         level: 'info',
         requestId,
         method: c.req.method,
-        path: c.req.path,
+        // A status link's path is its own credential, so it never reaches the log.
+        path: redactPath(c.req.path),
         status: c.res.status,
         ms: Math.round(performance.now() - started),
       }), deps.config.redact ?? []))
     }
   })
 
-  const visitorIp = (c: { req: { header: (name: string) => string | undefined } }) => clientIp(
-    { get: (name) => c.req.header(name) },
-    deps.config.trustProxy === true,
-    deps.config.trustedProxyHops ?? 1,
-  )
+  function visitorIp(c: { req: { header: (name: string) => string | undefined } }) {
+    return clientIp(
+      { get: (name) => c.req.header(name) },
+      deps.config.trustProxy === true,
+      deps.config.trustedProxyHops ?? 1,
+    )
+  }
 
   // A known key keeps its own bucket. Guesses share one bucket per client IP, so a new wrong key does not reset the count.
+  // Only the current hash is looked up here: rewriting an old-format key's hash (more PBKDF2 runs) waits for the auth
+  // check, after this request has been counted. Such a key is counted as a guess for that one request.
   const requestBucket = (c: { req: { header: (name: string) => string | undefined } }): string => {
     const ip = visitorIp(c)
-    const header = c.req.header('authorization') ?? ''
-    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
+    const token = bearerToken(c.req.header('authorization'))
     if (token === '') return `anon:${ip}`
-    acceptLegacyMachineKey(services.repo, token)
+    if (staticKey(token, deps)) return `key:${createHash('sha256').update(token).digest('hex')}`
     const digest = machineKeyHash(token)
-    const known = sameSecret(token, deps.config.apiKey)
-      || (deps.config.proposerKey ? sameSecret(token, deps.config.proposerKey) : false)
-      || (deps.config.buyerAgentKey ? sameSecret(token, deps.config.buyerAgentKey) : false)
-      || services.repo.getAgentByKeyHash(digest) !== null
-      || services.repo.getClientKeyByKeyHash(digest) !== null
+    const known = services.repo.getAgentByKeyHash(digest) !== null || services.repo.getClientKeyByKeyHash(digest) !== null
     return known ? `key:${digest}` : `fail:${ip}`
   }
 
@@ -413,18 +445,22 @@ export function createApp(deps: AppDeps) {
     if (c.req.path === '/health' || c.req.path === '/ready' || c.req.path === '/healthz' || c.req.path === '/readyz' || isWeb(c.req.path)) return next()
     const limit = deps.config.rateLimitPerMinute
     if (limit <= 0) return next()
-    const presented = requestBucket(c)
+    // PayPal's deliveries come from PayPal's addresses, not a visitor's, and arrive in bursts when a batch settles. They
+    // get one bucket of their own, ten times the size, so they neither eat a visitor's allowance nor get starved by one.
+    const webhook = c.req.path === '/v1/webhooks/paypal'
+    const presented = webhook ? 'webhook:paypal' : requestBucket(c)
+    const allowed = webhook ? Math.max(limit * 10, 600) : limit
     const key = createHash('sha256').update(presented).digest('hex')
     const now = Date.now()
     pruneBuckets(buckets, now, MAX_RATE_BUCKETS)
     const bucket = buckets.get(key)
     if (!bucket || now >= bucket.reset) buckets.set(key, { count: 1, reset: now + 60_000 })
-    else if (bucket.count >= limit) {
+    else if (bucket.count >= allowed) {
       c.header('retry-after', '60')
       throw new Problem(429, 'rate.limited', 'Too many requests', 'The per-minute limit for this credential has been reached.')
     } else bucket.count += 1
     pruneBuckets(buckets, now, MAX_RATE_BUCKETS)
-    if (deps.config.classedRates) {
+    if (deps.config.classedRates && !webhook) {
       const decision = classes.take({
         className: rateClass(c.req.method, c.req.path),
         ip: visitorIp(c),
@@ -475,6 +511,8 @@ export function createApp(deps: AppDeps) {
     const studio = !owner && token !== '' && Boolean(deps.config.proposerKey) && sameSecret(token, deps.config.proposerKey!)
     const buyer = !owner && !studio && token !== '' && Boolean(deps.config.buyerAgentKey) && sameSecret(token, deps.config.buyerAgentKey!)
     let principal: Principal
+    /** The signed-in person behind a console request. Every ledger event the request writes carries it. */
+    let actor: ActorStamp | null = null
     if (owner) principal = OWNER
     else if (studio) principal = STUDIO
     else if (buyer) principal = buyerPrincipal(deps.config.buyerAgentParty ?? 'client_northwind')
@@ -490,6 +528,7 @@ export function createApp(deps: AppDeps) {
       c.set('memberRole', member.role)
       c.set('memberId', member.id)
       c.set('approvalLimit', member.approval_limit_cents)
+      actor = { memberId: member.id, displayName: member.display_name, role: member.role, via: session.method }
       if (member.role === 'viewer' || member.role === 'payee') {
         const isDemoAction = deps.workspace?.mode === 'demo' && (c.req.path === '/v1/demo/switch' || c.req.path === '/v1/demo/reset')
         if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && !isDemoAction) {
@@ -497,7 +536,9 @@ export function createApp(deps: AppDeps) {
         }
         principal = STUDIO
       } else if (member.role === 'proposer') principal = STUDIO
-      else principal = OWNER
+      else if (member.role === 'owner' || member.role === 'approver') principal = OWNER
+      // A role this server does not know (a hand-edited row, a role from a newer build) gets nothing, never the owner's door.
+      else throw new Problem(403, 'auth/forbidden', 'Unknown role', 'This member has a role this server does not know.')
       if (session.method === 'recovery' && c.req.method !== 'GET' && !c.req.path.startsWith('/auth/')) {
         throw new Problem(403, 'auth/forbidden', 'Recovery cannot approve', 'A recovery session can only add a passkey.')
       }
@@ -513,6 +554,7 @@ export function createApp(deps: AppDeps) {
           throw new Problem(403, 'client-key.expired', 'This client key has expired', 'Ask the studio for a new client key.')
         }
         services.repo.setClientKeySeen(clientKey.id, new Date().toISOString())
+        rememberVerifiedKey(token)
         principal = buyerPrincipal(clientKey.party_id)
       } else {
         // Agents have their own keys: look them up by hash, enforce status, and carry their scopes and limits.
@@ -524,6 +566,7 @@ export function createApp(deps: AppDeps) {
           throw new Problem(403, 'agent.expired', 'This agent key has expired', 'Ask the owner to issue a new agent key or upgrade it.')
         }
         services.repo.setAgentSeen(agent.id, deps.now().toISOString())
+        rememberVerifiedKey(token)
         principal = { role: 'agent', side: null, buyerId: null, agentId: agent.id, name: agent.name, scopes: JSON.parse(agent.scopes_json) as AgentScope[], limits: JSON.parse(agent.limits_json) as AgentLimits }
       }
     }
@@ -557,7 +600,8 @@ export function createApp(deps: AppDeps) {
     if (principal.side === 'buyer' && !buyerMayCall(c.req.method, c.req.path)) {
       throw new Problem(403, 'auth.forbidden', 'Not available to a client agent', 'A client agent can make and read deal offers for its own client. Nothing else.')
     }
-    await next()
+    if (actor) await actorContext.run(actor, next)
+    else await next()
   })
 
   app.get('/app', (c) => c.redirect('/app/', 308))
@@ -1187,6 +1231,12 @@ export function createApp(deps: AppDeps) {
       const amount = service.packet(id).proposal.amountCents
       if (limit != null && amount > limit) throw new Problem(403, 'approval.over_limit', 'Over your limit', 'This amount is above what you can approve.')
     }
+    // Two people, not one: whoever asked for the money cannot also be the one who says yes. The request's first event
+    // records the signed-in person who filed it. Only the owner, who answers for the whole studio, may approve their own.
+    const memberId = c.get('memberId')
+    if (memberId && c.get('memberRole') !== 'owner' && filedBy(deps.db, id) === memberId) {
+      throw new Problem(403, 'approval.self', 'Someone else must approve this', 'You filed this request, so another approver or the owner has to approve it.')
+    }
     const hash = service.approvalHash(id)
     const grantId = c.req.header('x-mandate-stepup')
     const grant = grantId ? deps.control?.grant(grantId) : null
@@ -1371,7 +1421,8 @@ export function createApp(deps: AppDeps) {
     return streamSSE(c, async (stream) => {
       activeStreams++
       try {
-        const unsubscribe = live.subscribe((event) => { void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).catch(() => undefined) })
+        // Only this studio's events. One process serves many studios; another studio's payments are not this owner's news.
+        const unsubscribe = live.subscribe((event) => { void stream.writeSSE({ event: event.type, data: JSON.stringify(event) }).catch(() => undefined) }, workspaceId)
         await stream.writeSSE({ event: 'hello', data: JSON.stringify({ type: 'hello', at: deps.now().toISOString() }) })
         const beat = setInterval(() => { void stream.writeSSE({ event: 'ping', data: '{}' }).catch(() => undefined) }, 15_000)
         await new Promise<void>((resolve) => stream.onAbort(resolve))
@@ -1814,6 +1865,7 @@ export function createApp(deps: AppDeps) {
     masterKey: deps.masterKey ?? null,
     paypalMode: deps.config.paypalMode ?? 'none',
     paypal: deps.paypal as ProductCtx['paypal'],
+    origins: [new URL(deps.config.publicUrl).origin],
     tryOne: (body: unknown) => {
       const parsed = TrySchema.safeParse(body)
       if (!parsed.success) throw invalidRequest(parsed.error)
@@ -1839,6 +1891,20 @@ export function createApp(deps: AppDeps) {
 }
 
 const misstampedKeyHome = new Map<string, string>()
+/**
+ * Keys no studio file holds, and until when that answer stands. Finding out means opening every studio's file, one
+ * after another, on the request's own time, so a made-up `mnd_cl_ws_default_…` key must not be able to make the server
+ * do it again and again. Both maps are bounded: the oldest answers are dropped first.
+ */
+const misstampedKeyMiss = new Map<string, number>()
+const MISSTAMPED_MAX = 2_048
+const MISSTAMPED_MISS_MS = 60_000
+
+function boundedSet<V>(map: Map<string, V>, key: string, value: V): void {
+  map.delete(key)
+  map.set(key, value)
+  while (map.size > MISSTAMPED_MAX) map.delete(map.keys().next().value as string)
+}
 
 function fileHoldsMachineKey(db: DatabaseSync, hash: string): boolean {
   for (const table of ['client_keys', 'agents']) {
@@ -1857,18 +1923,22 @@ function studioHoldingMisstampedKey(deps: AppDeps, token: string): string | null
   const hash = machineKeyHash(token)
   const cached = misstampedKeyHome.get(hash)
   if (cached) return cached
+  const missUntil = misstampedKeyMiss.get(hash)
+  if (missUntil !== undefined && missUntil > Date.now()) return null
   if (fileHoldsMachineKey(deps.db, hash)) return null
   for (const studio of deps.control?.studioFiles() ?? []) {
     if (!studio.db_path || !existsSync(studio.db_path)) continue
     const db = openDatabase(studio.db_path)
     try {
       if (!fileHoldsMachineKey(db, hash)) continue
-      misstampedKeyHome.set(hash, studio.id)
+      boundedSet(misstampedKeyHome, hash, studio.id)
+      misstampedKeyMiss.delete(hash)
       return studio.id
     } finally {
       db.close()
     }
   }
+  boundedSet(misstampedKeyMiss, hash, Date.now() + MISSTAMPED_MISS_MS)
   return null
 }
 
@@ -1966,10 +2036,31 @@ function assertJson(c: { req: { header: (name: string) => string | undefined } }
   }
 }
 
+/** The signed-in member who filed a request, from the actor stamped on its `proposal.created` event. Null when none was. */
+function filedBy(db: DatabaseSync, proposalId: string): string | null {
+  const row = db.prepare(`SELECT actor_json FROM events WHERE proposal_id = ? AND type = 'proposal.created' ORDER BY created_at ASC, rowid ASC LIMIT 1`).get(proposalId) as { actor_json: string | null } | undefined
+  if (!row?.actor_json) return null
+  try {
+    const actor = JSON.parse(row.actor_json) as { memberId?: unknown }
+    return typeof actor.memberId === 'string' ? actor.memberId : null
+  } catch {
+    return null
+  }
+}
+
+/** A body that is not JSON is the caller's mistake, a 400, never a crash. */
+function parseJsonBody(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    throw new Problem(400, 'request.invalid', 'Request is invalid', 'Body is not JSON.')
+  }
+}
+
 async function assertEmpty(c: { req: { text: () => Promise<string> } }): Promise<void> {
   const text = (await c.req.text()).trim()
   if (!text) return
-  const parsed = JSON.parse(text) as unknown
+  const parsed = parseJsonBody(text)
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length === 0) return
   throw new Problem(400, 'request.invalid', 'Request is invalid', 'This action takes no fields. The cart is read from the server.')
 }
@@ -1990,7 +2081,7 @@ async function readJson(c: { req: { text: () => Promise<string> } }): Promise<un
 async function readInstrument(c: { req: { text: () => Promise<string> } }): Promise<'invoice' | 'checkout' | null> {
   const text = (await c.req.text()).trim()
   if (!text) return null
-  const parsed = z.object({ instrument: z.enum(['invoice', 'checkout']).optional() }).strict().safeParse(JSON.parse(text) as unknown)
+  const parsed = z.object({ instrument: z.enum(['invoice', 'checkout']).optional() }).strict().safeParse(parseJsonBody(text))
   if (!parsed.success) throw invalidRequest(parsed.error)
   return parsed.data.instrument ?? null
 }
@@ -1998,6 +2089,56 @@ async function readInstrument(c: { req: { text: () => Promise<string> } }): Prom
 function tableCount(db: DatabaseSync, table: 'proposals' | 'events' | 'payees'): number {
   const row = db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
   return row.n
+}
+
+function bearerToken(header: string | undefined): string {
+  const value = header ?? ''
+  return value.startsWith('Bearer ') ? value.slice(7).trim() : ''
+}
+
+/** One of the keys set in the environment. Comparing them is cheap and needs no hashing. */
+function staticKey(token: string, deps: AppDeps): boolean {
+  return sameSecret(token, deps.config.apiKey)
+    || (deps.config.proposerKey ? sameSecret(token, deps.config.proposerKey) : false)
+    || (deps.config.buyerAgentKey ? sameSecret(token, deps.config.buyerAgentKey) : false)
+}
+
+/**
+ * Machine keys that have passed the auth check in this process, remembered by a SHA-256 of the key. They are exempt
+ * from the pre-auth limiter, so made-up keys pushing real ones out of the hash memo cannot lock a working agent out.
+ * Shared across the main app and the studios' apps, since a key is checked by its studio but limited at the front.
+ */
+const VERIFIED_MAX = 2_048
+const verifiedKeys = new Map<string, true>()
+
+function verifiedKey(token: string): boolean {
+  return verifiedKeys.has(createHash('sha256').update(token).digest('base64url'))
+}
+
+function rememberVerifiedKey(token: string): void {
+  const id = createHash('sha256').update(token).digest('base64url')
+  verifiedKeys.delete(id)
+  verifiedKeys.set(id, true)
+  while (verifiedKeys.size > VERIFIED_MAX) verifiedKeys.delete(verifiedKeys.keys().next().value as string)
+}
+
+/** Most bodies are small JSON. 256 KB is generous for every one of them. */
+export const DEFAULT_BODY_LIMIT = 256 * 1024
+/** The PayPal webhook, the agent door (which keeps its own 1 MB check too) and an AG Studio turn carry more. */
+export const LARGE_BODY_LIMIT = 1024 * 1024
+
+/** The cap for a path, judged by what the path is inside its studio, so `/w/<id>/v1/webhooks/paypal` is the webhook. */
+export function bodyLimitFor(path: string): number {
+  const inner = path.replace(/^\/w\/[^/]+/, '') || '/'
+  if (inner === '/v1/webhooks/paypal' || inner === '/mcp' || inner.startsWith('/mcp/') || inner === '/v1/studio/turn') return LARGE_BODY_LIMIT
+  return DEFAULT_BODY_LIMIT
+}
+
+function bodyLimitByPath() {
+  const tooLarge = (c: Context) => sendProblem(c, new Problem(413, 'request.too_large', 'Request is too large', 'The body is over the size this route accepts. Send less.'))
+  const small = bodyLimit({ maxSize: DEFAULT_BODY_LIMIT, onError: tooLarge })
+  const large = bodyLimit({ maxSize: LARGE_BODY_LIMIT, onError: tooLarge })
+  return (c: Context, next: () => Promise<void>) => (bodyLimitFor(c.req.path) === LARGE_BODY_LIMIT ? large : small)(c, next)
 }
 
 function sameSecret(presented: string, expected: string): boolean {

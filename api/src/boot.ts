@@ -14,10 +14,11 @@ import type { InvoicePort } from './paypal/invoices'
 import type { PayPalPort } from './paypal/port'
 import type { WatchPort } from './paypal/watch'
 import { buildServices } from './services/container'
+import { inWorkspace } from './services/live'
 import { openSeal } from './tenancy/envelope'
 import { TenantRegistry } from './tenancy/registry'
 
-import { cleanupExpiredDemos, runTenantSchedulerSweep } from './ops/scheduler'
+import { cleanupExpiredDemos, runTenantSchedulerSweep, tenantSweepInFlight } from './ops/scheduler'
 
 /** A PayPal account for one studio: the client, the invoice tools and the account reader. */
 export type StudioPayPal = { paypal: PayPalPort; invoices: InvoicePort | null; watch: WatchPort | null; environment: 'sandbox' | 'live' }
@@ -40,8 +41,42 @@ export type ProductBoot = {
   cleanupTimer?: NodeJS.Timeout | null
   schedulerTimer?: NodeJS.Timeout | null
   cleanupNow?: () => { cleaned: string[]; skipped: string[] }
-  sweepNow?: () => Promise<{ swept: string[] }>
+  sweepNow?: () => Promise<{ swept: string[]; skipped?: boolean }>
+  /**
+   * Shutdown, part one: waits (up to `timeoutMs`) for a tenant sweep that is still running, so it is not cut off
+   * halfway through a write. `close` then closes every studio database and the control database.
+   */
+  drain: (timeoutMs?: number) => Promise<void>
   close: () => void
+}
+
+/**
+ * Settings that are wrong in production, checked once at boot. A setting that would hand out sessions is refused
+ * outright; one the free hosting tier cannot avoid is only said, loudly, so the operator knows what they are running.
+ */
+export function bootSafety(input: { nodeEnv: string; flags: ServerFlags; env: NodeJS.ProcessEnv; databasePath: string }): { warnings: string[] } {
+  const production = input.nodeEnv === 'production'
+  // The PayPal login door is a stand-in: it signs anyone in as the studio's owner for any code but two. It exists for
+  // the tests and a local demo. On a production server it would be an open door, so the server does not start.
+  if (production && input.flags.paypalLogin) {
+    throw new Error('PAYPAL_LOGIN_ENABLED is a test stand-in that signs anyone in as the owner; it cannot be on when NODE_ENV=production')
+  }
+  const warnings: string[] = []
+  if (!production) return { warnings }
+  if (!input.env.KEY_PEPPER?.trim()) {
+    warnings.push('KEY_PEPPER is not set: agent and client key hashes use the built-in fallback pepper, which is public in the source. Set KEY_PEPPER (render.yaml generates one).')
+  }
+  const path = input.databasePath
+  if (path !== ':memory:' && (path === '/tmp' || path.startsWith('/tmp/') || path.startsWith('/private/tmp/'))) {
+    warnings.push(`DATABASE_PATH is under /tmp (${path}): the ledger, its keys and every studio are lost on each restart, and backups on the same disk go with them.`)
+  }
+  return { warnings }
+}
+
+function perMinute(value: string | undefined, fallback: number): number {
+  if (value === undefined || value === '') return fallback
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback
 }
 
 function on(value: string | undefined): boolean {
@@ -75,8 +110,16 @@ export function openProduct(input: {
    * hosted demo gets a stand-in. Called once per studio, so each has its own client and its own token.
    */
   paypalFactory?: () => StudioPayPal | null
+  /** The per-key request limit of the main app. Each studio's app applies the same limit to its own keys. */
+  rateLimitPerMinute?: number
 }): ProductBoot {
   const flags = input.flags
+  for (const warning of bootSafety({ nodeEnv: input.nodeEnv, flags, env: input.env, databasePath: input.databasePath }).warnings) {
+    console.warn(JSON.stringify({ level: 'warn', message: `[boot] ${warning}` }))
+  }
+  // A machine key sent to the main address is handed to its studio's app before the main app's limiter sees it, so the
+  // studio's app must count it itself. Zero (no limit) was the old setting and let a studio key call without limit.
+  const tenantRateLimit = input.rateLimitPerMinute ?? perMinute(input.env.RATE_LIMIT_PER_MINUTE, 120)
   const budget = new ModelBudget(capsFromEnv(input.env), input.now, 'ws_default', input.ledger ? sqliteBudgetStore(input.ledger) : null)
   // A flag that is off pauses this process only. A persisted kill would stay on after a later boot turns the model back on.
   if (!flags.modelEnabled) budget.pause()
@@ -95,7 +138,7 @@ export function openProduct(input: {
     ? { rpID: input.env.WEBAUTHN_RP_ID, rpName: input.env.WEBAUTHN_RP_NAME?.trim() || 'Mandate', origins: input.env.WEBAUTHN_ORIGINS.split(',').map((item) => item.trim()).filter(Boolean) }
     : null
   if (!needsPeople) {
-    return { control: null, registry: null, budget, masterKey: null, demo: null, adminKey, webauthn, cookieSecure, trustProxy, trustedProxyHops, classedRates, idleHours, absoluteDays, redact, close: () => undefined }
+    return { control: null, registry: null, budget, masterKey: null, demo: null, adminKey, webauthn, cookieSecure, trustProxy, trustedProxyHops, classedRates, idleHours, absoluteDays, redact, drain: async () => undefined, close: () => undefined }
   }
   if (!masterKey || masterKey.length < 16 || !pepper || pepper.length < 16) {
     throw new Error('MASTER_KEY and KEY_PEPPER are required when workspaces, the demo, passkeys, or invites are on')
@@ -176,7 +219,7 @@ export function openProduct(input: {
       drafterModel: input.drafterModel ?? null,
       config: {
         apiKey: input.env.API_KEY && input.env.API_KEY.length >= 16 ? input.env.API_KEY : 'tenant-placeholder-key',
-        rateLimitPerMinute: 0,
+        rateLimitPerMinute: tenantRateLimit,
         paypalConfigured: real !== null,
         paypalMode: real ? real.environment : paypalMode,
         paypalEnvironment: real?.environment ?? 'sandbox',
@@ -200,10 +243,12 @@ export function openProduct(input: {
       id,
       fetch: (request) => app.fetch(request),
       close: () => db.close(),
-      sweep: async () => {
+      // A sweep runs outside any request, so it says which studio it is working for: what it publishes on the live
+      // bus reaches this studio's screens and nobody else's.
+      sweep: () => inWorkspace(id, async () => {
         await services.mandate.sweepStanding()
         await services.mandate.sweepPending()
-      },
+      }),
     }
   })
 
@@ -227,9 +272,22 @@ export function openProduct(input: {
     schedulerTimer,
     cleanupNow: () => cleanupExpiredDemos({ control, registry, now: input.now() }),
     sweepNow: () => (registry ? runTenantSchedulerSweep({ control, registry }) : Promise.resolve({ swept: [] })),
+    drain: async (timeoutMs = 10_000) => {
+      if (cleanupTimer) clearInterval(cleanupTimer)
+      if (schedulerTimer) clearInterval(schedulerTimer)
+      const running = registry ? tenantSweepInFlight(registry) : null
+      if (!running) return
+      let timer: NodeJS.Timeout | undefined
+      await Promise.race([
+        running.catch(() => undefined),
+        new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); timer.unref() }),
+      ])
+      if (timer) clearTimeout(timer)
+    },
     close: () => {
       if (cleanupTimer) clearInterval(cleanupTimer)
       if (schedulerTimer) clearInterval(schedulerTimer)
+      try { registry?.closeAll() } catch { /* already closed */ }
       try { controlDb.close() } catch { /* already closed */ }
     },
   }

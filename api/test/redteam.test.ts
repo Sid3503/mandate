@@ -751,24 +751,24 @@ describe('Appendix B red team: cases 1 to 35', () => {
     h.control.createInvite({ id: randomUUID(), workspaceId: studioId, role: 'proposer', token, expiresAt: '2027-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     const joined = await h.app.request(`http://mandate.test/w/${studioId}/join`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Sam' }),
     })
     expect(joined.status).toBe(200)
     const second = await h.app.request(`http://mandate.test/w/${studioId}/join`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Sam' }),
     })
     expect(second.status).toBe(400)
     const expired = 'invite-token-expired-case-19'
     h.control.createInvite({ id: randomUUID(), workspaceId: studioId, role: 'viewer', token: expired, expiresAt: '2020-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
-    expect((await h.app.request(`http://mandate.test/w/${studioId}/join`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: expired, name: 'Late' }) })).status).toBe(400)
+    expect((await h.app.request(`http://mandate.test/w/${studioId}/join`, { method: 'POST', headers: { 'content-type': 'application/json', ...WEB }, body: JSON.stringify({ token: expired, name: 'Late' }) })).status).toBe(400)
     const revoked = 'invite-token-revoked-case-19'
     const revokedId = randomUUID()
     h.control.createInvite({ id: revokedId, workspaceId: studioId, role: 'viewer', token: revoked, expiresAt: '2027-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     h.controlDb.prepare('UPDATE invites SET revoked_at = ? WHERE id = ?').run(NOW.toISOString(), revokedId)
-    expect((await h.app.request(`http://mandate.test/w/${studioId}/join`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: revoked, name: 'No' }) })).status).toBe(400)
+    expect((await h.app.request(`http://mandate.test/w/${studioId}/join`, { method: 'POST', headers: { 'content-type': 'application/json', ...WEB }, body: JSON.stringify({ token: revoked, name: 'No' }) })).status).toBe(400)
     h.controlDb.close()
   })
 
@@ -778,8 +778,8 @@ describe('Appendix B red team: cases 1 to 35', () => {
     h.control.createInvite({ id: randomUUID(), workspaceId: 'ws_default', role: 'viewer', token, expiresAt: '2027-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     const body = JSON.stringify({ token, name: 'Sam' })
     const [left, right] = await Promise.all([
-      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body }),
-      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body }),
+      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json', ...WEB }, body }),
+      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json', ...WEB }, body }),
     ])
     expect([left.status, right.status].sort()).toEqual([200, 400])
     h.controlDb.close()
@@ -802,7 +802,7 @@ describe('Appendix B red team: cases 1 to 35', () => {
     h.control.createInvite({ id: randomUUID(), workspaceId: studioId, role: 'proposer', token, expiresAt: '2027-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     const wrong = await h.app.request('http://mandate.test/join', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Sam' }),
     })
     expect(wrong.status).toBe(400)

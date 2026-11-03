@@ -150,29 +150,57 @@ export function cleanupExpiredDemos(deps: {
   return { cleaned, skipped, authEventsTrimmed, logsTrimmed }
 }
 
+/** The sweep each registry is running now. A timer that fires while one is still going does not start another. */
+const inFlight = new WeakMap<TenantRegistry, Promise<{ swept: string[]; skipped?: boolean; pruned?: number }>>()
+
 /**
  * P2.T10: Background work without per-tenant timers.
  * A single scheduler visits only tenants that have open invoices or payouts.
  * For each tenant, calls the tenant's sweep handler to check PayPal status and progress workflows.
+ *
+ * It never runs twice at once for the same registry: a sweep that talks to PayPal for many studios can outlast the
+ * 15-second timer, and two overlapping runs would sweep each studio twice and race each other's writes. A call made
+ * while one is running answers `skipped: true` at once. Ids of studios that no longer exist are forgotten first, so a
+ * removed studio is not looked up on every run.
  */
-export async function runTenantSchedulerSweep(deps: {
+export function runTenantSchedulerSweep(deps: {
   control: ControlStore
   registry: TenantRegistry
-}): Promise<{ swept: string[] }> {
-  const workspaces = deps.control.activeRefWorkspaces()
-  const swept: string[] = []
+}): Promise<{ swept: string[]; skipped?: boolean; pruned?: number }> {
+  const running = inFlight.get(deps.registry)
+  if (running) return Promise.resolve({ swept: [], skipped: true })
+  const run = (async () => {
+    let pruned = 0
+    try {
+      pruned = deps.control.pruneOrphanRefs()
+    } catch {
+      // Pruning is housekeeping; the sweep still runs.
+    }
+    const workspaces = deps.control.activeRefWorkspaces()
+    const swept: string[] = []
 
-  for (const workspaceId of workspaces) {
-    const handle = deps.registry.get(workspaceId)
-    if (handle?.sweep) {
-      try {
-        await handle.sweep()
-        swept.push(workspaceId)
-      } catch {
-        // Individual tenant sweep failure does not abort other tenants
+    for (const workspaceId of workspaces) {
+      const handle = deps.registry.get(workspaceId)
+      if (handle?.sweep) {
+        try {
+          await handle.sweep()
+          swept.push(workspaceId)
+        } catch {
+          // Individual tenant sweep failure does not abort other tenants
+        }
       }
     }
-  }
 
-  return { swept }
+    return { swept, pruned }
+  })()
+  inFlight.set(deps.registry, run)
+  void run.finally(() => {
+    if (inFlight.get(deps.registry) === run) inFlight.delete(deps.registry)
+  }).catch(() => undefined)
+  return run
+}
+
+/** The sweep running now for this registry, if any. Shutdown waits on it before closing the databases. */
+export function tenantSweepInFlight(registry: TenantRegistry): Promise<unknown> | null {
+  return inFlight.get(registry) ?? null
 }
