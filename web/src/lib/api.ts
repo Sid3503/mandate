@@ -311,7 +311,13 @@ export const api = {
     const registered = await startRegistration({ optionsJSON: reg.options as never })
     return request<{ credentialId: string; fingerprint: string }>('/auth/register/verify', { method: 'POST', body: { challengeId: reg.challengeId, response: registered } })
   },
-  issueRecovery: () => request<{ codes: string[]; saved: boolean }>('/auth/recovery/issue', { method: 'POST', body: {} }),
+  /** Recovery codes are a way in without the passkey, so issuing them takes a fresh passkey signature, as replacing them does. */
+  issueRecovery: async () => {
+    const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'recovery' } })
+    const signed = await startAuthentication({ optionsJSON: started.options as never })
+    const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
+    return request<{ codes: string[]; saved: boolean }>('/auth/recovery/issue', { method: 'POST', body: {}, headers: { 'x-mandate-stepup': verified.grant } })
+  },
   ackRecovery: () => request<{ saved: boolean }>('/auth/recovery/ack', { method: 'POST', body: { saved: true } }),
   regenerateRecovery: async () => {
     const started = await request<{ challengeId: string; options: Record<string, unknown> }>('/auth/stepup/options', { method: 'POST', body: { kind: 'recovery' } })
@@ -340,7 +346,9 @@ export const api = {
     const verified = await request<{ grant: string }>('/auth/stepup/verify', { method: 'POST', body: { challengeId: started.challengeId, response: signed } })
     return request<{ ok: boolean; openRequests: string[] }>(`/v1/members/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: {}, headers: { 'x-mandate-stepup': verified.grant } })
   },
-  join: (workspaceId: string, token: string, name: string) => request<{ memberId: string; role: string; workspaceId: string }>(workspaceId === 'ws_default' ? '/join' : `/w/${workspaceId}/join`, { method: 'POST', body: { token, name } }),
+  // Joining sets a session cookie, so the server only takes it from this console. A browser opening its first invite has
+  // no studio chosen yet, so the console names itself here rather than relying on that.
+  join: (workspaceId: string, token: string, name: string) => request<{ memberId: string; role: string; workspaceId: string }>(workspaceId === 'ws_default' ? '/join' : `/w/${workspaceId}/join`, { method: 'POST', body: { token, name }, headers: { 'x-mandate-client': 'web' } }),
   tryRequest: (requestBody: Record<string, unknown>, rules?: unknown) => request<TryOne>('/v1/rules/try', { method: 'POST', body: { request: requestBody, ...(rules ? { rules } : {}) } }),
   tryCases: (rules?: unknown) => request<TryCases>('/v1/rules/cases', { method: 'POST', body: rules ? { rules } : {} }),
   pause: (reason: string) => request<Safety>('/v1/safety/pause', { method: 'POST', body: { reason } }),
