@@ -62,6 +62,9 @@ services:
       # open-weights models). Everything else works without it.
       - key: OLLAMA_API_KEY
         sync: false
+      # Product search (Channel3). Unset: the Buy panel says search is off. Never logged.
+      - key: CHANNEL3_API_KEY
+        sync: false
       - key: PAYPAL_CLIENT_ID
         sync: false
       - key: PAYPAL_CLIENT_SECRET

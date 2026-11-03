@@ -324,7 +324,8 @@ describe('static files and security headers', () => {
     expect(await file.text()).toContain('inside-file')
     const page = await h.app.request('http://mandate.test/app/')
     expect(page.headers.get('content-security-policy')).toBe(WEB_CSP)
-    expectSecurity(page.headers, WEB_CSP)
+    // The console lets PayPal's own window (PayPal, Venmo, Pay Later) report back to the page that opened it.
+    expectSecurity(page.headers, WEB_CSP, 'same-origin-allow-popups')
     const api = await h.app.request('http://mandate.test/v1/session', { headers: { authorization: `Bearer ${OWNER_KEY}` } })
     expect(api.status).toBe(200)
     expectSecurity(api.headers, API_CSP)
@@ -334,13 +335,13 @@ describe('static files and security headers', () => {
   })
 })
 
-function expectSecurity(headers: Headers, csp: string) {
+function expectSecurity(headers: Headers, csp: string, opener = 'same-origin') {
   expect(headers.get('content-security-policy')).toBe(csp)
   expect(headers.get('x-content-type-options')).toBe('nosniff')
   expect(headers.get('referrer-policy')).toBe('no-referrer')
   expect(headers.get('x-frame-options')).toBe('DENY')
   expect(headers.get('permissions-policy')).toContain('camera=()')
-  expect(headers.get('cross-origin-opener-policy')).toBe('same-origin')
+  expect(headers.get('cross-origin-opener-policy')).toBe(opener)
   expect(headers.get('cross-origin-resource-policy')).toBe('same-origin')
 }
 

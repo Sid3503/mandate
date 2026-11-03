@@ -32,21 +32,21 @@ describe('PayPal tool tiers', () => {
     for (const name of ['pay_order', 'create_refund', 'accept_dispute_claim', 'record_payment_for_invoice', 'create_product']) {
       await expect(toolkit.run(name, {}), name).rejects.toMatchObject({ paypalName: 'toolkit_tool_not_allowed' })
     }
-    expect(USED_BY_MANDATE.sort()).toEqual(['cancel_sent_invoice', 'create_invoice', 'get_dispute', 'get_invoice', 'list_disputes', 'list_invoices', 'list_transactions', 'send_invoice', 'send_invoice_reminder'])
+    expect(USED_BY_MANDATE.sort()).toEqual(['cancel_sent_invoice', 'create_invoice', 'generate_invoice_qr_code', 'get_dispute', 'get_invoice', 'list_disputes', 'list_invoices', 'list_transactions', 'send_invoice', 'send_invoice_reminder'])
   })
 
   it('exposes no PayPal tool on the agent door', async () => {
     const { services } = harness()
     const server = createMandateMcpServer({ services, principal: { role: 'proposer', side: 'studio' } as never, runId: 'r', budget: { asks: 1 } })
     const registered = Object.keys((server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools)
-    expect(registered.length).toBe(11)
+    expect(registered.length).toBe(13)
     expect(registered.filter((name) => name in TOOL_TIERS)).toEqual([])
   })
 
   it('tells the owner, and only the owner, what an agent can reach', async () => {
     const { app } = harness()
     const summary = (await call(app, 'GET', '/v1/paypal/tools')).json
-    expect(summary).toMatchObject({ total: 47, agentCanCallDirectly: 0, usedByMandate: 9 })
+    expect(summary).toMatchObject({ total: 47, agentCanCallDirectly: 0, usedByMandate: 10 })
     expect(summary.read + summary.propose + summary.outOfScope).toBe(47)
     expect((await call(app, 'GET', '/v1/paypal/tools', { key: STUDIO_KEY })).status).toBe(403)
     expect(toolSummary().tools.length).toBe(47)

@@ -16,6 +16,7 @@ import { createToolkitInvoices } from './paypal/invoices'
 import { createPayPalClient } from './paypal/client'
 import { createToolkitWatch } from './paypal/watch'
 import { Notifier } from './services/notify'
+import { catalogFromEnv } from './procure/channel3'
 
 const config = loadConfig(process.env)
 const defaultWeb = fileURLToPath(new URL('../../web/dist', import.meta.url))
@@ -51,6 +52,7 @@ const services = buildServices({
   payeeBook: flags.payeeBook,
   newPayeeWaitHours: flags.newPayeeWaitHours,
   paypalEnvironment: sandbox ? 'sandbox' : 'live',
+  catalog: config.channel3 ? catalogFromEnv({ CHANNEL3_API_KEY: config.secrets.channel3ApiKey?.reveal(), CHANNEL3_API_URL: config.channel3.baseUrl }) : null,
 })
 
 // Ollama Cloud's open-weights models power the agents. With no key they are off and everything else works.
@@ -129,7 +131,7 @@ const app = createApp({
 })
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
-  console.log(JSON.stringify({ level: 'info', message: 'listening', host: info.address, port: info.port, paypal: config.paypal ? 'configured' : 'missing', console: webDist ? '/app/' : 'not built' }))
+  console.log(JSON.stringify({ level: 'info', message: 'listening', host: info.address, port: info.port, paypal: config.paypal ? 'configured' : 'missing', catalog: config.channel3 ? 'channel3' : 'off', console: webDist ? '/app/' : 'not built' }))
 })
 
 // A client dispute is news that can arrive between taps. Look for it every minute so a payout never leaves on stale news.

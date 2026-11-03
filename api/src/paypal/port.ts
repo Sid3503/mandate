@@ -85,9 +85,11 @@ export type PayPalPort = {
     payeeEmail: string | null
     /**
      * Which instrument the order is opened for. A card order (paid on our own page) and a checkout order (the buyer is
-     * sent to PayPal) are different orders on PayPal's side, so the request id is seeded with this too.
+     * sent to PayPal) are different orders on PayPal's side, so the request id is seeded with this too. A wallet order
+     * is approved in PayPal's own window (PayPal, Venmo or Pay Later) that the page opens: it carries no payment
+     * source and no way back, because the buyer never leaves the page.
      */
-    kind?: 'card' | 'checkout'
+    kind?: 'card' | 'checkout' | 'wallet'
     /** Where PayPal sends the buyer after they approve or cancel. */
     returnUrl?: string
     cancelUrl?: string

@@ -109,6 +109,8 @@ export type AppDeps = {
     redact?: string[]
     webauthn?: { rpID: string; rpName: string; origins: string[] } | null
     classedRates?: boolean
+    /** Off only for a local dev server that opens a studio per test. Never set it on a server strangers can reach. */
+    studioOpenLimit?: boolean
     idleHours?: number
     absoluteDays?: number
   }
@@ -216,10 +218,12 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/notify\/test$/ },
   { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
   { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
+  { method: 'GET', pattern: /^\/v1\/proposals\/[^/]+\/invoice-qr$/ },
   { method: 'POST', pattern: /^\/v1\/pay\/(session|capture)$/ },
   { method: 'POST', pattern: /^\/v1\/workspace\/passkey-rule$/ },
   { method: 'POST', pattern: /^\/v1\/members\/[^/]+\/(role|revoke)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit|flags)$/ },
+  { method: 'GET', pattern: /^\/v1\/books(\/journal)?$/ },
   { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
   { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
 ]
@@ -230,7 +234,7 @@ function requiredAgentScope(method: string, path: string): AgentScope | null {
   if (method === 'GET' && path === '/v1/stream') return 'stream'
   if (path.startsWith('/v1/deals') || path.startsWith('/v1/deliveries') || path.startsWith('/v1/party-rules') || path.startsWith('/v1/negotiations')) return 'deals'
   if (method === 'GET') return 'read'
-  if (method === 'POST' && path === '/v1/proposals') return 'propose'
+  if (method === 'POST' && (path === '/v1/proposals' || path === '/v1/procure/propose')) return 'propose'
   return null
 }
 
@@ -318,6 +322,11 @@ const ShareCreateSchema = z.object({
 
 /** Which bill a page is paying. The server finds the rest of the facts from the lock. */
 const PayRequestSchema = z.object({ proposalId: z.string().trim().min(1).max(64) }).strict()
+/**
+ * Opening a way to pay names how the buyer will pay. A card is typed on our page. PayPal, Venmo and Pay Later are
+ * approved in PayPal's own window. Left out, it is a card, as it always was.
+ */
+const PaySessionSchema = PayRequestSchema.extend({ instrument: z.enum(['card', 'paypal', 'venmo', 'paylater']).default('card') }).strict()
 
 const TrySchema = z.object({ request: ProposalCreateSchema, rules: WarrantBodySchema.optional() }).strict()
 const CasesSchema = z.object({ rules: WarrantBodySchema.optional() }).strict()
@@ -402,7 +411,11 @@ export function createApp(deps: AppDeps) {
     c.set('requestId', requestId)
     c.header('x-request-id', requestId)
     c.header('cache-control', 'no-store')
-    for (const [key, value] of Object.entries(securityHeaders(deps.config.cookieSecure === true))) c.header(key, value)
+    for (const [key, value] of Object.entries(securityHeaders(deps.config.cookieSecure === true))) {
+      // PayPal, Venmo and Pay Later open PayPal's own window from the console, and that window reports the buyer's
+      // approval back to the page that opened it. "same-origin" would cut that line. The API stays isolated.
+      c.header(key, key === 'cross-origin-opener-policy' && isWeb(c.req.path) ? 'same-origin-allow-popups' : value)
+    }
     if (!isWeb(c.req.path)) c.header('content-security-policy', API_CSP)
     const started = performance.now()
     await next()
@@ -612,6 +625,8 @@ export function createApp(deps: AppDeps) {
       'content-type': asset.type,
       'cache-control': asset.cache,
       'content-security-policy': webCsp(deps.config.paypalEnvironment ?? 'sandbox'),
+      // The same opener policy as the middleware: PayPal's window has to be able to talk back to this page.
+      'cross-origin-opener-policy': 'same-origin-allow-popups',
     }
     if (asset.encoding) headers['content-encoding'] = asset.encoding
     headers.vary = 'accept-encoding'
@@ -852,11 +867,11 @@ export function createApp(deps: AppDeps) {
   app.post('/v1/share/:token/pay/session', async (c) => {
     assertJson(c)
     requireOwnOrigin(c, deps)
-    const parsed = PayRequestSchema.safeParse(await readJson(c))
+    const parsed = PaySessionSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
     const allowed = services.shares.payable(c.req.param('token'), parsed.data.proposalId)
     try {
-      return c.json(await services.mandate.paySession(allowed.proposalId))
+      return c.json(await services.mandate.paySession(allowed.proposalId, parsed.data.instrument))
     } catch (error) {
       // PayPal refusing to open the order is the payer's problem to read, not a crash.
       if (error instanceof PayPalError) throw paypalProblem(error, 'to open the payment form', { proposalId: allowed.proposalId })
@@ -879,9 +894,9 @@ export function createApp(deps: AppDeps) {
   // The same two steps for the owner, who may pay a bill themselves or open it on another screen.
   app.post('/v1/pay/session', async (c) => {
     assertJson(c)
-    const parsed = PayRequestSchema.safeParse(await readJson(c))
+    const parsed = PaySessionSchema.safeParse(await readJson(c))
     if (!parsed.success) throw invalidRequest(parsed.error)
-    return c.json(await services.mandate.paySession(parsed.data.proposalId))
+    return c.json(await services.mandate.paySession(parsed.data.proposalId, parsed.data.instrument))
   })
   app.post('/v1/pay/capture', async (c) => {
     assertJson(c)
@@ -1190,6 +1205,43 @@ export function createApp(deps: AppDeps) {
     return send(c, result)
   })
 
+  const PurchaseSchema = z.object({
+    productId: z.string().trim().min(1).max(64),
+    merchant: z.string().trim().min(1).max(200).optional(),
+    jobId: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/).optional(),
+    fundingCaptureId: z.string().trim().min(1).max(64).optional(),
+    maxPriceCents: z.number().int().positive().max(100_000_000).optional(),
+    prompt: z.string().trim().max(4000).optional(),
+    // A caller may send this. It is ignored: the price is read from the catalog.
+    amountCents: z.number().optional(),
+  }).strict()
+
+  app.get('/v1/procure', (c) => c.json(services.procure.status()))
+
+  app.get('/v1/procure/search', async (c) => {
+    const maxRaw = c.req.query('max')
+    const limitRaw = c.req.query('limit')
+    if (maxRaw !== undefined && maxRaw !== '' && !/^\d{1,9}$/.test(maxRaw)) throw new Problem(422, 'procure.max', 'Budget must be whole cents', 'Pass max as a whole number of cents, e.g. 2000 for $20.00.')
+    if (limitRaw !== undefined && limitRaw !== '' && !/^\d{1,2}$/.test(limitRaw)) throw new Problem(422, 'procure.limit', 'Limit is not a number', 'Pass limit as a whole number.')
+    const found = await services.procure.search({
+      query: c.req.query('q') ?? '',
+      maxPriceCents: maxRaw ? Number(maxRaw) : undefined,
+      limit: limitRaw ? Number(limitRaw) : undefined,
+    })
+    return c.json(found)
+  })
+
+  app.post('/v1/procure/propose', async (c) => {
+    assertJson(c)
+    const key = IdempotencyKeySchema.safeParse(c.req.header('idempotency-key'))
+    if (!key.success) throw new Problem(400, 'idempotency.missing', 'Idempotency-Key is missing', 'POST /v1/procure/propose requires an Idempotency-Key of 8 to 255 token characters.')
+    const parsed = PurchaseSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    const { productId, merchant, jobId, fundingCaptureId, maxPriceCents, prompt } = parsed.data
+    const outcome = await services.procure.propose({ productId, merchant, jobId, fundingCaptureId, maxPriceCents, prompt }, key.data, actorLabel(c.get('principal')))
+    return c.json(outcome, 201, { location: `/v1/proposals/${outcome.proposal.id}` })
+  })
+
   app.post('/v1/proposals', async (c) => {
     assertJson(c)
     const key = IdempotencyKeySchema.safeParse(c.req.header('idempotency-key'))
@@ -1281,6 +1333,7 @@ export function createApp(deps: AppDeps) {
     await assertEmpty(c)
     return send(c, await service.cancelUnclaimedPayout(c.req.param('id')))
   })
+  app.get('/v1/proposals/:id/invoice-qr', async (c) => send(c, await services.mandate.invoiceQr(c.req.param('id'))))
   app.post('/v1/proposals/:id/remind-invoice', async (c) => {
     await assertEmpty(c)
     return send(c, await service.remindInvoice(c.req.param('id')))
@@ -1465,7 +1518,7 @@ export function createApp(deps: AppDeps) {
 
   // ---------- the agent door ----------
   app.all('/mcp', (c) => handleMcp(c.req.raw, services, c.get('principal'), deps.config.flags ?? defaultFlags()))
-  // The same door with only the four tools that look. A client that wants to try an agent safely points here.
+  // The same door with only the tools that look, including product search. A client that wants to try an agent safely points here.
   app.all('/mcp/readonly', (c) => handleMcp(c.req.raw, services, c.get('principal'), deps.config.flags ?? defaultFlags(), { onlyTools: READONLY_TOOLS }))
 
   // RFC 9728 Protected Resource Metadata. Names this server as its own authorization server, so a client that
@@ -1843,6 +1896,16 @@ export function createApp(deps: AppDeps) {
     return c.json(service.listLedger(query.data.limit, query.data.cursor ? decodeCursor(query.data.cursor) : null))
   })
 
+  // The books: the double-entry journal behind the events, read the same way the events are. Balances, totals and a
+  // fresh walk of the hash chain; then the journal itself, newest first, or one request's entries.
+  app.get('/v1/books', (c) => c.json(services.books.summary()))
+  app.get('/v1/books/journal', (c) => {
+    const query = ListQuerySchema.safeParse({ limit: c.req.query('limit') ?? 50, cursor: c.req.query('cursor') })
+    if (!query.success) throw invalidRequest(query.error)
+    const proposalId = c.req.query('proposalId')
+    return c.json(services.books.journal({ limit: query.data.limit, cursor: query.data.cursor, proposalId: proposalId && proposalId.length <= 128 ? proposalId : undefined }))
+  })
+
   const flags = deps.config.flags ?? defaultFlags()
   const product: ProductCtx = {
     flags,
@@ -1864,6 +1927,7 @@ export function createApp(deps: AppDeps) {
     demo: deps.demo ?? null,
     masterKey: deps.masterKey ?? null,
     paypalMode: deps.config.paypalMode ?? 'none',
+    studioOpenLimit: deps.config.studioOpenLimit,
     paypal: deps.paypal as ProductCtx['paypal'],
     origins: [new URL(deps.config.publicUrl).origin],
     tryOne: (body: unknown) => {

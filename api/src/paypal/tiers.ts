@@ -27,7 +27,7 @@ export const TOOL_TIERS: Record<string, ToolPolicy> = {
   search_invoicing: t('Invoicing', 'read', 'Searches invoices.'),
   update_invoicing: t('Invoicing', 'propose', 'Edits an invoice after it was locked, which Mandate forbids.'),
   generate_invoice_number: t('Invoicing', 'read', 'Mandate derives its own number from the proposal id.'),
-  generate_invoice_qr_code: t('Invoicing', 'read', 'A QR code for an invoice.'),
+  generate_invoice_qr_code: t('Invoicing', 'read', 'A QR code for an invoice PayPal has already sent. The server asks for it; scanning it opens PayPal, and PayPal still decides the payment.', true),
   record_payment_for_invoice: t('Invoicing', 'propose', 'Marks an invoice paid without PayPal moving money. Mandate settles only when PayPal reports a real transaction.'),
   record_refund_for_invoice: t('Invoicing', 'propose', 'Records a refund outside the gate.'),
   create_conditional_rules_for_invoice: t('Invoicing', 'propose', 'Changes how an invoice behaves.'),

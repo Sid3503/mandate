@@ -1,5 +1,5 @@
 import { createPayPalClient } from '../src/paypal/client'
-import { harness, call, OWNER_KEY } from '../test/support'
+import { harness, call, OWNER_KEY, allowRawWrites } from '../test/support'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -89,9 +89,13 @@ async function main() {
   })
   const parentId = parentRes.json.id
   await call(h.app, 'POST', `/v1/proposals/${parentId}/approve`, { key: OWNER_KEY })
+  // The database refuses an impossible phase move, so adopting a capture PayPal already holds (the historical one
+  // below) is done the way an operator with the file in hand would: with the guards switched off, deliberately.
+  allowRawWrites(h.db)
   h.db.prepare('UPDATE proposals SET capture_id = ?, phase = ?, captured_amount_cents = ? WHERE id = ?').run(
     parentCaptureId, 'captured', 15000, parentId
   )
+  h.db.exec('DELETE FROM maintenance_mode')
 
   const refundRes = await call(h.app, 'POST', '/v1/proposals', {
     key: OWNER_KEY,

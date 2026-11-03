@@ -10,6 +10,8 @@ type StoredOrder = {
   captureId?: string
   /** True when the order was opened for a card on our own page: no way back to PayPal, so no payer-action link. */
   cardFlow?: boolean
+  /** Which instrument the order was opened for, as the request asked. */
+  kind?: 'card' | 'checkout' | 'wallet'
 }
 
 type StoredPayout = {
@@ -64,13 +66,15 @@ export class FakePayPal implements PayPalPort {
     currency: string
     description: string
     payeeEmail: string | null
-    kind?: 'card' | 'checkout'
+    kind?: 'card' | 'checkout' | 'wallet'
     returnUrl?: string
     cancelUrl?: string
   }) {
-    this.lastReturnUrl = input.returnUrl ?? null
-    // A card order and a checkout order are different orders, as they are on PayPal's side.
-    const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}${input.kind === 'card' ? '-CARD' : ''}`
+    // A wallet order never carries a way back, even if a caller passed one. The real client does not send one.
+    const returnUrl = input.kind === 'wallet' ? undefined : input.returnUrl
+    this.lastReturnUrl = returnUrl ?? null
+    // A card order, a wallet order and a checkout order are different orders, as they are on PayPal's side.
+    const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}${input.kind === 'card' ? '-CARD' : input.kind === 'wallet' ? '-WALLET' : ''}`
     const existing = this.orders.get(orderId)
     if (!existing) {
       this.orders.set(orderId, {
@@ -78,8 +82,9 @@ export class FakePayPal implements PayPalPort {
         currency: input.currency,
         customId: input.proposalId,
         status: this.autoApprove ? 'APPROVED' : 'CREATED',
-        // An order opened for a card on our own page has no way back to PayPal, so it carries no payer-action link.
-        cardFlow: !input.returnUrl,
+        // An order opened on our own page has no way back to PayPal, so it carries no payer-action link.
+        cardFlow: !returnUrl,
+        kind: input.kind ?? 'checkout',
       })
     }
     const order = this.orders.get(orderId)!
@@ -375,6 +380,17 @@ export class FakeInvoices implements InvoicePort {
   async findByNumber(number: string) {
     const found = [...this.invoices.entries()].find(([, item]) => item.number === number)
     return found ? { invoiceId: found[0] } : null
+  }
+
+  /** Invoices this server asked PayPal to draw a QR code for. */
+  qrCalls: string[] = []
+  async qrCode(invoiceId: string) {
+    const invoice = this.invoices.get(invoiceId)
+    if (!invoice) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', null, invoiceId)
+    // PayPal only draws a code for an invoice the client can open. A draft has no pay page yet.
+    if (invoice.status === 'DRAFT' || invoice.status === 'CANCELLED') throw new PayPalError(422, 'INVALID_INVOICE_STATE', null, 'a QR code is only for an invoice that has been sent')
+    this.qrCalls.push(invoiceId)
+    return { imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', contentType: 'image/png' as const }
   }
 
   /** The client pays the invoice in PayPal. */

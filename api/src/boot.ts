@@ -13,6 +13,7 @@ import { FakePayPal } from './paypal/fake'
 import type { InvoicePort } from './paypal/invoices'
 import type { PayPalPort } from './paypal/port'
 import type { WatchPort } from './paypal/watch'
+import { catalogFromEnv } from './procure/channel3'
 import { buildServices } from './services/container'
 import { inWorkspace } from './services/live'
 import { openSeal } from './tenancy/envelope'
@@ -132,7 +133,7 @@ export function openProduct(input: {
   const classedRates = trustProxy
   const idleHours = hours('SESSION_IDLE_HOURS', input.env.SESSION_IDLE_HOURS, 12)
   const absoluteDays = hours('SESSION_ABSOLUTE_DAYS', input.env.SESSION_ABSOLUTE_DAYS, 7)
-  const redact = [input.env.API_KEY, input.env.PROPOSER_KEY, input.env.BUYER_AGENT_KEY, input.env.PAYPAL_CLIENT_SECRET, input.env.MASTER_KEY, input.env.KEY_PEPPER, input.env.ADMIN_KEY, input.env.SIGNING_KEY].filter((item): item is string => typeof item === 'string' && item.length >= 8)
+  const redact = [input.env.API_KEY, input.env.PROPOSER_KEY, input.env.BUYER_AGENT_KEY, input.env.PAYPAL_CLIENT_SECRET, input.env.MASTER_KEY, input.env.KEY_PEPPER, input.env.ADMIN_KEY, input.env.SIGNING_KEY, input.env.CHANNEL3_API_KEY].filter((item): item is string => typeof item === 'string' && item.length >= 8)
   const needsPeople = flags.tenancy || flags.demoEnabled || flags.passkeys || flags.invites
   const webauthn = input.env.WEBAUTHN_RP_ID && input.env.WEBAUTHN_ORIGINS
     ? { rpID: input.env.WEBAUTHN_RP_ID, rpName: input.env.WEBAUTHN_RP_NAME?.trim() || 'Mandate', origins: input.env.WEBAUTHN_ORIGINS.split(',').map((item) => item.trim()).filter(Boolean) }
@@ -197,6 +198,7 @@ export function openProduct(input: {
       payeeBook: flags.payeeBook,
       newPayeeWaitHours: flags.newPayeeWaitHours,
       paypalEnvironment: real?.environment ?? 'sandbox',
+      catalog: catalogFromEnv(input.env),
       onExternalRef: (kind, externalId) => control.rememberRef(kind, externalId, id),
     })
     const app = createApp({

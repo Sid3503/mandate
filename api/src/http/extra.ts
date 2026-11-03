@@ -50,6 +50,11 @@ export type ProductCtx = {
   masterKey: string | null
   /** The PayPal this server really uses. A studio opened here moves money the same way the server does. */
   paypalMode: 'none' | 'fake' | 'sandbox' | 'live'
+  /**
+   * Whether opening a studio is limited per address (a few a minute). On by default, and it should stay on anywhere
+   * strangers can reach the server. Only a local development server that opens a studio per test turns it off.
+   */
+  studioOpenLimit?: boolean
   paypal: { pay?: (invoiceId: string, cents?: number) => void; settlePayouts?: (status?: 'SUCCESS' | 'FAILED') => void } | null
   /**
    * The origins a cookie write may come from when passkeys are not configured: this server's own public address.
@@ -217,7 +222,7 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       // sandbox, where the money is pretend. On a live account it would let a stranger send the operator's real money.
       if (ctx.paypalMode === 'live') throw new Problem(403, 'tenant/live-refused', 'Not on a live account', 'Studios can only be opened here while the server runs on the PayPal sandbox.')
       const ip = clientIp({ get: (name) => c.req.header(name) }, ctx.trustProxy, ctx.trustedProxyHops)
-      const limited = studioOpens.take({ className: 'auth', ip, principal: 'workspaces' })
+      const limited = ctx.studioOpenLimit === false ? { ok: true as const } : studioOpens.take({ className: 'auth', ip, principal: 'workspaces' })
       if (!limited.ok) {
         c.header('retry-after', String(limited.retryAfter))
         throw new Problem(429, 'rate/limited', 'Too many studios', 'This network has opened enough studios for now. Try again after the stated wait.')

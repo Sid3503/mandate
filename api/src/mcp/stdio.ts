@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { loadConfig } from '../config'
 import { migrate, openDatabase, seed } from '../db/database'
 import { loadSigner } from '../domain/signing'
+import { catalogFromEnv } from '../procure/channel3'
 import { buildServices } from '../services/container'
 import { buyerPrincipal, STUDIO } from '../services/principal'
 import { DEFAULT_BUDGET } from './http'
@@ -22,7 +23,7 @@ const signer = loadSigner({
   devKeyPath: join(dirname(config.databasePath), 'signing-key.pem'),
   production: config.nodeEnv === 'production',
 })
-const services = buildServices({ db, paypal: null, now: () => new Date(), signer })
+const services = buildServices({ db, paypal: null, now: () => new Date(), signer, catalog: catalogFromEnv(process.env) })
 const principal = process.env.MANDATE_MCP_SIDE === 'buyer' ? buyerPrincipal(config.buyerAgentParty) : STUDIO
 const server = createMandateMcpServer({ services, principal, runId: randomUUID(), budget: { asks: DEFAULT_BUDGET } })
 await server.connect(new StdioServerTransport())

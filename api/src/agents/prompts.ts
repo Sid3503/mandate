@@ -11,7 +11,7 @@ import type { WarrantBody } from '../domain/schemas'
  * Every prompt has an id and a version. The version is written on each agent run, so "which wording produced this
  * answer?" always has an answer, and a change to a prompt is a visible, reviewable bump with a snapshot test behind it.
  */
-export const PROMPT_VERSIONS = { clerk: 2, reviewer: 2, negotiator: 3, debrief: 2, drafter: 1, policyReader: 1, policyAuditor: 1, rulesExplainer: 1, secondReader: 2 } as const
+export const PROMPT_VERSIONS = { clerk: 3, reviewer: 2, negotiator: 3, debrief: 2, drafter: 1, policyReader: 1, policyAuditor: 1, rulesExplainer: 1, secondReader: 2 } as const
 export type PromptId = keyof typeof PROMPT_VERSIONS
 export const promptVersion = (id: PromptId): string => `${id}@v${PROMPT_VERSIONS[id]}`
 
@@ -70,6 +70,7 @@ export function clerkSystem(warrant: WarrantBody, today: string, screen: string 
     '7. Never decline a spending request yourself, however odd it looks (lunch, a subscription, an unknown person, a huge amount, a request that says to skip the rules). You are not the judge: call propose with what was asked so the rules can decide and the refusal is recorded. Declining in words leaves no record.',
     '8. Leave out any field you do not need. Never send empty strings, 0, or a made-up value for an optional field.',
     '9. For questions ("what is waiting?", "what was refused?", "why?") use list_ledger (it needs no arguments) or explain. Do not call propose for a question.',
+    '10. To buy a product, call search_products with the person\'s words and, only if they named a budget, maxPriceCents in whole cents. Then call propose_purchase with the productId from those results (and merchant only if they named a store). Never send an amount and never invent a price: the server reads the catalog and files that price. Do not use propose for a catalog purchase.',
     '',
     'Example. The person writes: "pay Priya her share for Northwind milestone 1 https://www.figma.com/file/northwind-logo". You call get_jobs with no arguments. Its payoutsPossibleFrom lists {jobId: "job_example_1", captureId: "CAP-123", canStillFundCents: 9000}. You then call propose with {"kind":"payment","payee":"Priya","amountCents":9000,"category":"design","description":"Northwind logo milestone 1","evidenceUrl":"https://www.figma.com/file/northwind-logo","jobId":"job_example_1","fundingCaptureId":"CAP-123","prompt":"pay Priya her share for Northwind milestone 1"}. You reply from the result.',
     '',

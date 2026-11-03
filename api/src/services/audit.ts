@@ -107,7 +107,7 @@ export class AuditService {
       ranAt: this.now().toISOString(),
       totals: { requests: proposals.length, moved: moved.length, locks: locked.length, events: events.length, deals: agreed.length, jobs: new Set(proposals.map((row) => row.job_id).filter(Boolean)).size },
       checks,
-      agentReach: { toolkitTools: tools.total, agentCanCallDirectly: tools.agentCanCallDirectly, serverUses: tools.usedByMandate, mcpTools: 6 },
+      agentReach: { toolkitTools: tools.total, agentCanCallDirectly: tools.agentCanCallDirectly, serverUses: tools.usedByMandate, mcpTools: 13 },
     }
   }
 
@@ -378,7 +378,7 @@ export class AuditService {
     return {
       id: 'agents.no_reach',
       title: 'No AI can use PayPal\'s tools to move money',
-      why: 'The agent door has eleven tools and none can approve, pay or change rules. Of PayPal\'s Agent Toolkit, the server runs only the few it names, and refuses the rest.',
+      why: 'The agent door has thirteen tools and none can approve, pay or change rules. Of PayPal\'s Agent Toolkit, the server runs only the few it names, and refuses the rest.',
       status: tools.agentCanCallDirectly === 0 ? 'pass' : 'fail',
       checked: tools.total,
       failures: tools.agentCanCallDirectly === 0 ? [] : [{ proposalId: null, detail: `${tools.agentCanCallDirectly} tools are reachable` }],

@@ -47,7 +47,7 @@ describe('the audit', () => {
     const report = await audit(h.app)
     expect(report.ok).toBe(true)
     expect(report.totals).toMatchObject({ requests: 0, moved: 0 })
-    expect(report.agentReach).toMatchObject({ toolkitTools: 47, agentCanCallDirectly: 0, mcpTools: 6 })
+    expect(report.agentReach).toMatchObject({ toolkitTools: 47, agentCanCallDirectly: 0, mcpTools: 13 })
   })
 
   it('passes on the whole frozen job: a tapped payout and a payout a rule sent', async () => {

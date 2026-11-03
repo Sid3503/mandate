@@ -29,12 +29,12 @@ const PUBLIC_URL = 'http://127.0.0.1:8787'
 const payout = { kind: 'payment', payee: 'Priya', amountCents: 9000, currency: 'USD', category: 'design', description: 'Northwind milestone 1', evidenceUrl: EVIDENCE }
 
 describe('the read-only door', () => {
-  it('offers the four tools that look, even to a key that may also ask', async () => {
+  it('offers the tools that look, even to a key that may also ask', async () => {
     const { app } = harness()
     const { apiKey } = await issue(app, ['mcp', 'read', 'propose', 'deals'])
     const client = await connect(app, '/mcp/readonly', apiKey)
     const tools = (await client.listTools()).tools
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['explain', 'get_jobs', 'get_rules', 'list_ledger'])
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['explain', 'get_jobs', 'get_rules', 'list_ledger', 'search_products'])
     expect(tools.every((tool) => tool.annotations?.readOnlyHint === true)).toBe(true)
     await client.close()
   })
@@ -108,7 +108,7 @@ describe('testing a connection from the console', () => {
     const { app } = harness()
     const { apiKey } = await issue(app, ['mcp', 'read', 'propose'])
     const result = await call(app, 'POST', '/v1/agents/test-connection', { body: { key: apiKey, door: '/mcp/readonly' } })
-    expect(result.json).toMatchObject({ ok: true, door: '/mcp/readonly', toolCount: 4, canPay: [] })
+    expect(result.json).toMatchObject({ ok: true, door: '/mcp/readonly', toolCount: 5, canPay: [] })
   })
 
   it('reports a key the door refuses, and does not claim success', async () => {

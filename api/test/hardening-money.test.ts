@@ -87,6 +87,19 @@ describe('a capture is only money when PayPal says COMPLETED', () => {
     expect(h.repo.eventsFor(id).filter((e) => e.type === 'capture.completed')).toHaveLength(1)
   })
 
+  it('records a capture re-read as PARTIALLY_REFUNDED as money that arrived (a status seen on a real sandbox capture)', async () => {
+    const h = harness()
+    const id = await approvedCharge(h)
+    h.paypal!.loseNextCaptureAnswer = true
+    await call(h.app, 'POST', `/v1/proposals/${id}/capture`)
+    const captureId = [...h.paypal!.captures.keys()][0]!
+    h.paypal!.setCaptureStatus(captureId, 'PARTIALLY_REFUNDED')
+    h.setNow(new Date(NOW.getTime() + 10 * 60_000))
+    await h.services.mandate.sweepPending()
+    expect(phase(h, id)).toBe('captured')
+    expect(balance(h, 'income:client_payments')).toBe(-15000)
+  })
+
   it('puts back a request whose settle crashed before PayPal was called', async () => {
     const h = harness()
     const id = await approvedCharge(h)

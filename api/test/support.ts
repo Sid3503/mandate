@@ -11,6 +11,7 @@ import type { AgentModel } from '../src/agents/model'
 import { ephemeralSigner, type Signer } from '../src/domain/signing'
 import { FakePayPal } from '../src/paypal/fake'
 import type { SafetyConfig } from '../src/services/safety'
+import type { CatalogPort } from '../src/procure/channel3'
 import { buildServices, type Services } from '../src/services/container'
 
 export const NOW = new Date('2026-10-03T12:00:00.000Z')
@@ -28,7 +29,7 @@ export function closeAll() {
 
 export type Requester = { request: (input: string, init?: RequestInit) => Response | Promise<Response> }
 
-export function harness(options: { commit?: string | null; demoReset?: boolean; flags?: ServerFlags; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: Partial<SafetyConfig>; control?: ControlStore | null; registry?: TenantRegistry | null; budget?: ModelBudget | null; adminKey?: string | null; webauthn?: { rpID: string; rpName: string; origins: string[] } | null; workspace?: { id: string; mode: 'default' | 'demo' | 'studio' | 'live'; name?: string | null; paypalMode?: 'fake' | 'sandbox' | 'none' }; masterKey?: string | null; demo?: { root: string; template: string } | null; classedRates?: boolean; redact?: string[]; rateLimitPerMinute?: number; trustProxy?: boolean; trustedProxyHops?: number; webDist?: string | null; cookieSecure?: boolean; log?: boolean; paypalMode?: 'none' | 'fake' | 'sandbox' | 'live' } = {}) {
+export function harness(options: { commit?: string | null; demoReset?: boolean; flags?: ServerFlags; invoices?: InvoicePort | null; model?: AgentModel | null; paypal?: FakePayPal | null; signer?: Signer; watch?: WatchPort | null; webhookId?: string | null; clientAgent?: 'auto' | 'manual'; draining?: () => boolean; breaker?: Partial<SafetyConfig>; control?: ControlStore | null; registry?: TenantRegistry | null; budget?: ModelBudget | null; adminKey?: string | null; webauthn?: { rpID: string; rpName: string; origins: string[] } | null; workspace?: { id: string; mode: 'default' | 'demo' | 'studio' | 'live'; name?: string | null; paypalMode?: 'fake' | 'sandbox' | 'none' }; masterKey?: string | null; demo?: { root: string; template: string } | null; classedRates?: boolean; redact?: string[]; rateLimitPerMinute?: number; trustProxy?: boolean; trustedProxyHops?: number; webDist?: string | null; cookieSecure?: boolean; log?: boolean; paypalMode?: 'none' | 'fake' | 'sandbox' | 'live'; catalog?: CatalogPort | null } = {}) {
   const db = openDatabase(':memory:')
   open.push(db)
   migrate(db)
@@ -65,6 +66,7 @@ export function harness(options: { commit?: string | null; demoReset?: boolean; 
       newPayeeWaitHours: options.flags?.newPayeeWaitHours,
       control: options.control,
       workspaceId: options.workspace?.id ?? 'ws_default',
+      catalog: options.catalog ?? null,
       onExternalRef: (kind, externalId) => options.control?.rememberRef(kind, externalId, options.workspace?.id ?? 'ws_default'),
     })),
     now: () => clock,

@@ -102,12 +102,23 @@ export type ProposalView = {
 }
 
 /**
- * What a browser needs to open a card form against a locked bill: the order to pay, and a browser-safe token.
+ * How a buyer pays a locked bill on our own page. A card is typed into PayPal's card fields. PayPal, Venmo and Pay
+ * Later are wallets the buyer approves in PayPal's own window, opened from our page.
+ */
+export type PayMethod = 'card' | 'paypal' | 'venmo' | 'paylater'
+
+/** What a bill's PayPal order was opened for. One wallet order serves PayPal, Venmo and Pay Later alike. */
+export type OpenedFor = 'card' | 'wallet' | 'checkout'
+
+/**
+ * What a browser needs to pay a locked bill on our page: the order to pay, and a browser-safe token.
  * Nothing here can capture, change an amount, or approve anything.
  */
 export type PaySession = {
   proposalId: string
   orderId: string
+  /** What this session opened the order for. */
+  instrument: PayMethod
   clientToken: string
   amountCents: number
   currency: string
@@ -724,13 +735,19 @@ export class MandateService {
   }
 
   /**
-   * Opens a checkout for a locked client charge, so a buyer can pay it with a card inside the console.
+   * Opens a checkout for a locked client charge, so a buyer can pay it on our page: a card in the form, or PayPal,
+   * Venmo or Pay Later in PayPal's own window.
    *
    * The order is made from the lock, so the amount the browser submits against cannot differ from the amount the owner
    * approved: the server re-reads the order before it captures and refuses on any difference. The browser is given an
    * order id and a browser-safe token, and nothing else. It cannot capture, and it cannot change a cent.
+   *
+   * One bill keeps one live order. A card and a wallet are different orders on PayPal's side. Switching between them
+   * replaces the open one. It was never captured, so no money moved, and PayPal expires the old one on its own.
+   * PayPal, Venmo and Pay Later share one wallet order: it carries no payment source, so whichever button the buyer
+   * presses can approve it.
    */
-  async paySession(id: string): Promise<PaySession> {
+  async paySession(id: string, method: PayMethod = 'card'): Promise<PaySession> {
     if (!this.paypal) throw new Problem(503, 'paypal.unconfigured', 'PayPal is not configured', 'Set PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET before taking a card.')
     if (!this.paypal.clientToken) throw new Problem(503, 'pay.card_fields_off', 'Paying on this page is off', 'Turn on Advanced Credit and Debit Card Payments for this app in the PayPal dashboard, then press Check again on the System screen.')
     const row = this.require(id)
@@ -741,21 +758,26 @@ export class MandateService {
       if (fullPhase(row.phase) || paidPhase(row.phase)) throw new Problem(409, 'proposal.state', 'That bill is already paid', 'There is nothing left to pay.')
       throw new Problem(409, 'proposal.state', 'That bill is not ready to pay', 'The owner has to approve it first.')
     }
-    // The order must match the instrument: a card is taken on our page, so the order is opened for a card. An order
-    // that was opened as a checkout sends the buyer to PayPal, and a card cannot be taken on it. It was never captured,
-    // so no money moved, and PayPal expires it on its own.
+    // The order must match the instrument. A card is taken on our page, so its order is opened for a card, with the
+    // bank check asked for. A wallet is approved in PayPal's own window, so its order carries no card and no way back.
+    // An order opened for the other one is replaced. One bill keeps one live order at a time.
+    const wanted: OpenedFor = method === 'card' ? 'card' : 'wallet'
     const previousOrderId = row.order_id
-    if (row.order_id && row.order_kind !== 'card') {
+    const current = this.openedFor(row)
+    if (row.order_id && current !== wanted) {
       this.repo.insertEvent(randomUUID(), row.id, 'order.replaced', row.clause, {
-        orderId: row.order_id, instrument: 'checkout', why: `opened as a ${row.order_kind ?? 'checkout'}`,
+        orderId: row.order_id, instrument: 'checkout', why: `opened as a ${current ?? 'checkout'}`, for: method,
       }, this.iso())
       row.order_id = null
     }
-    const orderId = row.order_id ?? await this.openCheckoutOrder(row, previousOrderId)
+    const orderId = row.order_id ?? (wanted === 'card'
+      ? await this.openCheckoutOrder(row, previousOrderId)
+      : await this.openWalletOrder(row, method))
     const clientToken = await this.paypal.clientToken()
     return {
       proposalId: row.id,
       orderId,
+      instrument: method,
       clientToken,
       amountCents: row.amount_cents,
       currency: row.currency,
@@ -803,6 +825,62 @@ export class MandateService {
     })
     this.options.onExternalRef?.('order', created.orderId)
     return created.orderId
+  }
+
+  /**
+   * Opens the PayPal order for a bill the buyer pays with a wallet on our own page: PayPal, Venmo or Pay Later, each
+   * approved in the window PayPal's script opens over the page. Like a card order it is made from the locked cart,
+   * with the request id as its custom id, and with no return URL. Unlike one it carries no payment source, so the
+   * same order can be approved by whichever wallet the buyer pressed, and no card check is asked for.
+   *
+   * It is captured by the same capture as every other order. The browser only ever says "the buyer approved".
+   */
+  private async openWalletOrder(row: ProposalRow, method: PayMethod): Promise<string> {
+    const created = await this.paypal!.createOrder({
+      proposalId: row.id,
+      amountCents: row.amount_cents,
+      currency: row.currency,
+      description: row.description,
+      // The contractor's identity stays on the warrant. The receiver is the studio.
+      payeeEmail: null,
+      kind: 'wallet',
+    })
+    const now = this.iso()
+    this.repo.transaction(() => {
+      // Stored as a checkout order: the buyer approves it on PayPal, not by typing a card, so the card's bank check
+      // never applies. What it was opened for is on the event, which is how the next session tells a wallet from a
+      // checkout that sends the buyer away.
+      this.repo.saveOrder(row.id, created.orderId, created.approveUrl, now, 'checkout')
+      this.repo.insertEvent(randomUUID(), row.id, 'order.created', row.clause, {
+        orderId: created.orderId,
+        payeeAttached: false,
+        instrument: 'checkout',
+        openedFor: 'wallet',
+        method,
+      }, now)
+    })
+    this.options.onExternalRef?.('order', created.orderId)
+    return created.orderId
+  }
+
+  /**
+   * What the bill's open order was opened for: a card on our page, a wallet in PayPal's window, or an ordinary checkout
+   * that sends the buyer to PayPal and back. A card order says so on the row. A wallet order says so on the event that
+   * opened it. Null when the bill has no order.
+   */
+  openedFor(row: ProposalRow): OpenedFor | null {
+    if (!row.order_id) return null
+    if (row.order_kind === 'card') return 'card'
+    const events = this.repo.eventsFor(row.id)
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      const event = events[index]!
+      if (event.type !== 'order.created') continue
+      let payload: { orderId?: unknown; openedFor?: unknown } = {}
+      try { payload = JSON.parse(event.payload_json) as typeof payload } catch { continue }
+      if (payload.orderId !== row.order_id) continue
+      return payload.openedFor === 'wallet' ? 'wallet' : 'checkout'
+    }
+    return 'checkout'
   }
 
   /** `by` is 'server' when nobody asked: the server found the buyer's approval by itself and settled it. */
@@ -959,7 +1037,9 @@ export class MandateService {
       })
       throw new Problem(402, 'pay.capture_declined', 'PayPal declined the payment', `PayPal answered ${captured.status}${captured.statusReason ? ` (${captured.statusReason})` : ''}. No money moved. The client can pay again with another method.`, { proposalId: row.id })
     }
-    if (captured.status !== 'COMPLETED') {
+    // PARTIALLY_REFUNDED is a capture that completed and was later partly given back (seen on a real sandbox capture).
+    // The money did arrive, so it is recorded as arrived; the part taken back is noted by the capture re-read.
+    if (captured.status !== 'COMPLETED' && captured.status !== 'PARTIALLY_REFUNDED') {
       throw new Problem(502, 'paypal.unexpected_status', 'PayPal gave an unexpected answer', `The capture came back ${captured.status}. Nothing was recorded as paid; the server will read it again.`, { proposalId: row.id })
     }
     this.repo.transaction(() => {
@@ -1114,6 +1194,25 @@ export class MandateService {
     }
     this.repo.insertEvent(randomUUID(), row.id, 'invoice.reminded', row.clause, { invoiceId: row.invoice_id, via }, this.iso())
     return { status: 200, body: toView(this.require(id)) }
+  }
+
+  /**
+   * PayPal's QR code for an invoice that is already out. Reading it writes nothing and moves nothing: the client
+   * pays by scanning it on PayPal, and the invoice is settled only when PayPal reports the payment.
+   */
+  async invoiceQr(id: string): Promise<HttpResult> {
+    const row = this.require(id)
+    if (row.kind !== 'charge' || !row.invoice_id || (row.phase !== 'invoice_sent' && row.phase !== 'settled_short')) {
+      throw new Problem(409, 'proposal.state', 'No payable invoice on this charge', `Phase is ${row.phase}. A QR code is for an invoice PayPal has sent and the client can still pay.`)
+    }
+    if (!this.invoices) throw new Problem(503, 'invoice.unavailable', 'Invoicing is not available', 'The PayPal app has no Invoicing permission.')
+    try {
+      const qr = await this.invoices.qrCode(row.invoice_id)
+      return { status: 200, body: { image: qr.imageBase64, contentType: qr.contentType } }
+    } catch (error) {
+      if (error instanceof PayPalError) throw paypalProblem(error, 'to draw the invoice QR code', { proposalId: id })
+      throw error
+    }
   }
 
   /** Voids an invoice that is out and unpaid, so a wrong one cannot be paid later. */

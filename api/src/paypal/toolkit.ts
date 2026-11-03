@@ -50,7 +50,12 @@ export function createToolkit(options: {
     } finally {
       clearTimeout(timer)
     }
-    const value: unknown = typeof raw === 'string' ? safeParse(raw) : raw
+    // A tool that answers with a JSON string is parsed. A tool that answers with something else (the invoice QR
+    // code comes back as a multipart body, not JSON) is kept whole under `raw`, so the caller can read it.
+    const parsed = typeof raw === 'string' ? safeParse(raw) : raw
+    const value: unknown = typeof raw === 'string' && (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed as object).length === 0)
+      ? { raw }
+      : parsed
     const result = (value && typeof value === 'object' ? value : {}) as Json
     if (result.ok === false) {
       const status = typeof result.status === 'number' ? result.status : 502

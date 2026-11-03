@@ -117,7 +117,7 @@ export function createPayPalClient(options: {
     currency: string
     description: string
     payeeEmail: string | null
-    kind?: 'card' | 'checkout'
+    kind?: 'card' | 'checkout' | 'wallet'
     returnUrl?: string
     cancelUrl?: string
   }, attachPayee: boolean): Promise<CreatedOrder> {
@@ -130,9 +130,9 @@ export function createPayPalClient(options: {
     if (attachPayee && input.payeeEmail) unit.payee = { email_address: input.payeeEmail }
     const { json } = await call('/v2/checkout/orders', {
       method: 'POST',
-      // A card order and a checkout order are different orders on PayPal's side, so the request id carries the
-      // instrument. A retry of the same instrument still returns the same order.
-      requestId: paypalRequestId(`${input.proposalId}:create${input.kind === 'card' ? ':card' : ''}`),
+      // A card order, a wallet order and a checkout order are different orders on PayPal's side, so the request id
+      // carries the instrument. A retry of the same instrument still returns the same order.
+      requestId: paypalRequestId(`${input.proposalId}:create${input.kind === 'card' ? ':card' : input.kind === 'wallet' ? ':wallet' : ''}`),
       body: {
         intent: 'CAPTURE',
         purchase_units: [unit],
@@ -142,8 +142,11 @@ export function createPayPalClient(options: {
           attributes: { verification: { method: 'SCA_WHEN_REQUIRED' } },
           ...(input.returnUrl ? { experience_context: { return_url: input.returnUrl, cancel_url: input.cancelUrl ?? input.returnUrl } } : {}),
         } } } : {}),
+        // A wallet order carries no payment source and no return URL. PayPal's script approves it in its own window
+        // (PayPal, Venmo or Pay Later, whichever the buyer pressed). A payment source would tie the order to one
+        // wallet, and a return URL would send the buyer away from a page they never left.
         // With a return URL the buyer lands back on the receipt after approving, instead of being stranded on PayPal.
-        ...(input.returnUrl && input.kind !== 'card' ? { payment_source: { paypal: { experience_context: {
+        ...(input.returnUrl && input.kind !== 'card' && input.kind !== 'wallet' ? { payment_source: { paypal: { experience_context: {
           return_url: input.returnUrl,
           cancel_url: input.cancelUrl ?? input.returnUrl,
           user_action: 'PAY_NOW',
