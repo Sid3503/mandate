@@ -6,6 +6,7 @@ import { OAuthService, type AuthorizeRequest, type OauthGrant } from './auth/oau
 import { es256PublicJwk, passkeyRuleBinding, stepBinding } from './auth/passkeys'
 import type { ControlStore } from './control/store'
 import { mountExtra, type ProductCtx } from './http/extra'
+import { mountBreaks } from './http/breaks'
 import { clientIp } from './ops/client-ip'
 import { API_CSP, securityHeaders } from './ops/headers'
 import { Metrics } from './ops/metrics'
@@ -224,6 +225,8 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/members\/[^/]+\/(role|revoke)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit|flags)$/ },
   { method: 'GET', pattern: /^\/v1\/books(\/journal)?$/ },
+  { method: 'GET', pattern: /^\/v1\/(breaks(\/.+)?|proposals\/[^/]+\/attempts)$/ },
+  { method: 'POST', pattern: /^\/v1\/breaks(\/scan|\/.+\/(fix|dismiss))$/ },
   { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
   { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
 ]
@@ -1950,6 +1953,7 @@ export function createApp(deps: AppDeps) {
     },
   }
   mountExtra(app, product, (request) => app.fetch(request))
+  mountBreaks(app, services)
 
   return app
 }

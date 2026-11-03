@@ -41,7 +41,7 @@ const PAYOUT_LIVE_PHASES = ['payout_sent', 'payout_unclaimed']
  * path through PayPal (three attempts of a 20 s call, backoff, a token fetch, and up to four calls in one settle), or a
  * second worker takes over a call that is still running and both write the result.
  */
-const INFLIGHT_MS = 180_000
+export const INFLIGHT_MS = 180_000
 /** PayPal capture and refund statuses that are final failures: no money moved and none will. */
 const CAPTURE_FAILED = new Set(['DECLINED', 'FAILED'])
 const REFUND_FAILED = new Set(['FAILED', 'CANCELLED'])

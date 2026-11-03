@@ -16,6 +16,7 @@ import { ShareService } from './shares'
 import { ProjectionService } from './projections'
 import { ReceiptService } from './receipt'
 import { BooksService } from './books'
+import { BreaksService } from './breaks'
 import type { CatalogPort } from '../procure/channel3'
 import { ProcureService } from '../procure/service'
 
@@ -34,6 +35,8 @@ export type Services = {
   projections: ProjectionService
   receipt: ReceiptService
   books: BooksService
+  /** The Breaks desk: where the books and PayPal disagree. Reads and keeps notes; never moves money. */
+  breaks: BreaksService
   /** Product search and purchase requests (Channel3). Off, and saying why, when no catalog is configured. */
   procure: ProcureService
 }
@@ -63,6 +66,7 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   const receipt = new ReceiptService(repo, signer, deps.now, deps.publicUrl ?? 'http://localhost:3000')
   // The books read the double-entry journal back: balances, totals and the hash chain, re-walked on every read.
   const books = new BooksService(repo)
+  const breaks = new BreaksService(deps.db, repo, mandate, deps.now)
   const procure = new ProcureService(deps.catalog ?? null, repo, mandate)
-  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares, projections, receipt, books, procure }
+  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares, projections, receipt, books, breaks, procure }
 }

@@ -1,6 +1,7 @@
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 import { session, workspaceFromKey } from './session'
 import type { ConnectionCheck } from './connect'
+import type { AttemptRow, BreakDetail, BreaksList, FixResult as BreakFixResult, ScanResult as BreakScanResult } from './breaks'
 import type { AgentActivityRow, OauthRequestInfo, NegotiationView, ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, Books, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, JournalEntry, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PayMethod, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
@@ -549,6 +550,16 @@ export const api = {
   checkFeatures: () => request<Features>('/v1/paypal/features/check', { method: 'POST' }),
   today: () => request<Today>('/v1/today'),
   audit: (paypal = false) => request<AuditReport>(`/v1/audit${paypal ? '?paypal=1' : ''}`),
+  // The Breaks desk: where the books and PayPal disagree. A fix files a request the gate decides or re-reads PayPal.
+  breaks: (filter: { state?: string; severity?: string } = {}) => {
+    const query = new URLSearchParams(Object.entries(filter).filter(([, value]) => value) as Array<[string, string]>).toString()
+    return request<BreaksList>(`/v1/breaks${query ? `?${query}` : ''}`)
+  },
+  breakDetail: (key: string) => request<BreakDetail>(`/v1/breaks/${encodeURIComponent(key)}`),
+  scanBreaks: () => request<BreakScanResult>('/v1/breaks/scan', { method: 'POST' }),
+  fixBreak: (key: string) => request<BreakFixResult>(`/v1/breaks/${encodeURIComponent(key)}/fix`, { method: 'POST' }),
+  dismissBreak: (key: string, note: string) => request<unknown>(`/v1/breaks/${encodeURIComponent(key)}/dismiss`, { method: 'POST', body: { note } }),
+  attempts: (proposalId: string) => request<{ data: AttemptRow[] }>(`/v1/proposals/${proposalId}/attempts`),
   draftRules: (instruction: string) => request<RulesDraft>('/v1/rules/draft', { method: 'POST', body: { instruction } }),
   balance: () => request<Balance>('/v1/paypal/balance'),
   tools: () => request<ToolSummary>('/v1/paypal/tools'),

@@ -1403,3 +1403,24 @@ html { scroll-behavior: smooth; }
 .invoice-qr-wrap { display: flex; gap: 14px; align-items: center; margin: 12px 0; }
 .invoice-qr { width: 148px; height: 148px; border: 1.5px solid var(--ink); background: #fff; }
 .invoice-qr-wrap figcaption { display: grid; gap: 4px; max-width: 36ch; }
+
+/* ---------- Breaks desk ---------- */
+.breaks-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 0 0 16px; }
+.breaks-kpi { background: var(--surface); border: 1.5px solid var(--ink); padding: 14px 16px; display: grid; gap: 6px; }
+.breaks-kpi strong { font: 800 28px/1 var(--mono); }
+.breaks-status { min-height: 1.4em; margin: 0 0 8px; }
+.breaks-detail { margin-top: 18px; }
+.breaks-fix { display: grid; gap: 6px; justify-items: start; }
+.breaks-dismiss { display: grid; gap: 10px; justify-items: start; }
+.breaks-dismiss .field { width: 100%; }
+.breaks-history { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.link-button { background: none; border: 0; padding: 0; text-align: left; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.link-button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+.receipt-ledgers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 22px; align-items: start; }
+.call-status { font: 700 11px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px; border: 1.5px solid var(--ink); }
+.call-succeeded { background: var(--lime); }
+.call-failed, .call-unknown { background: var(--ink); color: var(--paper); }
+@media (max-width: 860px) {
+  .breaks-kpis { grid-template-columns: repeat(2, 1fr); }
+  .receipt-ledgers { grid-template-columns: 1fr; }
+}

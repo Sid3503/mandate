@@ -250,6 +250,7 @@ export function openProduct(input: {
       sweep: () => inWorkspace(id, async () => {
         await services.mandate.sweepStanding()
         await services.mandate.sweepPending()
+        await services.breaks.scanIfDue()
       }),
     }
   })

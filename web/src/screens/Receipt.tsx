@@ -161,7 +161,10 @@ export function Receipt() {
           </section>
         </div>
       </div>
-      <InTheBooks proposalId={p.id} updatedAt={p.updatedAt} />
+      <div className="receipt-ledgers">
+        <InTheBooks proposalId={p.id} updatedAt={p.updatedAt} />
+        <PayPalCalls proposalId={p.id} updatedAt={p.updatedAt} />
+      </div>
     </div>
   )
 }
@@ -185,6 +188,33 @@ function InTheBooks({ proposalId, updatedAt }: { proposalId: string; updatedAt: 
           {entries.map((entry) => <BookLine key={entry.id} entry={entry} />)}
         </div>
       )}
+    </section>
+  )
+}
+
+/**
+ * Every call to PayPal that can move money for this request, as the server recorded it BEFORE making the call. A row
+ * that says "started" and never finished is how a crash is recognised: the same call is resumed with the same
+ * PayPal-Request-Id, so PayPal answers with what it already did instead of doing it twice.
+ */
+function PayPalCalls({ proposalId, updatedAt }: { proposalId: string; updatedAt: string }) {
+  const owner = useIsOwner()
+  const calls = useQuery({ queryKey: ['paypal-attempts', proposalId, updatedAt], queryFn: () => api.attempts(proposalId), enabled: owner })
+  if (!owner) return null
+  if (calls.error instanceof ApiError && (calls.error.status === 403 || calls.error.status === 401)) return null
+  if (calls.isLoading) return <section className="panel books-slip"><h2 className="panel-title">PayPal calls</h2><p className="fine">Reading the call record…</p></section>
+  if (calls.error || !calls.data) return <section className="panel books-slip"><h2 className="panel-title">PayPal calls</h2><p className="fine">The call record for this request could not be read.</p></section>
+  const rows = calls.data.data
+  return (
+    <section className="panel books-slip" data-testid="paypal-calls">
+      <h2 className="panel-title">PayPal calls</h2>
+      <p className="fine">Each call is written down before it is made, then finished when PayPal answers.</p>
+      {rows.length === 0 ? <p className="fine">No call to PayPal has been made for this request.</p> : rows.map((row) => (
+        <div className="books-slip-row" key={row.id}>
+          <div className="row between"><strong>{row.op}</strong><span className={`call-status call-${row.status}`}>{row.status}</span></div>
+          <p className="fine mono">PayPal-Request-Id {row.requestIdPrefix}… · {row.externalId ? `PayPal id ${row.externalId}` : 'no PayPal id'} · {when(row.startedAt)}</p>
+        </div>
+      ))}
     </section>
   )
 }

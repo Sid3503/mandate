@@ -180,6 +180,49 @@ CREATE INDEX IF NOT EXISTS events_type ON events(type, created_at);
 CREATE INDEX IF NOT EXISTS proposals_payee ON proposals(payee_id, kind, phase);
 `,
   },
+  {
+    // The Breaks desk: where the books and PayPal disagree, kept as rows so a break can be opened, resolved, reopened
+    // or dismissed with a note, and the history of each is kept. `breaks` is the current state of each disagreement
+    // (the key is `rule:request`, so the same disagreement on the next scan is the same row). `break_events` is its
+    // append-only history. `fingerprint` is what was seen when the owner dismissed it: a dismissed break stays quiet
+    // until the evidence changes. Neither table can move money or change a request.
+    id: '0005_breaks',
+    sql: `
+CREATE TABLE IF NOT EXISTS breaks (
+  key TEXT PRIMARY KEY,
+  rule TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('critical', 'warning', 'info')),
+  proposal_id TEXT,
+  title TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  expected TEXT NOT NULL,
+  observed TEXT NOT NULL,
+  delta_cents INTEGER,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  resolved_at TEXT,
+  dismissed_at TEXT,
+  dismissed_by TEXT,
+  dismiss_note TEXT,
+  fingerprint TEXT
+);
+CREATE INDEX IF NOT EXISTS breaks_state ON breaks(resolved_at, dismissed_at, severity);
+CREATE INDEX IF NOT EXISTS breaks_proposal ON breaks(proposal_id);
+
+CREATE TABLE IF NOT EXISTS break_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  break_key TEXT NOT NULL,
+  at TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('opened', 'resolved', 'reopened', 'dismissed', 'fix_filed')),
+  detail TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS break_events_key ON break_events(break_key, id);
+CREATE TRIGGER IF NOT EXISTS break_events_append_only_update BEFORE UPDATE ON break_events
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode) BEGIN SELECT RAISE(ABORT, 'break history is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS break_events_append_only_delete BEFORE DELETE ON break_events
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode) BEGIN SELECT RAISE(ABORT, 'break history is append-only'); END;
+`,
+  },
 ]
 
 /**
