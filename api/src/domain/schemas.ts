@@ -185,6 +185,22 @@ export const BLANK_WARRANT: WarrantBody = {
 }
 export type Payee = z.infer<typeof PayeeSchema>
 
+/** Angle brackets are dropped so a description or note can never carry markup into an email, a page or a PayPal invoice. */
+export const stripMarkup = (value: string): string => value.replace(/[<>]/g, '').trim()
+
+/** One line of a bill. Whole cents and whole units, so the total is exact and the signed hash is stable. */
+export const LineItemSchema = z.object({
+  description: z.string().max(400).transform(stripMarkup).pipe(z.string().min(1).max(200)),
+  quantity: z.number().int().min(1).max(999),
+  unitCents: z.number().int().positive().max(100_000_000),
+}).strict()
+
+export const MAX_LINE_ITEMS = 20
+export const MAX_DUE_DAYS = 365
+
+/** The sum of quantity times unit price, in cents. */
+export const lineItemsTotal = (items: Array<{ quantity: number; unitCents: number }>): number => items.reduce((sum, item) => sum + item.quantity * item.unitCents, 0)
+
 export const ProposalCreateSchema = z.object({
   kind: z.enum(['payment', 'charge', 'refund']).default('payment'),
   payee: z.string().trim().min(1).max(200),
@@ -201,9 +217,18 @@ export const ProposalCreateSchema = z.object({
   dealId: z.uuid().optional(),
   milestone: z.number().int().min(0).max(11).optional(),
   proposalId: z.uuid().optional(),
+  /** What the bill is for, line by line (a charge only). The amount must equal their sum. Signed into the lock. */
+  lineItems: z.array(LineItemSchema).min(1).max(MAX_LINE_ITEMS).optional(),
+  /** The day the bill falls due, YYYY-MM-DD (a charge only; not in the past, at most a year ahead). Signed into the lock. */
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().startsWith(value), 'not a real calendar date').optional(),
+  /** A note the client sees on the bill. Signed into the lock. */
+  customerNote: z.string().max(2000).transform(stripMarkup).pipe(z.string().max(1000)).optional(),
 }).strict().refine((value) => (value.dealId === undefined) === (value.milestone === undefined), {
   message: 'dealId and milestone go together',
   path: ['milestone'],
+}).refine((value) => value.kind === 'charge' || (value.lineItems === undefined && value.dueDate === undefined && value.customerNote === undefined), {
+  message: 'items, a due date and a customer note belong to a charge only',
+  path: ['lineItems'],
 })
 
 export type ProposalCreate = z.infer<typeof ProposalCreateSchema>

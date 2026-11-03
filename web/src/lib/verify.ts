@@ -68,9 +68,16 @@ export function canonicalCart(p: Record<string, unknown>): string {
     kind: p.kind,
     parentCaptureId: (p.parentCaptureId as string | null | undefined) ?? null,
   }
-  if (p.dealId) return JSON.stringify({ v: 3, ...base, jobId, fundingCaptureId, dealId: p.dealId, milestone: (p.milestone as number | null | undefined) ?? null })
-  if (jobId !== null || fundingCaptureId !== null || p.kind === 'charge') return JSON.stringify({ v: 2, ...base, jobId, fundingCaptureId })
-  return JSON.stringify({ v: 1, ...base })
+  // Items, a due date and a note join the hash last, and only when the bill has them, so an older cart is unchanged.
+  const terms: Record<string, unknown> = {}
+  const items = p.lineItems as Array<{ description: string; quantity: number; unitCents: number }> | null | undefined
+  if (items && items.length > 0) terms.lineItems = items.map((item) => ({ description: item.description, quantity: item.quantity, unitCents: item.unitCents }))
+  if (p.dueDate) terms.dueDate = p.dueDate
+  if (p.customerNote) terms.customerNote = p.customerNote
+  const tail = Object.keys(terms).length > 0 ? { terms } : {}
+  if (p.dealId) return JSON.stringify({ v: 3, ...base, jobId, fundingCaptureId, dealId: p.dealId, milestone: (p.milestone as number | null | undefined) ?? null, ...tail })
+  if (jobId !== null || fundingCaptureId !== null || p.kind === 'charge') return JSON.stringify({ v: 2, ...base, jobId, fundingCaptureId, ...tail })
+  return JSON.stringify({ v: 1, ...base, ...tail })
 }
 
 export const lockMessage = (proposalId: string, cartHash: string) => `mandate:lock:v1\n${proposalId}\n${cartHash}`

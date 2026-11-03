@@ -1,3 +1,5 @@
+import { paypalRequestId } from '../domain/hash'
+import type { LineItem } from '../domain/hash'
 import { centsToPayPal, moneyCents, payPalToCents } from '../domain/money'
 import { PayPalError } from './port'
 import { createToolkit, type Json } from './toolkit'
@@ -13,6 +15,12 @@ export type InvoiceRequest = {
   note: string
   recipientEmail: string
   recipientName: string
+  /** The items the owner approved. Null for a bill with one total and no items, which is sent as a single line. */
+  lineItems?: LineItem[] | null
+  /** The day it falls due, YYYY-MM-DD, or null. Sent as PayPal's `detail.payment_term`. */
+  dueDate?: string | null
+  /** The owner's note for the client, or null. Sent as PayPal's `detail.note`. */
+  customerNote?: string | null
   /** Whether the client may pay this invoice in part. The owner's rules decide; PayPal honours it only where PayPal offers it. */
   allowPartialPayment: boolean
   /** A conditional discount from the deal: pay by `dueDate` and PayPal takes `percentBps` off. Null when the deal carries none. */
@@ -106,7 +114,40 @@ export const percentString = (percentBps: number): string => {
  * PayPal's own Agent Toolkit, run inside our server, for everything about billing a client by invoice.
  * The server calls these tools with values taken from a locked cart. No model ever sees them.
  */
-export function createToolkitInvoices(options: { clientId: string; clientSecret: string; sandbox: boolean }): InvoicePort {
+/** PayPal's invoice items for a request: the signed line items when there are any, else the one-line bill it always was. */
+export function invoiceItemsFor(input: InvoiceRequest): Json[] {
+  if (input.lineItems && input.lineItems.length > 0) {
+    return input.lineItems.map((item) => ({ name: item.description.slice(0, 200), quantity: String(item.quantity), unit_amount: { currency_code: input.currency, value: centsToPayPal(item.unitCents, input.currency) } }))
+  }
+  return [{ name: input.title.slice(0, 200), description: input.description.slice(0, 1000), quantity: '1', unit_amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) } }]
+}
+
+/** The note the client reads: the owner's customer note when there is one, else the request's own wording. */
+export const invoiceNoteFor = (input: InvoiceRequest): string => (input.customerNote ?? input.note).slice(0, 4000)
+
+/**
+ * PayPal's own request body for "create draft invoice" (POST /v2/invoicing/invoices). Field names are the ones in
+ * PayPal's published Invoicing v2 OpenAPI (detail.payment_term.term_type / due_date, detail.note, items[].name /
+ * quantity / unit_amount). It is used only when a due date is set, because the Agent Toolkit's simplified
+ * create_invoice has no way to carry a payment term.
+ */
+export function invoiceDraftBody(input: InvoiceRequest): Json {
+  const [given, ...rest] = input.recipientName.trim().split(/\s+/)
+  return {
+    detail: {
+      reference: input.proposalId,
+      invoice_number: input.invoiceNumber,
+      currency_code: input.currency,
+      note: invoiceNoteFor(input),
+      ...(input.dueDate ? { payment_term: { term_type: 'DUE_ON_DATE_SPECIFIED', due_date: input.dueDate } } : {}),
+    },
+    primary_recipients: [{ billing_info: { email_address: input.recipientEmail, name: { given_name: given || 'Client', surname: rest.join(' ') || undefined }, business_name: input.recipientName.slice(0, 300) } }],
+    items: invoiceItemsFor(input),
+    configuration: { partial_payment: { allow_partial_payment: input.allowPartialPayment } },
+  }
+}
+
+export function createToolkitInvoices(options: { clientId: string; clientSecret: string; sandbox: boolean; fetch?: typeof fetch }): InvoicePort {
   const toolkit = createToolkit({
     ...options,
     actions: { invoices: { create: true, send: true, get: true, list: true, sendReminder: true, cancel: true, generateQRC: true } },
@@ -115,14 +156,20 @@ export function createToolkitInvoices(options: { clientId: string; clientSecret:
 
   return {
     async createDraft(input) {
+      // A due date cannot travel through the toolkit's simplified create_invoice, so a bill that has one is drafted
+      // with PayPal's own request body. Everything else about the invoice (send, read, remind, cancel) is unchanged.
+      if (input.dueDate) {
+        const id = await createDraftDirect(options, invoiceDraftBody(input), paypalRequestId(`${input.proposalId}:invoice`))
+        return { invoiceId: id }
+      }
       const [given, ...rest] = input.recipientName.trim().split(/\s+/)
       const result = await run('create_invoice', {
         currency_code: input.currency,
         invoice_number: input.invoiceNumber,
         reference: input.proposalId,
-        note: input.note.slice(0, 4000),
+        note: invoiceNoteFor(input),
         primary_recipients: [{ billing_info: { email_address: input.recipientEmail, name: { given_name: given || 'Client', surname: rest.join(' ') || undefined }, business_name: input.recipientName.slice(0, 300) } }],
-        items: [{ name: input.title.slice(0, 200), description: input.description.slice(0, 1000), quantity: '1', unit_amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) } }],
+        items: invoiceItemsFor(input),
         allow_partial_payment: input.allowPartialPayment,
         ...(input.earlyPaymentDiscount ? { early_payment_discount: { percent: percentString(input.earlyPaymentDiscount.percentBps), due_date: input.earlyPaymentDiscount.dueDate } } : {}),
       })
@@ -167,6 +214,34 @@ export function createToolkitInvoices(options: { clientId: string; clientSecret:
       return null
     },
   }
+}
+
+/**
+ * One direct call to PayPal's create-draft-invoice endpoint, with its own short-lived token. Not exercised against
+ * the live sandbox from the build environment: the lead verifies it there.
+ */
+async function createDraftDirect(options: { clientId: string; clientSecret: string; sandbox: boolean; fetch?: typeof fetch }, body: Json, requestId: string): Promise<string> {
+  const doFetch = options.fetch ?? fetch
+  const base = options.sandbox ? 'https://api-m.sandbox.paypal.com' : 'https://api-m.paypal.com'
+  const tokenResponse = await doFetch(`${base}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: { authorization: `Basic ${Buffer.from(`${options.clientId}:${options.clientSecret}`).toString('base64')}`, 'content-type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials',
+    signal: AbortSignal.timeout(20_000),
+  })
+  const tokenJson = (await tokenResponse.json().catch(() => ({}))) as Json
+  if (!tokenResponse.ok || typeof tokenJson.access_token !== 'string') throw new PayPalError(tokenResponse.status, 'paypal_token', null, 'could not get an access token')
+  const made = await doFetch(`${base}/v2/invoicing/invoices`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${tokenJson.access_token}`, 'content-type': 'application/json', 'paypal-request-id': requestId },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(25_000),
+  })
+  const json = (await made.json().catch(() => ({}))) as Json
+  if (!made.ok) throw new PayPalError(made.status, typeof json.name === 'string' ? json.name : 'paypal_error', typeof json.debug_id === 'string' ? json.debug_id : null, String(json.message ?? '').slice(0, 300))
+  const id = idFrom(json)
+  if (!id) throw new PayPalError(502, 'paypal_malformed', null, 'create draft invoice returned no id')
+  return id
 }
 
 function idFrom(value: Json): string | null {

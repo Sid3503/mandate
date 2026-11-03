@@ -1423,4 +1423,20 @@ html { scroll-behavior: smooth; }
 @media (max-width: 860px) {
   .breaks-kpis { grid-template-columns: repeat(2, 1fr); }
   .receipt-ledgers { grid-template-columns: 1fr; }
+/* Line items, due date and note on a bill: the request form, the receipt and the client page. */
+.line-items { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; min-width: 0; }
+.line-items legend { padding: 0; font-weight: 700; margin-bottom: 6px; }
+.line-row { display: grid; grid-template-columns: minmax(0, 1fr) 72px 110px auto; gap: 8px; align-items: center; }
+.bill-terms { display: grid; gap: 12px; margin-top: 14px; }
+.bill-items { width: 100%; border-collapse: collapse; font-size: 14px; }
+.bill-items th, .bill-items td { text-align: left; padding: 8px 6px; border-top: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.bill-items thead th { font: 700 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--mute); border-top: 0; }
+.bill-items .num { text-align: right; white-space: nowrap; }
+.bill-items tfoot th { text-align: right; }
+.bill-due, .bill-note { margin: 0; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.bill-due span, .bill-note span { display: block; font: 700 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--mute); margin-bottom: 4px; }
+.bill-due span { display: inline; margin: 0 6px 0 0; }
+@media (max-width: 560px) {
+  .line-row { grid-template-columns: 1fr 1fr; }
+  .line-row input:first-child { grid-column: 1 / -1; }
 }
