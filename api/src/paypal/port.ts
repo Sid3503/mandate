@@ -18,6 +18,11 @@ export type LiveOrder = {
   currency: string
   customId: string | null
   approveUrl: string | null
+  /**
+   * The capture PayPal already holds on this order, when it has one. An order that reads COMPLETED was captured; this
+   * is how a capture whose answer was lost (a timeout, a crash) is recovered without asking PayPal to capture again.
+   */
+  capture?: CapturedPayment | null
 }
 
 export type CapturedPayment = {
@@ -29,11 +34,15 @@ export type CapturedPayment = {
   feeCents: number | null
   /** What PayPal said reached the seller (`seller_receivable_breakdown.net_amount`). Null when it said nothing. */
   netCents: number | null
+  /** Why a capture is PENDING or DECLINED (`status_details.reason`), when PayPal says. */
+  statusReason?: string | null
 }
 
 export type RefundedPayment = {
   refundId: string
+  /** COMPLETED, PENDING, FAILED or CANCELLED. Only COMPLETED means the money went back. */
   status: string
+  statusReason?: string | null
 }
 
 export type SentPayout = {
@@ -90,6 +99,10 @@ export type PayPalPort = {
    */
   cardResult?(orderId: string): Promise<CardOnOrder | null>
   captureOrder(orderId: string, proposalId: string): Promise<CapturedPayment>
+  /** Re-reads one capture. Its status is the truth about whether the money arrived, stayed, or was taken back. */
+  getCapture(captureId: string): Promise<CapturedPayment>
+  /** Re-reads one refund, for a refund PayPal left PENDING. */
+  getRefund(refundId: string): Promise<RefundedPayment>
   refundCapture(input: {
     proposalId: string
     captureId: string
@@ -112,7 +125,7 @@ export type PayPalPort = {
   /** The account's balance. PayPal's report refreshes every few hours, so `asOf` matters: this is advice, never a guarantee. */
   balance(currency: string): Promise<{ availableCents: number; withheldCents: number; asOf: string | null }>
   /** Asks PayPal whether a webhook really came from PayPal. True only when PayPal says SUCCESS. */
-  verifyWebhook(input: { webhookId: string; headers: Record<string, string>; event: unknown }): Promise<boolean>
+  verifyWebhook(input: { webhookId: string; headers: Record<string, string>; event: unknown; rawEvent?: string }): Promise<boolean>
   /** The scopes on the app's access token, which say which PayPal features the app may use. `fresh` forces a new token. */
   scopes(fresh?: boolean): Promise<string[]>
 }

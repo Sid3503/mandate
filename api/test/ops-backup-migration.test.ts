@@ -67,7 +67,7 @@ describe('Pre-migration backups and older database copy migration', () => {
     // Insert test proposal
     olderDb.prepare(`
       INSERT INTO proposals (id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at)
-      VALUES (?, ?, 1, 'payment', 5000, 'USD', 'Old work', 'allow', 'clause_1', 'detail_1', 'approved', '2026-01-01', '2026-01-01')
+      VALUES (?, ?, 1, 'payment', 5000, 'USD', 'Old work', 'AUTO', 'clause_1', 'detail_1', 'locked', '2026-01-01', '2026-01-01')
     `).run('prop_old_1', 'warrant_default')
 
     olderDb.close()
@@ -121,7 +121,7 @@ describe('Database backup and restore scripts (scripts/db-backup.mjs, scripts/db
     const sourceDb = openDatabase(sourceDbPath)
     migrate(sourceDb)
     seed(sourceDb, new Date())
-    sourceDb.exec("INSERT INTO proposals (id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at) VALUES ('p_test', 'w1', 1, 'pay', 100, 'USD', 'desc', 'allow', 'c', 'd', 'approved', 'now', 'now')")
+    sourceDb.exec("INSERT INTO proposals (id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at) VALUES ('p_test', 'w1', 1, 'payment', 100, 'USD', 'desc', 'AUTO', 'c', 'd', 'locked', 'now', 'now')")
     sourceDb.close()
 
     // Run db-backup script
@@ -145,13 +145,13 @@ describe('Database backup and restore scripts (scripts/db-backup.mjs, scripts/db
     const backupPath = join(dir, 'backup.sqlite')
     const bdb = openDatabase(backupPath)
     migrate(bdb)
-    bdb.exec("INSERT INTO proposals (id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at) VALUES ('from_backup', 'w1', 1, 'pay', 999, 'USD', 'desc', 'allow', 'c', 'd', 'approved', 'now', 'now')")
+    bdb.exec("INSERT INTO proposals (id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at) VALUES ('from_backup', 'w1', 1, 'payment', 999, 'USD', 'desc', 'AUTO', 'c', 'd', 'locked', 'now', 'now')")
     bdb.close()
 
     const targetDbPath = join(dir, 'target.sqlite')
     const tdb = openDatabase(targetDbPath)
     migrate(tdb)
-    tdb.exec("INSERT INTO proposals (id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at) VALUES ('original_target', 'w1', 1, 'pay', 111, 'USD', 'desc', 'allow', 'c', 'd', 'approved', 'now', 'now')")
+    tdb.exec("INSERT INTO proposals (id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at) VALUES ('original_target', 'w1', 1, 'payment', 111, 'USD', 'desc', 'AUTO', 'c', 'd', 'locked', 'now', 'now')")
     tdb.close()
 
     // 1. Calling restore without --yes must fail with exit code 2

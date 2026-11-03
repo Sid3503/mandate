@@ -27,7 +27,7 @@ import { openSeal, seal } from '../src/tenancy/envelope'
 import { TenantRegistry } from '../src/tenancy/registry'
 import { scriptedModel } from './mockModel'
 import { SoftAuthenticator } from './soft-authenticator'
-import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, NOW, OWNER_KEY, STUDIO_KEY } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, NOW, OWNER_KEY, STUDIO_KEY, allowRawWrites } from './support'
 
 afterEach(closeAll)
 
@@ -728,7 +728,7 @@ describe('Appendix B red team: cases 1 to 35', () => {
     const payout = await call(h.app, 'POST', '/v1/proposals', { idem: idem(), body: { payee: 'Priya', amountCents: 9_000, currency: 'USD', category: 'design', description: 'M1 share', evidenceUrl: EVIDENCE, jobId: JOB, fundingCaptureId: collectRes.captureId } })
     await call(h.app, 'POST', `/v1/proposals/${payout.json.id}/approve`)
     const stored = JSON.parse((h.db.prepare(`SELECT payload_json FROM events WHERE proposal_id = ? AND type = 'proposal.approved'`).get(payout.json.id) as { payload_json: string }).payload_json) as { cartHash: string }
-    h.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: stored.cartHash, method: 'passkey' }), payout.json.id)
+    allowRawWrites(h.db); h.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: stored.cartHash, method: 'passkey' }), payout.json.id)
     const redAudit = (await call(h.app, 'GET', '/v1/audit')).json
     expect(redAudit.ok).toBe(false)
     expect(redAudit.checks.find((c: { id: string }) => c.id === 'approval.proof').status).toBe('fail')

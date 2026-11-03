@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { DEMO_BUYER_RULES, DEMO_SELLER_RULES, PartyRulesSchema } from '../domain/deal'
 import { LINE_STUDIO_WARRANT, WARRANT_ID, WarrantBodySchema } from '../domain/schemas'
+import { ALL_PHASES, TRANSITIONS } from '../domain/phases'
 import { applySqlSteps, OPS_STEPS } from './sql-migrations'
 
 /** Northwind, the demo client. Its deal rules are keyed by the client id on the warrant. */
@@ -367,6 +368,9 @@ export function openDatabase(path: string): DatabaseSync {
 
 export function migrate(db: DatabaseSync, options: { backup?: boolean } = {}): void {
   db.exec(SCHEMA)
+  // FROZEN. The column checks below brought databases written before numbered migrations existed up to the 0001
+  // baseline. They are kept so an old file still opens, and nothing new is ever added here: every change from now on
+  // is a numbered, checksummed step in sql-migrations.ts, so a schema can be named by the last step it ran.
   const columns = new Set((db.prepare('PRAGMA table_info(proposals)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!columns.has('job_id')) db.exec('ALTER TABLE proposals ADD COLUMN job_id TEXT')
   if (!columns.has('funding_capture_id')) db.exec('ALTER TABLE proposals ADD COLUMN funding_capture_id TEXT')
@@ -397,6 +401,7 @@ export function migrate(db: DatabaseSync, options: { backup?: boolean } = {}): v
   const shareColumns = new Set((db.prepare('PRAGMA table_info(share_links)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!shareColumns.has('can_pay')) db.exec('ALTER TABLE share_links ADD COLUMN can_pay INTEGER NOT NULL DEFAULT 0')
   applySqlSteps(db, OPS_STEPS, new Date().toISOString(), options.backup === false ? undefined : backupFileDatabase)
+  syncStateMachine(db)
   const eventColumns = new Set((db.prepare('PRAGMA table_info(events)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!eventColumns.has('actor_json')) db.exec('ALTER TABLE events ADD COLUMN actor_json TEXT')
   const agentColumns = new Set((db.prepare('PRAGMA table_info(agents)').all() as Array<{ name: string }>).map((column) => column.name))
@@ -408,6 +413,45 @@ export function migrate(db: DatabaseSync, options: { backup?: boolean } = {}): v
   const safetyColumns = new Set((db.prepare('PRAGMA table_info(safety_state)').all() as Array<{ name: string }>).map((column) => column.name))
   if (!safetyColumns.has('autopilot_paused')) db.exec('ALTER TABLE safety_state ADD COLUMN autopilot_paused INTEGER NOT NULL DEFAULT 0')
   if (!safetyColumns.has('config_json')) db.exec('ALTER TABLE safety_state ADD COLUMN config_json TEXT')
+}
+
+/**
+ * Writes the state machine from domain/phases.ts into the tables the phase triggers read. It is configuration, not
+ * data, so it is replaced whole at every boot: the code is the source, and the database enforces exactly what it says.
+ */
+export function syncStateMachine(db: DatabaseSync): void {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.exec('DELETE FROM known_phases')
+    db.exec('DELETE FROM phase_transitions')
+    const phase = db.prepare('INSERT INTO known_phases (phase) VALUES (?)')
+    const edge = db.prepare('INSERT INTO phase_transitions (from_phase, to_phase) VALUES (?, ?)')
+    for (const name of ALL_PHASES) phase.run(name)
+    for (const [from, targets] of Object.entries(TRANSITIONS)) for (const to of targets) edge.run(from, to)
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+/**
+ * Runs `fn` with the database's own guards switched off: the append-only history, the locked-cart and the phase
+ * triggers. Only for wiping a sandbox demo and for an operator repairing a file by hand. The switch is a row inside
+ * the same transaction, so it can never be left on by a crash.
+ */
+export function withMaintenance<T>(db: DatabaseSync, fn: () => T): T {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.exec('INSERT OR IGNORE INTO maintenance_mode (id) VALUES (1)')
+    const value = fn()
+    db.exec('DELETE FROM maintenance_mode')
+    db.exec('COMMIT')
+    return value
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
 }
 
 /** Copies a file database aside before a new checksum step. Memory databases are skipped. */
@@ -458,17 +502,12 @@ export function databaseReady(db: DatabaseSync): boolean {
  * keep working. It is for a hosted demo, behind DEMO_RESET, and only ever against the PayPal sandbox.
  */
 export function resetDemo(db: DatabaseSync, now: Date): void {
-  db.exec('BEGIN')
-  try {
-    // Children before parents, because events point at proposals and deliveries at deals.
-    for (const table of ['events', 'deliveries', 'negotiation_moves', 'negotiations', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
+  withMaintenance(db, () => {
+    // Children before parents, because events and the ledger point at proposals and deliveries at deals.
+    for (const table of ['postings', 'journal_entries', 'paypal_attempts', 'events', 'deliveries', 'negotiation_moves', 'negotiations', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
       db.exec(`DELETE FROM ${table}`)
     }
     db.exec("UPDATE safety_state SET paused = 0, reason = NULL, since = NULL, by = NULL WHERE id = 1")
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  })
   seed(db, now)
 }

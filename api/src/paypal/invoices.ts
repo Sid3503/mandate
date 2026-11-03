@@ -108,16 +108,21 @@ export function createToolkitInvoices(options: { clientId: string; clientSecret:
     async cancel(invoiceId, note) {
       await run('cancel_sent_invoice', { invoice_id: invoiceId, note: note.slice(0, 4000), send_to_recipient: true })
     },
+    /**
+     * Finds an invoice this server already created, by its number, so a create that crashed before its answer was stored
+     * is found instead of made twice. It reads every page (up to a limit), and a failed read is an error, never "not
+     * found": "not found" would send a second create that PayPal refuses as a duplicate number.
+     */
     async findByNumber(invoiceNumber) {
-      try {
-        const result = await run('list_invoices', { page: 1, page_size: 100, total_required: false })
+      for (let page = 1; page <= 20; page += 1) {
+        const result = await run('list_invoices', { page, page_size: 100, total_required: false })
         const items = Array.isArray(result.items) ? (result.items as Json[]) : []
         const found = items.find((item) => (item.detail as Json | undefined)?.invoice_number === invoiceNumber)
         const id = found ? idFrom(found) : null
-        return id ? { invoiceId: id } : null
-      } catch {
-        return null
+        if (id) return { invoiceId: id }
+        if (items.length < 100) return null
       }
+      return null
     },
   }
 }

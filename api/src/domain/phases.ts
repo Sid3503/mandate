@@ -23,14 +23,69 @@ export const FUNDED_PHASES = ['captured', 'settled_short'] as const
 /** Less than the lock arrived. What a shortfall's reason was read from is on the row, in `delta_source`. */
 export const SHORT_PHASES = ['settled_short'] as const
 
-/** Nothing has finished yet: waiting, locked, sent, out, or unclaimed. */
-export const OPEN_PHASES = ['pending_approval', 'locked', 'order_created', 'capture_inflight', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'] as const
+/**
+ * Nothing has finished yet: waiting, locked, sent, out, or unclaimed. `capture_pending` and `refund_pending` are money
+ * PayPal accepted but has not finished moving (an eCheck, a risk review). `mismatch_hold` is money PayPal moved that does
+ * not match the lock: it needs a person, so it stays open and in everyone's way until one looks.
+ */
+export const OPEN_PHASES = ['pending_approval', 'locked', 'order_created', 'capture_inflight', 'capture_pending', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed', 'refund_pending', 'mismatch_hold'] as const
 
-/** A billed milestone stays billed unless the request that billed it was refused or thrown away. */
-export const DEAD_PHASES = ['denied', 'rejected', 'capture_refused', 'invoice_cancelled'] as const
+/** A billed milestone stays billed unless the request that billed it was refused, thrown away, or declined by PayPal. */
+export const DEAD_PHASES = ['denied', 'rejected', 'capture_refused', 'invoice_cancelled', 'capture_failed', 'refund_failed'] as const
 
-/** A payout's money is spoken for: locked, sent to PayPal, or paid. */
-export const RESERVED_PHASES = ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured'] as const
+/**
+ * A payout's money is spoken for: locked, sent to PayPal, or paid. A payout held on a mismatch stays reserved: PayPal
+ * may already have paid it, so releasing its headroom would let the same money be promised twice.
+ */
+export const RESERVED_PHASES = ['locked', 'order_created', 'capture_inflight', 'payout_sent', 'payout_unclaimed', 'captured', 'mismatch_hold'] as const
+
+/** A refund that holds part of its capture: asked for, approved, being sent, waiting at PayPal, or done. */
+export const REFUND_HELD_PHASES = ['pending_approval', 'locked', 'order_created', 'capture_inflight', 'refund_pending', 'refunded'] as const
+
+/**
+ * Every phase a request can be in, and every move between two of them. This is the state machine. The database holds a
+ * copy (refreshed at every boot) and a trigger refuses any write that is not on this list, so a stale read that would
+ * move a paid row back to "sent", or a cancelled invoice over a paid one, fails loudly instead of silently rewinding the
+ * money. A move to the same phase is always allowed: it is a re-read that learned nothing new.
+ */
+export const TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
+  pending_approval: ['locked', 'rejected', 'denied'],
+  locked: ['capture_inflight', 'order_created', 'capture_refused', 'rejected'],
+  order_created: ['capture_inflight', 'captured', 'capture_pending', 'capture_failed', 'capture_refused', 'mismatch_hold', 'rejected'],
+  capture_inflight: [
+    'locked', 'order_created', 'invoice_draft', 'invoice_sent', 'invoice_cancelled', 'payout_sent', 'payout_unclaimed', 'payout_failed',
+    'captured', 'settled_short', 'capture_pending', 'capture_failed', 'capture_refused', 'mismatch_hold',
+    'refunded', 'refund_pending', 'refund_failed',
+  ],
+  capture_pending: ['captured', 'capture_failed', 'capture_reversed'],
+  invoice_draft: ['invoice_sent', 'capture_inflight', 'invoice_cancelled', 'captured', 'settled_short', 'capture_refused'],
+  invoice_sent: ['capture_inflight', 'captured', 'settled_short', 'invoice_cancelled', 'capture_refused'],
+  settled_short: ['captured', 'capture_refused', 'capture_reversed'],
+  payout_sent: ['capture_inflight', 'captured', 'payout_unclaimed', 'payout_failed', 'mismatch_hold'],
+  payout_unclaimed: ['capture_inflight', 'captured', 'payout_failed', 'mismatch_hold'],
+  // A paid charge can still be taken back (a chargeback, a refund made at PayPal). A paid payout can still come back
+  // (RETURNED, REVERSED). Both are recorded; neither is allowed to pretend the money never arrived.
+  captured: ['capture_reversed', 'payout_failed'],
+  refund_pending: ['refunded', 'refund_failed'],
+  // Final. A person decides what happens next, by filing a new request.
+  mismatch_hold: [],
+  denied: [],
+  rejected: [],
+  capture_refused: [],
+  capture_failed: [],
+  capture_reversed: [],
+  invoice_cancelled: [],
+  payout_failed: [],
+  refunded: [],
+  refund_failed: [],
+}
+
+export const ALL_PHASES: readonly string[] = Object.keys(TRANSITIONS)
+
+/** True when a request may move from one phase to the other. Staying put is always allowed. */
+export function canTransition(from: string, to: string): boolean {
+  return from === to || (TRANSITIONS[from]?.includes(to) ?? false)
+}
 
 /**
  * An invoice the server still re-reads from PayPal. A short payment keeps its invoice watched, so a later payment

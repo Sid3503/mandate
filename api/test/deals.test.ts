@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Signer } from '../src/domain/signing'
-import { agree, BUYER_KEY, call, closeAll, collect, confirmPrices, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY, terms } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, confirmPrices, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY, terms, allowRawWrites } from './support'
 import { generateKeyPairSync } from 'node:crypto'
 import { Repo } from '../src/db/repo'
 import { cartHash } from '../src/domain/hash'
@@ -393,7 +393,7 @@ describe('signed locks', () => {
       currency: row.currency, category: row.category!, evidenceUrl: row.evidence_url!, kind: row.kind, parentCaptureId: row.parent_capture_id,
       jobId: row.job_id, fundingCaptureId: row.funding_capture_id, dealId: row.deal_id, milestone: row.milestone,
     }
-    db.prepare('UPDATE proposals SET amount_cents = ?, cart_hash = ? WHERE id = ?').run(forged.amount_cents, cartHash(fields), id)
+    allowRawWrites(db); db.prepare('UPDATE proposals SET amount_cents = ?, cart_hash = ? WHERE id = ?').run(forged.amount_cents, cartHash(fields), id)
     expect(locked.cartHash).not.toBe(cartHash(fields))
     const verify = (await call(app, 'GET', `/v1/proposals/${id}/verify`)).json
     expect(verify).toMatchObject({ hashMatches: true, signatureValid: false, verdict: 'invalid' })
@@ -406,7 +406,7 @@ describe('signed locks', () => {
 
   it('refuses a lock whose stored hash no longer matches its fields', async () => {
     const { app, db, id } = await approved()
-    db.prepare('UPDATE proposals SET amount_cents = 1 WHERE id = ?').run(id)
+    allowRawWrites(db); db.prepare('UPDATE proposals SET amount_cents = 1 WHERE id = ?').run(id)
     expect((await call(app, 'POST', `/v1/proposals/${id}/capture`)).json.code).toBe('cart.immutable')
   })
 
@@ -417,8 +417,8 @@ describe('signed locks', () => {
     const b = await call(h.app, 'POST', `/v1/deals/${deal.id}/milestones/1/bill`, { body: { evidenceUrl: EVIDENCE } })
     await call(h.app, 'POST', `/v1/proposals/${a.json.id}/approve`)
     await call(h.app, 'POST', `/v1/proposals/${b.json.id}/approve`)
-    h.db.prepare('UPDATE proposals SET lock_sig = NULL, lock_key_id = NULL WHERE id IN (?, ?)').run(a.json.id, b.json.id)
-    h.db.prepare('UPDATE proposals SET amount_cents = 1 WHERE id = ?').run(b.json.id)
+    allowRawWrites(h.db); h.db.prepare('UPDATE proposals SET lock_sig = NULL, lock_key_id = NULL WHERE id IN (?, ?)').run(a.json.id, b.json.id)
+    allowRawWrites(h.db); h.db.prepare('UPDATE proposals SET amount_cents = 1 WHERE id = ?').run(b.json.id)
     const app = h.rebuild()
     expect((await call(app, 'GET', `/v1/proposals/${a.json.id}/verify`)).json.verdict).toBe('valid')
     expect((await call(app, 'GET', `/v1/proposals/${b.json.id}/verify`)).json.verdict).toBe('invalid')
@@ -447,7 +447,7 @@ describe('signed locks', () => {
     const row = db.prepare('SELECT terms_json FROM deals WHERE id = ?').get(deal.id) as { terms_json: string }
     const edited = JSON.parse(row.terms_json)
     edited.totalCents = 99_999_999
-    db.prepare('UPDATE deals SET terms_json = ? WHERE id = ?').run(JSON.stringify(edited), deal.id)
+    allowRawWrites(db); db.prepare('UPDATE deals SET terms_json = ? WHERE id = ?').run(JSON.stringify(edited), deal.id)
     expect((await call(app, 'GET', `/v1/deals/${deal.id}/verify`)).json).toMatchObject({ verdict: 'invalid', hashMatches: false })
   })
 })

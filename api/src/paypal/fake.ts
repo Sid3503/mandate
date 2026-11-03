@@ -37,6 +37,18 @@ export class FakePayPal implements PayPalPort {
   autoApprove = true
   captureCalls = 0
   refundCalls = 0
+  /** What a new capture comes back as. Tests set PENDING (an eCheck, a risk review) or DECLINED. */
+  captureOutcome: 'COMPLETED' | 'PENDING' | 'DECLINED' = 'COMPLETED'
+  /** What a new refund comes back as. */
+  refundOutcome: 'COMPLETED' | 'PENDING' | 'FAILED' = 'COMPLETED'
+  /** Every capture the fake has made, by id, so a re-read and a later status change can be simulated. */
+  readonly captures = new Map<string, { captureId: string; orderId: string; amountCents: number; currency: string; status: string; feeCents: number; netCents: number }>()
+  readonly refunds = new Map<string, { refundId: string; status: string }>()
+  /** When set, the next capture call takes the money and then fails as if the answer was lost on the way back. */
+  loseNextCaptureAnswer = false
+  /** Past PayPal's request-id window: a repeated capture is refused instead of answered. */
+  requestIdsForgotten = false
+  getCaptureCalls = 0
   /** How many browser-safe client tokens have been minted. */
   clientTokenCalls = 0
 
@@ -87,6 +99,7 @@ export class FakePayPal implements PayPalPort {
   async getOrder(orderId: string) {
     const order = this.orders.get(orderId)
     if (!order) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'order')
+    const capture = order.captureId ? this.captures.get(order.captureId) : undefined
     return {
       orderId,
       status: order.status,
@@ -95,6 +108,7 @@ export class FakePayPal implements PayPalPort {
       customId: order.customId,
       // PayPal gives every order a payer-action link, card orders included.
       approveUrl: `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
+      capture: capture ? { captureId: capture.captureId, amountCents: capture.amountCents, currency: capture.currency, status: capture.status, feeCents: capture.feeCents, netCents: capture.netCents, statusReason: null } : null,
     }
   }
 
@@ -109,17 +123,58 @@ export class FakePayPal implements PayPalPort {
     if (order.status !== 'APPROVED' && order.status !== 'COMPLETED') {
       throw new PayPalError(422, 'ORDER_NOT_APPROVED', 'debug', 'status')
     }
+    // Within PayPal's request-id window a repeat gets the first answer back. Past it, PayPal refuses a second capture
+    // of a captured order; tests set `requestIdsForgotten` to step past the window.
+    const existing = order.captureId ? this.captures.get(order.captureId) : undefined
+    if (existing) {
+      if (this.requestIdsForgotten) throw new PayPalError(422, 'UNPROCESSABLE_ENTITY', 'debug', 'ORDER_ALREADY_CAPTURED')
+      return { captureId: existing.captureId, amountCents: existing.amountCents, currency: existing.currency, status: existing.status, feeCents: existing.feeCents, netCents: existing.netCents, statusReason: null }
+    }
     order.status = 'COMPLETED'
     order.captureId ??= `CAP-${orderId.slice(6, 18)}`
     // PayPal states the fee it took on a completed capture. The fake stands in with PayPal's published US rate
     // (2.9% + $0.30) so the receipt has a fee to show; the product reads the number, it never computes one.
     const feeCents = Math.round((order.amountCents * 29) / 1000) + 30
-    return { captureId: order.captureId, amountCents: order.amountCents, currency: order.currency, status: 'COMPLETED', feeCents, netCents: order.amountCents - feeCents }
+    const capture = { captureId: order.captureId, orderId, amountCents: order.amountCents, currency: order.currency, status: this.captureOutcome as string, feeCents, netCents: order.amountCents - feeCents }
+    this.captures.set(capture.captureId, capture)
+    if (this.loseNextCaptureAnswer) {
+      this.loseNextCaptureAnswer = false
+      throw new PayPalError(504, 'network_timeout', null, 'the answer was lost')
+    }
+    return { captureId: capture.captureId, amountCents: capture.amountCents, currency: capture.currency, status: capture.status, feeCents, netCents: capture.netCents, statusReason: capture.status === 'COMPLETED' ? null : capture.status === 'PENDING' ? 'PENDING_REVIEW' : 'DECLINED_BY_RISK_FRAUD_FILTERS' }
+  }
+
+  async getCapture(captureId: string) {
+    this.getCaptureCalls += 1
+    const capture = this.captures.get(captureId)
+    if (!capture) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'capture')
+    return { captureId, amountCents: capture.amountCents, currency: capture.currency, status: capture.status, feeCents: capture.feeCents, netCents: capture.netCents, statusReason: null }
+  }
+
+  /** Simulates PayPal finishing, declining, refunding or reversing a capture after the fact. */
+  setCaptureStatus(captureId: string, status: string): void {
+    const capture = this.captures.get(captureId)
+    if (!capture) throw new Error(`missing ${captureId}`)
+    capture.status = status
   }
 
   async refundCapture(input: { proposalId: string; captureId: string; amountCents: number; currency: string }) {
     this.refundCalls += 1
-    return { refundId: `REFUND-${input.proposalId.replaceAll('-', '').slice(0, 12)}`, status: 'COMPLETED' }
+    const refundId = `REFUND-${input.proposalId.replaceAll('-', '').slice(0, 12)}`
+    if (!this.refunds.has(refundId)) this.refunds.set(refundId, { refundId, status: this.refundOutcome })
+    return { refundId, status: this.refunds.get(refundId)!.status, statusReason: null }
+  }
+
+  async getRefund(refundId: string) {
+    const refund = this.refunds.get(refundId)
+    if (!refund) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'refund')
+    return { refundId, status: refund.status, statusReason: null }
+  }
+
+  setRefundStatus(refundId: string, status: string): void {
+    const refund = this.refunds.get(refundId)
+    if (!refund) throw new Error(`missing ${refundId}`)
+    refund.status = status
   }
 
   async sendPayout(input: { proposalId: string; cartHash: string; receiverEmail: string; amountCents: number; currency: string }) {

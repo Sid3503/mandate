@@ -17,7 +17,7 @@ import { FakePayPal } from '../src/paypal/fake'
 import { buildServices } from '../src/services/container'
 import { openSeal } from '../src/tenancy/envelope'
 import { TenantRegistry } from '../src/tenancy/registry'
-import { call, closeAll, EVIDENCE, harness, JOB, NOW, OWNER_KEY, type Requester } from './support'
+import { call, closeAll, EVIDENCE, harness, JOB, NOW, OWNER_KEY, type Requester, allowRawWrites } from './support'
 import { SoftAuthenticator } from './soft-authenticator'
 
 afterEach(closeAll)
@@ -400,7 +400,7 @@ describe('step-up grants', () => {
     const { auth } = await enroll(h.app, headers)
     const id = await proposeCharge(h.app)
     const signed = await signApprove(h.app, headers, auth, id)
-    h.db.prepare('UPDATE proposals SET amount_cents = amount_cents + 1 WHERE id = ?').run(id)
+    allowRawWrites(h.db); h.db.prepare('UPDATE proposals SET amount_cents = amount_cents + 1 WHERE id = ?').run(id)
     const approved = await h.app.request(`http://mandate.test/v1/proposals/${id}/approve`, { method: 'POST', headers: { ...headers, 'x-mandate-stepup': signed.grant } })
     expect(approved.status).toBe(409)
     expect((await approved.json() as { title: string }).title).toBe('changed since you looked')

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
-import { DEAD_PHASES, expectedSignedCents, INVOICE_WATCH_PHASES, OPEN_PHASES, PAID_PHASES, RESERVED_PHASES, sqlList } from '../domain/phases'
+import { arrivedCents, canTransition, DEAD_PHASES, expectedSignedCents, fullPhase, FUNDED_PHASES, INVOICE_WATCH_PHASES, OPEN_PHASES, PAID_PHASES, REFUND_HELD_PHASES, RESERVED_PHASES, sqlList } from '../domain/phases'
 import type { LedgerMoney } from '../domain/reconcile'
 import type { PartyRules } from '../domain/deal'
 import { PartyRulesSchema } from '../domain/deal'
@@ -236,6 +237,79 @@ const RESERVED_SQL = sqlList(RESERVED_PHASES)
 const OPEN_SQL = sqlList(OPEN_PHASES)
 const PAID_SQL = sqlList(PAID_PHASES)
 const INVOICE_WATCH_SQL = sqlList(INVOICE_WATCH_PHASES)
+const REFUND_HELD_SQL = sqlList(REFUND_HELD_PHASES)
+const FUNDED_SQL = sqlList(FUNDED_PHASES)
+
+/** What PayPal has paid one payee, derived from the payouts themselves. Never a counter that two refreshes can both bump. */
+const PAID_TO_PAYEE_SQL = `(SELECT COALESCE(SUM(COALESCE(p.captured_amount_cents, p.amount_cents)), 0) FROM proposals p
+  WHERE p.payee_id = payees.id AND p.kind = 'payment' AND p.phase = 'captured')`
+
+/** One leg of a journal entry. Positive is a debit, negative a credit; an entry's legs always sum to zero. */
+export type Posting = { account: string; amountCents: number }
+
+export type JournalEntryRow = {
+  id: string
+  seq: number
+  proposal_id: string
+  purpose: string
+  currency: string
+  delta_cents: number
+  memo: string
+  prev_hash: string
+  hash: string
+  created_at: string
+}
+
+export type AttemptRow = {
+  id: string
+  proposal_id: string
+  op: string
+  request_id: string
+  status: 'started' | 'succeeded' | 'failed' | 'unknown'
+  external_id: string | null
+  error: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+/** The hash an entry is chained with: the previous entry's hash, then every field that says what moved. */
+export function journalHash(prevHash: string, entry: { id: string; seq: number; proposalId: string; purpose: string; currency: string; deltaCents: number; memo: string; createdAt: string }, postings: Posting[]): string {
+  const legs = [...postings].sort((a, b) => a.account.localeCompare(b.account) || a.amountCents - b.amountCents).map((leg) => `${leg.account}=${leg.amountCents}`).join(',')
+  return createHash('sha256').update([prevHash, entry.id, entry.seq, entry.proposalId, entry.purpose, entry.currency, entry.deltaCents, entry.memo, entry.createdAt, legs].join('|')).digest('hex')
+}
+
+export const GENESIS_HASH = '0'.repeat(64)
+
+/**
+ * What the books should say about one request, given the state its row is in now. Each purpose is one balance the
+ * request contributes to; the ledger posts the difference between this target and what it already posted, so a re-read
+ * that changes nothing posts nothing, and a payout PayPal returns after paying it is reversed by a new entry, never by an
+ * edit. The accounts:
+ * - `paypal:balance` (asset) is the money in the PayPal account.
+ * - `income:client_payments` is what clients paid; `income:refunds` and `income:reversals` are what went back.
+ * - `expense:payouts:<payee>` is what each contractor was paid; `expense:paypal_fees` is what PayPal kept.
+ */
+export function ledgerTargets(row: ProposalRow): Array<{ purpose: string; cents: number; debit: string; credit: string; memo: string }> {
+  const funded = FUNDED_PHASES.includes(row.phase as never) || row.phase === 'capture_reversed'
+  if (row.kind === 'charge') {
+    const arrived = funded ? arrivedCents(row) : 0
+    return [
+      { purpose: 'receipt', cents: arrived, debit: 'paypal:balance', credit: 'income:client_payments', memo: 'client payment arrived' },
+      { purpose: 'capture_fee', cents: funded ? row.capture_fee_cents ?? 0 : 0, debit: 'expense:paypal_fees', credit: 'paypal:balance', memo: 'PayPal fee on the client payment' },
+      { purpose: 'reversal', cents: row.phase === 'capture_reversed' ? arrived : 0, debit: 'income:reversals', credit: 'paypal:balance', memo: 'client payment taken back at PayPal' },
+    ]
+  }
+  if (row.kind === 'payment') {
+    const paid = fullPhase(row.phase)
+    return [
+      { purpose: 'payout', cents: paid ? row.captured_amount_cents ?? row.amount_cents : 0, debit: `expense:payouts:${row.payee_id ?? 'unknown'}`, credit: 'paypal:balance', memo: 'contractor payout' },
+      { purpose: 'payout_fee', cents: paid ? row.payout_fee_cents ?? 0 : 0, debit: 'expense:paypal_fees', credit: 'paypal:balance', memo: 'PayPal fee on the payout' },
+    ]
+  }
+  return [
+    { purpose: 'refund', cents: row.phase === 'refunded' ? row.amount_cents : 0, debit: 'income:refunds', credit: 'paypal:balance', memo: 'refund to the client' },
+  ]
+}
 
 export type PayoutUpdate = {
   phase: string
@@ -428,12 +502,12 @@ export class Repo {
 
   /** Contractor payouts that hold money against a client capture: locked or further, net of their refunds. */
   heldPayoutCents(fundingCaptureId: string): number {
-    const rows = this.db.prepare(
-      `SELECT amount_cents AS amountCents, capture_id AS captureId FROM proposals
-       WHERE kind = 'payment' AND funding_capture_id = ?
-         AND phase IN (${RESERVED_SQL})`,
-    ).all(fundingCaptureId) as Array<{ amountCents: number; captureId: string | null }>
-    return rows.reduce((sum, row) => sum + Math.max(0, row.amountCents - (row.captureId ? this.refundedCents(row.captureId) : 0)), 0)
+    return (this.db.prepare(
+      `SELECT COALESCE(SUM(MAX(0, p.amount_cents - COALESCE((SELECT SUM(r.amount_cents) FROM proposals r
+           WHERE r.kind = 'refund' AND r.parent_capture_id = p.capture_id AND r.phase = 'refunded'), 0))), 0) AS cents
+       FROM proposals p
+       WHERE p.kind = 'payment' AND p.funding_capture_id = ? AND p.phase IN (${RESERVED_SQL})`,
+    ).get(fundingCaptureId) as { cents: number }).cents
   }
 
   proposalsForJob(jobId: string): ProposalRow[] {
@@ -461,12 +535,13 @@ export class Repo {
     ).all(cursor.createdAt, cursor.createdAt, cursor.id, limit) as ProposalRow[]
   }
 
-  reservations(warrantId: string, start: string, end: string): Array<{ amountCents: number; captureId: string | null }> {
+  /** Payouts that count against the month's cap. Only those in the cap's own currency: cents of two currencies do not add. */
+  reservations(warrantId: string, start: string, end: string, currency: string | null = null): Array<{ amountCents: number; captureId: string | null }> {
     return this.db.prepare(
       `SELECT amount_cents AS amountCents, capture_id AS captureId FROM proposals
        WHERE warrant_id = ? AND kind = 'payment' AND reserved_at >= ? AND reserved_at < ?
-         AND phase IN (${RESERVED_SQL})`,
-    ).all(warrantId, start, end) as Array<{ amountCents: number; captureId: string | null }>
+         AND phase IN (${RESERVED_SQL}) AND (? IS NULL OR currency = ?)`,
+    ).all(warrantId, start, end, currency, currency) as Array<{ amountCents: number; captureId: string | null }>
   }
 
   /** How many proposals of any kind were filed since this moment, across every payee and actor. The risk engine's velocity slice. */
@@ -493,7 +568,7 @@ export class Repo {
     const row = this.db.prepare(
       `SELECT COALESCE(SUM(amount_cents), 0) AS cents FROM proposals
        WHERE kind = 'refund' AND parent_capture_id = ?
-         AND phase IN ('pending_approval', 'locked', 'order_created', 'capture_inflight', 'refunded')`,
+         AND phase IN (${REFUND_HELD_SQL})`,
     ).get(captureId) as { cents: number }
     return row.cents
   }
@@ -514,12 +589,12 @@ export class Repo {
   stampEvents: (() => Record<string, unknown>) | null = null
 
   payeeRow(id: string): { id: string; email: string; status: string; change_pending: number; change_email: string | null; first_seen: string; verified_method: string; total_paid_cents: number } | null {
-    return this.db.prepare('SELECT id, email, status, change_pending, change_email, first_seen, verified_method, total_paid_cents FROM payees WHERE id = ?').get(id) as { id: string; email: string; status: string; change_pending: number; change_email: string | null; first_seen: string; verified_method: string; total_paid_cents: number } | undefined ?? null
+    return this.db.prepare(`SELECT id, email, status, change_pending, change_email, first_seen, verified_method, ${PAID_TO_PAYEE_SQL} AS total_paid_cents FROM payees WHERE id = ?`).get(id) as { id: string; email: string; status: string; change_pending: number; change_email: string | null; first_seen: string; verified_method: string; total_paid_cents: number } | undefined ?? null
   }
 
   /** The payout book. Reading it does not change a payment. */
   listPayees(): Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number; change_email: string | null }> {
-    return this.db.prepare('SELECT id, email, status, verified_method, first_seen, total_paid_cents, change_pending, change_email FROM payees ORDER BY email').all() as Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number; change_email: string | null }>
+    return this.db.prepare(`SELECT id, email, status, verified_method, first_seen, ${PAID_TO_PAYEE_SQL} AS total_paid_cents, change_pending, change_email FROM payees ORDER BY email`).all() as Array<{ id: string; email: string; status: string; verified_method: string; first_seen: string; total_paid_cents: number; change_pending: number; change_email: string | null }>
   }
 
   insertPayee(payee: { id: string; email: string; status?: string; verified_method?: string; first_seen?: string }): void {
@@ -531,31 +606,29 @@ export class Repo {
     ).run(payee.id, payee.email, status, verified, seen)
   }
 
-  updatePayeePaidCents(id: string, amountCents: number): void {
-    this.db.prepare('UPDATE payees SET total_paid_cents = total_paid_cents + ? WHERE id = ?').run(amountCents, id)
-  }
-
   requestPayeeChange(id: string, newEmail: string): void {
     this.db.prepare('UPDATE payees SET change_email = ?, change_pending = 1 WHERE id = ?').run(newEmail, id)
     live.publish({ type: 'changed', scope: 'rules', what: 'payee.change_requested', at: stamp() })
   }
 
-  confirmPayeeChange(id: string): void {
+  /**
+   * The owner confirmed a payee's new address. The published rules are never edited in place: a lock was approved
+   * under exactly that version, and a passkey may have signed it. The new address goes into a new version, published
+   * unsigned (nobody signed this exact text), and the payout book row follows it. Both happen or neither does.
+   */
+  confirmPayeeChange(id: string, now: string = new Date().toISOString()): void {
     const row = this.payeeRow(id)
     if (!row || !row.change_email) return
     const newEmail = row.change_email
-    this.db.prepare('UPDATE payees SET email = change_email, change_email = NULL, change_pending = 0 WHERE id = ?').run(id)
-    const warrant = this.latestWarrant()
-    if (warrant) {
-      const target = warrant.body.payees.find((p) => p.id === id)
-      if (target && target.email !== newEmail) {
-        const updatedPayees = warrant.body.payees.map((p) => p.id === id ? { ...p, email: newEmail } : p)
-        const updatedBody = { ...warrant.body, payees: updatedPayees }
-        this.db.prepare('UPDATE warrants SET body_json = ? WHERE id = ? AND version = ?').run(
-          JSON.stringify(updatedBody), warrant.id, warrant.version,
-        )
+    this.transaction(() => {
+      this.db.prepare('UPDATE payees SET email = change_email, change_email = NULL, change_pending = 0 WHERE id = ?').run(id)
+      const warrant = this.latestWarrant()
+      const target = warrant?.body.payees.find((p) => p.id === id)
+      if (warrant && target && target.email !== newEmail) {
+        const body = { ...warrant.body, payees: warrant.body.payees.map((p) => p.id === id ? { ...p, email: newEmail } : p) }
+        this.insertWarrant(warrant.id, warrant.version + 1, WarrantBodySchema.parse(body), now, null)
       }
-    }
+    })
     live.publish({ type: 'changed', scope: 'rules', what: 'payee.change_confirmed', at: stamp() })
   }
 
@@ -796,18 +869,25 @@ export class Repo {
 
   /** PayPal batches still processing, and invoices still out. The server asks PayPal about these on a timer, so nobody has to press Check. */
   openPayoutBatches(): string[] {
-    return (this.db.prepare(`SELECT payout_batch_id FROM proposals WHERE phase = 'payout_sent' AND payout_batch_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ payout_batch_id: string }>).map((row) => row.payout_batch_id)
+    // Unclaimed payouts are watched too: PayPal returns one after 30 days, and only a re-read would notice. Least
+    // recently asked first, so rows PayPal never changes cannot hold the window shut on newer ones.
+    return (this.db.prepare(`SELECT payout_batch_id FROM proposals WHERE phase IN ('payout_sent', 'payout_unclaimed') AND payout_batch_id IS NOT NULL ORDER BY COALESCE(last_polled_at, '') ASC, updated_at LIMIT 20`).all() as Array<{ payout_batch_id: string }>).map((row) => row.payout_batch_id)
+  }
+
+  /** Payouts PayPal is still processing. While any are, the server looks every few seconds. */
+  payoutsInFlight(): number {
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM proposals WHERE phase = 'payout_sent' AND payout_batch_id IS NOT NULL`).get() as { n: number }).n
   }
 
   /** Invoices the server still re-reads from PayPal, including one that is part paid. */
   openInvoices(): string[] {
-    return (this.db.prepare(`SELECT invoice_id FROM proposals WHERE phase IN (${INVOICE_WATCH_SQL}) AND invoice_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ invoice_id: string }>).map((row) => row.invoice_id)
+    return (this.db.prepare(`SELECT invoice_id FROM proposals WHERE phase IN (${INVOICE_WATCH_SQL}) AND invoice_id IS NOT NULL ORDER BY COALESCE(last_polled_at, '') ASC, updated_at LIMIT 20`).all() as Array<{ invoice_id: string }>).map((row) => row.invoice_id)
   }
 
   /** Checkout orders the server opened and the buyer has not finished with. A buyer who approved one and closed the
    *  browser must still leave the request settled, so the server re-reads these. */
   openOrders(): string[] {
-    return (this.db.prepare(`SELECT order_id FROM proposals WHERE phase = 'order_created' AND order_id IS NOT NULL ORDER BY updated_at LIMIT 20`).all() as Array<{ order_id: string }>).map((row) => row.order_id)
+    return (this.db.prepare(`SELECT order_id FROM proposals WHERE phase = 'order_created' AND order_id IS NOT NULL ORDER BY COALESCE(last_polled_at, '') ASC, updated_at LIMIT 20`).all() as Array<{ order_id: string }>).map((row) => row.order_id)
   }
 
   /** The request an open order belongs to. */
@@ -832,12 +912,12 @@ export class Repo {
 
   /** What one payee has been promised out of one client payment: locked, sent or paid. */
   heldPayoutCentsFor(fundingCaptureId: string, payeeId: string): number {
-    const rows = this.db.prepare(
-      `SELECT amount_cents AS amountCents, capture_id AS captureId FROM proposals
-       WHERE kind = 'payment' AND funding_capture_id = ? AND payee_id = ?
-         AND phase IN (${RESERVED_SQL})`,
-    ).all(fundingCaptureId, payeeId) as Array<{ amountCents: number; captureId: string | null }>
-    return rows.reduce((sum, row) => sum + Math.max(0, row.amountCents - (row.captureId ? this.refundedCents(row.captureId) : 0)), 0)
+    return (this.db.prepare(
+      `SELECT COALESCE(SUM(MAX(0, p.amount_cents - COALESCE((SELECT SUM(r.amount_cents) FROM proposals r
+           WHERE r.kind = 'refund' AND r.parent_capture_id = p.capture_id AND r.phase = 'refunded'), 0))), 0) AS cents
+       FROM proposals p
+       WHERE p.kind = 'payment' AND p.funding_capture_id = ? AND p.payee_id = ? AND p.phase IN (${RESERVED_SQL})`,
+    ).get(fundingCaptureId, payeeId) as { cents: number }).cents
   }
 
   /** Requests made since a moment, newest first. */
@@ -962,13 +1042,39 @@ export class Repo {
     )
   }
 
-  /** True the first time an event id is seen. PayPal retries deliveries, and a retry must not be processed twice. */
-  claimWebhookEvent(eventId: string, eventType: string, now: string): boolean {
-    return this.db.prepare('INSERT OR IGNORE INTO webhook_events (event_id, event_type, received_at) VALUES (?, ?, ?)').run(eventId, eventType, now).changes > 0
+  /**
+   * The webhook inbox. True when this delivery should be processed: the first time an event id is seen, a retry of one
+   * that failed, or a retry of one stuck 'processing' for longer than `staleMs` (the process died mid-way). False for an
+   * event already done or being processed right now. PayPal retries deliveries, and a retry must not be processed twice.
+   */
+  claimWebhookEvent(eventId: string, eventType: string, now: string, staleMs = 5 * 60_000): boolean {
+    return this.transaction(() => {
+      const inserted = this.db.prepare(`INSERT OR IGNORE INTO webhook_events (event_id, event_type, received_at, status, attempts) VALUES (?, ?, ?, 'processing', 1)`).run(eventId, eventType, now).changes > 0
+      if (inserted) return true
+      const staleBefore = new Date(Date.parse(now) - staleMs).toISOString()
+      return Number(this.db.prepare(
+        `UPDATE webhook_events SET status = 'processing', attempts = attempts + 1, received_at = ?, error = NULL
+         WHERE event_id = ? AND (status = 'failed' OR (status = 'processing' AND received_at < ?))`,
+      ).run(now, eventId, staleBefore).changes) > 0
+    })
   }
 
+  finishWebhookEvent(eventId: string, now: string): void {
+    this.db.prepare(`UPDATE webhook_events SET status = 'done', processed_at = ?, error = NULL WHERE event_id = ?`).run(now, eventId)
+  }
+
+  /** Processing threw. The event is kept as failed, with why, and PayPal's next retry may process it again. */
+  failWebhookEvent(eventId: string, error: string): void {
+    this.db.prepare(`UPDATE webhook_events SET status = 'failed', error = ? WHERE event_id = ?`).run(error.slice(0, 500), eventId)
+  }
+
+  /** Kept for callers that still say "release": the same as failing it, so a retry is let in. */
   releaseWebhookEvent(eventId: string): void {
-    this.db.prepare('DELETE FROM webhook_events WHERE event_id = ?').run(eventId)
+    this.failWebhookEvent(eventId, 'released')
+  }
+
+  webhookEvent(eventId: string): { event_id: string; event_type: string; status: string; attempts: number; error: string | null } | null {
+    return (this.db.prepare('SELECT event_id, event_type, status, attempts, error FROM webhook_events WHERE event_id = ?').get(eventId) as never) ?? null
   }
 
   disputeById(disputeId: string): DisputeRow | null {
@@ -1119,8 +1225,7 @@ export class Repo {
 
   /** Reads and deletes in one step: a code works once, and a second try finds nothing. */
   takeOauthCode(codeHash: string): OauthCodeRow | null {
-    const row = (this.db.prepare('SELECT * FROM oauth_codes WHERE code_hash = ?').get(codeHash) as OauthCodeRow | undefined) ?? null
-    if (row) this.db.prepare('DELETE FROM oauth_codes WHERE code_hash = ?').run(codeHash)
+    const row = (this.db.prepare('DELETE FROM oauth_codes WHERE code_hash = ? RETURNING *').get(codeHash) as OauthCodeRow | undefined) ?? null
     this.db.prepare('DELETE FROM oauth_codes WHERE expires_at < ?').run(new Date(Date.now() - 3_600_000).toISOString())
     return row
   }
@@ -1169,26 +1274,15 @@ export class Repo {
   }
 
   agentProposalStats(agentId: string): { total: number; auto: number; needsTap: number; refusals: number } {
-    const actor = `agent:${agentId}`
-    const rows = this.db.prepare(
-      `SELECT payload_json FROM events WHERE type = 'proposal.created'`
-    ).all() as Array<{ payload_json: string }>
-    let total = 0
-    let auto = 0
-    let needsTap = 0
-    let refusals = 0
-    for (const r of rows) {
-      try {
-        const payload = JSON.parse(r.payload_json) as { actor?: string; gate?: string }
-        if (payload.actor === actor) {
-          total += 1
-          if (payload.gate === 'AUTO') auto += 1
-          else if (payload.gate === 'DENY') refusals += 1
-          else if (payload.gate === 'NEEDS_APPROVAL' || payload.gate === 'TAP') needsTap += 1
-        }
-      } catch {}
-    }
-    return { total, auto, needsTap, refusals }
+    // Counted in SQL over the indexed proposal.created events, instead of parsing every event's JSON in JavaScript.
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS total,
+         COALESCE(SUM(json_extract(payload_json, '$.gate') = 'AUTO'), 0) AS auto,
+         COALESCE(SUM(json_extract(payload_json, '$.gate') = 'DENY'), 0) AS refusals,
+         COALESCE(SUM(json_extract(payload_json, '$.gate') IN ('NEEDS_APPROVAL', 'TAP', 'DUAL_TAP')), 0) AS needsTap
+       FROM events WHERE type = 'proposal.created' AND json_valid(payload_json) AND json_extract(payload_json, '$.actor') = ?`,
+    ).get(`agent:${agentId}`) as { total: number; auto: number; refusals: number; needsTap: number }
+    return { total: row.total, auto: row.auto, needsTap: row.needsTap, refusals: row.refusals }
   }
 
   createShare(row: ShareRow): void {
@@ -1250,8 +1344,196 @@ export class Repo {
   }
 
   setPhase(id: string, phase: string, now: string): void {
-    this.db.prepare('UPDATE proposals SET phase = ?, updated_at = ? WHERE id = ?').run(phase, now, id)
+    this.transaction(() => {
+      this.db.prepare('UPDATE proposals SET phase = ?, updated_at = ? WHERE id = ?').run(phase, now, id)
+      this.syncLedger(id, now)
+    })
     live.publish({ type: 'changed', scope: 'ledger', what: `phase.${phase}`, id, at: stamp() })
+  }
+
+  /**
+   * Compare-and-swap on the phase. Moves the row to `to` only if it is still in one of `from` (and the move is on the
+   * state machine), and says whether it did. A caller that read the row before an await uses this, so a second worker
+   * that already finished the same money cannot be undone by the first one's stale view.
+   */
+  transitionPhase(id: string, from: readonly string[], to: string, now: string): boolean {
+    return this.transaction(() => {
+      const current = this.proposal(id)
+      if (!current || !from.includes(current.phase) || !canTransition(current.phase, to)) return false
+      this.db.prepare('UPDATE proposals SET phase = ?, updated_at = ? WHERE id = ? AND phase = ?').run(to, now, id, current.phase)
+      this.syncLedger(id, now)
+      live.publish({ type: 'changed', scope: 'ledger', what: `phase.${to}`, id, at: stamp() })
+      return true
+    })
+  }
+
+  /** The sweep asked PayPal about this row just now. Kept apart from updated_at, which means "something changed". */
+  notePolled(id: string, now: string): void {
+    this.db.prepare('UPDATE proposals SET last_polled_at = ? WHERE id = ?').run(now, id)
+  }
+
+  /** Charges PayPal accepted but has not finished (a PENDING capture), least recently asked first. */
+  pendingCaptures(limit = 20): ProposalRow[] {
+    return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE phase = 'capture_pending' AND capture_id IS NOT NULL ORDER BY COALESCE(last_polled_at, '') ASC, id LIMIT ?`).all(limit) as ProposalRow[]
+  }
+
+  /** Refunds PayPal accepted but has not finished, least recently asked first. */
+  pendingRefunds(limit = 20): ProposalRow[] {
+    return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE phase = 'refund_pending' AND refund_id IS NOT NULL ORDER BY COALESCE(last_polled_at, '') ASC, id LIMIT ?`).all(limit) as ProposalRow[]
+  }
+
+  /** Rows marked "settling" whose worker has had longer than `olderThan` to finish. A crash leaves rows here. */
+  stalledInflight(olderThanIso: string, limit = 20): ProposalRow[] {
+    return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE phase = 'capture_inflight' AND updated_at < ? ORDER BY updated_at LIMIT ?`).all(olderThanIso, limit) as ProposalRow[]
+  }
+
+  /** Charges this ledger holds as paid, by their PayPal capture, so a capture webhook finds its row. */
+  proposalByCapture(captureId: string): ProposalRow | null {
+    return (this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE capture_id = ?`).get(captureId) as ProposalRow | undefined) ?? null
+  }
+
+  proposalByRefund(refundId: string): ProposalRow | null {
+    return (this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE refund_id = ?`).get(refundId) as ProposalRow | undefined) ?? null
+  }
+
+  // ---------- PayPal capture outcomes other than "completed" ----------
+
+  /** PayPal accepted the capture but is still deciding (an eCheck, a risk review). The id is kept; no money has arrived. */
+  markCapturePending(id: string, captureId: string, now: string): void {
+    this.transaction(() => {
+      this.db.prepare(`UPDATE proposals SET phase = 'capture_pending', capture_id = ?, updated_at = ? WHERE id = ?`).run(captureId, now, id)
+      this.syncLedger(id, now)
+    })
+  }
+
+  /** PayPal declined or failed the capture. Final: no money arrived, and the milestone may be billed again. */
+  markCaptureFailed(id: string, captureId: string | null, now: string): void {
+    this.transaction(() => {
+      this.db.prepare(`UPDATE proposals SET phase = 'capture_failed', capture_id = COALESCE(?, capture_id), updated_at = ? WHERE id = ?`).run(captureId, now, id)
+      this.syncLedger(id, now)
+    })
+  }
+
+  /**
+   * PayPal moved money that does not match the lock. The PayPal ids are kept, so the money can be found and put right,
+   * and the row stays reserved: releasing its headroom would let the same money be promised a second time.
+   */
+  holdMismatch(id: string, ids: { captureId?: string | null; orderId?: string | null }, now: string): void {
+    this.transaction(() => {
+      this.db.prepare(`UPDATE proposals SET phase = 'mismatch_hold', capture_id = COALESCE(?, capture_id), order_id = COALESCE(?, order_id), updated_at = ? WHERE id = ?`).run(ids.captureId ?? null, ids.orderId ?? null, now, id)
+      this.syncLedger(id, now)
+    })
+  }
+
+  markRefundPending(id: string, refundId: string, now: string): void {
+    this.transaction(() => {
+      this.db.prepare(`UPDATE proposals SET phase = 'refund_pending', refund_id = ?, updated_at = ? WHERE id = ?`).run(refundId, now, id)
+      this.syncLedger(id, now)
+    })
+  }
+
+  // ---------- the double-entry ledger ----------
+
+  /**
+   * Brings the books for one request in line with its row: for each purpose, posts the difference between what the
+   * row says should have moved and what was already posted. Called inside the same transaction as every write that
+   * changes money, so the books and the rows can never disagree; and idempotent, so calling it twice posts once.
+   */
+  syncLedger(proposalId: string, now: string): number {
+    const row = this.proposal(proposalId)
+    if (!row) return 0
+    let posted = 0
+    this.transaction(() => {
+      const already = new Map((this.db.prepare('SELECT purpose, COALESCE(SUM(delta_cents), 0) AS cents FROM journal_entries WHERE proposal_id = ? GROUP BY purpose').all(proposalId) as Array<{ purpose: string; cents: number }>).map((item) => [item.purpose, item.cents]))
+      for (const target of ledgerTargets(row)) {
+        const delta = target.cents - (already.get(target.purpose) ?? 0)
+        if (delta === 0) continue
+        this.appendJournal(proposalId, target.purpose, row.currency, delta, delta > 0 ? target.memo : `reversal: ${target.memo}`, [
+          { account: target.debit, amountCents: delta },
+          { account: target.credit, amountCents: -delta },
+        ], now)
+        posted += 1
+      }
+    })
+    return posted
+  }
+
+  /** Every request's books brought in line at once. Boot runs it, so a database written before the ledger existed is posted. */
+  syncAllLedger(now: string): number {
+    let posted = 0
+    for (const { id } of this.db.prepare('SELECT id FROM proposals ORDER BY created_at, id').all() as Array<{ id: string }>) posted += this.syncLedger(id, now)
+    return posted
+  }
+
+  private appendJournal(proposalId: string, purpose: string, currency: string, deltaCents: number, memo: string, postings: Posting[], now: string): void {
+    const sum = postings.reduce((total, leg) => total + leg.amountCents, 0)
+    if (sum !== 0 || postings.length < 2) throw new Error(`journal entry for ${proposalId}/${purpose} does not balance`)
+    const last = this.db.prepare('SELECT seq, hash FROM journal_entries ORDER BY seq DESC LIMIT 1').get() as { seq: number; hash: string } | undefined
+    const seq = (last?.seq ?? 0) + 1
+    const id = `je_${seq.toString().padStart(8, '0')}_${createHash('sha256').update(`${proposalId}|${purpose}|${seq}`).digest('hex').slice(0, 8)}`
+    const prevHash = last?.hash ?? GENESIS_HASH
+    const hash = journalHash(prevHash, { id, seq, proposalId, purpose, currency, deltaCents, memo, createdAt: now }, postings)
+    const leg = this.db.prepare('INSERT INTO postings (entry_id, account, amount_cents) VALUES (?, ?, ?)')
+    for (const posting of postings) leg.run(id, posting.account, posting.amountCents)
+    // The header goes in last. Its trigger refuses it unless the legs above sum to zero, and then seals them.
+    this.db.prepare('INSERT INTO journal_entries (id, seq, proposal_id, purpose, currency, delta_cents, memo, prev_hash, hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, seq, proposalId, purpose, currency, deltaCents, memo, prevHash, hash, now)
+  }
+
+  journal(limit = 200, proposalId: string | null = null): Array<JournalEntryRow & { postings: Posting[] }> {
+    const entries = (proposalId
+      ? this.db.prepare('SELECT * FROM journal_entries WHERE proposal_id = ? ORDER BY seq ASC').all(proposalId)
+      : this.db.prepare('SELECT * FROM (SELECT * FROM journal_entries ORDER BY seq DESC LIMIT ?) ORDER BY seq ASC').all(limit)) as JournalEntryRow[]
+    const legs = this.db.prepare('SELECT account, amount_cents AS amountCents FROM postings WHERE entry_id = ? ORDER BY id')
+    return entries.map((entry) => ({ ...entry, postings: legs.all(entry.id) as Posting[] }))
+  }
+
+  allJournal(): Array<JournalEntryRow & { postings: Posting[] }> {
+    const entries = this.db.prepare('SELECT * FROM journal_entries ORDER BY seq ASC').all() as JournalEntryRow[]
+    const legs = this.db.prepare('SELECT account, amount_cents AS amountCents FROM postings WHERE entry_id = ? ORDER BY id')
+    return entries.map((entry) => ({ ...entry, postings: legs.all(entry.id) as Posting[] }))
+  }
+
+  /** Every account's balance, per currency, summed from the postings. Debits positive. */
+  ledgerBalances(): Array<{ account: string; currency: string; cents: number }> {
+    return this.db.prepare(
+      `SELECT p.account AS account, e.currency AS currency, SUM(p.amount_cents) AS cents
+       FROM postings p JOIN journal_entries e ON e.id = p.entry_id GROUP BY p.account, e.currency ORDER BY p.account, e.currency`,
+    ).all() as Array<{ account: string; currency: string; cents: number }>
+  }
+
+  // ---------- PayPal attempts: what was asked of PayPal, before it was asked ----------
+
+  startAttempt(row: { id: string; proposalId: string; op: string; requestId: string; now: string }): void {
+    this.db.prepare(`INSERT INTO paypal_attempts (id, proposal_id, op, request_id, status, started_at) VALUES (?, ?, ?, ?, 'started', ?)`).run(row.id, row.proposalId, row.op, row.requestId, row.now)
+  }
+
+  finishAttempt(id: string, status: 'succeeded' | 'failed' | 'unknown', externalId: string | null, error: string | null, now: string): void {
+    this.db.prepare('UPDATE paypal_attempts SET status = ?, external_id = COALESCE(?, external_id), error = ?, finished_at = ? WHERE id = ?').run(status, externalId, error, now, id)
+  }
+
+  attemptsFor(proposalId: string): AttemptRow[] {
+    return this.db.prepare('SELECT * FROM paypal_attempts WHERE proposal_id = ? ORDER BY started_at, rowid').all(proposalId) as AttemptRow[]
+  }
+
+  /**
+   * True when a money-moving call for this request was sent at or after `sinceIso` and PayPal did not clearly refuse
+   * it: it may have moved money. A retry must then resume that call (same request id) rather than decide again.
+   */
+  hasLiveAttempt(proposalId: string, sinceIso: string): boolean {
+    return Boolean(this.db.prepare(`SELECT 1 FROM paypal_attempts WHERE proposal_id = ? AND started_at >= ? AND status != 'failed' LIMIT 1`).get(proposalId, sinceIso))
+  }
+
+  // ---------- housekeeping ----------
+
+  /** Idempotency keys are a promise for a day (as at Stripe). Webhook ids are kept long enough to outlast PayPal's retries. */
+  prune(now: Date): { idempotency: number; webhooks: number } {
+    const day = new Date(now.getTime() - 86_400_000).toISOString()
+    const month = new Date(now.getTime() - 30 * 86_400_000).toISOString()
+    return {
+      idempotency: Number(this.db.prepare(`DELETE FROM idempotency WHERE created_at < ? AND state = 'done'`).run(day).changes),
+      webhooks: Number(this.db.prepare(`DELETE FROM webhook_events WHERE received_at < ? AND status = 'done'`).run(month).changes),
+    }
   }
 
   /** Opens the order on the row, and records how it was opened: a card order takes a card, a checkout sends the buyer away. */
@@ -1270,12 +1552,15 @@ export class Repo {
    */
   markCaptured(id: string, captureId: string, capturedCents: number, settledCents: number, now: string, feeCents: number | null = null, netCents: number | null = null): void {
     // COALESCE, like applyPayout: a re-read that does not repeat a fee PayPal already stated cannot erase it.
-    this.db.prepare(
-      `UPDATE proposals SET phase = 'captured', capture_id = ?, captured_amount_cents = ?, settled_cents = ?,
-         capture_fee_cents = COALESCE(?, capture_fee_cents), capture_net_cents = COALESCE(?, capture_net_cents),
-         delta_cents = ? - amount_cents, delta_reason = 'full', delta_source = NULL, updated_at = ?
-       WHERE id = ? AND kind IN ('payment', 'charge')`,
-    ).run(captureId, capturedCents, settledCents, feeCents, netCents, settledCents, now, id)
+    this.transaction(() => {
+      this.db.prepare(
+        `UPDATE proposals SET phase = 'captured', capture_id = ?, captured_amount_cents = ?, settled_cents = ?,
+           capture_fee_cents = COALESCE(?, capture_fee_cents), capture_net_cents = COALESCE(?, capture_net_cents),
+           delta_cents = ? - amount_cents, delta_reason = 'full', delta_source = NULL, updated_at = ?
+         WHERE id = ? AND kind IN ('payment', 'charge')`,
+      ).run(captureId, capturedCents, settledCents, feeCents, netCents, settledCents, now, id)
+      this.syncLedger(id, now)
+    })
   }
 
   /**
@@ -1286,11 +1571,14 @@ export class Repo {
    * Returns true when this was news, which is what stops a part-paid invoice appending an event a minute.
    */
   recordSettlement(id: string, settledCents: number, reason: string, source: string | null, now: string): boolean {
-    const written = this.db.prepare(
-      `UPDATE proposals SET settled_cents = ?, delta_cents = ? - amount_cents, delta_reason = ?, delta_source = ?, updated_at = ?
-       WHERE id = ? AND (settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
-    ).run(settledCents, settledCents, reason, source, now, id, settledCents, reason)
-    return Number(written.changes) > 0
+    return this.transaction(() => {
+      const written = this.db.prepare(
+        `UPDATE proposals SET settled_cents = ?, delta_cents = ? - amount_cents, delta_reason = ?, delta_source = ?, updated_at = ?
+         WHERE id = ? AND (settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
+      ).run(settledCents, settledCents, reason, source, now, id, settledCents, reason)
+      this.syncLedger(id, now)
+      return Number(written.changes) > 0
+    })
   }
 
   /**
@@ -1308,13 +1596,17 @@ export class Repo {
    * settlement was news.
    */
   settleShort(id: string, captureId: string | null, settledCents: number, reason: string, source: string | null, now: string): boolean {
-    const written = this.db.prepare(
-      `UPDATE proposals SET phase = 'settled_short', capture_id = COALESCE(capture_id, ?), settled_cents = ?,
-         delta_cents = ? - amount_cents, delta_reason = ?, delta_source = ?, updated_at = ?
-       WHERE id = ? AND kind = 'charge'
-         AND (phase IS NOT 'settled_short' OR settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
-    ).run(captureId, settledCents, settledCents, reason, source, now, id, settledCents, reason)
-    return Number(written.changes) > 0
+    return this.transaction(() => {
+      // A row already paid in full is never moved back to "paid short" by a later, partial read.
+      const written = this.db.prepare(
+        `UPDATE proposals SET phase = 'settled_short', capture_id = COALESCE(capture_id, ?), settled_cents = ?,
+           delta_cents = ? - amount_cents, delta_reason = ?, delta_source = ?, updated_at = ?
+         WHERE id = ? AND kind = 'charge' AND phase IN ('invoice_draft', 'invoice_sent', 'capture_inflight', 'settled_short')
+           AND (phase IS NOT 'settled_short' OR settled_cents IS NOT ? OR delta_reason IS NOT ?)`,
+      ).run(captureId, settledCents, settledCents, reason, source, now, id, settledCents, reason)
+      this.syncLedger(id, now)
+      return Number(written.changes) > 0
+    })
   }
 
   /** The payout batch now exists at PayPal. From here the payout is in flight, not merely locked. */
@@ -1325,11 +1617,14 @@ export class Repo {
   }
 
   applyPayout(id: string, update: PayoutUpdate, now: string): void {
-    this.db.prepare(
-      `UPDATE proposals SET phase = ?, payout_status = ?, payout_item_id = COALESCE(?, payout_item_id),
-         payout_txn_id = COALESCE(?, payout_txn_id), payout_fee_cents = COALESCE(?, payout_fee_cents),
-         captured_amount_cents = COALESCE(?, captured_amount_cents), updated_at = ? WHERE id = ?`,
-    ).run(update.phase, update.status, update.itemId, update.transactionId, update.feeCents, update.paidCents, now, id)
+    this.transaction(() => {
+      this.db.prepare(
+        `UPDATE proposals SET phase = ?, payout_status = ?, payout_item_id = COALESCE(?, payout_item_id),
+           payout_txn_id = COALESCE(?, payout_txn_id), payout_fee_cents = COALESCE(?, payout_fee_cents),
+           captured_amount_cents = COALESCE(?, captured_amount_cents), updated_at = ? WHERE id = ?`,
+      ).run(update.phase, update.status, update.itemId, update.transactionId, update.feeCents, update.paidCents, now, id)
+      this.syncLedger(id, now)
+    })
   }
 
   proposalByPayoutBatch(batchId: string): ProposalRow | null {
@@ -1337,13 +1632,16 @@ export class Repo {
   }
 
   markRefunded(id: string, refundId: string, amountCents: number, now: string): void {
-    this.db.prepare(
-      `UPDATE proposals SET phase = 'refunded', refund_id = ?, captured_amount_cents = ?, updated_at = ? WHERE id = ?`,
-    ).run(refundId, amountCents, now, id)
+    this.transaction(() => {
+      this.db.prepare(
+        `UPDATE proposals SET phase = 'refunded', refund_id = ?, captured_amount_cents = ?, updated_at = ? WHERE id = ?`,
+      ).run(refundId, amountCents, now, id)
+      this.syncLedger(id, now)
+    })
   }
 
   refuse(id: string, now: string): void {
-    this.db.prepare(`UPDATE proposals SET phase = 'capture_refused', updated_at = ? WHERE id = ?`).run(now, id)
+    this.setPhase(id, 'capture_refused', now)
   }
 
   updateProposalGate(id: string, gate: ProposalRow['gate'], clause: string, detail: string, now: string): void {

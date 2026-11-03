@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { approvalProof } from '../domain/approvalProof'
 import type { ControlStore } from '../control/store'
-import type { ProposalRow, Repo } from '../db/repo'
+import { GENESIS_HASH, journalHash, ledgerTargets, type ProposalRow, type Repo } from '../db/repo'
 import { fundableCents } from '../domain/gate'
 import { arrivedCents, fundedPhase, fullPhase, RESERVED_PHASES, shortPhase } from '../domain/phases'
 import { monthWindow } from '../domain/period'
@@ -97,6 +97,7 @@ export class AuditService {
       this.rulesSigned(rawWarrants),
       this.safetyEventsCheck(),
       this.keyFingerprintCheck(),
+      this.ledgerCheck(proposals),
     ]
     if (options.paypal) checks.push(await this.paypalAgrees(proposals))
 
@@ -108,6 +109,35 @@ export class AuditService {
       checks,
       agentReach: { toolkitTools: tools.total, agentCanCallDirectly: tools.agentCanCallDirectly, serverUses: tools.usedByMandate, mcpTools: 6 },
     }
+  }
+
+  /**
+   * The double-entry books. Every journal entry balances to zero, the entries form one unbroken hash chain from the
+   * first, and for every request the books say exactly what its row says moved: no payout paid twice, no refund missed,
+   * no capture booked that PayPal did not complete.
+   */
+  private ledgerCheck(proposals: ProposalRow[]): AuditCheck {
+    const failures: AuditCheck['failures'] = []
+    const journal = this.repo.allJournal()
+    let prev = GENESIS_HASH
+    const posted = new Map<string, number>()
+    journal.forEach((entry, index) => {
+      const sum = entry.postings.reduce((total, leg) => total + leg.amountCents, 0)
+      if (sum !== 0 || entry.postings.length < 2) failures.push({ proposalId: entry.proposal_id, detail: `journal entry ${entry.seq} does not balance (${sum} cents)` })
+      if (entry.seq !== index + 1) failures.push({ proposalId: entry.proposal_id, detail: `journal entry ${entry.seq} is out of sequence: an entry before it is missing` })
+      const expected = journalHash(prev, { id: entry.id, seq: entry.seq, proposalId: entry.proposal_id, purpose: entry.purpose, currency: entry.currency, deltaCents: entry.delta_cents, memo: entry.memo, createdAt: entry.created_at }, entry.postings)
+      if (entry.prev_hash !== prev || entry.hash !== expected) failures.push({ proposalId: entry.proposal_id, detail: `journal entry ${entry.seq} breaks the hash chain: it or an entry before it was changed` })
+      prev = entry.hash
+      const key = `${entry.proposal_id}|${entry.purpose}`
+      posted.set(key, (posted.get(key) ?? 0) + entry.delta_cents)
+    })
+    for (const row of proposals) {
+      for (const target of ledgerTargets(row)) {
+        const booked = posted.get(`${row.id}|${target.purpose}`) ?? 0
+        if (booked !== target.cents) failures.push({ proposalId: row.id, detail: `the books show ${booked} cents for ${target.purpose}, the request says ${target.cents}` })
+      }
+    }
+    return this.check('ledger.balanced', 'The books balance and agree', 'Every movement of money is a double-entry journal entry whose legs sum to zero, chained by hash to the one before it, and the books say exactly what each request says moved.', journal.length, failures, `${journal.length} journal entr${journal.length === 1 ? 'y' : 'ies'}.`)
   }
 
   private check(id: string, title: string, why: string, checked: number, failures: AuditCheck['failures'], note?: string): AuditCheck {

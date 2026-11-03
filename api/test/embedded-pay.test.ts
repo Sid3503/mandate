@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeInvoices } from '../src/paypal/fake'
-import { call, closeAll, EVIDENCE, harness, JOB, idem, OWNER_KEY, STUDIO_KEY } from './support'
+import { call, closeAll, EVIDENCE, harness, JOB, idem, OWNER_KEY, STUDIO_KEY, allowRawWrites } from './support'
 
 afterEach(closeAll)
 
@@ -306,7 +306,7 @@ describe('one bill, one instrument', () => {
     await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId } })
     await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId } })
     // As if it had been paid through a checkout order an older build opened.
-    db.prepare("UPDATE proposals SET order_kind = 'checkout' WHERE id = ?").run(proposalId)
+    allowRawWrites(db); db.prepare("UPDATE proposals SET order_kind = 'checkout' WHERE id = ?").run(proposalId)
     const again = await services.mandate.paySession(proposalId).catch((error: { status?: number }) => error)
     expect((again as { status?: number }).status).toBe(409)
     expect(services.repo.eventsFor(proposalId).some((event) => event.type === 'order.replaced')).toBe(false)

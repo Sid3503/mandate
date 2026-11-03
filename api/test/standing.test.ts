@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeInvoices, FakePayPal, FakeWatch } from '../src/paypal/fake'
-import { agree, call, closeAll, collect, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY } from './support'
+import { agree, call, closeAll, collect, EVIDENCE, harness, idem, JOB, OWNER_KEY, STUDIO_KEY, allowRawWrites } from './support'
 
 afterEach(closeAll)
 
@@ -152,7 +152,7 @@ describe('a standing rule: say yes to the rule once, not to each payment', () =>
     const asked = await call(h.app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem(), body: payout(h.captureId) })
     expect(asked.json.phase).toBe('locked')
     watch.failStatus = 0
-    h.db.prepare('UPDATE proposals SET amount_cents = 90000 WHERE id = ?').run(asked.json.id)
+    allowRawWrites(h.db); h.db.prepare('UPDATE proposals SET amount_cents = 90000 WHERE id = ?').run(asked.json.id)
     await h.services.mandate.sweepStanding()
     expect(h.paypal!.payoutCalls).toBe(0)
     // A broken lock is not something waiting can fix, so the payout is refused for good and stops holding the money.

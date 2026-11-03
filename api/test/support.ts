@@ -97,6 +97,15 @@ export function harness(options: { commit?: string | null; demoReset?: boolean; 
   return { app, db, repo: new Repo(db), paypal, signer, rebuild: build, get services() { return services }, setNow: (date: Date) => { clock = date } }
 }
 
+/**
+ * Models someone with the database file in hand who first switches off its guards (the append-only history, the locked
+ * cart, the state machine), as anyone with file access can. Tamper tests use it to show that what is left, the
+ * signatures and the audit, still catches the edit.
+ */
+export function allowRawWrites(db: { exec(sql: string): void }): void {
+  db.exec('INSERT OR IGNORE INTO maintenance_mode (id) VALUES (1)')
+}
+
 export const bearer = (key: string = OWNER_KEY): HeadersInit => ({ authorization: `Bearer ${key}` })
 
 export async function call(app: Requester, method: string, path: string, options: { key?: string; body?: unknown; idem?: string } = {}) {

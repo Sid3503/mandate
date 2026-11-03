@@ -1254,18 +1254,19 @@ export function createApp(deps: AppDeps) {
     return send(c, await service.capture(c.req.param('id'), parsed.data.claimedAmountCents))
   })
 
-  // PayPal tells us a payout changed. The body is never trusted: it only names a batch, and the
-  // batch is re-read from PayPal with our own credentials. A forged call can at worst cause a read.
+  // PayPal tells us something changed. The body is never trusted: it only names a payout batch, an invoice, a capture or
+  // a refund, and that is re-read from PayPal with our own credentials. A forged call can at worst cause a read.
   app.post('/v1/webhooks/paypal', async (c) => {
     const raw = await c.req.text()
-    let event: { id?: unknown; event_type?: unknown; resource?: Record<string, unknown> } = {}
+    let event: { id?: unknown; event_type?: unknown; resource_type?: unknown; resource?: Record<string, unknown> } = {}
     try {
       event = JSON.parse(raw) as typeof event
     } catch {
       return c.json({ received: true, refreshed: false })
     }
-    // With a webhook id, PayPal must vouch for the delivery. Without one the body is still never trusted:
-    // it only names something to re-read from PayPal.
+    // With a webhook id, PayPal must vouch for the delivery. PayPal signs the exact bytes it sent, so the raw body is what
+    // is checked, never a re-serialised copy. In production a server that talks to a real PayPal and has no webhook id
+    // cannot tell a forged delivery from a real one, so it refuses them all; the sweep still settles everything.
     if (deps.config.webhookId) {
       const header = (name: string) => c.req.header(name) ?? ''
       let genuine = false
@@ -1275,23 +1276,44 @@ export function createApp(deps: AppDeps) {
               webhookId: deps.config.webhookId,
               headers: Object.fromEntries(['paypal-auth-algo', 'paypal-cert-url', 'paypal-transmission-id', 'paypal-transmission-sig', 'paypal-transmission-time'].map((name) => [name, header(name)])),
               event,
+              rawEvent: raw,
             })
           : false
       } catch {
         genuine = false
       }
       if (!genuine) return c.json({ received: false, error: 'webhook.signature_invalid' }, 401)
+    } else if (process.env.NODE_ENV === 'production' && (deps.config.paypalMode === 'sandbox' || deps.config.paypalMode === 'live')) {
+      return c.json({ received: false, error: 'webhook.unverifiable', detail: 'Set PAYPAL_WEBHOOK_ID so PayPal deliveries can be verified. The server keeps settling by re-reading PayPal.' }, 503)
     }
     const resource = event.resource ?? {}
+    const eventType = typeof event.event_type === 'string' ? event.event_type.slice(0, 80) : ''
+    const safeId = (value: unknown, pattern = /^[A-Za-z0-9_-]{6,64}$/) => (typeof value === 'string' && pattern.test(value) ? value : null)
     const header = resource.batch_header as Record<string, unknown> | undefined
-    const found = resource.payout_batch_id ?? header?.payout_batch_id
-    const batchId = typeof found === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(found) ? found : null
+    const batchId = safeId(resource.payout_batch_id ?? header?.payout_batch_id)
     const invoice = (resource.invoice as Record<string, unknown> | undefined)?.id ?? (typeof resource.id === 'string' && resource.id.startsWith('INV') ? resource.id : undefined)
-    const invoiceId = typeof invoice === 'string' && /^INV[A-Za-z0-9-]{3,64}$/.test(invoice) ? invoice : null
+    const invoiceId = safeId(invoice, /^INV[A-Za-z0-9-]{3,64}$/)
+    // PAYMENT.CAPTURE.* names a capture. For REFUNDED and REVERSED the resource is the refund, and its "up" link names
+    // the capture it came from.
+    let captureId: string | null = null
+    let refundId: string | null = null
+    if (eventType.startsWith('PAYMENT.CAPTURE.')) {
+      const links = Array.isArray(resource.links) ? resource.links as Array<Record<string, unknown>> : []
+      const up = links.find((item) => item?.rel === 'up' && typeof item.href === 'string' && /\/captures\//.test(item.href))
+      if (up) {
+        captureId = safeId(String(up.href).split('/captures/')[1]?.split(/[/?]/)[0])
+        refundId = safeId(resource.id)
+      } else {
+        captureId = safeId(resource.id)
+      }
+    }
+    const related = (resource.supplementary_data as Record<string, unknown> | undefined)?.related_ids as Record<string, unknown> | undefined
+    const orderId = safeId(related?.order_id)
 
     if (!deps.nested && deps.control && deps.registry) {
       const targetWorkspace = (batchId ? deps.control.workspaceForRef('payout', batchId) : null)
         ?? (invoiceId ? deps.control.workspaceForRef('invoice', invoiceId) : null)
+        ?? (orderId ? deps.control.workspaceForRef('order', orderId) : null)
       if (targetWorkspace && targetWorkspace !== (deps.workspace?.id ?? 'ws_default')) {
         const tenant = deps.registry.get(targetWorkspace)
         if (tenant) {
@@ -1305,20 +1327,28 @@ export function createApp(deps: AppDeps) {
     }
 
     const eventId = typeof event.id === 'string' && event.id.length <= 128 ? event.id : null
-    const eventType = typeof event.event_type === 'string' ? event.event_type.slice(0, 80) : ''
-    // PayPal retries deliveries. A retry of an event already handled does nothing.
+    // The inbox. PayPal retries deliveries: a retry of an event already done does nothing, and one that failed (or was
+    // cut off by a crash) is processed again.
     if (eventId && !services.repo.claimWebhookEvent(eventId, eventType, deps.now().toISOString())) {
       return c.json({ received: true, duplicate: true, refreshed: false })
     }
     try {
-      if (eventType.startsWith('CUSTOMER.DISPUTE.')) return c.json({ received: true, refreshed: (await service.syncDisputes()).checked })
-      if (batchId) return c.json({ received: true, ...(await service.refreshPayoutBatch(batchId)) })
-      if (invoiceId) return c.json({ received: true, ...(await service.refreshInvoice(invoiceId)) })
-    } catch {
-      if (eventId) services.repo.releaseWebhookEvent(eventId)
+      let result: { refreshed: boolean } = { refreshed: false }
+      if (eventType.startsWith('CUSTOMER.DISPUTE.')) result = { refreshed: (await service.syncDisputes()).checked }
+      else if (batchId) result = await service.refreshPayoutBatch(batchId)
+      else if (invoiceId) result = await service.refreshInvoice(invoiceId)
+      else if (captureId) {
+        const pendingRefund = refundId ? services.repo.proposalByRefund(refundId) : null
+        if (pendingRefund) result = await service.refreshRefund(pendingRefund.id)
+        if (!result.refreshed) result = await service.refreshCapture(captureId)
+        if (!result.refreshed && orderId) result = await service.refreshOrder(orderId)
+      }
+      if (eventId) services.repo.finishWebhookEvent(eventId, deps.now().toISOString())
+      return c.json({ received: true, ...result })
+    } catch (error) {
+      if (eventId) services.repo.failWebhookEvent(eventId, error instanceof Error ? `${error.name}: ${error.message}` : 'error')
       return c.json({ received: true, refreshed: false })
     }
-    return c.json({ received: true, refreshed: false })
   })
 
   // ---------- what PayPal knows about the account (owner only) ----------
