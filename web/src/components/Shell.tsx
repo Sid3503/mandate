@@ -25,7 +25,7 @@ const NAV: NavItem[] = [
   { to: '/', label: 'Today', tour: 'nav-waiting', icon: 'M4 5h16v14H4z M4 9h16', end: true },
   { to: '/jobs', label: 'Jobs', tour: 'nav-jobs', icon: 'M4 7h16v12H4z M9 7V4h6v3', also: ['/deals'] },
   { to: '/rules', label: 'Rules', tour: 'nav-rules', icon: 'M6 4h12v16H6z M9 9h6 M9 13h6 M9 17h3' },
-  { to: '/ledger', label: 'Activity', tour: 'nav-activity', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16', also: ['/proof', '/control-room', '/books', '/breaks'] },
+  { to: '/ledger', label: 'Activity', tour: 'nav-activity', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16', also: ['/proof', '/control-room', '/books', '/breaks', '/disputes'] },
 ]
 
 /** Quiet shortcuts on the desktop rail. On a phone they live inside Jobs and Today. */

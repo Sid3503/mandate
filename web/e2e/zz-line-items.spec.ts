@@ -70,7 +70,7 @@ test('a bill with two items, a due date and a note is asked for, approved, and s
   await expect(terms.getByRole('row', { name: /Final files/ })).toContainText('$50.00')
   await expect(terms.getByRole('row', { name: /Total/ })).toContainText('$150.00')
   await expect(terms).toContainText('Due')
-  await expect(terms).toContainText('Thank you bso/b much.')
+  await expect(terms).toContainText('Thank you so much.')
   await expect(terms).not.toContainText('Overdue')
   await expect(page.getByText('items, due date and note')).toBeVisible()
   const verified = await (await page.request.get(`/v1/proposals/${made.id}/verify`, { headers: { authorization: `Bearer ${OWNER}` } })).json()

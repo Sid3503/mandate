@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { ActivityTabs } from '../components/ActivityTabs'
 import { Chip, Empty, Loading, Money, PageHead, ProblemCard, Spinner } from '../components/ui'
 import { disputesApi, dueWords, type DisputeDetail, type DisputeListItem } from '../lib/disputes'
 import { useSession } from '../lib/hooks'
@@ -32,6 +33,7 @@ function DisputeList() {
   const rows = list.data?.data ?? []
   return (
     <div className="page">
+      <ActivityTabs />
       <PageHead eyebrow="Disputes" title="Client disputes">
         <p className="muted">When a client disputes a payment with PayPal, Mandate answers with its signed records. A person approves every response.</p>
       </PageHead>

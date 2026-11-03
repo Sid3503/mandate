@@ -14,7 +14,8 @@ test('the dispute desk: evidence from the signed records, a person approves, the
   await page.getByLabel('API key').fill(OWNER)
   await page.getByRole('button', { name: 'Unlock console' }).click()
   await expect(page.getByRole('heading', { name: /Waiting for you/ })).toBeVisible()
-  await page.getByRole('link', { name: 'Disputes' }).first().click()
+  // Reached by address: on a phone the rail is a drawer, and the Activity tabs (which carry Disputes) are tested below.
+  await page.goto('/app/disputes')
   await expect(page.getByText('No client disputes')).toBeVisible()
 
   // A paid client charge, then a dispute on it.

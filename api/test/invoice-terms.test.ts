@@ -31,15 +31,26 @@ async function approved(h: ReturnType<typeof harness>, body: Record<string, unkn
 describe('bill terms: the schema', () => {
   const parse = (extra: Record<string, unknown>) => ProposalCreateSchema.safeParse({ ...bill(), ...extra })
 
-  it('accepts items, a due date and a note, and strips angle brackets', () => {
+  it('accepts items, a due date and a note, and removes markup', () => {
     const ok = parse({ lineItems: [{ description: '  <b>Logo</b> <script>alert(1)</script>', quantity: 1, unitCents: 15_000 }], customerNote: 'Hi <img src=x onerror=alert(1)>' })
     expect(ok.success).toBe(true)
     if (ok.success) {
-      expect(ok.data.lineItems![0]!.description).toBe('bLogo/b scriptalert(1)/script')
-      expect(ok.data.customerNote).toBe('Hi img src=x onerror=alert(1)')
+      expect(ok.data.lineItems![0]!.description).toBe('Logo alert(1)')
+      expect(ok.data.customerNote).toBe('Hi')
       expect(JSON.stringify(ok.data)).not.toMatch(/[<>]/)
     }
   })
+  it('removes whole tags, and any lone angle bracket, whatever the input', () => {
+    const clean = (customerNote: string) => {
+      const out = parse({ lineItems: [{ description: 'x', quantity: 1, unitCents: 15_000 }], customerNote })
+      return out.success ? out.data.customerNote : null
+    }
+    expect(clean('Thank you <b>for</b> your business')).toBe('Thank you for your business')
+    expect(clean('5 < 6 and 7 > 3')).toBe('5  6 and 7  3')
+    expect(clean('<<script>script>alert(1)<</script>/script>')).not.toMatch(/[<>]/)
+    expect(clean('a<b')).toBe('ab')
+  })
+
 
   it('holds the bounds', () => {
     expect(parse({ lineItems: [] }).success).toBe(false)
@@ -84,7 +95,7 @@ describe('bill terms: the server checks them', () => {
   it('stores the terms, returns them in the view, and sanitises over HTTP', async () => {
     const h = harness({ invoices: new FakeInvoices() })
     const made = await call(h.app, 'POST', '/v1/proposals', { idem: idem(), body: bill({ customerNote: 'Pay <b>soon</b>' }) })
-    expect(made.json).toMatchObject({ lineItems: ITEMS, dueDate: '2026-10-17', customerNote: 'Pay bsoon/b' })
+    expect(made.json).toMatchObject({ lineItems: ITEMS, dueDate: '2026-10-17', customerNote: 'Pay soon' })
     const plain = await call(h.app, 'POST', '/v1/proposals', { idem: idem(), body: { ...plainBill(), jobId: 'job_other' } })
     expect(plain.json).toMatchObject({ lineItems: null, dueDate: null, customerNote: null })
   })

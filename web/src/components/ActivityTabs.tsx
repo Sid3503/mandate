@@ -4,6 +4,7 @@ const TABS = [
   { to: '/ledger', label: 'Ledger', hint: 'every request', phone: true },
   { to: '/books', label: 'Books', hint: 'the journal', phone: true },
   { to: '/breaks', label: 'Breaks', hint: 'vs PayPal', phone: true },
+  { to: '/disputes', label: 'Disputes', hint: 'client claims', phone: true },
   { to: '/proof', label: 'Proof', hint: 'check it', phone: true },
   { to: '/control-room', label: 'Control room', hint: 'dashboard', phone: false },
 ]
