@@ -1,6 +1,7 @@
 import { OpenApiGeneratorV31, OpenAPIRegistry } from '@asteasolutions/zod-to-openapi'
 import { z } from 'zod'
 import { BillMilestoneSchema, DealOfferSchema, PartyRulesSchema } from './domain/deal'
+import { registerDisputePaths } from './http/disputes-openapi'
 import { CaptureSchema, ListQuerySchema, ProposalCreateSchema, WarrantBodySchema } from './domain/schemas'
 
 const HealthSchema = z.object({
@@ -737,6 +738,8 @@ export function buildOpenApi(publicUrl: string) {
     request: { query: ListQuerySchema.extend({ proposalId: z.string().max(128).optional() }) },
     responses: { 200: { description: 'Journal page', content: { 'application/json': { schema: BooksJournalSchema } } }, 400: problem, 401: problem },
   })
+
+  registerDisputePaths(registry)
 
   return new OpenApiGeneratorV31(registry.definitions).generateDocument({
     openapi: '3.1.0',

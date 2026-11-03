@@ -6,6 +6,7 @@ import { OAuthService, type AuthorizeRequest, type OauthGrant } from './auth/oau
 import { es256PublicJwk, passkeyRuleBinding, stepBinding } from './auth/passkeys'
 import type { ControlStore } from './control/store'
 import { mountExtra, type ProductCtx } from './http/extra'
+import { mountDisputes } from './http/disputes'
 import { clientIp } from './ops/client-ip'
 import { API_CSP, securityHeaders } from './ops/headers'
 import { Metrics } from './ops/metrics'
@@ -180,6 +181,9 @@ const AS_PATH = '/.well-known/oauth-authorization-server'
 
 /** Routes only the owner key may call. A proposer, such as an agent, can ask but never decide or move money. */
 const OWNER_ONLY = [
+  { method: 'GET', pattern: /^\/v1\/disputes(\/[^/]+)?$/ },
+  { method: 'POST', pattern: /^\/v1\/disputes\/[^/]+\/(draft|send)$/ },
+  { method: 'PUT', pattern: /^\/v1\/disputes\/[^/]+\/draft$/ },
   { method: 'PUT', pattern: /^\/v1\/warrant$/ },
   { method: 'POST', pattern: /^\/v1\/rules\/words$/ },
   { method: 'DELETE', pattern: /^\/v1\/rules\/words$/ },
@@ -1950,6 +1954,7 @@ export function createApp(deps: AppDeps) {
     },
   }
   mountExtra(app, product, (request) => app.fetch(request))
+  mountDisputes(app, { services, model: deps.drafterModel ?? deps.model ?? null, budget: deps.budget ?? null, requireStep: (c, kind, binding) => requireStep(c, deps, kind, binding) })
 
   return app
 }

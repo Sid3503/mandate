@@ -30,6 +30,7 @@ const NAV: NavItem[] = [
 
 /** Quiet shortcuts on the desktop rail. On a phone they live inside Jobs and Today. */
 const MORE: NavItem[] = [
+  { to: '/disputes', label: 'Disputes', tour: 'nav-disputes', icon: 'M12 3l9 16H3z M12 10v4 M12 17h.01' },
   { to: '/books', label: 'Books', tour: 'nav-books', icon: 'M5 4h14v16H5z M5 9h14 M9 4v16' },
   { to: '/deals', label: 'Deals', tour: 'nav-deals', icon: 'M3 12h7 M14 12h7 M9 7l3 5-3 5 M15 7l-3 5 3 5' },
   { to: '/payees', label: 'Payees', tour: 'nav-payees', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75' },

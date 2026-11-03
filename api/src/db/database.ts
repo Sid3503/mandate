@@ -504,7 +504,7 @@ export function databaseReady(db: DatabaseSync): boolean {
 export function resetDemo(db: DatabaseSync, now: Date): void {
   withMaintenance(db, () => {
     // Children before parents, because events and the ledger point at proposals and deliveries at deals.
-    for (const table of ['postings', 'journal_entries', 'paypal_attempts', 'events', 'deliveries', 'negotiation_moves', 'negotiations', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
+    for (const table of ['postings', 'journal_entries', 'paypal_attempts', 'events', 'deliveries', 'negotiation_moves', 'negotiations', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'dispute_responses', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
       db.exec(`DELETE FROM ${table}`)
     }
     db.exec("UPDATE safety_state SET paused = 0, reason = NULL, since = NULL, by = NULL WHERE id = 1")
