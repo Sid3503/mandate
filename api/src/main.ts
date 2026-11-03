@@ -82,6 +82,8 @@ let draining = false
 // Tell the owner's own channel when something needs them. Off unless NOTIFY_WEBHOOK_URL is set.
 const notifier = new Notifier({ url: config.notifyWebhookUrl, repo: services.repo, consoleUrl: `${config.publicUrl.replace(/\/$/, '')}/app`, now: () => new Date() })
 notifier.start()
+// A critical break on the Breaks desk reaches the owner's channel once, when it opens.
+services.breaks.onCritical = (found) => void notifier.breakOpened(found).catch(() => undefined)
 
 const app = createApp({
   draining: () => draining,
@@ -144,7 +146,7 @@ let sweeping: Promise<unknown> | null = null
 const standingTimer = setInterval(() => {
   // Check every second whether it is time: 5 s apart while something is in flight, a minute apart otherwise.
   if (sweeping || draining || Date.now() - lastSweep < services.mandate.nextSweepMs()) return
-  sweeping = services.mandate.sweepStanding().then(() => services.mandate.sweepPending()).catch(() => undefined).finally(() => { lastSweep = Date.now(); sweeping = null })
+  sweeping = services.mandate.sweepStanding().then(() => services.mandate.sweepPending()).then(() => services.breaks.scanIfDue()).catch(() => undefined).finally(() => { lastSweep = Date.now(); sweeping = null })
 }, 1_000)
 standingTimer.unref()
 

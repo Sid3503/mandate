@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { BalanceNote } from '../components/PayPalFeatures'
+import { BillTerms } from '../components/BillTerms'
 import { PaySheet } from '../components/PaySheet'
 import { Signature } from '../components/Signature'
 import { useToast } from '../components/Toast'
@@ -13,6 +14,9 @@ import { useIsOwner, useNames, useOnline, useRefreshMoney, useVersions } from '.
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { JournalEntry, LedgerEvent, Packet, Warrant } from '../lib/types'
 import { AGENT_LABEL, EVENT, explain, fundedPhase, fullPhase, isPayout, KIND, namedAdjustment, paidPhase, settlementLine, type Names } from '../lib/words'
+
+/** Charge phases where the client has not yet paid, so a past due date is still owed. */
+const UNPAID = ['locked', 'order_created', 'invoice_draft', 'invoice_sent', 'capture_inflight', 'settled_short']
 
 export function Receipt() {
   const { id = '' } = useParams()
@@ -63,6 +67,7 @@ export function Receipt() {
             <h2 className="panel-title">What was asked</h2>
             {data.prompt ? <p className="quote big">“{data.prompt}”</p> : <p className="muted">No sentence was recorded.</p>}
             {data.agentRun ? <AgentTrace run={data.agentRun} /> : null}
+            <BillTerms lineItems={p.lineItems} dueDate={p.dueDate} customerNote={p.customerNote} currency={p.currency} unpaid={p.kind === 'charge' && UNPAID.includes(p.phase)} />
             <div className="kvs">
               <KV label="Kind">{kind.label}</KV>
               <KV label={p.kind === 'charge' ? 'Client' : 'Payee'}>{names(p.payeeId)}</KV>
@@ -79,7 +84,7 @@ export function Receipt() {
           <section className="panel panel-ink" data-tour="receipt-lock">
             <h2 className="panel-title">The lock</h2>
             <Hash value={p.cartHash} full />
-            <p className="fine">SHA-256 over payee, cents, currency, category, proof{p.jobId ? ', job' : ''}{p.fundingCaptureId ? ' and funding capture' : ''}. Settlement recomputes it and refuses on any difference.</p>
+            <p className="fine">SHA-256 over payee, cents, currency, category, proof{p.jobId ? ', job' : ''}{p.fundingCaptureId ? ', funding capture' : ''}{p.lineItems || p.dueDate || p.customerNote ? ', items, due date and note' : ''}. Settlement recomputes it and refuses on any difference.</p>
             {p.cartHash ? <div className="panel-ink-sig"><Signature kind="lock" id={p.id} signature={p.lockSignature} keyId={p.lockKeyId} receipt={data} /></div> : null}
             <div className="match">
               <div><span>Approved</span><Money cents={data.amounts.approvedCents} size="lg" /></div>
@@ -161,7 +166,10 @@ export function Receipt() {
           </section>
         </div>
       </div>
-      <InTheBooks proposalId={p.id} updatedAt={p.updatedAt} />
+      <div className="receipt-ledgers">
+        <InTheBooks proposalId={p.id} updatedAt={p.updatedAt} />
+        <PayPalCalls proposalId={p.id} updatedAt={p.updatedAt} />
+      </div>
     </div>
   )
 }
@@ -185,6 +193,33 @@ function InTheBooks({ proposalId, updatedAt }: { proposalId: string; updatedAt: 
           {entries.map((entry) => <BookLine key={entry.id} entry={entry} />)}
         </div>
       )}
+    </section>
+  )
+}
+
+/**
+ * Every call to PayPal that can move money for this request, as the server recorded it BEFORE making the call. A row
+ * that says "started" and never finished is how a crash is recognised: the same call is resumed with the same
+ * PayPal-Request-Id, so PayPal answers with what it already did instead of doing it twice.
+ */
+function PayPalCalls({ proposalId, updatedAt }: { proposalId: string; updatedAt: string }) {
+  const owner = useIsOwner()
+  const calls = useQuery({ queryKey: ['paypal-attempts', proposalId, updatedAt], queryFn: () => api.attempts(proposalId), enabled: owner })
+  if (!owner) return null
+  if (calls.error instanceof ApiError && (calls.error.status === 403 || calls.error.status === 401)) return null
+  if (calls.isLoading) return <section className="panel books-slip"><h2 className="panel-title">PayPal calls</h2><p className="fine">Reading the call record…</p></section>
+  if (calls.error || !calls.data) return <section className="panel books-slip"><h2 className="panel-title">PayPal calls</h2><p className="fine">The call record for this request could not be read.</p></section>
+  const rows = calls.data.data
+  return (
+    <section className="panel books-slip" data-testid="paypal-calls">
+      <h2 className="panel-title">PayPal calls</h2>
+      <p className="fine">Each call is written down before it is made, then finished when PayPal answers.</p>
+      {rows.length === 0 ? <p className="fine">No call to PayPal has been made for this request.</p> : rows.map((row) => (
+        <div className="books-slip-row" key={row.id}>
+          <div className="row between"><strong>{row.op}</strong><span className={`call-status call-${row.status}`}>{row.status}</span></div>
+          <p className="fine mono">PayPal-Request-Id {row.requestIdPrefix}… · {row.externalId ? `PayPal id ${row.externalId}` : 'no PayPal id'} · {when(row.startedAt)}</p>
+        </div>
+      ))}
     </section>
   )
 }

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { RESERVED_PHASES, type Repo, type ProposalRow, type ProposalKind, type PayoutUpdate } from '../db/repo'
+import { itemsOf, RESERVED_PHASES, type Repo, type ProposalRow, type ProposalKind, type PayoutUpdate } from '../db/repo'
 import { clearingState, Clause, decide, fundableCents, fundingArithmetic, type Decision, resolveCategory, resolveClient, resolvePayee, type DealContext, type FundingCharge } from '../domain/gate'
 import { approvalProof, type ApprovalProof } from '../domain/approvalProof'
-import { cartHash, stableHash, type CartFields } from '../domain/hash'
+import { cartHash, stableHash, type CartFields, type LineItem } from '../domain/hash'
 import { acceptanceMessage, lockMessage, proofHash, type Signer } from '../domain/signing'
 import { monthWindow } from '../domain/period'
 import { arrivedCents, canTransition, fullPhase, fundedPhase, PAID_PHASES, paidPhase, watchedInvoicePhase } from '../domain/phases'
@@ -10,7 +10,7 @@ import { paypalRequestId } from '../domain/hash'
 import { ATTRIBUTED_REASONS, explainDelta, explainTotal, SOURCE_OF, type InvoiceMoney } from '../domain/settlement'
 import { DealTermsSchema, type DealTerms, type PartyRules } from '../domain/deal'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
-import { NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema, DEFAULT_RISK } from '../domain/schemas'
+import { lineItemsTotal, MAX_DUE_DAYS, NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema, DEFAULT_RISK } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
 import { PayPalError, type CapturedPayment, type CardOnOrder, type CreatedOrder, type LivePayout, type PayPalPort } from '../paypal/port'
 import { cardAuthDecision } from '../domain/cardAuth'
@@ -18,6 +18,7 @@ import type { LiveDispute, WatchPort } from '../paypal/watch'
 import { assessFeatures } from '../domain/paypalFeatures'
 import { reconcile } from '../domain/reconcile'
 import { Problem } from '../http/problem'
+import { overdueDays } from './today'
 import { paypalProblem } from './paypalProblem'
 import { applyPayeeBook, type PayeeView } from '../domain/payee-book'
 import { applyPause, NOT_PAUSED } from '../domain/safety'
@@ -41,7 +42,7 @@ const PAYOUT_LIVE_PHASES = ['payout_sent', 'payout_unclaimed']
  * path through PayPal (three attempts of a 20 s call, backoff, a token fetch, and up to four calls in one settle), or a
  * second worker takes over a call that is still running and both write the result.
  */
-const INFLIGHT_MS = 180_000
+export const INFLIGHT_MS = 180_000
 /** PayPal capture and refund statuses that are final failures: no money moved and none will. */
 const CAPTURE_FAILED = new Set(['DECLINED', 'FAILED'])
 const REFUND_FAILED = new Set(['FAILED', 'CANCELLED'])
@@ -92,6 +93,10 @@ export type ProposalView = {
   invoiceId: string | null
   invoiceUrl: string | null
   invoiceStatus: string | null
+  /** The bill's items, the day it falls due (YYYY-MM-DD) and the note for the client. Null when the bill has none. */
+  lineItems: LineItem[] | null
+  dueDate: string | null
+  customerNote: string | null
   /** How this charge is to be paid: an invoice the client gets, or a card form on our own page. */
   payInstrument: 'invoice' | 'checkout' | null
   /** How the order on this row was opened: a card (paid on our page) or a checkout (the buyer is sent to PayPal). */
@@ -171,6 +176,9 @@ export function toView(row: ProposalRow): ProposalView {
     invoiceId: row.invoice_id,
     invoiceUrl: row.invoice_url,
     invoiceStatus: row.invoice_status,
+    lineItems: itemsOf(row),
+    dueDate: row.due_date,
+    customerNote: row.customer_note,
     /** How this charge is to be paid: an invoice the client gets, or a card form on our own page. */
     payInstrument: row.pay_instrument === 'checkout' ? 'checkout' : row.pay_instrument === 'invoice' ? 'invoice' : null,
     orderKind: row.order_kind === 'card' ? 'card' : row.order_kind === 'checkout' ? 'checkout' : null,
@@ -633,7 +641,12 @@ export class MandateService {
       const reminders = events.filter((event) => event.type === 'invoice.reminded')
       const since = reminders.at(-1)?.created_at ?? events.find((event) => event.type === 'invoice.sent')?.created_at
       if (!since || reminders.length >= automation.maxReminders) continue
-      if (this.now().getTime() - Date.parse(since) < automation.remindUnpaidAfterDays * 86_400_000) continue
+      // A bill with a due date is chased only once it is past due, the first reminder going out at once; later ones
+      // keep the owner's spacing. A bill without one keeps the days-since-sent rule it always had.
+      if (row.due_date) {
+        if (overdueDays(row.due_date, this.now()) < 1) continue
+        if (reminders.length > 0 && this.now().getTime() - Date.parse(since) < automation.remindUnpaidAfterDays * 86_400_000) continue
+      } else if (this.now().getTime() - Date.parse(since) < automation.remindUnpaidAfterDays * 86_400_000) continue
       await this.remindInvoice(row.id, 'autopilot')
       sent += 1
     }
@@ -1380,6 +1393,9 @@ export class MandateService {
             recipientName: client.displayName,
             // Both come from something the owner signed, not from a constant here: whether this client may pay
             // in part is a rule, and the discount is a term of the deal this charge bills.
+            lineItems: itemsOf(row),
+            dueDate: row.due_date,
+            customerNote: row.customer_note,
             allowPartialPayment: warrant.body.allowPartialPayment,
             earlyPaymentDiscount: earlyPaymentDiscountOf(terms, this.now()),
           }))).invoiceId
@@ -1754,7 +1770,9 @@ export class MandateService {
     const dealId = input.kind === 'charge' ? input.dealId ?? null : null
     const milestone = dealId ? input.milestone ?? null : null
     const deal = input.kind === 'charge' ? this.dealContext(dealId, milestone, jobId, evidenceUrl) : null
+    const terms = this.billTerms(input, now)
     const openDuplicate = this.repo.openDuplicate({
+      ...terms,
       kind: input.kind,
       payeeId: payee?.id ?? null,
       amountCents: input.amountCents,
@@ -1804,7 +1822,31 @@ export class MandateService {
     const withPayee = this.options.payeeBook && input.kind === 'payment'
       ? applyPayeeBook(decision, this.payeeView(payee?.id ?? null, Date.parse(now)))
       : decision
-    return { decision: withPayee, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap }
+    return { decision: withPayee, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap, terms }
+  }
+
+  /**
+   * The items, due date and note of a bill, checked. The total must be exactly what the items add up to, the due date
+   * must be today or later and within a year, and none of it belongs to anything but a charge. What comes back is what
+   * is stored and signed.
+   */
+  private billTerms(input: ProposalCreate, now: string): { lineItems: LineItem[] | null; dueDate: string | null; customerNote: string | null } {
+    const items = input.lineItems && input.lineItems.length > 0 ? input.lineItems.map((item) => ({ description: item.description, quantity: item.quantity, unitCents: item.unitCents })) : null
+    if (items) {
+      const sum = lineItemsTotal(items)
+      if (sum !== input.amountCents) {
+        throw new Problem(422, 'lineitems.sum_mismatch', 'The items do not add up to the amount', `The items add up to ${sum} cents but the amount is ${input.amountCents} cents. The amount must be the sum of quantity times unit price.`)
+      }
+    }
+    let dueDate: string | null = null
+    if (input.dueDate) {
+      const today = now.slice(0, 10)
+      const last = new Date(Date.parse(`${today}T00:00:00Z`) + MAX_DUE_DAYS * 86_400_000).toISOString().slice(0, 10)
+      if (input.dueDate < today) throw new Problem(422, 'duedate.past', 'The due date has passed', `${input.dueDate} is before today (${today}).`)
+      if (input.dueDate > last) throw new Problem(422, 'duedate.too_far', 'The due date is too far away', `A bill may fall due at most ${MAX_DUE_DAYS} days ahead (${last}).`)
+      dueDate = input.dueDate
+    }
+    return { lineItems: items, dueDate, customerNote: input.customerNote ? input.customerNote : null }
   }
 
   /** A settled client payment with money left to fund a payout, for the try-it cases to cite. Null when there is none yet. */
@@ -1845,7 +1887,7 @@ export class MandateService {
     if (input.proposalId) return this.amend(input, now)
     const warrant = this.repo.latestWarrant()
     if (!warrant) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
-    const { decision, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap } = this.judge(input, warrant, now, actor)
+    const { decision, payee, category, evidenceUrl, jobId, fundingCaptureId, dealId, milestone, cap, terms } = this.judge(input, warrant, now, actor)
     const id = randomUUID()
     // The gate judged this ask before the row had an id. Its refusal names the ask that is already open;
     // adding this one's own id lets the stored refusal be read on its own, from the ledger.
@@ -1866,6 +1908,7 @@ export class MandateService {
       fundingCaptureId,
       dealId,
       milestone,
+      ...terms,
     } : null
     const lockHash = fields ? cartHash(fields) : null
     const lockSig = lockHash ? this.signer.sign(lockMessage(id, lockHash)) : null
@@ -1895,6 +1938,7 @@ export class MandateService {
       lockSig: lockSig?.signature ?? null,
       lockKeyId: lockSig?.keyId ?? null,
       reservedAt: lockNow ? now : null,
+      ...terms,
       now,
     })
     this.repo.insertEvent(randomUUID(), id, 'proposal.created', decision.clause, {
@@ -1944,6 +1988,7 @@ export class MandateService {
       && (row.prompt ?? null) === (input.prompt ?? null)
       && (input.jobId === undefined || row.job_id === input.jobId)
       && (row.funding_capture_id ?? null) === (input.kind === 'payment' ? input.fundingCaptureId ?? null : null)
+      && sameTerms(row, input)
     if (same) return { status: 200, body: toView(row) }
     this.repo.insertEvent(randomUUID(), row.id, 'cart.mutation_refused', Clause.cartImmutable, {
       claimedAmountCents: input.amountCents,
@@ -2099,6 +2144,9 @@ export class MandateService {
       fundingCaptureId: row.funding_capture_id,
       dealId: row.deal_id,
       milestone: row.milestone,
+      lineItems: itemsOf(row),
+      dueDate: row.due_date,
+      customerNote: row.customer_note,
     }
   }
 
@@ -2434,4 +2482,14 @@ function partyRulesToWarrant(party: PartyRules, seller: WarrantBody): WarrantBod
     evidenceRequired: party.requireProof || seller.evidenceRequired,
     currency: party.currency || seller.currency,
   }
+}
+
+/** Whether a stored bill already says what an amend asks for, item by item. */
+function sameTerms(row: ProposalRow, input: ProposalCreate): boolean {
+  const stored = itemsOf(row) ?? []
+  const asked = input.lineItems ?? []
+  return stored.length === asked.length
+    && stored.every((item, at) => item.description === asked[at]!.description && item.quantity === asked[at]!.quantity && item.unitCents === asked[at]!.unitCents)
+    && (row.due_date ?? null) === (input.dueDate ?? null)
+    && (row.customer_note ?? null) === (input.customerNote ? input.customerNote : null)
 }

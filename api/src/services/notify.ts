@@ -46,6 +46,16 @@ export class Notifier {
     return this.status()
   }
 
+  /**
+   * Tells the owner a critical break opened on the Breaks desk, once per opening (the id is the break's history row). It
+   * carries only the plain-English title the rules wrote (amounts and what happened, never an address, a key or a name) and
+   * a link to the desk. It cannot fix anything: the owner opens the console and decides.
+   */
+  async breakOpened(found: { key: string; title: string; eventId: number }): Promise<void> {
+    if (!this.firstTime(`break:${found.key}:${found.eventId}`)) return
+    await this.send(`Mandate: a critical break opened. ${found.title}.`, `${this.options.consoleUrl}/breaks`)
+  }
+
   private onEvent(event: LiveEvent): void {
     if (event.type !== 'changed') return
     // The event is published while a write may still be open. Look one tick later, when it is committed.

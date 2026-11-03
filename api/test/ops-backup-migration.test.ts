@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync } from 'n
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { backupFileDatabase, migrate, openDatabase, SCHEMA, seed } from '../src/db/database'
 import { applySqlSteps, OPS_STEPS, type SqlStep } from '../src/db/sql-migrations'
 
@@ -200,5 +200,21 @@ describe('Database backup and restore scripts (scripts/db-backup.mjs, scripts/db
     const safetyRow = safetyDb.prepare("SELECT id FROM proposals WHERE id = 'original_target'").get() as { id: string }
     expect(safetyRow.id).toBe('original_target')
     safetyDb.close()
+  })
+
+  it('names every backup uniquely and in the order taken, even in the same millisecond', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mandate-backup-names-'))
+    const db = openDatabase(join(dir, 'test.sqlite'))
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-03T12:00:00.000Z'))
+    try {
+      for (let i = 0; i < 3; i += 1) backupFileDatabase(db)
+    } finally {
+      vi.useRealTimers()
+    }
+    const names = readdirSync(join(dir, 'backups'))
+    expect(names).toHaveLength(3)
+    expect(names.sort()[2]).toMatch(/-003\.sqlite$/)
+    db.close()
   })
 })

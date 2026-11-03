@@ -6,6 +6,9 @@ import { OAuthService, type AuthorizeRequest, type OauthGrant } from './auth/oau
 import { es256PublicJwk, passkeyRuleBinding, stepBinding } from './auth/passkeys'
 import type { ControlStore } from './control/store'
 import { mountExtra, type ProductCtx } from './http/extra'
+import { mountBreaks } from './http/breaks'
+import { mountDisputes } from './http/disputes'
+import { mountInvoices } from './http/invoices'
 import { clientIp } from './ops/client-ip'
 import { API_CSP, securityHeaders } from './ops/headers'
 import { Metrics } from './ops/metrics'
@@ -180,6 +183,11 @@ const AS_PATH = '/.well-known/oauth-authorization-server'
 
 /** Routes only the owner key may call. A proposer, such as an agent, can ask but never decide or move money. */
 const OWNER_ONLY = [
+  { method: 'GET', pattern: /^\/v1\/invoices$/ },
+  { method: 'POST', pattern: /^\/v1\/invoices\/draft$/ },
+  { method: 'GET', pattern: /^\/v1\/disputes(\/[^/]+)?$/ },
+  { method: 'POST', pattern: /^\/v1\/disputes\/[^/]+\/(draft|send)$/ },
+  { method: 'PUT', pattern: /^\/v1\/disputes\/[^/]+\/draft$/ },
   { method: 'PUT', pattern: /^\/v1\/warrant$/ },
   { method: 'POST', pattern: /^\/v1\/rules\/words$/ },
   { method: 'DELETE', pattern: /^\/v1\/rules\/words$/ },
@@ -224,6 +232,8 @@ const OWNER_ONLY = [
   { method: 'POST', pattern: /^\/v1\/members\/[^/]+\/(role|revoke)$/ },
   { method: 'GET', pattern: /^\/v1\/(today|audit|flags)$/ },
   { method: 'GET', pattern: /^\/v1\/books(\/journal)?$/ },
+  { method: 'GET', pattern: /^\/v1\/(breaks(\/.+)?|proposals\/[^/]+\/attempts)$/ },
+  { method: 'POST', pattern: /^\/v1\/breaks(\/scan|\/.+\/(fix|dismiss))$/ },
   { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
   { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
 ]
@@ -1950,6 +1960,9 @@ export function createApp(deps: AppDeps) {
     },
   }
   mountExtra(app, product, (request) => app.fetch(request))
+  mountBreaks(app, services)
+  mountInvoices(app, { services, model: deps.drafterModel ?? deps.model ?? null, budget: deps.budget ?? null, now: deps.now })
+  mountDisputes(app, { services, model: deps.drafterModel ?? deps.model ?? null, budget: deps.budget ?? null, requireStep: (c, kind, binding) => requireStep(c, deps, kind, binding) })
 
   return app
 }

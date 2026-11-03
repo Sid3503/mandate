@@ -104,7 +104,13 @@ export class TodayService {
         const limit = body?.automation.remindUnpaidAfterDays ?? DEFAULT_OVERDUE_DAYS
         const reminders = events.filter((event) => event.type === 'invoice.reminded').length
         const item = { ...base, at: sent }
-        if (days >= limit) {
+        // A bill with a due date is overdue the day after it, and not before. One without keeps the days-since-sent rule.
+        const daysLate = row.due_date ? overdueDays(row.due_date, now) : 0
+        if (row.due_date && daysLate > 0) {
+          waiting.push({ ...item, id: `${row.id}:overdue`, kind: 'overdue', title: `${who} has not paid ${money}`, detail: `The invoice was due ${row.due_date}, ${daysLate} day${daysLate === 1 ? '' : 's'} ago${reminders > 0 ? ` and ${reminders} reminder${reminders === 1 ? ' has' : 's have'} been sent` : ''}. ${body?.automation.remindUnpaidAfterDays ? 'Mandate chases it on your schedule; you can also nudge now.' : 'Nudge them through PayPal.'}`, actions: ['remind', 'check', 'open'] })
+        } else if (row.due_date) {
+          inFlight.push({ ...item, id: `${row.id}:invoice`, kind: 'in_flight', title: `Waiting for ${who} to pay ${money}`, detail: `The invoice is due ${row.due_date}. It settles only when PayPal says it was paid.`, actions: ['check', 'remind', 'open'] })
+        } else if (days >= limit) {
           waiting.push({ ...item, id: `${row.id}:overdue`, kind: 'overdue', title: `${who} has not paid ${money}`, detail: `The invoice went out ${days} day${days === 1 ? '' : 's'} ago${reminders > 0 ? ` and ${reminders} reminder${reminders === 1 ? ' has' : 's have'} been sent` : ''}. ${body?.automation.remindUnpaidAfterDays ? 'Mandate chases it on your schedule; you can also nudge now.' : 'Nudge them through PayPal.'}`, actions: ['remind', 'check', 'open'] })
         } else {
           inFlight.push({ ...item, id: `${row.id}:invoice`, kind: 'in_flight', title: `Waiting for ${who} to pay ${money}`, detail: `The invoice went out ${days === 0 ? 'today' : `${days} day${days === 1 ? '' : 's'} ago`}. It settles only when PayPal says it was paid.`, actions: ['check', 'remind', 'open'] })
@@ -407,4 +413,11 @@ function howItWent(row: ProposalRow, actor: string | undefined, approved: boolea
   if (row.clause === 'standing.matched') return 'standing'
   if (approved || row.gate === 'NEEDS_APPROVAL') return 'tap'
   return 'auto'
+}
+
+/** Whole days past a due date (YYYY-MM-DD, UTC). Zero on the due date itself and before it. */
+export function overdueDays(dueDate: string, now: Date): number {
+  const today = Date.parse(`${now.toISOString().slice(0, 10)}T00:00:00Z`)
+  const due = Date.parse(`${dueDate}T00:00:00Z`)
+  return Number.isNaN(due) ? 0 : Math.max(0, Math.round((today - due) / DAY))
 }

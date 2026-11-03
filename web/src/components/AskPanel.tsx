@@ -26,6 +26,10 @@ type Turn = {
 }
 
 const QUICK: Array<{ id: QuickId; label: string }> = [
+  { id: 'overdue', label: 'Which invoices are overdue?' },
+  { id: 'outstanding', label: 'How much is outstanding right now?' },
+  { id: 'received', label: 'Summarize payments received' },
+  { id: 'forecast', label: 'Cash forecast' },
   { id: 'waiting', label: 'What is waiting for me?' },
   { id: 'inflight', label: 'What is in flight?' },
   { id: 'ready', label: 'What can I bill?' },
@@ -41,6 +45,7 @@ const GO: Array<{ label: string; to: string; words: string }> = [
   { label: 'Deals', to: '/deals', words: 'deals negotiate agree' },
   { label: 'Rules', to: '/rules', words: 'rules standing autopilot cap limit draft' },
   { label: 'Ledger', to: '/ledger', words: 'ledger history events requests' },
+  { label: 'Invoices', to: '/invoices', words: 'invoices bills overdue outstanding owed cash outlook notes' },
   { label: 'Books', to: '/books', words: 'books journal balances double entry chain hash fees' },
   { label: 'Control room', to: '/control-room', words: 'control room dashboard studio charts money in out refusals' },
   { label: 'Proof', to: '/proof', words: 'proof audit verify check ledger' },

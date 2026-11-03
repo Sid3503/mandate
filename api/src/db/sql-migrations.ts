@@ -180,6 +180,102 @@ CREATE INDEX IF NOT EXISTS events_type ON events(type, created_at);
 CREATE INDEX IF NOT EXISTS proposals_payee ON proposals(payee_id, kind, phase);
 `,
   },
+  {
+    // The Breaks desk: where the books and PayPal disagree, kept as rows so a break can be opened, resolved, reopened
+    // or dismissed with a note, and the history of each is kept. `breaks` is the current state of each disagreement
+    // (the key is `rule:request`, so the same disagreement on the next scan is the same row). `break_events` is its
+    // append-only history. `fingerprint` is what was seen when the owner dismissed it: a dismissed break stays quiet
+    // until the evidence changes. Neither table can move money or change a request.
+    id: '0005_breaks',
+    sql: `
+CREATE TABLE IF NOT EXISTS breaks (
+  key TEXT PRIMARY KEY,
+  rule TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('critical', 'warning', 'info')),
+  proposal_id TEXT,
+  title TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  expected TEXT NOT NULL,
+  observed TEXT NOT NULL,
+  delta_cents INTEGER,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  resolved_at TEXT,
+  dismissed_at TEXT,
+  dismissed_by TEXT,
+  dismiss_note TEXT,
+  fingerprint TEXT
+);
+CREATE INDEX IF NOT EXISTS breaks_state ON breaks(resolved_at, dismissed_at, severity);
+CREATE INDEX IF NOT EXISTS breaks_proposal ON breaks(proposal_id);
+
+CREATE TABLE IF NOT EXISTS break_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  break_key TEXT NOT NULL,
+  at TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('opened', 'resolved', 'reopened', 'dismissed', 'fix_filed')),
+  detail TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS break_events_key ON break_events(break_key, id);
+CREATE TRIGGER IF NOT EXISTS break_events_append_only_update BEFORE UPDATE ON break_events
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode) BEGIN SELECT RAISE(ABORT, 'break history is append-only'); END;
+CREATE TRIGGER IF NOT EXISTS break_events_append_only_delete BEFORE DELETE ON break_events
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode) BEGIN SELECT RAISE(ABORT, 'break history is append-only'); END;
+`,
+  },
+  {
+    // The dispute desk. A response to a client's PayPal dispute is built up as appended rows and never edited: the
+    // draft (written by the model or by the template), each edit by the owner, the owner's approval, and the send.
+    // A correction is a new row. The partial unique index below lets a dispute be sent once, whatever the code does:
+    // a second 'sent' row for the same dispute is refused by the database. Every guard yields to `maintenance_mode`,
+    // like the ones in 0004.
+    id: '0006_disputes',
+    sql: `
+CREATE TABLE IF NOT EXISTS dispute_responses (
+  id TEXT PRIMARY KEY,
+  dispute_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  -- snapshot: what PayPal said about the dispute when we last read it. draft: text written by the model or the
+  -- template. edit: the owner's own words. approval: the owner's passkey-backed yes, bound to this exact text.
+  -- sent: PayPal took it. failed: PayPal refused it or could not be reached.
+  kind TEXT NOT NULL CHECK (kind IN ('snapshot', 'draft', 'edit', 'approval', 'sent', 'failed')),
+  text TEXT,
+  text_sha256 TEXT,
+  source TEXT,
+  packet_sha256 TEXT,
+  payload_json TEXT,
+  request_id TEXT,
+  actor TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (dispute_id, seq)
+);
+CREATE INDEX IF NOT EXISTS dispute_responses_dispute ON dispute_responses(dispute_id, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS dispute_responses_one_send ON dispute_responses(dispute_id) WHERE kind = 'sent';
+CREATE TRIGGER IF NOT EXISTS dispute_responses_append_only_update BEFORE UPDATE ON dispute_responses
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode) BEGIN SELECT RAISE(ABORT, 'dispute responses are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS dispute_responses_append_only_delete BEFORE DELETE ON dispute_responses
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode) BEGIN SELECT RAISE(ABORT, 'dispute responses are append-only'); END;
+`,
+  },
+  {
+    id: '0007_invoice_terms',
+    sql: `
+-- What a bill says beyond its total: the items (a JSON list of description, quantity, unit cents), the day it falls due
+-- and a note for the client. All three are part of the signed cart when present, so once a cart is locked they cannot
+-- change. SQLite cannot alter the 0004 trigger, so this is a second one with the same maintenance escape.
+ALTER TABLE proposals ADD COLUMN line_items_json TEXT;
+ALTER TABLE proposals ADD COLUMN due_date TEXT;
+ALTER TABLE proposals ADD COLUMN customer_note TEXT;
+
+CREATE TRIGGER IF NOT EXISTS proposals_terms_immutable BEFORE UPDATE ON proposals
+WHEN OLD.cart_hash IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM maintenance_mode)
+  AND (NEW.line_items_json IS NOT OLD.line_items_json OR NEW.due_date IS NOT OLD.due_date OR NEW.customer_note IS NOT OLD.customer_note)
+BEGIN
+  SELECT RAISE(ABORT, 'proposals: the items, due date and note of a locked cart cannot change');
+END;
+`,
+  },
 ]
 
 /**

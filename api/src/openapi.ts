@@ -1,6 +1,8 @@
 import { OpenApiGeneratorV31, OpenAPIRegistry } from '@asteasolutions/zod-to-openapi'
 import { z } from 'zod'
 import { BillMilestoneSchema, DealOfferSchema, PartyRulesSchema } from './domain/deal'
+import { registerDisputePaths } from './http/disputes-openapi'
+import { registerInvoicePaths } from './http/invoices-openapi'
 import { CaptureSchema, ListQuerySchema, ProposalCreateSchema, WarrantBodySchema } from './domain/schemas'
 
 const HealthSchema = z.object({
@@ -69,6 +71,9 @@ const ProposalSchema = z.object({
   invoiceId: z.string().nullable(),
   invoiceUrl: z.string().nullable(),
   invoiceStatus: z.string().nullable(),
+  lineItems: z.array(z.object({ description: z.string(), quantity: z.number().int(), unitCents: z.number().int() })).nullable().describe('The bill\'s items, signed into the lock. Null for a bill with one total and no items.'),
+  dueDate: z.string().nullable().describe('The day the bill falls due, YYYY-MM-DD, signed into the lock. Null when none.'),
+  customerNote: z.string().nullable().describe('The note the client sees on the bill, signed into the lock. Null when none.'),
   payInstrument: z.enum(['invoice', 'checkout']).nullable().describe('How this charge is to be paid: a PayPal invoice the client gets, or a card form on our own page.'),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -476,6 +481,24 @@ export function buildOpenApi(publicUrl: string) {
   ownerRoute('get', '/v1/paypal/activity', 'The last 30 days of PayPal activity (Transaction search) matched against the ledger. Read-only.')
   ownerRoute('get', '/v1/paypal/disputes', 'Stored PayPal disputes.')
   ownerRoute('post', '/v1/paypal/disputes/sync', 'Read disputes from PayPal now. A disputed client payment cannot fund a payout (funding.disputed).')
+  // The Breaks desk: where the books and PayPal disagree. Owner only; a fix re-reads PayPal or files a request the gate decides.
+  const breakKey = z.object({ key: z.string().openapi({ description: 'rule:request, for example capture.duplicate:<request id>' }) })
+  const breakRoute = (method: 'get' | 'post', path: string, summary: string, withKey = false) => registry.registerPath({
+    method, path, tags: ['breaks'], security: bearer, summary: `Owner only. ${summary}`,
+    ...(withKey ? { request: { params: breakKey } } : {}),
+    responses: { 200: { description: 'OK' }, 400: problem, 401: problem, 403: problem, 404: problem, 409: problem, 502: problem, 503: problem },
+  })
+  breakRoute('get', '/v1/breaks', 'The Breaks desk: the KPIs (open, money at stake, waiting on you, resolved) and every break, filterable with ?state=open|resolved|dismissed and ?severity=critical|warning|info.')
+  breakRoute('post', '/v1/breaks/scan', 'Reconcile now: run every rule against the books, and compare PayPal\'s own transaction list (which lags by hours and is rate limited). Opens new breaks, resolves ones no longer found, reopens ones that came back.')
+  breakRoute('get', '/v1/breaks/{key}', 'One break with its evidence (the request, the PayPal ids, the books entries, recent events), its history and its suggested fix.', true)
+  breakRoute('post', '/v1/breaks/{key}/fix', 'Apply the break\'s safe fix: re-read PayPal, remind, cancel an unclaimed payout, recover a stalled request, or file a refund request as the autopilot that the gate decides. It never captures or approves. The answer says what the gate decided.', true)
+  breakRoute('post', '/v1/breaks/{key}/dismiss', 'Dismiss an open break with a required note {note}. It stays quiet until its evidence changes.', true)
+  registry.registerPath({
+    method: 'get', path: '/v1/proposals/{id}/attempts', tags: ['breaks'], security: bearer,
+    summary: 'Owner only. Every PayPal call recorded for this request, written before the call was made: the operation, a prefix of the PayPal-Request-Id, its status (started, succeeded, failed, unknown) and PayPal\'s id.',
+    request: { params: z.object({ id: z.uuid() }) },
+    responses: { 200: { description: 'OK' }, 401: problem, 403: problem, 404: problem },
+  })
   registry.registerPath({
     method: 'post',
     path: '/v1/webhooks/paypal',
@@ -737,6 +760,9 @@ export function buildOpenApi(publicUrl: string) {
     request: { query: ListQuerySchema.extend({ proposalId: z.string().max(128).optional() }) },
     responses: { 200: { description: 'Journal page', content: { 'application/json': { schema: BooksJournalSchema } } }, 400: problem, 401: problem },
   })
+
+  registerDisputePaths(registry)
+  registerInvoicePaths(registry)
 
   return new OpenApiGeneratorV31(registry.definitions).generateDocument({
     openapi: '3.1.0',

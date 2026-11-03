@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { DEMO_BUYER_RULES, DEMO_SELLER_RULES, PartyRulesSchema } from '../domain/deal'
@@ -461,7 +461,16 @@ export function backupFileDatabase(db: DatabaseSync): void {
   if (!file) return
   const destDir = join(dirname(file), 'backups')
   mkdirSync(destDir, { recursive: true })
-  const dest = join(destDir, `mandate-${new Date().toISOString().replace(/[:.]/g, '-')}.sqlite`)
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  // VACUUM INTO refuses to overwrite, and two backups can land in the same millisecond (two quick migrations, or a
+  // test that takes them back to back). A counter after the stamp keeps every name unique, and because it is padded the
+  // names still sort in the order the backups were taken, which is how "the latest backup" is found.
+  let n = 1
+  let dest = join(destDir, `mandate-${stamp}-${String(n).padStart(3, '0')}.sqlite`)
+  while (existsSync(dest)) {
+    n += 1
+    dest = join(destDir, `mandate-${stamp}-${String(n).padStart(3, '0')}.sqlite`)
+  }
   db.exec(`VACUUM INTO '${dest.replaceAll("'", "''")}'`)
 }
 
@@ -504,7 +513,7 @@ export function databaseReady(db: DatabaseSync): boolean {
 export function resetDemo(db: DatabaseSync, now: Date): void {
   withMaintenance(db, () => {
     // Children before parents, because events and the ledger point at proposals and deliveries at deals.
-    for (const table of ['postings', 'journal_entries', 'paypal_attempts', 'events', 'deliveries', 'negotiation_moves', 'negotiations', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
+    for (const table of ['postings', 'journal_entries', 'paypal_attempts', 'events', 'deliveries', 'negotiation_moves', 'negotiations', 'deals', 'proposals', 'agent_runs', 'share_links', 'paypal_disputes', 'dispute_responses', 'webhook_events', 'safety_events', 'client_errors', 'idempotency', 'party_rules', 'warrants']) {
       db.exec(`DELETE FROM ${table}`)
     }
     db.exec("UPDATE safety_state SET paused = 0, reason = NULL, since = NULL, by = NULL WHERE id = 1")
