@@ -20,6 +20,7 @@ import { BreaksService } from './breaks'
 import type { CatalogPort } from '../procure/channel3'
 import { ProcureService } from '../procure/service'
 import { DisputeService } from './disputes'
+import { InvoiceDeskService } from './invoiceDesk'
 import { createPayPalDisputes, type DisputePort } from '../paypal/disputes'
 
 export type Services = {
@@ -43,6 +44,8 @@ export type Services = {
   procure: ProcureService
   /** The dispute desk: evidence from the signed records, a person approves every response. */
   disputes: DisputeService
+  /** The Invoices desk: charges read as invoices, with KPIs and a cash outlook. Reads only. */
+  invoiceDesk: InvoiceDeskService
 }
 
 import type { ControlStore } from '../control/store'
@@ -64,7 +67,8 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   mandate.prepareSigning()
   const today = new TodayService(repo, deals, mandate, deps.now, () => deps.paypal !== null)
   const audit = new AuditService(repo, mandate, deals, deps.now, safety, signer, deps.control, deps.workspaceId)
-  const ask = new AskService(today)
+  const invoiceDesk = new InvoiceDeskService(repo, mandate, deps.now)
+  const ask = new AskService(today, invoiceDesk)
   const shares = new ShareService(repo, mandate, deps.now)
   const projections = new ProjectionService(repo, signer, deps.now)
   const receipt = new ReceiptService(repo, signer, deps.now, deps.publicUrl ?? 'http://localhost:3000')
@@ -73,5 +77,5 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   const breaks = new BreaksService(deps.db, repo, mandate, deps.now)
   const procure = new ProcureService(deps.catalog ?? null, repo, mandate)
   const disputes = new DisputeService(deps.db, repo, mandate, books, signer, deps.now, deps.publicUrl ?? 'http://localhost:3000', deps.disputes !== undefined ? deps.disputes : deps.paypal ? createPayPalDisputes(deps.paypal) : null)
-  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares, projections, receipt, books, breaks, procure, disputes }
+  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares, projections, receipt, books, breaks, procure, disputes, invoiceDesk }
 }

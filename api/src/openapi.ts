@@ -2,6 +2,7 @@ import { OpenApiGeneratorV31, OpenAPIRegistry } from '@asteasolutions/zod-to-ope
 import { z } from 'zod'
 import { BillMilestoneSchema, DealOfferSchema, PartyRulesSchema } from './domain/deal'
 import { registerDisputePaths } from './http/disputes-openapi'
+import { registerInvoicePaths } from './http/invoices-openapi'
 import { CaptureSchema, ListQuerySchema, ProposalCreateSchema, WarrantBodySchema } from './domain/schemas'
 
 const HealthSchema = z.object({
@@ -761,6 +762,7 @@ export function buildOpenApi(publicUrl: string) {
   })
 
   registerDisputePaths(registry)
+  registerInvoicePaths(registry)
 
   return new OpenApiGeneratorV31(registry.definitions).generateDocument({
     openapi: '3.1.0',

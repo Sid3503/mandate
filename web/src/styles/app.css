@@ -1440,3 +1440,36 @@ html { scroll-behavior: smooth; }
   .line-row { grid-template-columns: 1fr 1fr; }
   .line-row input:first-child { grid-column: 1 / -1; }
 }
+
+/* ---------- Invoices desk ---------- */
+.inv-kpis { grid-template-columns: repeat(5, 1fr); }
+.kpi-bad { color: var(--deny, #b3261e); }
+.inv-side-by-side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 18px; align-items: start; }
+.outlook-buckets { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.outlook-buckets li { border: 1.5px solid var(--ink); padding: 8px 10px; display: grid; gap: 2px; font-size: 13px; }
+.outlook-buckets li.late { border-color: var(--deny, #b3261e); }
+.outlook-buckets li.late strong { color: var(--deny, #b3261e); }
+.guard-list { margin: 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; line-height: 1.45; }
+.inv-search { min-width: 240px; }
+.inv-table-wrap { overflow-x: auto; }
+.inv-table td, .inv-table th { padding: 10px 8px; }
+.inv-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.overdue-by { color: var(--deny, #b3261e); }
+.inv-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.inv-card { gap: 8px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.notes-invoice { margin-bottom: 18px; }
+.draft-card { border: 1.5px dashed var(--ink); padding: 16px; display: grid; gap: 12px; background: var(--paper); }
+.banner-line { margin: 0; padding: 8px 12px; border: 1.5px solid var(--ink); background: var(--lime-soft); font-weight: 700; }
+.draft-warnings { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.field-missing > input, .field-missing > select, .field-missing > textarea, fieldset.field-missing .line-row input { border-color: var(--deny, #b3261e); box-shadow: 0 0 0 2px rgba(179, 38, 30, 0.18); }
+.field-soft > input { border-style: dashed; }
+.missing-prompt { color: var(--deny, #b3261e); font-size: 13px; margin: 0; }
+.field-soft .missing-prompt { color: var(--mute); }
+.verdict-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.draft-done { margin: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-weight: 700; }
+@media (max-width: 860px) {
+  .inv-kpis { grid-template-columns: repeat(2, 1fr); }
+  .inv-side-by-side { grid-template-columns: 1fr; }
+  .outlook-buckets { grid-template-columns: repeat(2, 1fr); }
+}

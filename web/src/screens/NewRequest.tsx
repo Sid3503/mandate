@@ -2,6 +2,7 @@ import { useMutation, useQueries } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Chip, GateChip, Loading, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
+import { LineItemsEditor, wholeQuantity, type ItemRow } from '../components/LineItemsEditor'
 import { useToast } from '../components/Toast'
 import { ApiError, api } from '../lib/api'
 import { newKey } from '../lib/format'
@@ -13,11 +14,8 @@ import { explain, fundedPhase, KIND } from '../lib/words'
 const OTHER = '__other__'
 const UNFUNDED = '__none__'
 
-type ItemRow = { key: number; description: string; quantity: string; price: string }
-const MAX_ROWS = 20
 /** A day as the server counts it (UTC), so "Net 7" is never refused as being in the past. */
 const dayFromNow = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
-const wholeQuantity = (text: string): number | null => (/^\d{1,3}$/.test(text.trim()) && Number(text) >= 1 ? Number(text) : null)
 
 export function NewRequest() {
   const [params] = useSearchParams()
@@ -41,7 +39,6 @@ export function NewRequest() {
   const [funding, setFunding] = useState(params.get('funding') ?? '')
   const [parent, setParent] = useState(params.get('parent') ?? '')
   const [itemRows, setItemRows] = useState<ItemRow[]>([])
-  const [nextKey, setNextKey] = useState(1)
   const [dueDate, setDueDate] = useState('')
   const [note, setNote] = useState('')
 
@@ -228,23 +225,7 @@ export function NewRequest() {
             </label>
           </div>
 
-          {kind === 'charge' ? (
-            <fieldset className="field line-items" data-testid="line-items">
-              <legend>Line items <span className="fine">(optional, signed into the lock)</span></legend>
-              {itemRows.map((row, index) => (
-                <div className="line-row" key={row.key}>
-                  <input aria-label={`Item ${index + 1} description`} value={row.description} maxLength={200} placeholder="What it is" onChange={(event) => setItemRows(itemRows.map((item) => item.key === row.key ? { ...item, description: event.target.value } : item))} />
-                  <input aria-label={`Item ${index + 1} quantity`} inputMode="numeric" value={row.quantity} placeholder="Qty" onChange={(event) => setItemRows(itemRows.map((item) => item.key === row.key ? { ...item, quantity: event.target.value } : item))} />
-                  <input aria-label={`Item ${index + 1} unit price`} inputMode="decimal" value={row.price} placeholder="Unit price" onChange={(event) => setItemRows(itemRows.map((item) => item.key === row.key ? { ...item, price: event.target.value } : item))} />
-                  <button type="button" className="btn btn-ghost btn-small" aria-label={`Remove item ${index + 1}`} onClick={() => setItemRows(itemRows.filter((item) => item.key !== row.key))}>Remove</button>
-                </div>
-              ))}
-              <div className="row between wrap gap-s">
-                <button type="button" className="btn btn-ghost btn-small" disabled={itemRows.length >= MAX_ROWS} onClick={() => { setItemRows([...itemRows, { key: nextKey, description: '', quantity: '1', price: '' }]); setNextKey(nextKey + 1) }}>Add a line item</button>
-                {itemised ? <strong className="mono" data-testid="line-subtotal">Subtotal {subtotal === null ? '—' : dollars(subtotal, warrant.data?.currency ?? 'USD')}</strong> : null}
-              </div>
-            </fieldset>
-          ) : null}
+          {kind === 'charge' ? <LineItemsEditor rows={itemRows} onChange={setItemRows} currency={warrant.data?.currency ?? 'USD'} /> : null}
           {kind === 'charge' ? (
             <div className="field">
               <label htmlFor="due-date"><span>Due date <span className="fine">(optional)</span></span></label>

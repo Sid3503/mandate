@@ -48,6 +48,7 @@ if (location.hostname === '127.0.0.1' || location.hostname === '::1') {
 }
 
 const ControlRoom = lazy(() => import('./screens/ControlRoom'))
+const Invoices = lazy(() => import('./screens/Invoices').then((module) => ({ default: module.Invoices })))
 const Breaks = lazy(() => import('./screens/Breaks').then((module) => ({ default: module.Breaks })))
 const Ledger = lazy(() => import('./screens/Ledger').then((module) => ({ default: module.Ledger })))
 const Disputes = lazy(() => import('./screens/Disputes').then((module) => ({ default: module.Disputes })))
@@ -133,6 +134,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="new" element={<NewRequest />} />
             <Route path="ledger" element={<Suspense fallback={<div className="page"><Loading label="Opening ledger" /></div>}><Ledger /></Suspense>} />
             <Route path="breaks" element={<Suspense fallback={<div className="page"><Loading label="Opening the Breaks desk" /></div>}><Breaks /></Suspense>} />
+            <Route path="invoices" element={<Suspense fallback={<div className="page"><Loading label="Opening the Invoices desk" /></div>}><Invoices /></Suspense>} />
             <Route path="disputes" element={<Suspense fallback={<div className="page"><Loading label="Opening disputes" /></div>}><Disputes /></Suspense>} />
             <Route path="disputes/:id" element={<Suspense fallback={<div className="page"><Loading label="Opening the dispute" /></div>}><Disputes /></Suspense>} />
             <Route path="books" element={<Suspense fallback={<div className="page"><Loading label="Opening the books" /></div>}><Books /></Suspense>} />

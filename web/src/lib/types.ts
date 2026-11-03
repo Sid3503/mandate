@@ -633,7 +633,7 @@ export type AskRoute =
   | { kind: 'handoff'; to: 'rules'; text: string }
   | { kind: 'clerk' }
 
-export type QuickId = 'waiting' | 'refused' | 'month' | 'inflight' | 'ready' | 'done' | 'autopilot'
+export type QuickId = 'waiting' | 'refused' | 'month' | 'inflight' | 'ready' | 'done' | 'autopilot' | 'overdue' | 'outstanding' | 'received' | 'forecast'
 
 export type ClerkStreamEvent =
   | { type: 'step'; tools: Array<{ tool: string; ok: boolean }>; outcomes: Array<Record<string, any>> }

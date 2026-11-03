@@ -8,6 +8,7 @@ import type { ControlStore } from './control/store'
 import { mountExtra, type ProductCtx } from './http/extra'
 import { mountBreaks } from './http/breaks'
 import { mountDisputes } from './http/disputes'
+import { mountInvoices } from './http/invoices'
 import { clientIp } from './ops/client-ip'
 import { API_CSP, securityHeaders } from './ops/headers'
 import { Metrics } from './ops/metrics'
@@ -182,6 +183,8 @@ const AS_PATH = '/.well-known/oauth-authorization-server'
 
 /** Routes only the owner key may call. A proposer, such as an agent, can ask but never decide or move money. */
 const OWNER_ONLY = [
+  { method: 'GET', pattern: /^\/v1\/invoices$/ },
+  { method: 'POST', pattern: /^\/v1\/invoices\/draft$/ },
   { method: 'GET', pattern: /^\/v1\/disputes(\/[^/]+)?$/ },
   { method: 'POST', pattern: /^\/v1\/disputes\/[^/]+\/(draft|send)$/ },
   { method: 'PUT', pattern: /^\/v1\/disputes\/[^/]+\/draft$/ },
@@ -1958,6 +1961,7 @@ export function createApp(deps: AppDeps) {
   }
   mountExtra(app, product, (request) => app.fetch(request))
   mountBreaks(app, services)
+  mountInvoices(app, { services, model: deps.drafterModel ?? deps.model ?? null, budget: deps.budget ?? null, now: deps.now })
   mountDisputes(app, { services, model: deps.drafterModel ?? deps.model ?? null, budget: deps.budget ?? null, requireStep: (c, kind, binding) => requireStep(c, deps, kind, binding) })
 
   return app

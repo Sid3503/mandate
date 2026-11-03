@@ -1,3 +1,4 @@
+import type { InvoiceDeskService, InvoiceRow } from './invoiceDesk'
 import type { TodayService } from './today'
 
 /**
@@ -17,12 +18,17 @@ export type AskRoute =
   | { kind: 'handoff'; to: 'rules'; text: string }
   | { kind: 'clerk' }
 
-export const QUICK_IDS = ['waiting', 'refused', 'month', 'inflight', 'ready', 'done', 'autopilot'] as const
+export const QUICK_IDS = ['waiting', 'refused', 'month', 'inflight', 'ready', 'done', 'autopilot', 'overdue', 'outstanding', 'received', 'forecast'] as const
 export type QuickId = (typeof QUICK_IDS)[number]
 
 const money = (cents: number) => `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
 const QUICK_WORDS: Array<[QuickId, RegExp]> = [
+  // The money questions come first: "who owes me" and "what has been paid this month" would otherwise fall into the older, wider patterns.
+  ['overdue', /overdue|past due|late (invoices?|payments?|clients?)|who is late|haven'?t paid on time/i],
+  ['forecast', /forecast|project(ion|ed) (cash|balance)|cash (outlook|flow|position)|how much .{0,30}(will|would) (i|we) have/i],
+  ['received', /(payments?|money|invoices?)\s+(received|collected|paid)|summari[sz]e (the )?payments|(received|paid|collected) (this|last) month|what (has|have) (been )?(paid|received)\b.{0,30}month|how much (have (we|i)|did (we|i)) (been )?(collected|received|get paid)/i],
+  ['outstanding', /outstanding|who owes|what (am i|are we|is) (still )?owed|owed to (me|us)|receivables?|how much .{0,30}(owed|owe me)/i],
   ['waiting', /what('s| is| are)? (is |are )?(waiting|pending|needs? me|left for me)|waiting for me|anything (for me|to approve|to do)|needs? (my|a) (tap|approval)/i],
   ['refused', /(what|which).{0,40}(refus\w*|rejected|stopped|blocked|denied)|refus\w* (this|last)|why .{0,20}refus\w*/i],
   ['month', /this month|month so far|how much .{0,30}(came in|have we|did we|went out|kept)|in, out|money in and out/i],
@@ -39,7 +45,7 @@ const RULE_WORDS = /\b(from now on|always|never|whenever|automatically|every tim
 const ONE_OFF = /^\s*(please\s+)?(pay|bill|refund|send)\b/i
 
 export class AskService {
-  constructor(private readonly today: TodayService) {}
+  constructor(private readonly today: TodayService, private readonly desk: InvoiceDeskService | null = null) {}
 
   route(message: string, context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string }): AskRoute {
     const text = message.trim()
@@ -93,7 +99,54 @@ export class AskService {
     }
   }
 
+  /**
+   * Money questions, answered from the Invoices desk's numbers. Plain arithmetic over the books: no model, no PayPal call.
+   * Every answer lists the invoices it is made from, each with its id and a link to its receipt.
+   */
+  private money(id: 'overdue' | 'outstanding' | 'received' | 'forecast'): AskRoute {
+    const links: Array<{ label: string; to: string }> = []
+    const from = (rows: InvoiceRow[], note: (row: InvoiceRow) => string) => {
+      for (const row of rows.slice(0, 8)) links.push({ label: `${row.clientName} ${money(row.amountCents)} (${row.id.slice(0, 8)})`, to: `/p/${row.id}` })
+      return rows.slice(0, 8).map((row) => `${row.clientName}, ${money(row.amountCents)}: ${note(row)} (invoice ${row.id.slice(0, 8)}).`)
+    }
+    if (!this.desk) return { kind: 'answer', id, title: 'Invoices are not available', lines: ['The Invoices desk is not wired on this server.'], links }
+    const rows = this.desk.rows()
+    const none = rows.length === 0 ? 'There are no invoices yet.' : null
+    let title = ''
+    let lines: string[] = []
+    if (id === 'overdue') {
+      const late = rows.filter((row) => row.status === 'overdue').sort((a, b) => b.daysOverdue - a.daysOverdue)
+      title = late.length === 0 ? 'No invoice is overdue' : `${late.length} invoice${late.length === 1 ? ' is' : 's are'} overdue, ${money(late.reduce((sum, row) => sum + row.remainingCents, 0))} owed`
+      lines = late.length === 0 ? [none ?? 'Nothing sent or part-paid is past its due date.'] : from(late, (row) => `${money(row.remainingCents)} still owed, ${row.daysOverdue} day${row.daysOverdue === 1 ? '' : 's'} past ${row.dueDate}${row.dueSource === 'default' ? ' (a date Mandate worked out, none was on the bill)' : ''}`)
+    } else if (id === 'outstanding') {
+      const open = rows.filter((row) => ['sent', 'part_paid', 'overdue'].includes(row.status))
+      const total = open.reduce((sum, row) => sum + row.remainingCents, 0)
+      title = open.length === 0 ? 'Nobody owes you anything right now' : `${money(total)} is outstanding across ${open.length} invoice${open.length === 1 ? '' : 's'}`
+      lines = open.length === 0 ? [none ?? 'Every invoice that went out has been paid, cancelled or declined.'] : from(open, (row) => `owes ${money(row.remainingCents)}${row.paidCents > 0 ? ` (${money(row.paidCents)} already paid)` : ''}, due ${row.dueDate}${row.status === 'overdue' ? `, ${row.daysOverdue} day${row.daysOverdue === 1 ? '' : 's'} overdue` : ''}`)
+    } else if (id === 'received') {
+      const got = this.desk.receivedThisMonth()
+      title = got.invoices.length === 0 ? `Nothing has been paid in ${got.label}` : `${money(got.cents)} received in ${got.label} across ${got.invoices.length} invoice${got.invoices.length === 1 ? '' : 's'}`
+      lines = got.invoices.length === 0 ? [none ?? 'No payment PayPal confirmed landed this month.'] : from(got.invoices, (row) => `paid ${row.paidAt ? row.paidAt.slice(0, 10) : 'this month'}`)
+      if (got.invoices.length > 0) lines.push('These are payments PayPal confirmed, before any refunds.')
+    } else {
+      const o = this.desk.outlookWithoutBalance()
+      const open = rows.filter((row) => ['sent', 'part_paid', 'overdue'].includes(row.status))
+      title = open.length === 0 && o.committedPayoutsCents === 0 ? 'Nothing is expected to come in or go out' : `${money(o.outstandingCents)} expected in, ${money(o.committedPayoutsCents)} promised out`
+      lines = [
+        ...(none ? [none] : []),
+        `Overdue: ${money(o.buckets.overdue.cents)} (${o.buckets.overdue.count}). Due in the next 7 days: ${money(o.buckets.thisWeek.cents)} (${o.buckets.thisWeek.count}). Due in 8 to 14 days: ${money(o.buckets.nextWeek.cents)} (${o.buckets.nextWeek.count}). Due later: ${money(o.buckets.later.cents)} (${o.buckets.later.count}).`,
+        `By two weeks from now, at most ${money(o.buckets.overdue.cents + o.buckets.thisWeek.cents + o.buckets.nextWeek.cents)} of that could arrive, if every client pays by its due date.`,
+        `Approved payouts not yet paid: ${money(o.committedPayoutsCents)}. Expected in less promised out: ${money(o.netOfBooksCents)}.`,
+        'This leaves out your PayPal balance (open Invoices to see it added). It is arithmetic, not a promise: clients can pay late or not at all, and PayPal’s balance report lags by hours.',
+        ...from(open, (row) => `${money(row.remainingCents)} due ${row.dueDate}`),
+      ]
+    }
+    links.push({ label: 'Open Invoices', to: '/invoices' })
+    return { kind: 'answer', id, title, lines, links }
+  }
+
   quick(id: QuickId): AskRoute {
+    if (id === 'overdue' || id === 'outstanding' || id === 'received' || id === 'forecast') return this.money(id)
     const d = this.today.build()
     const links: Array<{ label: string; to: string }> = []
     let title = ''
