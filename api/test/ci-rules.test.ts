@@ -177,3 +177,27 @@ describe('whether a push needs a deploy (the same ignoredPaths list Render gets)
     expect(ask(head, head)).toContain('needed=false')
   })
 })
+
+describe('stylesheet braces', () => {
+  it('accepts balanced CSS, including braces inside comments and strings', () => {
+    expect(rules.cssBracesBalance('.a { color: red; } @media (max-width: 1px) { .b { x: y; } }')).toEqual({ balanced: true, depth: 0 })
+    expect(rules.cssBracesBalance('/* { not a brace */ .a::after { content: "}"; } .b { content: \'{\'; }').balanced).toBe(true)
+  })
+
+  it('refuses a block that is never closed, the way a bad merge leaves an @media', () => {
+    // Everything after the open @media would silently apply only at that width: the exact failure this guards against.
+    const merged = '@media (max-width: 860px) {\n  .a { x: y; }\n.landing { display: grid; }\n.other { x: y; }\n'
+    expect(rules.cssBracesBalance(merged)).toEqual({ balanced: false, depth: 1 })
+  })
+
+  it('refuses an extra closing brace', () => {
+    expect(rules.cssBracesBalance('.a { x: y; } }').balanced).toBe(false)
+  })
+
+  it('checks every stylesheet in the repo, and they all balance today', () => {
+    const results = rules.checkRepo(repo).filter((item: { name: string }) => item.name.endsWith('braces balance'))
+    expect(results.length).toBeGreaterThanOrEqual(2)
+    expect(results.filter((item: { ok: boolean }) => !item.ok)).toEqual([])
+  })
+})
+
