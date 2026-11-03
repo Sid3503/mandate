@@ -15,7 +15,10 @@ const EVENTS = [
   'INVOICING.INVOICE.PAID', 'INVOICING.INVOICE.CANCELLED', 'INVOICING.INVOICE.REFUNDED',
   'PAYMENT.PAYOUTSBATCH.SUCCESS', 'PAYMENT.PAYOUTSBATCH.DENIED', 'PAYMENT.PAYOUTS-ITEM.SUCCEEDED', 'PAYMENT.PAYOUTS-ITEM.FAILED',
   'PAYMENT.PAYOUTS-ITEM.UNCLAIMED', 'PAYMENT.PAYOUTS-ITEM.RETURNED', 'PAYMENT.PAYOUTS-ITEM.BLOCKED', 'PAYMENT.PAYOUTS-ITEM.CANCELED',
-  'PAYMENT.CAPTURE.COMPLETED', 'CUSTOMER.DISPUTE.CREATED', 'CUSTOMER.DISPUTE.UPDATED', 'CUSTOMER.DISPUTE.RESOLVED',
+  // A capture can finish, wait, be refused, be refunded or be taken back (a chargeback). The server re-reads the capture
+  // from PayPal on each of these, so a payout is never funded from money that is no longer there.
+  'PAYMENT.CAPTURE.COMPLETED', 'PAYMENT.CAPTURE.PENDING', 'PAYMENT.CAPTURE.DENIED', 'PAYMENT.CAPTURE.REFUNDED', 'PAYMENT.CAPTURE.REVERSED',
+  'CUSTOMER.DISPUTE.CREATED', 'CUSTOMER.DISPUTE.UPDATED', 'CUSTOMER.DISPUTE.RESOLVED',
 ]
 
 async function main() {
@@ -26,10 +29,24 @@ async function main() {
 
   const existing = await fetch(`${base}/v1/notifications/webhooks`, { headers })
   if (!existing.ok) throw new Error(`listing webhooks failed: ${existing.status} (does the app have the Webhooks feature on?)`)
-  const list = ((await existing.json()) as { webhooks?: Array<{ id: string; url: string }> }).webhooks ?? []
+  const list = ((await existing.json()) as { webhooks?: Array<{ id: string; url: string; event_types?: Array<{ name: string }> }> }).webhooks ?? []
   const same = list.find((hook) => hook.url === url)
   if (same) {
-    console.log(`Already registered.\nPAYPAL_WEBHOOK_ID=${same.id}`)
+    // Already registered. Bring its events up to date in place, so the webhook id (and PAYPAL_WEBHOOK_ID) does not change.
+    const have = new Set((same.event_types ?? []).map((event) => event.name))
+    const missing = EVENTS.filter((name) => !have.has(name))
+    if (missing.length === 0) {
+      console.log(`Already registered, with every event.\nPAYPAL_WEBHOOK_ID=${same.id}`)
+      return
+    }
+    const patched = await fetch(`${base}/v1/notifications/webhooks/${encodeURIComponent(same.id)}`, {
+      method: 'PATCH',
+      headers,
+      // Replace the list with ours plus anything already subscribed that we do not know about, so nothing is dropped.
+      body: JSON.stringify([{ op: 'replace', path: '/event_types', value: [...new Set([...have, ...EVENTS])].map((name) => ({ name })) }]),
+    })
+    if (!patched.ok) throw new Error(`updating events failed: ${patched.status} ${await patched.text()}`)
+    console.log(`Already registered. Added ${missing.length} event(s): ${missing.join(', ')}\nPAYPAL_WEBHOOK_ID=${same.id}`)
     return
   }
   const created = await fetch(`${base}/v1/notifications/webhooks`, { method: 'POST', headers, body: JSON.stringify({ url, event_types: EVENTS.map((name) => ({ name })) }) })
