@@ -245,6 +245,9 @@ async function signStep<T>(kind: string, payload: string, optionsBody: Record<st
   return again(verified.grant)
 }
 
+/** The request and passkey-step helpers, for screens that keep their own client file (the dispute desk). */
+export { request as apiRequest, signStep as apiSignStep }
+
 /** The clerk, told as it works: each tool call as it starts and ends, the words as they are written, then the whole reply. */
 const streamClerk = (body: { message: string; conversationId?: string; context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } }, onEvent: (event: ClerkStreamEvent) => void, signal?: AbortSignal) => postStream('/v1/clerk/stream', body, onEvent, signal)
 

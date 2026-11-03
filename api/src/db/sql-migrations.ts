@@ -223,6 +223,40 @@ CREATE TRIGGER IF NOT EXISTS break_events_append_only_delete BEFORE DELETE ON br
 WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode) BEGIN SELECT RAISE(ABORT, 'break history is append-only'); END;
 `,
   },
+  {
+    // The dispute desk. A response to a client's PayPal dispute is built up as appended rows and never edited: the
+    // draft (written by the model or by the template), each edit by the owner, the owner's approval, and the send.
+    // A correction is a new row. The partial unique index below lets a dispute be sent once, whatever the code does:
+    // a second 'sent' row for the same dispute is refused by the database. Every guard yields to `maintenance_mode`,
+    // like the ones in 0004.
+    id: '0006_disputes',
+    sql: `
+CREATE TABLE IF NOT EXISTS dispute_responses (
+  id TEXT PRIMARY KEY,
+  dispute_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  -- snapshot: what PayPal said about the dispute when we last read it. draft: text written by the model or the
+  -- template. edit: the owner's own words. approval: the owner's passkey-backed yes, bound to this exact text.
+  -- sent: PayPal took it. failed: PayPal refused it or could not be reached.
+  kind TEXT NOT NULL CHECK (kind IN ('snapshot', 'draft', 'edit', 'approval', 'sent', 'failed')),
+  text TEXT,
+  text_sha256 TEXT,
+  source TEXT,
+  packet_sha256 TEXT,
+  payload_json TEXT,
+  request_id TEXT,
+  actor TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (dispute_id, seq)
+);
+CREATE INDEX IF NOT EXISTS dispute_responses_dispute ON dispute_responses(dispute_id, seq);
+CREATE UNIQUE INDEX IF NOT EXISTS dispute_responses_one_send ON dispute_responses(dispute_id) WHERE kind = 'sent';
+CREATE TRIGGER IF NOT EXISTS dispute_responses_append_only_update BEFORE UPDATE ON dispute_responses
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode) BEGIN SELECT RAISE(ABORT, 'dispute responses are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS dispute_responses_append_only_delete BEFORE DELETE ON dispute_responses
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode) BEGIN SELECT RAISE(ABORT, 'dispute responses are append-only'); END;
+`,
+  },
 ]
 
 /**

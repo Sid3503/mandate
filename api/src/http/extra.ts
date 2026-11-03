@@ -11,6 +11,7 @@ import { ControlStore, hashToken, type MemberRole } from '../control/store'
 import { migrate, openDatabase } from '../db/database'
 import { defaultFlags, type ServerFlags } from '../flags'
 import { Problem } from './problem'
+import { disputeSendPayload } from '../services/disputes'
 import type { Metrics } from '../ops/metrics'
 import type { ModelBudget } from '../ops/budget'
 import { isWorkspaceId, newWorkspaceId } from '../tenancy/ids'
@@ -461,6 +462,9 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
       const id = typeof body.id === 'string' ? body.id : ''
       if (!id) throw new Problem(400, 'request.invalid', 'Request is invalid', 'Name the agent.')
       binding = stepBinding(kind, id)
+    } else if (kind === 'dispute.send') {
+      if (typeof body.id !== 'string' || typeof (body as { text?: unknown }).text !== 'string') throw new Problem(400, 'request.invalid', 'Request is invalid', 'Say which dispute and the exact text.')
+      binding = stepBinding('dispute.send', disputeSendPayload(body.id, (body as { text: string }).text))
     } else if (kind === 'resume') {
       binding = stepBinding('resume', 'safety.resume')
     } else if (kind === 'client-key.revoke' || kind === 'client-key.rotate' || kind === 'client-key.upgrade') {

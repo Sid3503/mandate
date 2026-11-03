@@ -163,7 +163,7 @@ export function createPayPalClient(options: {
     }
   }
 
-  return {
+  const port: PayPalPort = {
     upstream: () => guard.status(),
     clientToken: () => browserClientToken(),
     async createOrder(input) {
@@ -319,7 +319,16 @@ export function createPayPalClient(options: {
       return { batchId: stringField(header, 'payout_batch_id'), batchStatus: stringField(header, 'batch_status'), item } satisfies LivePayout
     },
   }
+  callers.set(port, call)
+  return port
 }
+
+/**
+ * The authenticated, circuit-broken request function behind a client made here. Other PayPal ports (the dispute
+ * desk) borrow it so they share this client's token and breaker instead of opening a second set.
+ */
+const callers = new WeakMap<PayPalPort, (path: string, init: { method: string; requestId?: string; body?: unknown; rawBody?: string }) => Promise<{ status: number; json: Record<string, unknown> }>>()
+export const payPalCallerOf = (port: PayPalPort) => callers.get(port) ?? null
 
 type Json = Record<string, unknown>
 

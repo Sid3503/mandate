@@ -9,6 +9,7 @@ import { migrate, openDatabase, seed } from '../db/database'
 import { createAgentModel, DEFAULT_OLLAMA_MODEL } from '../agents/model'
 import { FakeInvoices, FakePayPal, FakeWatch } from '../paypal/fake'
 import { createPayPalClient } from '../paypal/client'
+import { FakeDisputes } from '../paypal/fake-disputes'
 import { loadFlags } from '../flags'
 import { demoModel } from './demo-model'
 import { PartyRulesSchema } from '../domain/deal'
@@ -97,7 +98,9 @@ const watch = new FakeWatch()
 // (DRAFTER_MODEL beside AGENT_MODEL). E2E_LIVE_DRAFTER=1 with OLLAMA_API_KEY turns it on.
 const drafterModel = process.env.E2E_LIVE_DRAFTER ? createAgentModel({ apiKey: process.env.OLLAMA_API_KEY, baseUrl: process.env.OLLAMA_BASE_URL, name: process.env.DRAFTER_MODEL ?? DEFAULT_OLLAMA_MODEL }) : null
 // The breaker is off for the tests (they make many refused requests on purpose). E2E_TRIP_AFTER=3 turns the real one on.
-const services = buildServices({ db, paypal, invoices, watch, publicUrl, now: () => new Date(), safety: { tripAfter: Number(process.env.E2E_TRIP_AFTER ?? 0) } })
+// A stand-in for PayPal's disputes API, so the Disputes screen can be used here. The sandbox cannot open a real dispute.
+const fakeDisputes = new FakeDisputes()
+const services = buildServices({ db, paypal, invoices, watch, publicUrl, ...(realPayPal ? {} : { disputes: fakeDisputes }), now: () => new Date(), safety: { tripAfter: Number(process.env.E2E_TRIP_AFTER ?? 0) } })
 // E2E_ADOPT=<paypal-record.json> brings a payment PayPal already holds into this ledger (see adopt.ts), to film what happens
 // to it next. With E2E_REAL_PAYPAL=1 a refund then goes to the real capture.
 if (process.env.E2E_ADOPT) {
@@ -157,6 +160,17 @@ app.post('/__fake/payouts/:outcome', async (c) => {
   } else if (outcome === 'SUCCESS' || outcome === 'PENDING' || outcome === 'FAILED') fakePayPal.payoutOutcome = outcome
   else return c.json({ error: 'unknown outcome' }, 400)
   return c.json({ ok: true, outcome })
+})
+
+// Test-only: a client dispute on the newest captured payment, due in 30 hours, so the Disputes screen has one to show.
+app.post('/__fake/disputes/seed', (c) => {
+  const row = db.prepare(`SELECT capture_id AS captureId, captured_amount_cents AS cents FROM proposals WHERE capture_id IS NOT NULL AND kind IN ('payment', 'charge') ORDER BY created_at DESC LIMIT 1`).get() as { captureId: string; cents: number | null } | undefined
+  if (!row) return c.json({ error: 'no captured payment yet' }, 409)
+  const id = `PP-D-${row.captureId.slice(-6)}`
+  const due = new Date(Date.now() + 30 * 3_600_000).toISOString()
+  fakeDisputes.add({ id, transactionIds: [row.captureId], amountCents: row.cents, sellerResponseDueDate: due })
+  services.repo.upsertDispute({ disputeId: id, transactionId: row.captureId, status: 'WAITING_FOR_SELLER_RESPONSE', reason: 'MERCHANDISE_OR_SERVICE_NOT_RECEIVED', amountCents: row.cents, currency: 'USD', openedAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+  return c.json({ id })
 })
 
 // A dev server may set a cookie instead of reading ?key= from the URL

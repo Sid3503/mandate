@@ -25,7 +25,7 @@ export default defineConfig({
   projects: [
     { name: 'desktop', testIgnore: /passkey-repair/, use: { baseURL: 'http://127.0.0.1:8779', viewport: { width: 1440, height: 960 } } },
     { name: 'phone', testIgnore: /passkey-repair/, use: { ...devices['Pixel 7'], channel: 'chrome', baseURL: 'http://127.0.0.1:8778' } },
-    { name: 'passkey', testIgnore: /job\.spec|pay-on-page/, use: { baseURL: 'http://localhost:8777', viewport: { width: 1440, height: 960 } } },
+    { name: 'passkey', testIgnore: /job\.spec|pay-on-page|zz-disputes/, use: { baseURL: 'http://localhost:8777', viewport: { width: 1440, height: 960 } } },
   ],
   webServer: [
     server(8779),

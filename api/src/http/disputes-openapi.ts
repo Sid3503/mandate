@@ -1,0 +1,14 @@
+import { z } from 'zod'
+
+/** The dispute desk's paths for /openapi.json. Called once from buildOpenApi. */
+export function registerDisputePaths(registry: { registerPath: (path: any) => void }): void {
+  const problem = { description: 'Problem details (RFC 9457)', content: { 'application/problem+json': { schema: z.object({ type: z.string(), title: z.string(), status: z.number(), detail: z.string(), code: z.string() }).passthrough() } } }
+  const security = [{ bearerAuth: [] }]
+  const id = z.object({ id: z.string() })
+  const text = z.object({ text: z.string().min(1).max(2000) })
+  registry.registerPath({ method: 'get', path: '/v1/disputes', tags: ['disputes'], security, summary: 'Owner only. The client disputes Mandate has read from PayPal, with the response-due countdown (urgent under 48 hours) and whether a response is drafted or sent.', responses: { 200: { description: 'Disputes' }, 403: problem } })
+  registry.registerPath({ method: 'get', path: '/v1/disputes/{id}', tags: ['disputes'], security, summary: 'Owner only. One dispute (re-read from PayPal when it answers), the evidence packet built from the signed records with its checklist, the latest draft, the appended history and, once sent, the exact request that went.', request: { params: id }, responses: { 200: { description: 'Dispute detail' }, 403: problem, 404: problem } })
+  registry.registerPath({ method: 'post', path: '/v1/disputes/{id}/draft', tags: ['disputes'], security, summary: 'Owner only. Writes a fresh draft from the packet: the model wording when it passes the honesty check, else a code-written template. Appends a row; nothing is sent.', request: { params: id }, responses: { 201: { description: 'The draft row' }, 403: problem, 404: problem, 409: problem } })
+  registry.registerPath({ method: 'put', path: '/v1/disputes/{id}/draft', tags: ['disputes'], security, summary: 'Owner only. Saves the owner own text as a new row. Earlier versions are kept.', request: { params: id, body: { content: { 'application/json': { schema: text } } } }, responses: { 201: { description: 'The edit row' }, 400: problem, 403: problem, 404: problem, 409: problem } })
+  registry.registerPath({ method: 'post', path: '/v1/disputes/{id}/send', tags: ['disputes'], security, summary: 'Owner only, passkey step-up required (grant kind dispute.send, bound to the dispute id and the sha256 of the exact text). Records the approval and the attempt, then sends through PayPal. A second send returns the first and does nothing. Built to PayPal documented request shape; not run on a live dispute.', request: { params: id, body: { content: { 'application/json': { schema: text } } } }, responses: { 200: { description: 'Already sent: the first send, unchanged' }, 201: { description: 'Sent' }, 401: problem, 403: problem, 404: problem, 409: problem, 502: problem } })
+}
