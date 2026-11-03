@@ -14,6 +14,8 @@ export const TOOL_LABEL: Record<string, { past: string; present: string; glyph: 
   list_ledger: { present: 'Reading the ledger', past: 'Read the ledger', glyph: '≣' },
   explain: { present: 'Looking up what happened', past: 'Looked up what happened', glyph: '?' },
   propose: { present: 'Filing the request with the rules', past: 'Filed the request with the rules', glyph: '✦' },
+  search_products: { present: 'Searching products', past: 'Searched products', glyph: '⌕' },
+  propose_purchase: { present: 'Asking to buy it', past: 'Asked to buy it', glyph: '✦' },
   offer_deal: { present: 'Offering deal terms', past: 'Offered deal terms', glyph: '⇄' },
   get_deliveries: { present: 'Looking at what was delivered', past: 'Looked at what was delivered', glyph: '▤' },
   decide_delivery: { present: 'Deciding on the delivery', past: 'Decided on the delivery', glyph: '✔' },
@@ -37,7 +39,13 @@ export function inputFacts(tool: string, input: unknown): Chipish[] {
   const i = obj(input)
   const out: Chipish[] = []
   const add = (k: string, v: string | null) => { if (v) out.push({ k, v }) }
-  if (tool === 'propose') {
+  if (tool === 'search_products') {
+    add('for', str(i.query) ? short(String(i.query), 40) : null)
+    add('budget', num(i.maxPriceCents) !== null ? dollars(num(i.maxPriceCents)!) : null)
+  } else if (tool === 'propose_purchase') {
+    add('product', str(i.productId) ? short(String(i.productId), 24) : null)
+    add('store', str(i.merchant))
+  } else if (tool === 'propose') {
     add(i.kind === 'charge' ? 'bill' : i.kind === 'refund' ? 'refund' : 'pay', str(i.payee))
     add('amount', num(i.amountCents) !== null ? dollars(num(i.amountCents)!) : null)
     add('work', str(i.category))
@@ -71,7 +79,7 @@ export function outputLine(tool: string, output: unknown, ok: boolean): { tone: 
     const error = obj(o.error)
     return { tone: 'bad', text: str(error.message) ?? str(error.code) ?? 'It did not go through' }
   }
-  if (tool === 'propose') {
+  if (tool === 'propose' || tool === 'propose_purchase') {
     const decision = String(o.decision ?? '')
     const code = str(o.ruleCode) ?? ''
     if (decision === 'DENY') return { tone: 'deny', text: `Refused · ${code}` }

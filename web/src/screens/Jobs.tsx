@@ -2,9 +2,10 @@ import { useQueries, useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { CountMoney } from '../components/Motion'
 import { JobShares } from '../components/JobShares'
+import { CrewSplit } from '../components/CrewSplit'
 import { Chip, Empty, Loading, Money, PageHead, PhaseChip, ProblemCard } from '../components/ui'
 import { api } from '../lib/api'
-import { useIsOwner, useNames, useProposals } from '../lib/hooks'
+import { useIsOwner, useNames, useProposals, useWarrant } from '../lib/hooks'
 import { dollars } from '../lib/money'
 import { jobNext, jobStages } from '../lib/jobTrack'
 import type { Job, Proposal } from '../lib/types'
@@ -93,6 +94,7 @@ export function JobScreen() {
   const job = useQuery({ queryKey: ['job', jobId], queryFn: () => api.job(jobId) })
   const names = useNames()
   const owner = useIsOwner()
+  const warrant = useWarrant()
   if (job.isLoading) return <div className="page"><Loading label="Opening job" /></div>
   if (!job.data) return <div className="page"><ProblemCard error={job.error} /></div>
   const data = job.data
@@ -142,6 +144,7 @@ export function JobScreen() {
                   </>
                 ) : <span className="muted">Not settled yet, so it funds nothing.</span>}
               </div>
+              <CrewSplit charge={charge} payouts={payoutsFor(charge)} warrant={warrant.data} names={names} clientId={data.client?.id ?? charge.payeeId} />
               {payoutsFor(charge).length > 0 ? (
                 <ul className="payouts" data-tour="job-payouts">
                   {payoutsFor(charge).map((payout) => (

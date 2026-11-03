@@ -30,6 +30,10 @@ export type LedgerRow = {
   moneyIn: number
   moneyOut: number
   kept: number
+  /** Contractor payouts PayPal confirmed. Refunds are not in this figure. */
+  payouts: number
+  /** PayPal's fee on a confirmed capture or payout. */
+  fees: number
   /** What was asked for and refused. */
   refused: number
   /** What a client still owes on an invoice that is out. */
@@ -72,6 +76,8 @@ export function toLedgerRows(proposals: Proposal[], nameOf: (id: string | null) 
       moneyIn: dollars(inCents),
       moneyOut: dollars(outCents),
       kept: dollars(inCents - outCents),
+      payouts: row.kind === 'payment' ? dollars(outCents) : 0,
+      fees: dollars((row.kind === 'charge' && inCents > 0 ? row.captureFeeCents ?? 0 : 0) + (row.kind === 'payment' && outCents > 0 ? row.payoutFeeCents ?? 0 : 0)),
       refused: row.gate === 'DENY' ? dollars(row.amountCents) : 0,
       owed: dollars(owed),
       daysOut: owed > 0 ? Math.max(0, Math.floor((now.getTime() - asked.getTime()) / 86_400_000)) : null,

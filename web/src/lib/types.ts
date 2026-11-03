@@ -61,6 +61,51 @@ export type PayeeBookEntry = {
 
 export type Page<T> = { data: T[]; nextCursor: string | null }
 
+/** GET /v1/books. Income totals are positive; every other total is its debit balance. */
+export type BooksTotals = {
+  currency: string
+  cashCents: number
+  inCents: number
+  outCents: number
+  feesCents: number
+  refundsCents: number
+  reversalsCents: number
+}
+
+export type BooksChain = {
+  entries: number
+  head: string
+  verified: boolean
+  brokenAt: number | null
+}
+
+export type Books = {
+  balances: Array<{ account: string; currency: string; cents: number }>
+  totals: BooksTotals[]
+  chain: BooksChain
+}
+
+/** One leg of a journal entry. Positive is a debit, negative a credit. An entry's legs sum to zero. */
+export type Posting = { account: string; amountCents: number }
+
+/** One double-entry journal entry, as GET /v1/books/journal returns it. */
+export type JournalEntry = {
+  id: string
+  seq: number
+  proposalId: string
+  purpose: string
+  currency: string
+  deltaCents: number
+  memo: string
+  prevHash: string
+  hash: string
+  createdAt: string
+  postings: Posting[]
+  kind: string | null
+  payeeId: string | null
+  description: string | null
+}
+
 export type LedgerEvent = {
   id: string
   proposalId: string
@@ -624,10 +669,14 @@ export type ShareView = {
   }
 }
 
-/** What a browser needs to open a card form against a locked bill. It cannot capture and cannot change an amount. */
+/** What a browser needs to pay a locked bill on our page. It cannot capture and cannot change an amount. */
+export type PayMethod = 'card' | 'paypal' | 'venmo' | 'paylater'
+
 export type PaySession = {
   proposalId: string
   orderId: string
+  /** What this session opened the order for: a card, or a wallet approved in PayPal's window. */
+  instrument: PayMethod
   clientToken: string
   amountCents: number
   currency: string

@@ -24,6 +24,8 @@ export const LEDGER_FIELDS: AgFieldDefinition[] = [
   money('moneyIn', 'Money in'),
   money('moneyOut', 'Money out'),
   money('kept', 'Kept'),
+  money('payouts', 'Contractor payouts'),
+  money('fees', 'PayPal fees'),
   money('refused', 'Refused'),
   money('owed', 'Still owed'),
   { id: 'daysOut', name: 'Days out', format: 'integerFormat' } as AgFieldDefinition,
@@ -54,6 +56,9 @@ export function demoLayout(): AgReportState {
           how: { type: 'donut-chart', dataMapping: { categoryKey: [f('how')], valueKey: [f('id', 'count')], tooltipKey: [] }, format: title('APPROVED BY') },
           refused: { type: 'grid', dataMapping: { cols: [f('who'), f('what'), f('reason'), f('amount')] }, format: title('WHAT THE RULES REFUSED') },
           owed: { type: 'grid', dataMapping: { cols: [f('who'), f('what'), f('owed', 'sum'), f('daysOut')] }, format: title('WHO STILL OWES WHAT') },
+          flow: { type: 'money-flow', dataMapping: {}, format: title('MONEY FLOW') },
+          wall: { type: 'refusal-wall', dataMapping: {}, format: title('REFUSAL WALL') },
+          chain: { type: 'books-integrity', dataMapping: {}, format: title('BOOKS INTEGRITY') },
         },
         widgetLayout: {
           in: { xTrack: 0, yTrack: 0, xSpan: 8, ySpan: 7 },
@@ -63,6 +68,9 @@ export function demoLayout(): AgReportState {
           how: { xTrack: 14, yTrack: 7, xSpan: 10, ySpan: 16 },
           refused: { xTrack: 0, yTrack: 23, xSpan: 16, ySpan: 17 },
           owed: { xTrack: 16, yTrack: 23, xSpan: 8, ySpan: 17 },
+          flow: { xTrack: 0, yTrack: 40, xSpan: 14, ySpan: 12 },
+          wall: { xTrack: 14, yTrack: 40, xSpan: 10, ySpan: 12 },
+          chain: { xTrack: 0, yTrack: 52, xSpan: 24, ySpan: 12 },
         },
         filter: {
           widget: {
@@ -76,7 +84,7 @@ export function demoLayout(): AgReportState {
     selectedPageId: 'control-room',
     // Quiet by default so the canvas has room: the chat panel stays open, the rest open on demand.
     panels: { filters: { collapsed: true }, edit: { collapsed: true }, data: { collapsed: true } },
-  } as AgReportState
+  } as unknown as AgReportState
 }
 
 const KEY = 'mandate.control-room.layout.v1'

@@ -1,6 +1,7 @@
 import { lookalikeOf } from '../lib/money'
 import { useQuery } from '@tanstack/react-query'
 import { AskPanel } from '../components/AskPanel'
+import { BuyPanel } from '../components/BuyPanel'
 import { Chip, PageHead } from '../components/ui'
 import { api } from '../lib/api'
 import { relative } from '../lib/format'
@@ -49,6 +50,7 @@ export function Clerk() {
             <span className="eyebrow">What the clerk can and cannot do</span>
             <ul className="can">
               <li className="yes"><b>Can</b> read the rules, jobs and ledger</li>
+              <li className="yes"><b>Can</b> look up a product and ask to buy it. The price comes from the catalog, not from the message</li>
               <li className="yes"><b>Can</b> ask for a payment, a bill or a refund</li>
               <li className="no"><b>Cannot</b> approve. Only your tap, or a standing rule you signed, does</li>
               <li className="no"><b>Cannot</b> send money or touch PayPal</li>
@@ -62,6 +64,7 @@ export function Clerk() {
           </section>
         </aside>
       </div>
+      <BuyPanel />
     </div>
   )
 }

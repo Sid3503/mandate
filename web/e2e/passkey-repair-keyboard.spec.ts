@@ -97,9 +97,10 @@ test('passkey keyboard walk: studio creation, unlock sign-in, and passkey manage
   await client.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId })
   await client.send('WebAuthn.addVirtualAuthenticator', { options: authenticator })
 
-  // Tab until "Add a passkey" button is focused
+  // Tab until "Add a passkey" button is focused. The sidebar is a long list of links before the page body (and it grows
+  // with the product), so the cap is generous: the point is that the button is reachable by keyboard alone.
   let focusedAddPasskey = false
-  for (let i = 0; i < 20; i += 1) {
+  for (let i = 0; i < 40; i += 1) {
     await page.keyboard.press('Tab')
     const text = await page.evaluate(() => document.activeElement?.textContent ?? '')
     if (text.includes('Add a passkey')) {

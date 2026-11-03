@@ -1,7 +1,7 @@
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 import { session, workspaceFromKey } from './session'
 import type { ConnectionCheck } from './connect'
-import type { AgentActivityRow, OauthRequestInfo, NegotiationView, ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
+import type { AgentActivityRow, OauthRequestInfo, NegotiationView, ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, Books, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, JournalEntry, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PayMethod, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -266,6 +266,49 @@ async function approveWithPasskey(id: string, body?: unknown): Promise<Proposal>
   return request<Proposal>(`/v1/proposals/${id}/approve`, { method: 'POST', headers: { 'x-mandate-stepup': verified.grant }, body })
 }
 
+export type ProcureOption = {
+  merchant: string
+  priceCents: number
+  currency: string
+  url: string
+  availability: 'InStock' | 'OutOfStock'
+  vendor: { payeeId: string; name: string } | null
+}
+
+export type ProcureResult = {
+  productId: string
+  title: string
+  brand: string | null
+  imageUrl: string | null
+  best: ProcureOption | null
+  offers: ProcureOption[]
+  withinBudget: boolean
+  rank: number
+  why: string
+}
+
+export type ProcureStatus = {
+  enabled: boolean
+  source: 'channel3' | 'fake' | null
+  reason: string | null
+  note: string
+}
+
+export type ProcureSearch = {
+  query: string
+  maxPriceCents: number | null
+  results: ProcureResult[]
+  note: string
+}
+
+export type PurchaseOutcome = {
+  proposal: Proposal
+  product: { productId: string; title: string; imageUrl: string | null }
+  offer: ProcureOption
+  whatWouldPass: string[]
+  note: string
+}
+
 export const api = {
   streamNegotiation,
   streamPolicy,
@@ -418,12 +461,12 @@ export const api = {
   /**
    * Opens a card form for a locked bill on our own page. The link is the only proof a buyer has, so it sends no key.
    */
-  paySession: (token: string, proposalId: string) => request<PaySession>(`/v1/share/${encodeURIComponent(token)}/pay/session`, { method: 'POST', body: { proposalId }, key: '' }),
+  paySession: (token: string, proposalId: string, instrument: PayMethod = 'card') => request<PaySession>(`/v1/share/${encodeURIComponent(token)}/pay/session`, { method: 'POST', body: { proposalId, instrument }, key: '' }),
   /** The server captures the order it made from the lock, after re-reading it and checking it still matches. */
-  payCapture: (token: string, proposalId: string) => request<Proposal>(`/v1/share/${encodeURIComponent(token)}/pay/capture`, { method: 'POST', body: { proposalId }, key: '' }),
+  payCapture: (token: string, proposalId: string) => request<{ phase: string }>(`/v1/share/${encodeURIComponent(token)}/pay/capture`, { method: 'POST', body: { proposalId }, key: '' }),
   /** The same two steps for the owner, who may pay a bill themselves. */
-  paySessionOwner: (proposalId: string) => request<PaySession>('/v1/pay/session', { method: 'POST', body: { proposalId } }),
-  payCaptureOwner: (proposalId: string) => request<Proposal>('/v1/pay/capture', { method: 'POST', body: { proposalId } }),
+  paySessionOwner: (proposalId: string, instrument: PayMethod = 'card') => request<PaySession>('/v1/pay/session', { method: 'POST', body: { proposalId, instrument } }),
+  payCaptureOwner: (proposalId: string) => request<{ phase: string }>('/v1/pay/capture', { method: 'POST', body: { proposalId } }),
   notify: () => request<{ enabled: boolean; lastSentAt: string | null; lastError: string | null; sent: number }>('/v1/notify'),
   notifyTest: () => request<{ enabled: boolean; lastSentAt: string | null; lastError: string | null; sent: number }>('/v1/notify/test', { method: 'POST' }),
   resetDemo: () => request<{ reset: true }>('/v1/demo/reset', { method: 'POST', body: { confirm: 'reset the demo' } }),
@@ -499,6 +542,7 @@ export const api = {
   },
   reject: (id: string) => request<Proposal>(`/v1/proposals/${id}/reject`, { method: 'POST' }),
   cancelPayout: (id: string) => request<Proposal>(`/v1/proposals/${id}/cancel-payout`, { method: 'POST' }),
+  invoiceQr: (id: string) => request<{ image: string; contentType: 'image/png' }>(`/v1/proposals/${id}/invoice-qr`),
   remindInvoice: (id: string) => request<Proposal>(`/v1/proposals/${id}/remind-invoice`, { method: 'POST' }),
   cancelInvoice: (id: string) => request<Proposal>(`/v1/proposals/${id}/cancel-invoice`, { method: 'POST' }),
   features: () => request<Features>('/v1/paypal/features'),
@@ -540,6 +584,15 @@ export const api = {
   agentRuns: () => request<{ data: Array<{ id: string; agent: string; status: string; model: string; input: string; ms: number; createdAt: string }> }>('/v1/agent-runs'),
   agentRun: (id: string) => request<AgentRun>(`/v1/agent-runs/${id}`),
   ledger: (cursor?: string | null) => request<Page<LedgerEvent>>(`/v1/ledger?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
+  /** The double-entry books: balances, totals per currency, and whether the hash chain still checks out. */
+  books: () => request<Books>('/v1/books'),
+  /** The journal, newest first, a page at a time. The cursor is the seq of the last entry on the page before. */
+  journal: (cursor?: string | null, limit = 100) => request<Page<JournalEntry>>(`/v1/books/journal?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`),
+  /** One request's entries in the books, oldest first. */
+  journalFor: (proposalId: string) => request<Page<JournalEntry>>(`/v1/books/journal?proposalId=${encodeURIComponent(proposalId)}`),
+  procureStatus: () => request<ProcureStatus>('/v1/procure'),
+  procureSearch: (q: string, maxPriceCents?: number) => request<ProcureSearch>(`/v1/procure/search?q=${encodeURIComponent(q)}${maxPriceCents === undefined ? '' : `&max=${maxPriceCents}`}`),
+  procurePropose: (body: { productId: string; merchant?: string; maxPriceCents?: number; prompt?: string }) => request<PurchaseOutcome>('/v1/procure/propose', { method: 'POST', body, idempotencyKey: crypto.randomUUID() }),
   payees: () => request<{ payees: PayeeBookEntry[] }>('/v1/payees'),
   payee: (id: string) => request<{ payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}`),
   changePayee: (id: string, email: string) => request<{ ok: boolean; payee: PayeeBookEntry }>(`/v1/payees/${encodeURIComponent(id)}/change`, { method: 'POST', body: { email } }),

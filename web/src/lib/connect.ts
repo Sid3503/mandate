@@ -27,6 +27,8 @@ export const TOOL_WORDS: Record<string, string> = {
   accept_offer: 'accept an offer',
   walk_away: 'walk away from a deal',
   get_negotiation: 'read a negotiation',
+  search_products: 'search products',
+  propose_purchase: 'ask to buy a product',
 }
 
 /** A tool with one of these names could move money. The door never offers one; the connection check says so if it ever did. */
@@ -62,7 +64,7 @@ export function commandsFor(url: string, key: string) {
   }
 }
 
-/** The two doors. The read-only one offers only the four tools that look, whatever the key could do. */
+/** The two doors. The read-only one offers only the tools that look, whatever the key could do. */
 export type Door = 'mcp' | 'readonly'
 export const DOOR_PATH: Record<Door, string> = { mcp: '', readonly: '/readonly' }
 
