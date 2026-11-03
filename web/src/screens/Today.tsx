@@ -535,6 +535,9 @@ function useLockPreview(proposal: Proposal): string | null {
       fundingCaptureId: proposal.fundingCaptureId,
       dealId: proposal.dealId,
       milestone: proposal.milestone,
+      lineItems: proposal.lineItems,
+      dueDate: proposal.dueDate,
+      customerNote: proposal.customerNote,
     })
     void crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)).then((buf) => {
       if (cancel) return

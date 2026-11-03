@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { BillTerms } from '../components/BillTerms'
 import { Mark } from '../components/Shell'
 import { PaySheet } from '../components/PaySheet'
 import { Chip, Loading, Money } from '../components/ui'
@@ -111,6 +112,7 @@ function Client({ data, token }: { data: ShareView; token: string }) {
                   </button>
                 ) : null}
               </div>
+              <BillTerms lineItems={invoice.lineItems} dueDate={invoice.dueDate} customerNote={invoice.customerNote} currency={invoice.currency ?? invoice.payable?.currency ?? 'USD'} unpaid={invoice.state === 'due' && !(invoice.payable && paidId === invoice.payable.proposalId)} />
               {/* The pay sheet is a block of its own, the bill's full width: inside the row of chips it could grow past a
                   phone's screen and end up under the next bill, where the Pay button cannot be pressed. */}
               {invoice.state === 'due' && invoice.payable && paying === invoice.payable.proposalId ? (

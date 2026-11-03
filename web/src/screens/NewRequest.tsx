@@ -7,11 +7,17 @@ import { ApiError, api } from '../lib/api'
 import { newKey } from '../lib/format'
 import { useIsOwner, useNames, useOnline, useProposals, useRefreshMoney, useWarrant } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
-import type { Kind, Proposal, ProposalInput } from '../lib/types'
+import type { Kind, LineItem, Proposal, ProposalInput } from '../lib/types'
 import { explain, fundedPhase, KIND } from '../lib/words'
 
 const OTHER = '__other__'
 const UNFUNDED = '__none__'
+
+type ItemRow = { key: number; description: string; quantity: string; price: string }
+const MAX_ROWS = 20
+/** A day as the server counts it (UTC), so "Net 7" is never refused as being in the past. */
+const dayFromNow = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10)
+const wholeQuantity = (text: string): number | null => (/^\d{1,3}$/.test(text.trim()) && Number(text) >= 1 ? Number(text) : null)
 
 export function NewRequest() {
   const [params] = useSearchParams()
@@ -34,6 +40,10 @@ export function NewRequest() {
   const [jobId, setJobId] = useState(params.get('job') ?? '')
   const [funding, setFunding] = useState(params.get('funding') ?? '')
   const [parent, setParent] = useState(params.get('parent') ?? '')
+  const [itemRows, setItemRows] = useState<ItemRow[]>([])
+  const [nextKey, setNextKey] = useState(1)
+  const [dueDate, setDueDate] = useState('')
+  const [note, setNote] = useState('')
 
   const missingRules = warrant.isError && warrant.error instanceof ApiError && warrant.error.code === 'warrant.missing'
   const rows = proposals.data?.data ?? []
@@ -75,11 +85,19 @@ export function NewRequest() {
     if (!category && warrant.data?.categories[0]) setCategory(warrant.data.categories[0])
   }, [warrant.data, category])
 
-  const cents = parseCents(amount)
+  // A charge with items is billed for exactly what the items add up to, so the amount is never typed twice.
+  const itemised = kind === 'charge' && itemRows.length > 0
+  const lineItems: LineItem[] | null = itemised
+    ? itemRows.every((row) => row.description.trim() && wholeQuantity(row.quantity) !== null && (parseCents(row.price) ?? 0) > 0)
+      ? itemRows.map((row) => ({ description: row.description.trim(), quantity: wholeQuantity(row.quantity)!, unitCents: parseCents(row.price)! }))
+      : null
+    : null
+  const subtotal = lineItems ? lineItems.reduce((sum, item) => sum + item.quantity * item.unitCents, 0) : null
+  const cents = itemised ? subtotal : parseCents(amount)
   const finalCategory = category === OTHER ? otherCategory.trim().toLowerCase() : category
   const payee = stranger !== null && kind !== 'refund' ? stranger.trim() : party
   // Name what is missing while the button is dead, so an incomplete form never fails silently.
-  const missing = [cents === null ? 'an amount' : null, !payee ? (kind === 'refund' ? 'a settled payment' : 'who') : null, !description.trim() ? 'what it is for' : null].filter((part): part is string => part !== null)
+  const missing = [itemised && !lineItems ? 'a description, a whole quantity and a price on every line' : cents === null ? 'an amount' : null, !payee ? (kind === 'refund' ? 'a settled payment' : 'who') : null, !description.trim() ? 'what it is for' : null].filter((part): part is string => part !== null)
   const input: ProposalInput | null = cents === null || !payee || !description.trim() ? null : {
     kind,
     payee,
@@ -92,6 +110,9 @@ export function NewRequest() {
     jobId: jobId.trim() || undefined,
     fundingCaptureId: kind === 'payment' && funding && funding !== UNFUNDED ? funding : undefined,
     parentCaptureId: kind === 'refund' ? parent || undefined : undefined,
+    lineItems: itemised && lineItems ? lineItems : undefined,
+    dueDate: kind === 'charge' && dueDate ? dueDate : undefined,
+    customerNote: kind === 'charge' && note.trim() ? note.trim() : undefined,
   }
 
   // One idempotency key per distinct request body. A retry of the same body reuses it, so a double tap cannot ask twice.
@@ -115,6 +136,9 @@ export function NewRequest() {
   const reset = () => {
     send.reset()
     setAmount('')
+    setItemRows([])
+    setDueDate('')
+    setNote('')
     setDescription('')
     setPrompt('')
     setIdem(newKey('web'))
@@ -191,8 +215,8 @@ export function NewRequest() {
           <div className="field-row">
             <label className="field" data-tour="new-amount">
               <span>Amount</span>
-              <span className="dollar-input big"><span>{warrant.data?.currency ?? 'USD'}</span><input inputMode="decimal" autoComplete="off" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required aria-label={`Amount in ${warrant.data?.currency ?? 'USD'}`} /></span>
-              <small className="mono">{cents === null ? 'The amount, with cents' : `= ${cents} hundredths`}</small>
+              <span className="dollar-input big"><span>{warrant.data?.currency ?? 'USD'}</span><input inputMode="decimal" autoComplete="off" value={itemised ? (subtotal === null ? '' : centsInput(subtotal)) : amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required readOnly={itemised} aria-label={`Amount in ${warrant.data?.currency ?? 'USD'}`} /></span>
+              <small className="mono">{itemised ? 'The total of the line items below' : cents === null ? 'The amount, with cents' : `= ${cents} hundredths`}</small>
             </label>
             <label className="field" data-tour="new-work">
               <span>Kind of work</span>
@@ -204,6 +228,36 @@ export function NewRequest() {
             </label>
           </div>
 
+          {kind === 'charge' ? (
+            <fieldset className="field line-items" data-testid="line-items">
+              <legend>Line items <span className="fine">(optional, signed into the lock)</span></legend>
+              {itemRows.map((row, index) => (
+                <div className="line-row" key={row.key}>
+                  <input aria-label={`Item ${index + 1} description`} value={row.description} maxLength={200} placeholder="What it is" onChange={(event) => setItemRows(itemRows.map((item) => item.key === row.key ? { ...item, description: event.target.value } : item))} />
+                  <input aria-label={`Item ${index + 1} quantity`} inputMode="numeric" value={row.quantity} placeholder="Qty" onChange={(event) => setItemRows(itemRows.map((item) => item.key === row.key ? { ...item, quantity: event.target.value } : item))} />
+                  <input aria-label={`Item ${index + 1} unit price`} inputMode="decimal" value={row.price} placeholder="Unit price" onChange={(event) => setItemRows(itemRows.map((item) => item.key === row.key ? { ...item, price: event.target.value } : item))} />
+                  <button type="button" className="btn btn-ghost btn-small" aria-label={`Remove item ${index + 1}`} onClick={() => setItemRows(itemRows.filter((item) => item.key !== row.key))}>Remove</button>
+                </div>
+              ))}
+              <div className="row between wrap gap-s">
+                <button type="button" className="btn btn-ghost btn-small" disabled={itemRows.length >= MAX_ROWS} onClick={() => { setItemRows([...itemRows, { key: nextKey, description: '', quantity: '1', price: '' }]); setNextKey(nextKey + 1) }}>Add a line item</button>
+                {itemised ? <strong className="mono" data-testid="line-subtotal">Subtotal {subtotal === null ? '—' : dollars(subtotal, warrant.data?.currency ?? 'USD')}</strong> : null}
+              </div>
+            </fieldset>
+          ) : null}
+          {kind === 'charge' ? (
+            <div className="field">
+              <label htmlFor="due-date"><span>Due date <span className="fine">(optional)</span></span></label>
+              <div className="row gap-s wrap">
+                <input id="due-date" type="date" value={dueDate} min={dayFromNow(0)} max={dayFromNow(365)} onChange={(event) => setDueDate(event.target.value)} />
+                {[7, 14, 30].map((days) => <button key={days} type="button" className={`btn btn-small ${dueDate === dayFromNow(days) ? 'btn-ink' : 'btn-ghost'}`} onClick={() => setDueDate(dayFromNow(days))}>Net {days}</button>)}
+                {dueDate ? <button type="button" className="btn btn-ghost btn-small" onClick={() => setDueDate('')}>No due date</button> : null}
+              </div>
+            </div>
+          ) : null}
+          {kind === 'charge' ? (
+            <label className="field"><span>Note for the client <span className="fine">(optional)</span></span><textarea rows={2} value={note} onChange={(event) => setNote(event.target.value)} maxLength={1000} placeholder="Shown on the invoice. Angle brackets are removed." /></label>
+          ) : null}
           <label className="field"><span>What it is for</span><input value={description} onChange={(event) => setDescription(event.target.value)} placeholder={kind === 'charge' ? `What ${clientName} is billed for` : 'What this payment is for'} required maxLength={500} /></label>
           <label className="field" data-tour="new-proof"><span>Link to the work</span><input type="url" value={evidenceUrl} onChange={(event) => setEvidenceUrl(event.target.value)} placeholder="https://example.com/the-work" /><small>The rules need an https link.</small></label>
           {kind !== 'payment' ? (

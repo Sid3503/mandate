@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto'
 
+/** One line of a bill. Whole numbers only, so the same bill always hashes the same. */
+export type LineItem = { description: string; quantity: number; unitCents: number }
+
 export type CartFields = {
   proposalId: string
   warrantId: string
@@ -16,9 +19,37 @@ export type CartFields = {
   /** The agreed deal and milestone this charge bills. Present only on deal-linked charges (cart v3). */
   dealId?: string | null
   milestone?: number | null
+  /** What the owner approved beyond the total: the items, the due date and the note the client sees. Absent or null leaves the hash exactly as it was before these existed. */
+  lineItems?: LineItem[] | null
+  dueDate?: string | null
+  customerNote?: string | null
+}
+
+/**
+ * The bill's terms as they enter the hash, or null when the bill has none. Key order is fixed and an item is rebuilt
+ * from its three named fields, so a stray extra property on a stored row can never change a hash.
+ */
+function termsPart(fields: CartFields): Record<string, unknown> | null {
+  const terms: Record<string, unknown> = {}
+  if (fields.lineItems && fields.lineItems.length > 0) {
+    terms.lineItems = fields.lineItems.map((item) => ({ description: item.description, quantity: item.quantity, unitCents: item.unitCents }))
+  }
+  if (fields.dueDate) terms.dueDate = fields.dueDate
+  if (fields.customerNote) terms.customerNote = fields.customerNote
+  return Object.keys(terms).length > 0 ? terms : null
 }
 
 export function canonicalCart(fields: CartFields): string {
+  const terms = termsPart(fields)
+  // The terms are added last and only when present: a cart without them serialises byte for byte as it always did.
+  return JSON.stringify(withTerms(JSON.parse(baseCart(fields)) as Record<string, unknown>, terms))
+}
+
+function withTerms(base: Record<string, unknown>, terms: Record<string, unknown> | null): Record<string, unknown> {
+  return terms ? { ...base, terms } : base
+}
+
+function baseCart(fields: CartFields): string {
   const jobId = fields.jobId ?? null
   const fundingCaptureId = fields.fundingCaptureId ?? null
   if (fields.dealId) {

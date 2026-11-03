@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash } from 'node:crypto'
 import type { DatabaseSync } from 'node:sqlite'
 import { arrivedCents, canTransition, DEAD_PHASES, expectedSignedCents, fullPhase, FUNDED_PHASES, INVOICE_WATCH_PHASES, OPEN_PHASES, PAID_PHASES, REFUND_HELD_PHASES, RESERVED_PHASES, sqlList } from '../domain/phases'
+import type { LineItem } from '../domain/hash'
 import type { LedgerMoney } from '../domain/reconcile'
 import type { PartyRules } from '../domain/deal'
 import { PartyRulesSchema } from '../domain/deal'
@@ -59,6 +60,10 @@ export type ProposalRow = {
   invoice_id: string | null
   invoice_url: string | null
   invoice_status: string | null
+  /** The bill's items as JSON ([{description, quantity, unitCents}]), the day it falls due (YYYY-MM-DD) and the client's note. All null on a bill without them. */
+  line_items_json: string | null
+  due_date: string | null
+  customer_note: string | null
   /** How this charge is to be paid: 'invoice' (PayPal invoices it) or 'checkout' (the client pays on our page). */
   pay_instrument: string | null
   /** What PayPal reported actually arrived. Null until a settlement is seen. */
@@ -373,6 +378,9 @@ export type NewProposal = {
   lockSig: string | null
   lockKeyId: string | null
   reservedAt: string | null
+  lineItems?: LineItem[] | null
+  dueDate?: string | null
+  customerNote?: string | null
   now: string
 }
 
@@ -387,13 +395,33 @@ export type DuplicateKey = {
   dealId: string | null
   milestone: number | null
   parentCaptureId: string | null
+  /** The bill's items, due date and note. Two bills that differ in any of them are different asks. */
+  lineItems?: LineItem[] | null
+  dueDate?: string | null
+  customerNote?: string | null
+}
+
+/** The stored form of a bill's items: fixed key order, null when there are none, so equal bills compare equal in SQL. */
+export function itemsJson(items: LineItem[] | null | undefined): string | null {
+  return items && items.length > 0 ? JSON.stringify(items.map((item) => ({ description: item.description, quantity: item.quantity, unitCents: item.unitCents }))) : null
+}
+
+/** Reads a row's items back. A value that is not a list of items reads as no items. */
+export function itemsOf(row: { line_items_json: string | null }): LineItem[] | null {
+  if (!row.line_items_json) return null
+  try {
+    const parsed = JSON.parse(row.line_items_json) as LineItem[]
+    return Array.isArray(parsed) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
 const PROPOSAL_COLUMNS = `id, warrant_id, warrant_version, kind, parent_capture_id, payee_id, amount_cents, currency,
   category, description, evidence_url, prompt, gate, clause, detail, phase, cart_hash, order_id, order_kind, capture_id,
   refund_id, approve_url, captured_amount_cents, capture_fee_cents, capture_net_cents, reserved_at, job_id, funding_capture_id, payout_batch_id, payout_item_id,
   payout_status, payout_txn_id, payout_fee_cents, deal_id, milestone, lock_sig, lock_key_id, invoice_id, invoice_url,
-  invoice_status, pay_instrument, settled_cents, delta_cents, delta_reason, delta_source, created_at, updated_at`
+  invoice_status, line_items_json, due_date, customer_note, pay_instrument, settled_cents, delta_cents, delta_reason, delta_source, created_at, updated_at`
 
 /** How many transactions are open on each database, however many Repo objects look at it. */
 const DEPTH = new WeakMap<DatabaseSync, number>()
@@ -480,12 +508,13 @@ export class Repo {
     this.db.prepare(`INSERT INTO proposals (
       id, warrant_id, warrant_version, kind, parent_capture_id, payee_id, amount_cents, currency, category,
       description, evidence_url, prompt, gate, clause, detail, phase, cart_hash, reserved_at, job_id,
-      funding_capture_id, deal_id, milestone, lock_sig, lock_key_id, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      funding_capture_id, deal_id, milestone, lock_sig, lock_key_id, line_items_json, due_date, customer_note, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       input.id, input.warrantId, input.warrantVersion, input.kind, input.parentCaptureId, input.payeeId,
       input.amountCents, input.currency, input.category, input.description, input.evidenceUrl, input.prompt,
       input.gate, input.clause, input.detail, input.phase, input.cartHash, input.reservedAt, input.jobId,
-      input.fundingCaptureId, input.dealId, input.milestone, input.lockSig, input.lockKeyId, input.now, input.now,
+      input.fundingCaptureId, input.dealId, input.milestone, input.lockSig, input.lockKeyId,
+      itemsJson(input.lineItems), input.dueDate ?? null, input.customerNote ?? null, input.now, input.now,
     )
   }
 
@@ -947,8 +976,10 @@ export class Repo {
          AND kind = ? AND amount_cents = ? AND currency = ?
          AND payee_id IS ? AND job_id IS ? AND funding_capture_id IS ?
          AND deal_id IS ? AND milestone IS ? AND parent_capture_id IS ?
+         AND line_items_json IS ? AND due_date IS ? AND customer_note IS ?
        ORDER BY created_at ASC, id ASC LIMIT 1`,
-    ).get(key.kind, key.amountCents, key.currency, key.payeeId, key.jobId, key.fundingCaptureId, key.dealId, key.milestone, key.parentCaptureId)
+    ).get(key.kind, key.amountCents, key.currency, key.payeeId, key.jobId, key.fundingCaptureId, key.dealId, key.milestone, key.parentCaptureId,
+      itemsJson(key.lineItems), key.dueDate ?? null, key.customerNote ?? null)
     return (found as ProposalRow | undefined) ?? null
   }
 

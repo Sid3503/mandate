@@ -180,6 +180,25 @@ CREATE INDEX IF NOT EXISTS events_type ON events(type, created_at);
 CREATE INDEX IF NOT EXISTS proposals_payee ON proposals(payee_id, kind, phase);
 `,
   },
+  {
+    id: '0007_invoice_terms',
+    sql: `
+-- What a bill says beyond its total: the items (a JSON list of description, quantity, unit cents), the day it falls due
+-- and a note for the client. All three are part of the signed cart when present, so once a cart is locked they cannot
+-- change. SQLite cannot alter the 0004 trigger, so this is a second one with the same maintenance escape.
+ALTER TABLE proposals ADD COLUMN line_items_json TEXT;
+ALTER TABLE proposals ADD COLUMN due_date TEXT;
+ALTER TABLE proposals ADD COLUMN customer_note TEXT;
+
+CREATE TRIGGER IF NOT EXISTS proposals_terms_immutable BEFORE UPDATE ON proposals
+WHEN OLD.cart_hash IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM maintenance_mode)
+  AND (NEW.line_items_json IS NOT OLD.line_items_json OR NEW.due_date IS NOT OLD.due_date OR NEW.customer_note IS NOT OLD.customer_note)
+BEGIN
+  SELECT RAISE(ABORT, 'proposals: the items, due date and note of a locked cart cannot change');
+END;
+`,
+  },
 ]
 
 /**

@@ -2,6 +2,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { BalanceNote } from '../components/PayPalFeatures'
+import { BillTerms } from '../components/BillTerms'
 import { PaySheet } from '../components/PaySheet'
 import { Signature } from '../components/Signature'
 import { useToast } from '../components/Toast'
@@ -13,6 +14,9 @@ import { useIsOwner, useNames, useOnline, useRefreshMoney, useVersions } from '.
 import { centsInput, dollars, parseCents } from '../lib/money'
 import type { JournalEntry, LedgerEvent, Packet, Warrant } from '../lib/types'
 import { AGENT_LABEL, EVENT, explain, fundedPhase, fullPhase, isPayout, KIND, namedAdjustment, paidPhase, settlementLine, type Names } from '../lib/words'
+
+/** Charge phases where the client has not yet paid, so a past due date is still owed. */
+const UNPAID = ['locked', 'order_created', 'invoice_draft', 'invoice_sent', 'capture_inflight', 'settled_short']
 
 export function Receipt() {
   const { id = '' } = useParams()
@@ -63,6 +67,7 @@ export function Receipt() {
             <h2 className="panel-title">What was asked</h2>
             {data.prompt ? <p className="quote big">“{data.prompt}”</p> : <p className="muted">No sentence was recorded.</p>}
             {data.agentRun ? <AgentTrace run={data.agentRun} /> : null}
+            <BillTerms lineItems={p.lineItems} dueDate={p.dueDate} customerNote={p.customerNote} currency={p.currency} unpaid={p.kind === 'charge' && UNPAID.includes(p.phase)} />
             <div className="kvs">
               <KV label="Kind">{kind.label}</KV>
               <KV label={p.kind === 'charge' ? 'Client' : 'Payee'}>{names(p.payeeId)}</KV>
@@ -79,7 +84,7 @@ export function Receipt() {
           <section className="panel panel-ink" data-tour="receipt-lock">
             <h2 className="panel-title">The lock</h2>
             <Hash value={p.cartHash} full />
-            <p className="fine">SHA-256 over payee, cents, currency, category, proof{p.jobId ? ', job' : ''}{p.fundingCaptureId ? ' and funding capture' : ''}. Settlement recomputes it and refuses on any difference.</p>
+            <p className="fine">SHA-256 over payee, cents, currency, category, proof{p.jobId ? ', job' : ''}{p.fundingCaptureId ? ', funding capture' : ''}{p.lineItems || p.dueDate || p.customerNote ? ', items, due date and note' : ''}. Settlement recomputes it and refuses on any difference.</p>
             {p.cartHash ? <div className="panel-ink-sig"><Signature kind="lock" id={p.id} signature={p.lockSignature} keyId={p.lockKeyId} receipt={data} /></div> : null}
             <div className="match">
               <div><span>Approved</span><Money cents={data.amounts.approvedCents} size="lg" /></div>

@@ -1,4 +1,5 @@
-import type { InvoicePort, InvoiceRequest, LiveInvoice } from './invoices'
+import { invoiceItemsFor, invoiceNoteFor, type InvoicePort, type InvoiceRequest, type LiveInvoice } from './invoices'
+import { payPalToCents } from '../domain/money'
 import type { LiveDispute, LiveTransaction, WatchPort } from './watch'
 import { PayPalError, type CardOnOrder, type LivePayout, type PayPalPort } from './port'
 
@@ -297,6 +298,10 @@ export class FakeInvoices implements InvoicePort {
     earlyDiscountCents: number | null
     feeCents: number | null
     allowPartialPayment: boolean
+    /** What was sent as PayPal's items, note and payment term, so a test can read exactly what PayPal would hold. */
+    items: Array<{ name: string; quantity: string; unitCents: number }>
+    dueDate: string | null
+    note: string
     earlyPaymentDiscount: { percentBps: number; dueDate: string } | null
   }>()
   /** The last draft this server asked for, so a test can read exactly what was sent to PayPal. */
@@ -329,6 +334,9 @@ export class FakeInvoices implements InvoicePort {
       earlyDiscountCents: null,
       feeCents: null,
       allowPartialPayment: input.allowPartialPayment,
+      items: invoiceItemsFor(input).map((item) => ({ name: String(item.name), quantity: String(item.quantity), unitCents: payPalToCents(String((item.unit_amount as { value: string }).value)) })),
+      dueDate: input.dueDate ?? null,
+      note: invoiceNoteFor(input),
       earlyPaymentDiscount: input.earlyPaymentDiscount,
     })
     return { invoiceId }

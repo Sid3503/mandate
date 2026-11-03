@@ -1316,6 +1316,13 @@ export interface paths {
                         milestone?: number;
                         /** Format: uuid */
                         proposalId?: string;
+                        lineItems?: {
+                            description: string;
+                            quantity: number;
+                            unitCents: number;
+                        }[];
+                        dueDate?: string;
+                        customerNote?: string;
                     };
                 };
             };
@@ -6918,6 +6925,16 @@ export interface components {
             invoiceId: string | null;
             invoiceUrl: string | null;
             invoiceStatus: string | null;
+            /** @description The bill's items, signed into the lock. Null for a bill with one total and no items. */
+            lineItems: {
+                description: string;
+                quantity: number;
+                unitCents: number;
+            }[] | null;
+            /** @description The day the bill falls due, YYYY-MM-DD, signed into the lock. Null when none. */
+            dueDate: string | null;
+            /** @description The note the client sees on the bill, signed into the lock. Null when none. */
+            customerNote: string | null;
             /**
              * @description How this charge is to be paid: a PayPal invoice the client gets, or a card form on our own page.
              * @enum {string|null}

@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import type { Repo, ShareRow } from '../db/repo'
+import { itemsOf, type Repo, type ShareRow } from '../db/repo'
+import type { LineItem } from '../domain/hash'
 import { Problem } from '../http/problem'
 import { paidPhase } from '../domain/phases'
 import type { MandateService } from './mandate'
@@ -38,7 +39,7 @@ export type ShareView = {
     payouts: Array<{ amountCents: number; state: PayoutState; label: string; at: string }>
   }
   client?: {
-    invoices: Array<{ description: string; amountCents: number; state: 'due' | 'paid'; payUrl: string | null; at: string; payable: PayableBill | null }>
+    invoices: Array<{ description: string; amountCents: number; state: 'due' | 'paid'; payUrl: string | null; at: string; payable: PayableBill | null; /** Present only on a bill that carries items, a due date or a note. */ lineItems?: LineItem[]; dueDate?: string; customerNote?: string; currency?: string }>
   }
 }
 
@@ -106,6 +107,7 @@ export class ShareService {
       const mine = job.charges.filter((charge) => charge.payeeId === row.party_id)
       const invoices: NonNullable<ShareView['client']>['invoices'] = []
       for (const charge of mine) {
+        const before = invoices.length
         // A bill the client may pay here: the owner locked it, it is not settled, and PayPal did not invoice it.
         // A charge that already has an invoice is paid through that invoice, so it is never also payable here.
         const payable: PayableBill | null = base.canPay && charge.payInstrument === 'checkout' && ['locked', 'order_created'].includes(charge.phase)
@@ -115,6 +117,16 @@ export class ShareService {
         if (charge.phase === 'captured') invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'paid', payUrl: null, at: charge.updatedAt, payable: null })
         else if (paidPhase(charge.phase)) invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'due', payUrl: charge.invoiceUrl ?? charge.approveUrl ?? null, at: charge.updatedAt, payable: null })
         else if (['invoice_sent', 'order_created', 'locked'].includes(charge.phase)) invoices.push({ description: charge.description, amountCents: charge.amountCents, state: 'due', payUrl: charge.invoiceUrl ?? charge.approveUrl ?? null, at: charge.updatedAt, payable })
+        // The items, due date and note the owner signed, shown to the client. Only what the bill has is added.
+        const row2 = invoices.length > before ? this.repo.proposal(charge.id) : null
+        if (row2) {
+          const mineItems = invoices[invoices.length - 1]!
+          const items = itemsOf(row2)
+          mineItems.currency = row2.currency
+          if (items) mineItems.lineItems = items
+          if (row2.due_date) mineItems.dueDate = row2.due_date
+          if (row2.customer_note) mineItems.customerNote = row2.customer_note
+        }
       }
       return { ...base, role: 'client', with: null, client: { invoices } }
     }

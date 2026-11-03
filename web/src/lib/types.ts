@@ -454,7 +454,13 @@ export type ProposalInput = {
   parentCaptureId?: string
   jobId?: string
   fundingCaptureId?: string
+  /** A charge only. The amount must be the sum of quantity times unit price. */
+  lineItems?: LineItem[]
+  dueDate?: string
+  customerNote?: string
 }
+
+export type LineItem = { description: string; quantity: number; unitCents: number }
 
 export type Feature = {
   id: string
@@ -663,6 +669,10 @@ export type ShareView = {
       state: 'due' | 'paid'
       payUrl: string | null
       at: string
+      currency?: string
+      lineItems?: LineItem[]
+      dueDate?: string
+      customerNote?: string
       /** When the client may pay this on our own page instead of leaving for PayPal. */
       payable: { proposalId: string; amountCents: number; currency: string; description: string; instrument: 'checkout' } | null
     }>
