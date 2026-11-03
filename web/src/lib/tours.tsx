@@ -30,7 +30,7 @@ export function tourFor(pathname: string): TourId {
   if (pathname.startsWith('/new')) return 'new'
   if (pathname.startsWith('/deals')) return 'deals'
   if (pathname.startsWith('/clerk')) return 'clerk'
-  if (pathname.startsWith('/ledger')) return 'ledger'
+  if (pathname.startsWith('/ledger') || pathname.startsWith('/books')) return 'ledger'
   if (pathname.startsWith('/control-room')) return 'control-room'
   if (pathname.startsWith('/rules')) return 'rules'
   if (pathname.startsWith('/system')) return 'system'

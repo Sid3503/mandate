@@ -154,9 +154,11 @@ export class ShareService {
     if (!proposal || proposal.kind !== 'charge') throw gone()
     if (proposal.invoice_id) throw new Problem(409, 'pay.invoice_open', 'This bill is on its way by email', 'PayPal invoiced you for it, so pay that invoice. The studio can cancel the invoice to let you pay here instead.')
     if (proposal.pay_instrument === 'invoice') throw new Problem(409, 'pay.not_on_page', 'This bill is paid on its PayPal invoice', 'The studio sends this bill as a PayPal invoice. Pay it there; this page shows when it is paid.')
-    // A link settles only a card the payer handed over on this page: the card order must exist. Settling a bill with
-    // no order would have the server invoice it instead, and sending an invoice is the owner's act, never a link's.
-    if (stage === 'capture' && !(proposal.order_id && proposal.order_kind === 'card')) throw new Problem(409, 'pay.no_card', 'Open the card form first', 'Nothing has been paid by card on this page yet, so there is nothing to settle.')
+    // A link settles only what the payer handed over on this page: a card order, or a wallet order (PayPal, Venmo, Pay
+    // Later) opened from this page, must exist. Settling a bill with no order would have the server invoice it instead,
+    // and sending an invoice is the owner's act, never a link's.
+    const openedFor = this.mandate.openedFor(proposal)
+    if (stage === 'capture' && openedFor !== 'card' && openedFor !== 'wallet') throw new Problem(409, 'pay.no_card', 'Open the payment form first', 'Nothing has been paid on this page yet, so there is nothing to settle.')
     return { proposalId: charge.id }
   }
 

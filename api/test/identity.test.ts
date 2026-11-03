@@ -109,6 +109,10 @@ describe('sessions and sign-in history', () => {
     expect(rateClass('GET', '/auth/sessions')).toBe('auth')
     expect(rateClass('POST', '/auth/sessions/revoke')).toBe('auth')
     expect(rateClass('GET', '/auth/events')).toBe('auth')
+    // A signed-in owner approving several payments in a row must not be throttled like a password guesser.
+    expect(rateClass('POST', '/auth/stepup/options')).toBe('write')
+    expect(rateClass('POST', '/auth/stepup/verify')).toBe('write')
+    expect(rateClass('POST', '/auth/login/verify')).toBe('auth')
     const h = harness({ classedRates: true, rateLimitPerMinute: 100, flags: loadFlags({ FLAG_PASSKEYS: '1' }), webauthn: WA })
     let status = 0
     for (let i = 0; i < 6; i += 1) {
@@ -121,7 +125,13 @@ describe('sessions and sign-in history', () => {
 describe('recovery codes', () => {
   it('issues codes once, hides them in the database, and accepts them only after they are unused', async () => {
     const d = desk()
-    const issued = await d.h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST', headers: headers(d.ownerToken) })
+    // Issuing codes needs the same fresh passkey signature as replacing them.
+    const unsigned = await d.h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST', headers: headers(d.ownerToken) })
+    expect(unsigned.status).toBe(401)
+    expect((await unsigned.json() as { code: string }).code).toBe('auth/stepup-required')
+    const issueGrant = randomUUID()
+    d.control.putGrant({ id: issueGrant, memberId: d.ownerId, workspaceId: 'ws_default', kind: 'recovery', binding: stepBinding('recovery', 'regenerate'), now: NOW.toISOString() })
+    const issued = await d.h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST', headers: { ...headers(d.ownerToken), 'x-mandate-stepup': issueGrant } })
     expect(issued.status).toBe(200)
     const body = await issued.json() as { codes: string[]; saved: boolean }
     expect(body.codes).toHaveLength(8)
@@ -161,7 +171,9 @@ describe('recovery codes', () => {
     const d = desk()
     const missing = await d.h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST' })
     expect(missing.status).toBe(401)
-    const first = await d.h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST', headers: headers(d.ownerToken) })
+    const issueGrant = randomUUID()
+    d.control.putGrant({ id: issueGrant, memberId: d.ownerId, workspaceId: 'ws_default', kind: 'recovery', binding: stepBinding('recovery', 'regenerate'), now: NOW.toISOString() })
+    const first = await d.h.app.request('http://mandate.test/auth/recovery/issue', { method: 'POST', headers: { ...headers(d.ownerToken), 'x-mandate-stepup': issueGrant } })
     const oldCodes = (await first.json() as { codes: string[] }).codes
     const denied = await d.h.app.request('http://mandate.test/auth/recovery/regenerate', { method: 'POST', headers: headers(d.ownerToken) })
     expect(denied.status).toBe(401)
@@ -340,7 +352,7 @@ describe('invites', () => {
     expect(revoked.status).toBe(200)
     const again = await d.h.app.request('http://mandate.test/join', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Sam' }),
     })
     expect(again.status).toBe(400)
@@ -587,7 +599,7 @@ describe('members', () => {
 
     const joined = await d.h.app.request('http://mandate.test/join', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Taylor' }),
     })
     expect(joined.status).toBe(200)

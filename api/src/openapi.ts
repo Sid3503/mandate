@@ -144,6 +144,44 @@ const SessionSchema = z.object({
   demoReset: z.boolean(),
 }).openapi('Session')
 
+/** One leg of a journal entry. Positive is a debit, negative a credit; an entry's legs sum to zero. */
+const PostingSchema = z.object({ account: z.string(), amountCents: z.number().int() }).openapi('Posting')
+
+const BooksSchema = z.object({
+  balances: z.array(z.object({ account: z.string(), currency: z.string(), cents: z.number().int() })),
+  /** One row per currency the books have seen. Income is shown positive; everything else is its debit balance. */
+  totals: z.array(z.object({
+    currency: z.string(),
+    cashCents: z.number().int(),
+    inCents: z.number().int(),
+    outCents: z.number().int(),
+    feesCents: z.number().int(),
+    refundsCents: z.number().int(),
+    reversalsCents: z.number().int(),
+  })),
+  /** The hash chain, re-walked from the genesis hash on this read. */
+  chain: z.object({ entries: z.number().int(), head: z.string(), verified: z.boolean(), brokenAt: z.number().int().nullable() }),
+}).openapi('Books')
+
+const JournalEntrySchema = z.object({
+  id: z.string(),
+  seq: z.number().int(),
+  proposalId: z.string(),
+  purpose: z.string(),
+  currency: z.string(),
+  deltaCents: z.number().int(),
+  memo: z.string(),
+  prevHash: z.string(),
+  hash: z.string(),
+  createdAt: z.string(),
+  postings: z.array(PostingSchema),
+  kind: z.string().nullable(),
+  payeeId: z.string().nullable(),
+  description: z.string().nullable(),
+}).openapi('JournalEntry')
+
+const BooksJournalSchema = z.object({ data: z.array(JournalEntrySchema), nextCursor: z.string().nullable() }).openapi('BooksJournal')
+
 const problem = {
   description: 'Problem details (RFC 9457)',
   content: { 'application/problem+json': { schema: ProblemSchema } },
@@ -399,6 +437,7 @@ export function buildOpenApi(publicUrl: string) {
     responses: { 200: { description: 'OK' }, 401: problem, 403: problem, 409: problem, 502: problem, 503: problem },
   })
   ownerRoute('post', '/v1/proposals/{id}/cancel-payout', 'Cancel a payout PayPal is holding as UNCLAIMED. PayPal returns the money and the reservation is released.', true)
+  ownerRoute('get', '/v1/proposals/{id}/invoice-qr', 'PayPal\'s QR code for an invoice that has been sent. The image is Base64 PNG. Scanning it opens PayPal. Nothing is written and no money moves.', true)
   ownerRoute('post', '/v1/proposals/{id}/remind-invoice', 'Send the client a PayPal reminder for an invoice that is out and unpaid.', true)
   ownerRoute('post', '/v1/proposals/{id}/cancel-invoice', 'Cancel an invoice that is out and unpaid. The milestone can be billed again.', true)
   ownerRoute('post', '/v1/studio/turn', 'One turn of the dashboard agent in AG Studio: streams the model\'s words and tool calls as AG-UI events. The browser runs the dashboard\'s own tools; this route runs none and holds no ledger, service or PayPal client.')
@@ -628,11 +667,40 @@ export function buildOpenApi(publicUrl: string) {
     responses: { 200: { description: 'Run' }, 401: problem, 403: problem, 404: problem },
   })
   registry.registerPath({
+    method: 'get',
+    path: '/v1/procure',
+    tags: ['procure'],
+    security: bearer,
+    summary: 'Owner or proposer. Whether product search is on. Off, and saying why, when CHANNEL3_API_KEY is unset. A buyer key cannot call this.',
+    responses: { 200: { description: 'Status' }, 401: problem, 403: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/procure/search',
+    tags: ['procure'],
+    security: bearer,
+    summary: 'Owner or proposer. Search the product catalog. max is a budget in whole cents. Nothing is filed. A buyer key cannot call this.',
+    request: { query: z.object({ q: z.string(), max: z.coerce.number().int().nonnegative().optional(), limit: z.coerce.number().int().min(1).max(30).optional() }) },
+    responses: { 200: { description: 'Ranked products' }, 401: problem, 403: problem, 422: problem, 503: problem },
+  })
+  registry.registerPath({
+    method: 'post',
+    path: '/v1/procure/propose',
+    tags: ['procure'],
+    security: bearer,
+    summary: 'Owner or proposer. Ask to buy one catalog product. The amount is re-read from the catalog and any amountCents in the body is ignored. A buyer key cannot call this.',
+    request: {
+      headers: z.object({ 'Idempotency-Key': z.string().min(8) }),
+      body: { content: { 'application/json': { schema: z.object({ productId: z.string(), merchant: z.string().optional(), maxPriceCents: z.number().int().optional(), jobId: z.string().optional(), fundingCaptureId: z.string().optional(), prompt: z.string().optional(), amountCents: z.number().optional() }).openapi('PurchaseAsk') } } },
+    },
+    responses: { 201: { description: 'Request filed. The rules\' gate is on the proposal.' }, 401: problem, 403: problem, 409: problem, 422: problem, 503: problem },
+  })
+  registry.registerPath({
     method: 'post',
     path: '/mcp',
     tags: ['agents'],
     security: bearer,
-    summary: 'Model Context Protocol server (Streamable HTTP, stateless). A studio key gets get_rules, get_jobs, propose, list_ledger, explain and the negotiation tools (offer_deal, accept_offer, walk_away, get_negotiation); a client agent key gets get_rules, explain, get_deliveries, decide_delivery and the negotiation tools. No tool can approve, capture, send or change rules.',
+    summary: 'Model Context Protocol server (Streamable HTTP, stateless). A studio key gets get_rules, get_jobs, propose, propose_purchase, search_products, list_ledger, explain and the negotiation tools (offer_deal, accept_offer, walk_away, get_negotiation); a client agent key gets get_rules, explain, get_deliveries, decide_delivery and the negotiation tools. search_products is read-only. No tool can approve, capture, send or change rules.',
     responses: { 200: { description: 'JSON-RPC response' }, 401: problem },
   })
   registry.registerPath({
@@ -651,6 +719,23 @@ export function buildOpenApi(publicUrl: string) {
     security: bearer,
     request: { query: ListQuerySchema },
     responses: { 200: { description: 'Append-only events' }, 401: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/books',
+    tags: ['ledger'],
+    security: bearer,
+    summary: 'The double-entry books: every account\'s balance per currency, the headline totals (cash in PayPal, in, out, fees, refunds, reversals), and the journal\'s hash chain re-walked from genesis on this read.',
+    responses: { 200: { description: 'Books', content: { 'application/json': { schema: BooksSchema } } }, 401: problem },
+  })
+  registry.registerPath({
+    method: 'get',
+    path: '/v1/books/journal',
+    tags: ['ledger'],
+    security: bearer,
+    summary: 'Journal entries with their postings (debits positive), newest first. The cursor is the seq of the last entry on the previous page. With proposalId, that request\'s entries, oldest first.',
+    request: { query: ListQuerySchema.extend({ proposalId: z.string().max(128).optional() }) },
+    responses: { 200: { description: 'Journal page', content: { 'application/json': { schema: BooksJournalSchema } } }, 400: problem, 401: problem },
   })
 
   return new OpenApiGeneratorV31(registry.definitions).generateDocument({

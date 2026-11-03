@@ -224,7 +224,7 @@ Also built: the deal check, Ed25519 signed locks and deals, the MCP agent door, 
    web/  React + Vite         or any outside MCP client                  any HTTP client
    served at /app/                  │ proposer key, MCP                        │
         │                           ▼                                          │
-        │                   /mcp  (11 tools, none can pay)                     │
+        │                   /mcp  (13 tools, none can pay)                     │
         ▼                           │                                          ▼
    api/  Hono on Node 24  ── owner, studio or client-agent bearer key ─────────┘
      │  auth → rate limit → routes → MandateService / DealService / AgentService
@@ -536,7 +536,7 @@ Meaning: *Priya is paid, with no tap, from settled Northwind payments that came 
 - **The server sends it.** A matching payout is sent as soon as it is asked (`POST /v1/proposals`, and the MCP `propose` tool). If PayPal cannot be reached, or a dispute check cannot be answered, it stays locked with a `standing.waiting` event and a once-a-minute sweep sends it when it can. If the lock, the funding or the state is wrong it is refused for good (`capture.refused`), so a broken payout never holds the money or clogs the sweep.
 - **The automation is visible.** Today's *In flight* list says when the server last asked PayPal and how much it looked at (`watcher` in `GET /v1/today`), and a settlement that the server's own check found carries `by: "server"` on its event, so *Done for you* says "found by Mandate's own check, with nobody pressing anything". Pressing **Check PayPal** is the same read, just sooner: if you press it before the minute is up, you did the server's job for it.
 - **It finishes by itself.** Once a minute the server also re-reads PayPal for payouts still processing and invoices still out (the read the **Check PayPal** button does), so a payout or an invoice settles without anyone pressing anything and without needing a webhook. PayPal's word is still the only thing that marks it paid.
-- **What an agent sees:** the same MCP tools (eleven for the studio's agents, nine for a client's agent, plus the two delivery tools only a client key is offered). `propose` now answers `AUTO` / `standing.matched`, and `moneyMoved` shows only what PayPal has confirmed.
+- **What an agent sees:** the same MCP tools (thirteen for the studio's agents, nine for a client's agent, plus the two delivery tools only a client key is offered). `propose` now answers `AUTO` / `standing.matched`, and `moneyMoved` shows only what PayPal has confirmed.
 - **Bounds that stay:** an attack that asks for one dollar over the share, a different payee, no proof, a foreign currency, no client payment, a different job or lunch is refused exactly as without the rule. See the [red team](#testing-and-quality).
 
 ### Autopilot: the whole job, under rules you signed
@@ -609,7 +609,7 @@ deal (signed) → delivery (proof link) → client's agent accepts (signed) → 
 | `history.complete` | Every request has its "asked" event and every settlement has the event that recorded PayPal confirming it. |
 | `deals.signed` | Every agreed deal's signature verifies, and every charge on a deal is for exactly its milestone, to the client who agreed. |
 | `billing.accepted` | When the rules asked for the client's acceptance, every invoice sent without a tap has a signed acceptance of exactly that proof and milestone, and no signed decision was altered. |
-| `agents.no_reach` | None of PayPal's 47 agent tools can be called by an AI to move money (the server uses 9). |
+| `agents.no_reach` | None of PayPal's 47 agent tools can be called by an AI to move money (the server uses 10). |
 | `paypal.agrees` (optional) | Every settled payment appears in PayPal's transaction report. Payments newer than a day are noted, not failed, because the report refreshes every few hours. |
 
 The tests change the database by hand (an amount, a settled amount, a deleted approval, a removed signature, an over-share payout, a lowered cap, a deleted settle event, an edited deal) and check that the right check turns red.
@@ -796,13 +796,20 @@ The proposals table only holds what was filed, so a request the door turned away
 | `explain` | yes | `read` (requests) or `deals` (deals) | yes (its own deals only) | reads |
 | `verify_mandate` | yes | `read` | yes | reads (a token the caller already holds) |
 | `get_metrics` | yes | `read` | no | reads |
+| `get_negotiation` | yes | `deals` | yes | reads |
+| `accept_offer` | yes | `deals` | yes | **asks** |
+| `walk_away` | yes | `deals` | yes | **asks** |
+| `search_products` | yes | `read` | no | reads (Channel3; off, and says so, when no key is set) |
+| `propose_purchase` | yes | `propose` | no | **asks** (the catalog price, re-read by the server; the caller cannot set the amount) |
+| `get_deliveries` | no | `deals` | yes | reads |
+| `decide_delivery` | no | `deals` | yes | **asks** (accept or reject one delivery) |
 
 **There is no approve, capture, send, refund or publish-rules tool.** The owner key is accepted at `/mcp` but downgraded to a proposer, so the agent door never carries owner authority. Design choices worth knowing:
 
 - Every answer has the rule code, the rules' sentence in plain words, the server's own words, the phase, the next step and `moneyMoved: "$0.00"`.
 - Tool errors come back as `isError` results the model can read and fix, not as protocol failures. Small models fill optional fields with placeholders (`""`, `0`, an invented id); the `propose` boundary treats those as absent, and never changes who, how much or what for.
 - A connection has a budget of requests that ask (12, keyed by the `x-mandate-run` header). A request that fails validation does not spend it. When the budget runs out the tool answers `budget.exceeded`, and the owner sees that on **Connect an agent → What your agents are asking** (see *Refusals* below).
-- **A read-only door.** `POST /mcp/readonly` offers only `get_rules`, `get_jobs`, `list_ledger` and `explain`, even to a key that may also ask. A client that wants to try an agent safely points here: `propose` is not offered, so it cannot be called.
+- **A read-only door.** `POST /mcp/readonly` offers only `get_rules`, `get_jobs`, `list_ledger`, `explain` and `search_products`, even to a key that may also ask. A client that wants to try an agent safely points here: `propose` and `propose_purchase` are not offered, so they cannot be called.
 - **Discovery.** A missing or wrong key on `/mcp` answers `401` with `WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource/mcp"` (RFC 9728). That document names the resource, that a key goes in the `Authorization` header, the scopes (`mcp:look`, `mcp:ask`) and, on the main address, this server as its own authorization server.
 - **Check a connection from the console.** `POST /v1/agents/test-connection` (owner) walks `initialize`, `tools/list` and `get_rules` with a pasted key, and answers what it can reach and whether any listed tool could move money. The key is not echoed.
 - **An issued agent key** (System → Connect an agent, or `POST /v1/agents`) opens the door with the `mcp` scope, and `read`, `propose` and `deals` decide which tools are behind it. A tool the scopes do not allow is switched off before the connection opens: it is not listed and cannot be called. A key with the door and nothing behind it is refused when it is made (`agent.scopes`), so it can never connect to an empty room. The key's hourly request count and value limits apply to what it asks through `/mcp`, and the breaker counts refusals per agent: a key that keeps asking for what the rules never allow is suspended on its own (the next call gets `403 agent.suspended`), the others carry on, and the owner resumes it on System.
@@ -912,7 +919,7 @@ The base URL is `http://127.0.0.1:8787` locally. Everything under `/v1` needs a 
 | `POST /v1/deals/:id/milestones/:n/bill` | studio, owner | Propose a charge for one milestone, at exactly its agreed amount |
 | `GET /v1/party-rules` | owner | Both companies' private deal rules |
 | `PUT /v1/party-rules/:partyId` | owner **or** the company's own key | Writes that company's own sheet only (`mine` resolves to the caller); another party's sheet is refused; sample sheets count only once kept |
-| `POST /mcp`, `POST /mcp/readonly` | any key | The agent door (Model Context Protocol), and the same door with only the four tools that look |
+| `POST /mcp`, `POST /mcp/readonly` | any key | The agent door (Model Context Protocol), and the same door with only the five tools that look |
 | `GET /.well-known/oauth-authorization-server`, `GET /.well-known/oauth-protected-resource[/mcp[/readonly]]` | none | OAuth discovery (RFC 8414, RFC 9728). Open to any origin, because a browser client reads them |
 | `POST /oauth/register` | none | Dynamic client registration (RFC 7591). Public clients only; a redirect must be https, loopback, or an app's own scheme |
 | `GET /oauth/authorize` | none | Checks the request, then sends the browser to the console to ask the owner. Decides nothing itself |
@@ -1305,7 +1312,7 @@ Hard rule: every sponsor tool is **read-only or propose-only**. Only the Mandate
 | **Postman** | Assertion-checked collection walking the frozen job | calls the API | **built** (public workspace next) |
 | **APIMatic** | PayPal Context Plugin while building; an SDK from our OpenAPI | build time | planned |
 
-Not used, and why: **Bryntum** and **Elastic** need trial keys that would expire before judging. **Channel3** (retail buying) is not in the core story. **Astropods** overlaps with Render. **KERNEL** and **Zapier** were cut to protect scope.
+Not used, and why: **Bryntum** and **Elastic** need trial keys that would expire before judging. **Astropods** overlaps with Render. **KERNEL** and **Zapier** were cut to protect scope. **Channel3** product search is built: the clerk and the agent door can look up a product and ask to buy it, the price is re-read from the catalog, and the same rules gate decides. It stays off until `CHANNEL3_API_KEY` is set. A live search with a real key has not been run.
 
 ---
 
@@ -1316,7 +1323,7 @@ Not used, and why: **Bryntum** and **Elastic** need trial keys that would expire
 3. ✅ **Payouts** (Payouts v1, with unpaid and failed states and a webhook that re-reads PayPal).
 4. ✅ **Deal check** between two companies' rules, with private limits.
 5. ✅ **Signed locks and deals** (Ed25519, verifiable from a public key endpoint, rotation-safe).
-6. ✅ **MCP agent door** (`/mcp` and stdio), eleven tools, none can pay.
+6. ✅ **MCP agent door** (`/mcp` and stdio), thirteen tools, none can pay.
 7. ✅ **AI agents**: the clerk and the two negotiators on `gpt-oss:20b` and `gemma4:31b` on Ollama Cloud, evaluated against the real model against the real model.
 8. ✅ **PayPal invoices** through the Agent Toolkit, behind the gate, with a checkout fallback. Live in the sandbox: created, sent, paid and settled.
 9. ✅ **AG Grid ledger, job view, guided tour.** ⬜ The read-only agent query over the grid.

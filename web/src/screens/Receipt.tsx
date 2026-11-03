@@ -2,15 +2,16 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
 import { BalanceNote } from '../components/PayPalFeatures'
-import { PayCardFields } from '../components/PayCardFields'
+import { PaySheet } from '../components/PaySheet'
 import { Signature } from '../components/Signature'
 import { useToast } from '../components/Toast'
 import { Chip, GateChip, Hash, KV, Loading, Money, NoMoneyMoved, PageHead, PhaseChip, ProblemCard } from '../components/ui'
 import { api, ApiError } from '../lib/api'
+import { purposeWords } from '../lib/books'
 import { when } from '../lib/format'
 import { useIsOwner, useNames, useOnline, useRefreshMoney, useVersions } from '../lib/hooks'
 import { centsInput, dollars, parseCents } from '../lib/money'
-import type { LedgerEvent, Packet, Warrant } from '../lib/types'
+import type { JournalEntry, LedgerEvent, Packet, Warrant } from '../lib/types'
 import { AGENT_LABEL, EVENT, explain, fundedPhase, fullPhase, isPayout, KIND, namedAdjustment, paidPhase, settlementLine, type Names } from '../lib/words'
 
 export function Receipt() {
@@ -160,6 +161,42 @@ export function Receipt() {
           </section>
         </div>
       </div>
+      <InTheBooks proposalId={p.id} updatedAt={p.updatedAt} />
+    </div>
+  )
+}
+
+/** This request's journal lines. Compact, and last, so the pay and settle controls stay where they are. */
+function InTheBooks({ proposalId, updatedAt }: { proposalId: string; updatedAt: string }) {
+  const owner = useIsOwner()
+  // Keyed on when the request last changed, so a payment that settles while this page is open is read again. Without it
+  // the panel kept the empty answer it got before settlement and told the owner a settled payment was not in the books.
+  const journal = useQuery({ queryKey: ['books-journal', proposalId, updatedAt], queryFn: () => api.journalFor(proposalId), enabled: owner })
+  if (!owner) return null
+  if (journal.isLoading) return <section className="panel books-slip"><h2 className="panel-title">In the books</h2><p className="fine">Reading the journal…</p></section>
+  if (journal.error instanceof ApiError && (journal.error.status === 403 || journal.error.status === 401)) return null
+  if (journal.error || !journal.data) return <section className="panel books-slip"><h2 className="panel-title">In the books</h2><p className="fine">The journal for this request could not be read.</p></section>
+  const entries = journal.data.data
+  return (
+    <section className="panel books-slip" data-testid="in-the-books">
+      <div className="row between"><h2 className="panel-title">In the books</h2><Link className="btn btn-ghost btn-sm" to="/books">Open the books</Link></div>
+      {entries.length === 0 ? <p className="fine">Not in the books yet. A refused request does not post.</p> : (
+        <div>
+          {entries.map((entry) => <BookLine key={entry.id} entry={entry} />)}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function BookLine({ entry }: { entry: JournalEntry }) {
+  return (
+    <div className="books-slip-row">
+      <div className="row between">
+        <strong>#{entry.seq} · {purposeWords(entry.purpose)}</strong>
+        <span>{dollars(entry.deltaCents, entry.currency)}</span>
+      </div>
+      <p className="fine mono">{entry.hash.slice(0, 8)} · {entry.postings.map((leg) => `${leg.amountCents > 0 ? 'Dr' : 'Cr'} ${leg.account} ${dollars(Math.abs(leg.amountCents), entry.currency)}`).join(' · ')}</p>
     </div>
   )
 }
@@ -235,7 +272,6 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
   const refresh = useRefreshMoney()
   const [claim, setClaim] = useState('')
   const [checkedAt, setCheckedAt] = useState<Date | null>(null)
-  const [payingHere, setPayingHere] = useState(false)
   const toast = useToast()
   const settle = useMutation({ mutationFn: () => api.capture(p.id), onSuccess: (done) => { if (done.phase === 'captured') toast({ title: `Settled ${dollars(done.amountCents)}`, body: 'PayPal confirmed it. The cents match the lock.' }); else if (done.phase === 'settled_short') toast({ title: `Settled short ${dollars(done.settledCents ?? 0)} of ${dollars(done.amountCents)}`, body: namedAdjustment(done.deltaReason) ? 'PayPal confirmed what arrived and named the difference in its own fields.' : 'PayPal confirmed what arrived and reported only part of the invoice as paid.', tone: 'info' }); else if (done.phase === 'invoice_sent') toast({ title: 'Invoice sent', body: 'It settles when the client pays it.', tone: 'info' }) }, onSettled: () => { setCheckedAt(new Date()); void refresh() } })
   const tamper = useMutation({
@@ -264,6 +300,12 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
     if (claimCents !== null) tamper.mutate(claimCents)
   }
   const refusal = tamper.error instanceof ApiError ? tamper.error : null
+  // The pay sheet is for a bill the owner chose to have paid on our own page (a card or a wallet). A locked charge with
+  // no instrument is still settled by the button below, which sends the invoice when invoicing is on. And a checkout
+  // order that is already open and waiting for the buyer on PayPal's own page keeps its link: mounting the sheet there
+  // would open a card order, which replaces that order, and the link (and the buyer's approval of it) would be for an
+  // order the server no longer reads.
+  const showPaySheet = p.kind === 'charge' && (p.phase === 'locked' || p.phase === 'order_created') && p.payInstrument === 'checkout'
 
   return (
     <section className="panel panel-lime" data-tour="receipt-action">
@@ -274,20 +316,19 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
         {p.kind === 'charge' ? <> from {names(p.payeeId)}</> : <> back to {names(p.payeeId)}</>}.
         The server reads the live PayPal order first and refuses if the amount, currency or reference differ from the lock.
       </p>
-      {p.kind === 'charge' && p.payInstrument === 'checkout' ? (
-        <div className="buyer" data-testid="pay-here-owner">
-          <p><strong>Or pay it with a card on this page.</strong> The amount is the locked one. The card goes straight to PayPal and never reaches this server.</p>
-          {payingHere ? (
-            <PayCardFields proposalId={p.id} amountCents={p.amountCents} currency={p.currency} description={p.description} onPaid={() => { setPayingHere(false); void refresh() }} />
-          ) : (
-            <button type="button" className="btn btn-lime" data-testid="pay-here-owner-button" onClick={() => setPayingHere(true)}>Pay with a card here</button>
-          )}
-        </div>
+      {showPaySheet ? (
+        <PaySheet proposalId={p.id} amountCents={p.amountCents} currency={p.currency} description={p.description} approveUrl={approveUrl} onPaid={() => void refresh()} />
       ) : null}
       {returned === 'cancel' && p.phase === 'order_created' ? (
         <div className="still-waiting" role="status"><Chip tone="need">Not approved</Chip><span>You left PayPal without approving, so <strong>nothing was captured and $0 moved</strong>. Open PayPal again when you are ready.</span></div>
       ) : null}
-      {pending || (p.phase === 'order_created' && approveUrl) ? (
+      {pending && !settle.isPending ? (
+        <div className="still-waiting" role="status">
+          <Chip tone="need">Still waiting</Chip>
+          <span>Checked PayPal{checkedAt ? ` at ${checkedAt.toLocaleTimeString('en-US')}` : ''}. The buyer has not approved the order yet, so <strong>nothing was captured and $0 moved</strong>. Approve it on PayPal, then check again.</span>
+        </div>
+      ) : null}
+      {!showPaySheet && (pending || (p.phase === 'order_created' && approveUrl)) ? (
         <div className="buyer" aria-live="polite">
           <p><strong>Step 1 of 2 · the PayPal buyer approves.</strong> {p.kind === 'charge' ? `${names(p.payeeId)}’s account` : 'The buyer'} has to approve this {dollars(p.amountCents)} order on PayPal. Mandate cannot do it for them.</p>
           <ol className="how">
@@ -296,12 +337,6 @@ function Settle({ packet, warrant, names }: { packet: Packet; warrant: Warrant |
             <li>Come back here and press <em>Check PayPal and settle</em>.</li>
           </ol>
           {approveUrl ? <a className="btn btn-ink" href={approveUrl} target="_blank" rel="noreferrer noopener">Open PayPal ↗</a> : null}
-          {pending && !settle.isPending ? (
-            <div className="still-waiting" role="status">
-              <Chip tone="need">Still waiting</Chip>
-              <span>Checked PayPal{checkedAt ? ` at ${checkedAt.toLocaleTimeString('en-US')}` : ''}. The buyer has not approved the order yet, so <strong>nothing was captured and $0 moved</strong>. Approve it on PayPal, then check again.</span>
-            </div>
-          ) : null}
         </div>
       ) : null}
       <div className="row gap-s wrap">
@@ -491,6 +526,8 @@ function InvoicePanel({ packet, names }: { packet: Packet; names: Names }) {
   const voidIt = useMutation({ mutationFn: () => api.cancelInvoice(p.id), onSuccess: () => toast({ title: 'Invoice cancelled', body: 'It can no longer be paid. The milestone can be billed again.', tone: 'info' }), onSettled: () => void refresh() })
   const url = packet.invoice?.url ?? p.invoiceUrl
   const partPaid = p.phase === 'settled_short'
+  const payable = p.phase === 'invoice_sent' || partPaid
+  const qr = useQuery({ queryKey: ['invoice-qr', p.id], queryFn: () => api.invoiceQr(p.id), enabled: owner && payable, staleTime: 10 * 60_000, retry: false })
   const arrived = p.settledCents ?? 0
   return (
     <section className="panel panel-lime" data-tour="receipt-action" aria-live="polite">
@@ -509,6 +546,15 @@ function InvoicePanel({ packet, names }: { packet: Packet; names: Names }) {
           <p>It is settled only when PayPal says the client paid exactly that amount. Nothing on this page can mark it paid.</p>
         </>
       )}
+      {qr.data ? (
+        <figure className="invoice-qr-wrap">
+          <img className="invoice-qr" alt="QR code. Scanning it opens this invoice on PayPal." src={`data:image/png;base64,${qr.data.image}`} width={148} height={148} />
+          <figcaption>
+            <strong>Scan to pay on PayPal.</strong>
+            <span className="fine">The code is PayPal's. Scanning it opens their page. This screen cannot mark the invoice paid.</span>
+          </figcaption>
+        </figure>
+      ) : null}
       <div className="row gap-s wrap">
         {url ? <a className="btn btn-ink" href={url} target="_blank" rel="noreferrer noopener">Open the invoice ↗</a> : null}
         <button type="button" className="btn btn-ghost" disabled={!owner || !online || check.isPending} onClick={() => check.mutate()}>{check.isPending ? 'Asking PayPal…' : 'Check PayPal'}</button>
@@ -518,7 +564,7 @@ function InvoicePanel({ packet, names }: { packet: Packet; names: Names }) {
       {checkedAt && check.isSuccess && !check.isPending && !fullPhase(p.phase) ? (
         <div className="still-waiting" role="status"><Chip tone="need">{partPaid ? 'Settled short' : 'Still waiting'}</Chip><span>Checked PayPal at {checkedAt.toLocaleTimeString('en-US')}. {partPaid ? <>PayPal still reports {dollars(arrived, p.currency)} of {dollars(p.amountCents, p.currency)}, so nothing more has arrived.</> : <>The invoice has not been paid in full, so <strong>nothing is settled and $0 moved</strong>.</>}</span></div>
       ) : null}
-      <ProblemCard error={check.error ?? remind.error ?? voidIt.error} />
+      <ProblemCard error={check.error ?? remind.error ?? voidIt.error ?? qr.error} />
     </section>
   )
 }

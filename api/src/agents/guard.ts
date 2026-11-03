@@ -28,7 +28,7 @@ export function describe(outcome: Outcome): string | null {
     const error = d.error as { code?: string; message?: string } | undefined
     return error ? `That did not go through (${error.code}): ${error.message}` : null
   }
-  if (outcome.tool === 'propose') {
+  if (outcome.tool === 'propose' || outcome.tool === 'propose_purchase') {
     const options = Array.isArray(d.whatWouldPass) && d.whatWouldPass.length > 0 ? ` What would pass: ${(d.whatWouldPass as string[]).join(' ')}` : ''
     return `${d.amount} request: ${String(d.decision).replace('_', ' ').toLowerCase()} (${d.ruleCode}). ${d.inPlainWords} ${d.nextStep}${options}`
   }

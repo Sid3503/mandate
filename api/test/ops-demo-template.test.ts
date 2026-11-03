@@ -115,7 +115,7 @@ describe('Demo reset endpoint /v1/demo/reset (P2.T7)', () => {
     // Insert dummy proposal
     db.prepare(`
       INSERT INTO proposals (id, warrant_id, warrant_version, kind, amount_cents, currency, description, gate, clause, detail, phase, created_at, updated_at)
-      VALUES ('p_reset_test', 'wnt_line_studio', 1, 'payment', 1500, 'USD', 'Reset target', 'allow', 'c', 'd', 'approved', 'now', 'now')
+      VALUES ('p_reset_test', 'wnt_line_studio', 1, 'payment', 1500, 'USD', 'Reset target', 'AUTO', 'c', 'd', 'locked', 'now', 'now')
     `).run()
 
     expect(db.prepare('SELECT COUNT(*) AS c FROM proposals').get()).toEqual({ c: 1 })

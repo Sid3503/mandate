@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
+import { paypalRequestId } from '../src/domain/hash'
+import { createPayPalClient } from '../src/paypal/client'
 import { FakeInvoices } from '../src/paypal/fake'
-import { call, closeAll, EVIDENCE, harness, JOB, idem, OWNER_KEY, STUDIO_KEY } from './support'
+import { call, closeAll, EVIDENCE, harness, JOB, idem, OWNER_KEY, STUDIO_KEY, allowRawWrites } from './support'
 
 afterEach(closeAll)
 
@@ -306,7 +308,7 @@ describe('one bill, one instrument', () => {
     await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId } })
     await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId } })
     // As if it had been paid through a checkout order an older build opened.
-    db.prepare("UPDATE proposals SET order_kind = 'checkout' WHERE id = ?").run(proposalId)
+    allowRawWrites(db); db.prepare("UPDATE proposals SET order_kind = 'checkout' WHERE id = ?").run(proposalId)
     const again = await services.mandate.paySession(proposalId).catch((error: { status?: number }) => error)
     expect((again as { status?: number }).status).toBe(409)
     expect(services.repo.eventsFor(proposalId).some((event) => event.type === 'order.replaced')).toBe(false)
@@ -348,5 +350,133 @@ describe('a card is captured only if its bank confirmed the cardholder where tha
     const after = (await call(app, 'GET', `/v1/proposals/${proposalId}/packet`)).json
     const done = after.events.find((event: { type: string }) => event.type === 'capture.completed')
     expect(done.payload.card).toEqual({ brand: 'MASTERCARD', lastDigits: '4444', liabilityShift: 'POSSIBLE' })
+  })
+})
+
+describe('paying with a wallet on our own page (PayPal, Venmo, Pay Later)', () => {
+  it('opens a wallet order with no payment source, no return URL, and a request id of its own', async () => {
+    const ids: string[] = []
+    const bodies: Array<Record<string, unknown>> = []
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input)
+      if (url.endsWith('/v1/oauth2/token')) return new Response(JSON.stringify({ access_token: 'tok', expires_in: 300 }), { status: 200 })
+      if (!url.endsWith('/v2/checkout/orders')) return new Response('{}', { status: 404 })
+      ids.push(new Headers(init?.headers).get('paypal-request-id') ?? '')
+      bodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
+      return new Response(JSON.stringify({ id: `ORDER-${ids.length}`, status: 'CREATED', links: [] }), { status: 201 })
+    }
+    const client = createPayPalClient({ clientId: 'id', clientSecret: 'secret', baseUrl: 'https://api-m.sandbox.paypal.com', fetch: fetchImpl })
+    const proposalId = '11111111-1111-4111-8111-111111111111'
+    const input = { proposalId, amountCents: 15_000, currency: 'USD', description: 'Northwind logo', payeeEmail: null, returnUrl: 'https://example.test/back', cancelUrl: 'https://example.test/cancel' }
+    await client.createOrder({ ...input, kind: 'wallet' })
+    await client.createOrder({ ...input, kind: 'card' })
+    await client.createOrder({ ...input, kind: 'checkout' })
+    expect(ids[0]).toBe(paypalRequestId(`${proposalId}:create:wallet`))
+    expect(ids[1]).toBe(paypalRequestId(`${proposalId}:create:card`))
+    expect(ids[2]).toBe(paypalRequestId(`${proposalId}:create`))
+    expect(new Set(ids).size).toBe(3)
+    // A wallet order carries neither a payment source nor a way back, even if a return URL was passed in.
+    expect(bodies[0]?.payment_source).toBeUndefined()
+    expect((bodies[1]?.payment_source as { card?: unknown } | undefined)?.card).toBeTruthy()
+    expect((bodies[2]?.payment_source as { paypal?: { experience_context?: { return_url?: string } } } | undefined)?.paypal?.experience_context?.return_url).toBe('https://example.test/back')
+  })
+
+  it('opens one wallet order for PayPal, Venmo and Pay Later, and replaces it when the payer switches to a card and back', async () => {
+    const { app, paypal, services } = harness()
+    paypal!.autoApprove = false
+    const proposalId = await payableCharge(app)
+    const token = await payLink(app)
+
+    const paypalSession = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId, instrument: 'paypal' } })
+    expect(paypalSession.status).toBe(200)
+    expect(paypalSession.json).toMatchObject({ proposalId, instrument: 'paypal', amountCents: 15_000, currency: 'USD' })
+    expect(paypalSession.json.orderId).toMatch(/-WALLET$/)
+    expect(paypal!.lastReturnUrl).toBeNull()
+    expect(paypal!.orders.get(paypalSession.json.orderId)).toMatchObject({ kind: 'wallet', cardFlow: true, customId: proposalId, amountCents: 15_000 })
+    // No payer-action link was stored: the buyer never leaves the page.
+    expect((await call(app, 'GET', `/v1/proposals/${proposalId}`)).json).toMatchObject({ orderKind: 'checkout', approveUrl: null })
+    const opened = services.repo.eventsFor(proposalId).filter((event) => event.type === 'order.created')
+    expect(opened).toHaveLength(1)
+    expect(JSON.parse(opened[0]!.payload_json)).toMatchObject({ openedFor: 'wallet', method: 'paypal', orderId: paypalSession.json.orderId })
+
+    // The same order serves every wallet. Nothing was replaced.
+    const venmo = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId, instrument: 'venmo' } })
+    expect(venmo.json).toMatchObject({ orderId: paypalSession.json.orderId, instrument: 'venmo' })
+    const payLater = await call(app, 'POST', `/v1/pay/session`, { body: { proposalId, instrument: 'paylater' } })
+    expect(payLater.json).toMatchObject({ orderId: paypalSession.json.orderId, instrument: 'paylater' })
+    expect(services.repo.eventsFor(proposalId).some((event) => event.type === 'order.replaced')).toBe(false)
+
+    // A card cannot be taken on a wallet order, so the order is replaced.
+    const card = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId, instrument: 'card' } })
+    expect(card.json.orderId).toMatch(/-CARD$/)
+    expect(card.json.orderId).not.toBe(paypalSession.json.orderId)
+    expect(card.json.instrument).toBe('card')
+    const replaced = services.repo.eventsFor(proposalId).filter((event) => event.type === 'order.replaced')
+    expect(replaced).toHaveLength(1)
+    expect(JSON.parse(replaced[0]!.payload_json)).toMatchObject({ orderId: paypalSession.json.orderId, why: 'opened as a wallet', for: 'card' })
+    // The wallet order was never captured, so no money moved.
+    expect(paypal!.orders.get(paypalSession.json.orderId)!.status).toBe('CREATED')
+
+    // Switching back replaces the card order with the wallet order again.
+    const again = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId, instrument: 'paypal' } })
+    expect(again.json.orderId).toBe(paypalSession.json.orderId)
+    expect(services.repo.eventsFor(proposalId).filter((event) => event.type === 'order.replaced')).toHaveLength(2)
+  })
+
+  it('captures an approved wallet order through the lock, and still refuses a different amount', async () => {
+    const { app, paypal, services } = harness()
+    paypal!.autoApprove = false
+    const proposalId = await payableCharge(app)
+    const token = await payLink(app)
+    const session = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId, instrument: 'venmo' } })
+    // Not approved yet: the same refusal as every other order, and nothing is captured.
+    const waiting = await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId } })
+    expect(waiting.status).toBe(409)
+    expect(waiting.json.code).toBe('paypal.buyer_pending')
+    expect(paypal!.captureCalls).toBe(0)
+
+    // A wallet is not a card. A bank-check refusal left on the order must not block it: that check is only for a card.
+    paypal!.approve(session.json.orderId)
+    paypal!.cards.set(session.json.orderId, { brand: 'VISA', lastDigits: '0004', authentication: { liabilityShift: 'NO', enrollment: 'Y', status: 'N' } })
+    const paid = await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId } })
+    expect(paid.status).toBe(200)
+    expect(paid.json).toMatchObject({ phase: 'captured', capturedAmountCents: 15_000 })
+    expect(paypal!.captureCalls).toBe(1)
+    expect(services.repo.eventsFor(proposalId).some((event) => event.type === 'card.not_verified')).toBe(false)
+
+    // A second bill, approved in PayPal, whose amount no longer matches the lock.
+    const other = await payableCharge(app)
+    const mismatched = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId: other, instrument: 'paylater' } })
+    paypal!.mutateAmount(mismatched.json.orderId, 1_500)
+    paypal!.approve(mismatched.json.orderId)
+    const refused = await call(app, 'POST', `/v1/share/${token}/pay/capture`, { body: { proposalId: other } })
+    expect(refused.status).toBe(409)
+    expect(refused.json.code).toBe('cart.immutable')
+    expect(paypal!.captureCalls).toBe(1)
+  })
+
+  it('refuses a way to pay it does not know', async () => {
+    const { app } = harness()
+    const proposalId = await payableCharge(app)
+    const token = await payLink(app)
+    const refused = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId, instrument: 'cash' } })
+    expect(refused.status).toBe(400)
+    expect(refused.json.code).toBe('request.invalid')
+  })
+
+  it('leaves a checkout order alone until the payer asks for a wallet, then replaces it', async () => {
+    const { app, paypal, services } = harness()
+    paypal!.autoApprove = false
+    const asked = await call(app, 'POST', '/v1/proposals', { key: STUDIO_KEY, idem: idem('redirect'), body: chargeBody() })
+    await call(app, 'POST', `/v1/proposals/${asked.json.id}/approve`)
+    await call(app, 'POST', `/v1/proposals/${asked.json.id}/capture`)
+    const before = (await call(app, 'GET', `/v1/proposals/${asked.json.id}`)).json
+    expect(before.orderKind).toBe('checkout')
+    const token = await payLink(app)
+    const session = await call(app, 'POST', `/v1/share/${token}/pay/session`, { body: { proposalId: asked.json.id, instrument: 'paypal' } })
+    expect(session.json.orderId).toMatch(/-WALLET$/)
+    expect(session.json.orderId).not.toBe(before.orderId)
+    expect(services.repo.eventsFor(asked.json.id).some((event) => event.type === 'order.replaced')).toBe(true)
+    expect(paypal!.lastReturnUrl).toBeNull()
   })
 })

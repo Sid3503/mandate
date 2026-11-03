@@ -70,7 +70,15 @@ export class RateLimiter {
 }
 
 export function rateClass(method: string, path: string): RateClass {
+  // A step-up is asked for by a session that is already signed in, and each one is bound to a passkey signature over a
+  // server nonce: there is nothing to guess. Counting it with sign-ins (5 a minute per address) throttled an owner
+  // approving a few payments in a row, so it is counted per session like any other write.
+  if (path === '/auth/stepup/options' || path === '/auth/stepup/verify') return 'write'
+  // The console reads who is signed in on every screen. A read, not a sign-in attempt.
+  if (method === 'GET' && path === '/auth/me') return 'read'
   if (path.startsWith('/auth/')) return 'auth'
+  // Opening a studio needs no key and writes to disk: it is counted like a sign-in, per address.
+  if (method === 'POST' && path === '/workspaces') return 'auth'
   if (path === '/v1/session') return 'key-unlock'
   if (path === '/v1/ask' || path.startsWith('/v1/clerk')) return 'ask'
   if (/^\/v1\/share\/[^/]+\/pay\//.test(path) || path.startsWith('/v1/pay/')) return 'pay'

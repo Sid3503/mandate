@@ -421,7 +421,7 @@ describe('money in releases money out', () => {
     expect(job.charges[0].fundableCents).toBe(9000)
   })
 
-  it('refuses a payout whose amount PayPal reports differently from the lock', async () => {
+  it('holds, never calls refused, a payout PayPal already has at a different amount than the lock', async () => {
     const paypal = new FakePayPal()
     paypal.payoutOutcome = 'PENDING'
     const { app } = harness({ paypal })
@@ -435,8 +435,13 @@ describe('money in releases money out', () => {
     const body = await refused.json()
     expect(body).toMatchObject({ code: 'cart.immutable', lockedAmountCents: 9000, liveAmountCents: 25000 })
     const saved = await (await app.request(`http://mandate.test/v1/proposals/${payout.id}`, { headers: auth() })).json()
-    expect(saved.phase).toBe('capture_refused')
+    // PayPal already holds the batch, so money may have left. It is held for a person with its PayPal id, and it still
+    // counts against the client payment: releasing it would let the same money be promised to someone else.
+    expect(saved.phase).toBe('mismatch_hold')
+    expect(saved.payoutBatchId).toBe(sent.payoutBatchId)
     expect(saved.capturedAmountCents).toBeNull()
+    const again = await app.request(`http://mandate.test/v1/proposals/${payout.id}/capture`, { method: 'POST', headers: auth() })
+    expect(again.status).toBe(409)
   })
 
   it('pays through Payouts even when an older build already opened an Orders checkout for the row', async () => {

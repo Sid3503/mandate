@@ -150,7 +150,11 @@ async function main() {
   const keys = await request(scope('/auth/credentials'), { headers: asWeb() })
   check(keys.status === 200 && (keys.json?.credentials ?? []).length === 2, 'the account holds two passkeys', `the account holds ${(keys.json?.credentials ?? []).length} passkeys`)
 
-  const codes = await request(scope('/auth/recovery/issue'), { method: 'POST', headers: fromConsole() })
+  // Recovery codes are a way in without the passkey, so issuing them takes a fresh passkey signature first.
+  const codeStep = await request(scope('/auth/stepup/options'), { method: 'POST', headers: fromConsole({ 'content-type': 'application/json' }), body: JSON.stringify({ kind: 'recovery' }) })
+  const codeSigned = await request(scope('/auth/stepup/verify'), { method: 'POST', headers: fromConsole({ 'content-type': 'application/json' }), body: JSON.stringify({ challengeId: codeStep.json?.challengeId, response: secondAuth.authenticate(codeStep.json?.options?.challenge) }) })
+  check(codeSigned.status === 200, 'issuing recovery codes is signed with the passkey', `the recovery signature was refused (${codeSigned.status}: ${codeSigned.text.slice(0, 120)})`)
+  const codes = await request(scope('/auth/recovery/issue'), { method: 'POST', headers: fromConsole({ 'x-mandate-stepup': String(codeSigned.json?.grant ?? '') }) })
   check(codes.status === 200 && (codes.json?.codes ?? []).length === 8, 'the recovery codes are issued', `the recovery codes were not issued (${codes.status}: ${codes.text.slice(0, 120)})`)
   const ack = await request(scope('/auth/recovery/ack'), { method: 'POST', headers: fromConsole({ 'content-type': 'application/json' }), body: JSON.stringify({ saved: true }) })
   check(ack.status === 200, 'the owner says the codes are saved', `the codes were not acknowledged (${ack.status})`)

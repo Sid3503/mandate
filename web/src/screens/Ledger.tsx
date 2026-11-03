@@ -16,7 +16,7 @@ import { EVENT, explain, GATE, KIND, paidPhase, phaseInfo } from '../lib/words'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
-const theme = themeQuartz.withParams({
+export const ledgerGridTheme = themeQuartz.withParams({
   fontFamily: 'Inter Variable, system-ui, sans-serif',
   headerFontFamily: 'JetBrains Mono Variable, ui-monospace, monospace',
   headerFontSize: 12,
@@ -139,7 +139,7 @@ function Requests() {
       <div className="grid-wrap" data-tour="ledger-grid" style={{ height: Math.min(680, 140 + rows.length * 62) }}>
         <AgGridReact<Proposal>
           ref={grid}
-          theme={theme}
+          theme={ledgerGridTheme}
           rowData={rows}
           columnDefs={columns}
           quickFilterText={search}
@@ -182,7 +182,7 @@ function Events() {
       <ProblemCard error={events.error} />
       <div className="grid-wrap" style={{ height: 640 }}>
         <AgGridReact<LedgerEvent>
-          theme={theme}
+          theme={ledgerGridTheme}
           rowData={rows}
           columnDefs={columns}
           getRowId={(params) => params.data.id}
@@ -254,7 +254,7 @@ function PayPalActivity() {
       <div className="grid-tools"><p className="fine">{data.matched} matched to a Mandate request · <strong>{data.unmatched}</strong> that Mandate has no record of ({dollars(data.unmatchedNetCents)} net){data.mismatched ? <> · <strong>{data.mismatched}</strong> whose money does not agree ({dollars(data.mismatchedNetCents)} net)</> : null} · last 30 days</p></div>
       <div className="grid-wrap" style={{ height: Math.min(640, 140 + data.rows.length * 46) }}>
         <AgGridReact<ActivityRow>
-          theme={theme}
+          theme={ledgerGridTheme}
           rowData={data.rows}
           columnDefs={columns}
           getRowId={(params) => params.data.id}

@@ -15,7 +15,7 @@ const EVIDENCE = 'https://www.figma.com/file/northwind-logo'
 const SDK_STUB = `
 window.paypal = {
   createInstance: async () => ({
-    findEligibleMethods: async () => ({ isEligible: () => true }),
+    findEligibleMethods: async () => ({ isEligible: () => true, getDetails: () => undefined }),
     createCardFieldsOneTimePaymentSession: () => ({
       createCardFieldsComponent: (options) => {
         const field = document.createElement('input')
@@ -71,7 +71,7 @@ test('a client pays a locked bill on the page, without leaving it', async ({ pag
   // They pay.
   await page.getByTestId('pay-submit').click()
   await expect(page.getByTestId('pay-done')).toBeVisible()
-  await expect(page.getByTestId('pay-done')).toContainText('Paid')
+  await expect(page.getByTestId('pay-done')).toContainText('Captured')
 
   // The server settled it, and the cents match the lock.
   const settled = await (await request.get(`/v1/proposals/${asked.id}`, { headers })).json()
@@ -104,12 +104,13 @@ test('the owner can pay a bill themselves on the receipt', async ({ page, reques
 
   await unlock(page, OWNER)
   await page.goto(`/app/p/${asked.id}`)
-  await page.getByTestId('pay-here-owner-button').click()
+  // A bill the owner chose to have paid on the page shows the pay sheet on its receipt, already open.
+  await expect(page.getByTestId('pay-sheet')).toBeVisible()
   await expect(page.getByTestId('pay-panel')).toBeVisible()
   await page.getByTestId('pay-submit').click()
 
-  // The receipt settles, so the panel gives way to the settled receipt.
-  await expect(page.getByTestId('pay-here-owner')).toHaveCount(0, { timeout: 20_000 })
+  // The receipt settles, so the sheet gives way to the settled receipt.
+  await expect(page.getByTestId('pay-sheet')).toHaveCount(0, { timeout: 20_000 })
   const settled = await (await request.get(`/v1/proposals/${asked.id}`, { headers })).json()
   expect(settled.phase).toBe('captured')
   expect(settled.capturedAmountCents).toBe(29_000)
@@ -124,7 +125,7 @@ const SDK_REFUSES_ONCE = `
 let tries = 0
 window.paypal = {
   createInstance: async () => ({
-    findEligibleMethods: async () => ({ isEligible: () => true }),
+    findEligibleMethods: async () => ({ isEligible: () => true, getDetails: () => undefined }),
     createCardFieldsOneTimePaymentSession: () => ({
       createCardFieldsComponent: (options) => {
         const field = document.createElement('input')
@@ -186,4 +187,75 @@ test('a mistyped card is named, and what was typed survives the page refreshing'
   const settled = await (await request.get(`/v1/proposals/${asked.id}`, { headers })).json()
   expect(settled.phase).toBe('captured')
   expect(settled.capturedAmountCents).toBe(31_000)
+})
+
+/**
+ * PayPal, Venmo and Pay Later are PayPal's own buttons, and each opens PayPal's window over the page. The stand-in has
+ * the same shape as SDK v6 (a session per method, started from the click with the order as a promise, and an approve
+ * callback), so the test drives the real console code and the real server: the server makes the order from the lock,
+ * the browser only ever holds an order id, and the server captures after re-reading the order against the lock.
+ */
+const SDK_WALLETS = `
+for (const tag of ['paypal-button', 'venmo-button', 'paypal-pay-later-button']) {
+  customElements.define(tag, class extends HTMLElement {
+    connectedCallback() { this.textContent = tag; this.style.display = 'inline-block'; this.style.minHeight = '40px'; this.style.minWidth = '120px' }
+  })
+}
+const session = (callbacks) => ({
+  start: async (options, order) => {
+    window.__walletStart = options.presentationMode
+    const { orderId } = await order
+    await callbacks.onApprove({ orderId })
+  },
+})
+window.paypal = {
+  createInstance: async () => ({
+    findEligibleMethods: async () => ({
+      isEligible: () => true,
+      getDetails: (name) => (name === 'paylater' ? { productCode: 'PAY_LATER_SHORT_TERM', countryCode: 'US' } : undefined),
+    }),
+    createPayPalOneTimePaymentSession: session,
+    createVenmoOneTimePaymentSession: session,
+    createPayLaterOneTimePaymentSession: session,
+    createCardFieldsOneTimePaymentSession: () => ({
+      createCardFieldsComponent: (options) => {
+        const field = document.createElement('input')
+        field.setAttribute('data-paypal-field', options.type)
+        return field
+      },
+      submit: async (orderId) => ({ state: 'succeeded', data: { orderId } }),
+    }),
+  }),
+}
+`
+
+test('a client pays with the PayPal button on the page, with Venmo, Pay Later and the card form beside it', async ({ page, request }) => {
+  await page.route('**/web-sdk/**', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SDK_WALLETS }))
+  const headers = { authorization: `Bearer ${OWNER}` }
+  const asked = await (await request.post('/v1/proposals', {
+    headers: { ...headers, 'idempotency-key': 'embedded-pay-0005' },
+    data: { kind: 'charge', payee: 'Northwind', amountCents: 33_000, currency: 'USD', category: 'design', description: 'Wallet bill', evidenceUrl: EVIDENCE, jobId: JOB },
+  })).json()
+  await (await request.post(`/v1/proposals/${asked.id}/approve`, { headers, data: { instrument: 'checkout' } })).json()
+  const share = await (await request.post(`/v1/jobs/${JOB}/shares`, { headers, data: { partyId: 'client_northwind', canPay: true, ttlDays: 30 } })).json()
+
+  await page.goto(`/app/s/${share.token}`)
+  await page.locator('li', { hasText: 'Wallet bill' }).getByRole('button', { name: 'Pay here' }).click()
+
+  // Every way to pay is in the one sheet, and the amount is the locked one.
+  await expect(page.getByTestId('pay-paypal')).toBeVisible()
+  await expect(page.getByTestId('pay-venmo')).toBeVisible()
+  await expect(page.getByTestId('pay-paylater')).toBeVisible()
+  await expect(page.getByTestId('pay-field-number')).toBeVisible()
+  await expect(page.getByText('Pay in 4 / Pay Monthly with PayPal')).toBeVisible()
+  await expect(page.getByText('This amount is locked. It will not change while you pay.')).toBeVisible()
+
+  // Pressing PayPal opens its window over this page (a popup, not a redirect), and approving it settles the bill.
+  await page.getByTestId('pay-paypal').locator('paypal-button').click()
+  await expect(page.getByTestId('pay-done')).toContainText('Captured')
+  expect(await page.evaluate(() => (window as unknown as { __walletStart?: string }).__walletStart)).toBe('popup')
+
+  const settled = await (await request.get(`/v1/proposals/${asked.id}`, { headers })).json()
+  expect(settled.phase).toBe('captured')
+  expect(settled.capturedAmountCents).toBe(33_000)
 })

@@ -11,6 +11,17 @@ export function redactText(text: string, canaries: readonly string[] = []): stri
   return out
 }
 
+/**
+ * A request path with the secrets that travel in it taken out. A status link is its own proof: the token in
+ * `/v1/share/<token>` and `/app/s/<token>` is the whole credential, so a log line that kept it would hand the link to
+ * anyone who can read the logs. The same goes for a studio's own copy under `/w/<id>`. What stays is the shape.
+ */
+export function redactPath(path: string): string {
+  return path
+    .replace(/(\/v1\/share\/)[^/?#]+/g, '$1[redacted]')
+    .replace(/(\/app\/s\/)[^/?#]+/g, '$1[redacted]')
+}
+
 export function redactValue(value: unknown, canaries: readonly string[] = []): unknown {
   if (typeof value === 'string') return redactText(value, canaries)
   if (Array.isArray(value)) return value.map((item) => redactValue(item, canaries))

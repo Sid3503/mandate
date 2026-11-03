@@ -25,11 +25,12 @@ const NAV: NavItem[] = [
   { to: '/', label: 'Today', tour: 'nav-waiting', icon: 'M4 5h16v14H4z M4 9h16', end: true },
   { to: '/jobs', label: 'Jobs', tour: 'nav-jobs', icon: 'M4 7h16v12H4z M9 7V4h6v3', also: ['/deals'] },
   { to: '/rules', label: 'Rules', tour: 'nav-rules', icon: 'M6 4h12v16H6z M9 9h6 M9 13h6 M9 17h3' },
-  { to: '/ledger', label: 'Activity', tour: 'nav-activity', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16', also: ['/proof', '/control-room'] },
+  { to: '/ledger', label: 'Activity', tour: 'nav-activity', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16', also: ['/proof', '/control-room', '/books'] },
 ]
 
 /** Quiet shortcuts on the desktop rail. On a phone they live inside Jobs and Today. */
 const MORE: NavItem[] = [
+  { to: '/books', label: 'Books', tour: 'nav-books', icon: 'M5 4h14v16H5z M5 9h14 M9 4v16' },
   { to: '/deals', label: 'Deals', tour: 'nav-deals', icon: 'M3 12h7 M14 12h7 M9 7l3 5-3 5 M15 7l-3 5 3 5' },
   { to: '/payees', label: 'Payees', tour: 'nav-payees', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75' },
   { to: '/new', label: 'Request form', tour: 'nav-new', icon: 'M12 5v14 M5 12h14' },

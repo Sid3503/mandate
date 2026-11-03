@@ -31,6 +31,12 @@ export const PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
   payout_sent: { label: 'Sent · PayPal processing', tone: 'need' },
   payout_unclaimed: { label: 'Sent · unclaimed', tone: 'need' },
   payout_failed: { label: 'Payout failed', tone: 'deny' },
+  capture_pending: { label: 'PayPal is reviewing it', tone: 'need' },
+  capture_failed: { label: 'Declined by PayPal', tone: 'deny' },
+  capture_reversed: { label: 'Taken back at PayPal', tone: 'deny' },
+  refund_pending: { label: 'Refund · PayPal processing', tone: 'need' },
+  refund_failed: { label: 'Refund failed', tone: 'deny' },
+  mismatch_hold: { label: 'Held · PayPal amount differs', tone: 'deny' },
 }
 
 /** Money out reads differently from money in: it is sent and paid, not captured. */
@@ -39,6 +45,8 @@ const PAYOUT_PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
   order_created: { label: 'Approved · ready to send', tone: 'ink' },
   capture_inflight: { label: 'Sending', tone: 'ink' },
   captured: { label: 'Paid', tone: 'auto' },
+  payout_failed: { label: 'Payout failed or returned', tone: 'deny' },
+  mismatch_hold: { label: 'Held · PayPal amount differs', tone: 'deny' },
 }
 
 export function phaseInfo(phase: string, kind?: Kind): { label: string; tone: 'deny' | 'auto' | 'need' | 'ink' | 'muted' } {
@@ -122,6 +130,14 @@ export const EVENT: Record<string, string> = {
   'capture.refused': 'Settlement refused',
   'order.created': 'PayPal order created',
   'capture.completed': 'Settled with PayPal',
+  'capture.pending': 'PayPal accepted it and is reviewing it · not paid yet',
+  'capture.failed': 'PayPal declined the payment · nothing moved',
+  'capture.reversed': 'PayPal took the payment back',
+  'capture.refunded_elsewhere': 'Part refunded at PayPal, outside Mandate',
+  'capture.mismatch': 'PayPal moved a different amount · held for review',
+  'capture.recovered': 'Interrupted before PayPal was called · put back',
+  'refund.pending': 'Refund sent · PayPal processing',
+  'refund.failed': 'PayPal did not refund',
   'refund.completed': 'Refunded with PayPal',
   'invoice.created': 'PayPal invoice drafted',
   'invoice.sent': 'Invoice sent to the client',

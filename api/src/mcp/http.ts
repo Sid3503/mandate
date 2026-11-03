@@ -9,7 +9,7 @@ import { createMandateMcpServer } from './server'
 export const DEFAULT_BUDGET = 12
 
 /** The tools /mcp/readonly offers. Looking only: no ask, no offer. A key with a tool's scope still sees nothing outside this list. */
-export const READONLY_TOOLS = ['get_rules', 'get_jobs', 'list_ledger', 'explain']
+export const READONLY_TOOLS = ['get_rules', 'get_jobs', 'list_ledger', 'explain', 'search_products']
 
 /**
  * Requests left per agent run. The transport is stateless, so the count lives here, keyed by the run id the

@@ -519,8 +519,8 @@ export class ControlStore {
   }
 
   /** One invite, one use. Two callers: the first update wins. */
-  takeInvite(token: string, now: string): { id: string; workspace_id: string; role: MemberRole; label: string | null; delegation_expires_at: string | null } | null {
-    const row = this.db.prepare('SELECT id, workspace_id, role, label, expires_at, used_at, revoked_at, delegation_expires_at FROM invites WHERE token_hash = ?').get(hashToken(token)) as { id: string; workspace_id: string; role: MemberRole; label: string | null; expires_at: string; used_at: string | null; revoked_at: string | null; delegation_expires_at: string | null } | undefined
+  takeInvite(token: string, now: string): { id: string; workspace_id: string; role: MemberRole; label: string | null; delegation_expires_at: string | null; approval_limit_cents: number | null } | null {
+    const row = this.db.prepare('SELECT id, workspace_id, role, label, expires_at, used_at, revoked_at, delegation_expires_at, approval_limit_cents FROM invites WHERE token_hash = ?').get(hashToken(token)) as { id: string; workspace_id: string; role: MemberRole; label: string | null; expires_at: string; used_at: string | null; revoked_at: string | null; delegation_expires_at: string | null; approval_limit_cents: number | null } | undefined
     if (!row || row.used_at || row.revoked_at || row.expires_at <= now) return null
     const result = this.db.prepare('UPDATE invites SET used_at = ? WHERE id = ? AND used_at IS NULL AND revoked_at IS NULL').run(now, row.id)
     if (Number(result.changes) !== 1) return null
@@ -546,6 +546,16 @@ export class ControlStore {
   activeRefWorkspaces(): string[] {
     const rows = this.db.prepare(`SELECT DISTINCT workspace_id FROM external_refs WHERE kind IN ('invoice', 'payout')`).all() as Array<{ workspace_id: string }>
     return rows.map((r) => r.workspace_id)
+  }
+
+  /**
+   * Forgets the PayPal ids of studios that no longer exist. A studio removed by a path that skipped its own clean-up
+   * (an older build, a hand-edited control file) would otherwise be visited by every scheduler sweep forever. The
+   * default studio is never pruned: it has no row to lose. Returns how many were forgotten.
+   */
+  pruneOrphanRefs(): number {
+    const result = this.db.prepare(`DELETE FROM external_refs WHERE workspace_id != 'ws_default' AND workspace_id NOT IN (SELECT id FROM workspaces)`).run()
+    return Number(result.changes)
   }
 
   removeRef(kind: string, externalId: string): void {

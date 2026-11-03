@@ -49,6 +49,7 @@ if (location.hostname === '127.0.0.1' || location.hostname === '::1') {
 
 const ControlRoom = lazy(() => import('./screens/ControlRoom'))
 const Ledger = lazy(() => import('./screens/Ledger').then((module) => ({ default: module.Ledger })))
+const Books = lazy(() => import('./screens/Books').then((module) => ({ default: module.Books })))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -129,6 +130,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="clerk" element={<Clerk />} />
             <Route path="new" element={<NewRequest />} />
             <Route path="ledger" element={<Suspense fallback={<div className="page"><Loading label="Opening ledger" /></div>}><Ledger /></Suspense>} />
+            <Route path="books" element={<Suspense fallback={<div className="page"><Loading label="Opening the books" /></div>}><Books /></Suspense>} />
             <Route path="control-room" element={<Suspense fallback={<div className="page"><Loading label="Opening the control room" /></div>}><ControlRoom /></Suspense>} />
             <Route path="rules" element={<Rules />} />
             <Route path="proof" element={<Proof />} />

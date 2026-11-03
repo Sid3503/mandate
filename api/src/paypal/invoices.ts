@@ -55,6 +55,41 @@ export type InvoicePort = {
   cancel(invoiceId: string, note: string): Promise<void>
   /** Finds a draft this server made earlier (crash recovery). */
   findByNumber(invoiceNumber: string): Promise<{ invoiceId: string } | null>
+  /**
+   * PayPal's QR code for an invoice it has already sent. The image encodes PayPal's own pay page.
+   * Scanning it does not move money here: the client still pays on PayPal, and the sweep settles from what PayPal reports.
+   */
+  qrCode(invoiceId: string): Promise<{ imageBase64: string; contentType: 'image/png' }>
+}
+
+/** A 1×1 PNG, so a test can tell a real image from an empty answer without calling PayPal. */
+export const TINY_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
+/**
+ * Pulls the Base64 PNG out of PayPal's generate-qr-code answer. PayPal documents that answer both as JSON
+ * `{ image }` and as a multipart body whose `image` part is the Base64. Either shape is accepted. Anything else is
+ * not an image.
+ */
+export function qrImageFrom(value: unknown): string | null {
+  if (typeof value === 'string') return imageFromText(value)
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  for (const key of ['image', 'qr_code', 'data']) {
+    if (typeof record[key] === 'string') {
+      const image = imageFromText(record[key] as string)
+      if (image) return image
+    }
+  }
+  return typeof record.raw === 'string' ? imageFromText(record.raw) : null
+}
+
+function imageFromText(text: string): string | null {
+  const dataUrl = text.match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/)
+  if (dataUrl) return dataUrl[1] ?? null
+  const part = text.match(/name="image"[\s\S]*?(?:\r?\n){2}([A-Za-z0-9+/=\s]+)/)
+  const body = (part?.[1] ?? text).replace(/\s/g, '')
+  if (body.length >= 32 && /^[A-Za-z0-9+/=]+$/.test(body)) return body
+  return null
 }
 
 export const invoiceNumberFor = (proposalId: string) => `MND-${proposalId.replaceAll('-', '').slice(0, 16).toUpperCase()}`
@@ -74,7 +109,7 @@ export const percentString = (percentBps: number): string => {
 export function createToolkitInvoices(options: { clientId: string; clientSecret: string; sandbox: boolean }): InvoicePort {
   const toolkit = createToolkit({
     ...options,
-    actions: { invoices: { create: true, send: true, get: true, list: true, sendReminder: true, cancel: true } },
+    actions: { invoices: { create: true, send: true, get: true, list: true, sendReminder: true, cancel: true, generateQRC: true } },
   })
   const run = toolkit.run
 
@@ -108,16 +143,28 @@ export function createToolkitInvoices(options: { clientId: string; clientSecret:
     async cancel(invoiceId, note) {
       await run('cancel_sent_invoice', { invoice_id: invoiceId, note: note.slice(0, 4000), send_to_recipient: true })
     },
+    async qrCode(invoiceId) {
+      // 300 is inside PayPal's allowed 150–500. The client does not choose the size.
+      const result = await run('generate_invoice_qr_code', { invoice_id: invoiceId, width: 300, height: 300 })
+      const image = qrImageFrom(result)
+      if (!image) throw new PayPalError(502, 'paypal_malformed', null, 'generate_invoice_qr_code returned no image')
+      return { imageBase64: image, contentType: 'image/png' as const }
+    },
+    /**
+     * Finds an invoice this server already created, by its number, so a create that crashed before its answer was stored
+     * is found instead of made twice. It reads every page (up to a limit), and a failed read is an error, never "not
+     * found": "not found" would send a second create that PayPal refuses as a duplicate number.
+     */
     async findByNumber(invoiceNumber) {
-      try {
-        const result = await run('list_invoices', { page: 1, page_size: 100, total_required: false })
+      for (let page = 1; page <= 20; page += 1) {
+        const result = await run('list_invoices', { page, page_size: 100, total_required: false })
         const items = Array.isArray(result.items) ? (result.items as Json[]) : []
         const found = items.find((item) => (item.detail as Json | undefined)?.invoice_number === invoiceNumber)
         const id = found ? idFrom(found) : null
-        return id ? { invoiceId: id } : null
-      } catch {
-        return null
+        if (id) return { invoiceId: id }
+        if (items.length < 100) return null
       }
+      return null
     },
   }
 }

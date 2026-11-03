@@ -1,6 +1,7 @@
 import { ActivityTabs } from '../components/ActivityTabs'
 import { AgStudio, AgStudioProvider, type AgStudioRef } from 'ag-studio-react'
 import { AgStudioAiModule, type AgDataSourcesDefinition, type AgReportState, type AgStudioErrorRaisedEvent } from 'ag-studio'
+import { useQuery } from '@tanstack/react-query'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
 import { useToast } from '../components/Toast'
@@ -8,8 +9,11 @@ import { mandateAi } from '../control-room/agents'
 import { clearLayout, demoLayout, LEDGER_FIELDS, loadLayout, saveLayout, SOURCE } from '../control-room/layout'
 import { toLedgerRows, type LedgerRow } from '../control-room/rows'
 import { mandateTheme } from '../control-room/theme'
+import { mandateWidgets } from '../control-room/widgets'
 import { Link } from 'react-router-dom'
+import { api } from '../lib/api'
 import { useAgentsOn, useAllProposals, useIsOwner, useNames, useNarrow, useVersions } from '../lib/hooks'
+import type { Books } from '../lib/types'
 
 const LICENSE = import.meta.env.VITE_AG_STUDIO_LICENSE as string | undefined
 
@@ -41,13 +45,18 @@ export default function ControlRoom() {
   // The analyst's totals tool reads the rows as they are now, not as they were when the harness was built.
   const latest = useRef<LedgerRow[]>([])
   latest.current = rows
+  const booksQuery = useQuery({ queryKey: ['books'], queryFn: api.books, enabled: owner, refetchInterval: 15_000 })
+  const journalQuery = useQuery({ queryKey: ['books-journal', 'head'], queryFn: () => api.journal(null, 6), enabled: owner, refetchInterval: 15_000 })
+  const booksNow = useRef<Books | null>(null)
+  booksNow.current = booksQuery.data ?? null
   // Studio reloads its widgets whenever it is handed new data. The ledger is re-read every few seconds and after every
   // event, usually to the same answer, so new data is handed over only when the rows really changed.
   const signature = useMemo(() => JSON.stringify(rows), [rows])
   const held = useRef({ signature, rows })
   if (held.current.signature !== signature) held.current = { signature, rows }
   const data = useMemo<AgDataSourcesDefinition>(() => ({ sources: [{ id: SOURCE, name: 'Ledger', data: held.current.rows as never, fields: LEDGER_FIELDS }] }), [held.current.signature])
-  const ai = useMemo(() => mandateAi(() => latest.current), [])
+  const studioContext = useMemo(() => ({ signature, books: booksQuery.data ?? null, journal: journalQuery.data?.data ?? [] }), [signature, booksQuery.data, journalQuery.data])
+  const ai = useMemo(() => mandateAi(() => latest.current, () => booksNow.current), [])
 
   const save = useCallback(() => {
     const state = studio.current?.api.getState()
@@ -98,13 +107,13 @@ export default function ControlRoom() {
       </PageHead>
       <ProblemCard error={proposals.error} />
       <p className="fine cr-note" data-tour="cr-note">
-        <Chip tone="muted">no path to PayPal</Chip> Studio is handed {rows.length} plain rows copied from the ledger and can only display them. Money in and out count only what PayPal confirmed.
+        <Chip tone="muted">no path to PayPal</Chip> Studio is handed {rows.length} plain rows copied from the ledger{booksQuery.data ? ' and the books' : ''} and can only display them. Money in and out count only what PayPal confirmed.
         {agents ? <> Ask the analyst in the chat panel, for example “show what the rules refused”. It can change this dashboard and nothing else.</> : <> The dashboard agent is off: this server has no language model. System shows how to turn it on.</>}
         {LICENSE ? null : <> Running without a Studio licence key: fine for local work, with a watermark.</>}
       </p>
       <div className="cr-stage" data-tour="cr-stage" data-testid="control-room" style={{ height: 'max(760px, calc(100vh - 250px))' }}>
         <AgStudioProvider modules={agents ? [AgStudioAiModule] : []} licenseKey={LICENSE}>
-          <AgStudio ref={studio as never} style={{ height: '100%', width: '100%' }} data={data} mode={mode} theme={mandateTheme} initialState={initial} ai={agents ? ai : undefined} onErrorRaised={onError} />
+          <AgStudio ref={studio as never} style={{ height: '100%', width: '100%' }} data={data} context={studioContext} widgets={mandateWidgets} mode={mode} theme={mandateTheme} initialState={initial} ai={agents ? ai : undefined} onErrorRaised={onError} />
         </AgStudioProvider>
       </div>
     </div>

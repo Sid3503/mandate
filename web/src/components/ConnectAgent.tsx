@@ -121,7 +121,7 @@ export function ConnectAgent() {
   return (
     <section className="panel" aria-labelledby="h-connect" data-testid="connect-agent">
       <h2 className="panel-title" id="h-connect">Connect an agent</h2>
-      <p className="fine">Any agent that speaks MCP (Claude Code, Cursor, your own) gets up to eleven tools: read the rules, jobs and ledger, explain a decision, ask to pay or bill, offer a deal. It can ask. It cannot approve, pay or change the rules, whatever it is told.</p>
+      <p className="fine">Any agent that speaks MCP (Claude Code, Cursor, your own) gets up to thirteen tools: read the rules, jobs and ledger, search products, explain a decision, ask to pay, bill or buy, offer a deal. It can ask. It cannot approve, pay or change the rules, whatever it is told.</p>
 
       <form className="connect-form" onSubmit={submit}>
         <label className="field">
@@ -193,7 +193,7 @@ export function ConnectAgent() {
           <h3 className="connect-h">Copy it now. The key for “{made.name}” is shown once.</h3>
           <Snippet label="Agent key" text={made.key} testId="connect-key" />
           <label className="check">
-            <input type="checkbox" checked={door === 'readonly'} onChange={(e) => { setDoor(e.target.checked ? 'readonly' : 'mcp'); setCheck({ state: 'idle' }) }} data-testid="connect-readonly" /> Use the read-only door (<code className="mono small">{url}/readonly</code>): it offers only the four tools that look, so you can try an agent with nothing it could ask for.
+            <input type="checkbox" checked={door === 'readonly'} onChange={(e) => { setDoor(e.target.checked ? 'readonly' : 'mcp'); setCheck({ state: 'idle' }) }} data-testid="connect-readonly" /> Use the read-only door (<code className="mono small">{url}/readonly</code>): it offers only the tools that look, including product search, so you can try an agent with nothing it could ask for.
           </label>
           <p className="fine">Pick the app your agent lives in. The key is already in what you copy.</p>
           <div className="segmented small" role="tablist" aria-label="Where the agent runs" data-testid="connect-clients">

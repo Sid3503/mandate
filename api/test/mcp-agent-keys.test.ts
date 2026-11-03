@@ -49,15 +49,15 @@ const rpc = (app: App, key: string, body: string, headers: Record<string, string
   app.request('http://mandate.test/mcp', { method, headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json', ...headers }, body: method === 'POST' ? body : undefined })
 
 describe('the scopes on an agent key decide which tools it gets', () => {
-  const FULL = ['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'verify_mandate', 'walk_away']
+  const FULL = ['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'propose_purchase', 'search_products', 'verify_mandate', 'walk_away']
 
   it('gives each combination of scopes exactly the tools it allows, and the full set when the owner allows everything', async () => {
     const { app } = harness()
     const cases: Array<[Scope[], string[]]> = [
-      [['mcp', 'read'], ['explain', 'get_jobs', 'get_metrics', 'get_rules', 'list_ledger', 'verify_mandate']],
-      [['mcp', 'propose'], ['propose']],
+      [['mcp', 'read'], ['explain', 'get_jobs', 'get_metrics', 'get_rules', 'list_ledger', 'search_products', 'verify_mandate']],
+      [['mcp', 'propose'], ['propose', 'propose_purchase']],
       [['mcp', 'deals'], ['accept_offer', 'explain', 'get_negotiation', 'offer_deal', 'walk_away']],
-      [['mcp', 'read', 'propose'], ['explain', 'get_jobs', 'get_metrics', 'get_rules', 'list_ledger', 'propose', 'verify_mandate']],
+      [['mcp', 'read', 'propose'], ['explain', 'get_jobs', 'get_metrics', 'get_rules', 'list_ledger', 'propose', 'propose_purchase', 'search_products', 'verify_mandate']],
       [['mcp', 'read', 'propose', 'deals'], FULL],
       [['mcp', 'read', 'propose', 'deals', 'stream'], FULL],
     ]
@@ -167,7 +167,7 @@ describe('an issued key through the door: who it is, how much it may ask, when i
     expect(await fine.tools()).toContain('get_rules')
     expect((await call(app, 'GET', '/v1/agents')).json.find((row: { name: string }) => row.name === 'Noisy').status).toBe('suspended')
     expect((await call(app, 'POST', `/v1/agents/${noisy.agent.id}/resume`)).status).toBe(200)
-    expect(await (await connect(app, noisy.apiKey)).tools()).toEqual(['propose'])
+    expect(await (await connect(app, noisy.apiKey)).tools()).toEqual(['propose', 'propose_purchase'])
   })
 
   it('does not count the slips an honest agent makes (asking before the client paid, forgetting the proof link)', async () => {

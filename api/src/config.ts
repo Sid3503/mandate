@@ -41,6 +41,10 @@ const EnvSchema = z.object({
   NOTIFY_WEBHOOK_URL: z.string().url().refine((value) => value.startsWith('https://'), 'must be an https address').optional(),
   /** Lets the owner wipe the money state from the System page, for a hosted demo that many people try in turn. Sandbox PayPal only. */
   DEMO_RESET: z.enum(['on', 'off']).default('off'),
+  /** Channel3 product search for the procurement agent. Unset: product search is off and says so. A secret, never logged. */
+  CHANNEL3_API_KEY: z.string().trim().min(1).optional(),
+  /** Only to point at another Channel3 host (a test double). Defaults to https://api.trychannel3.com. */
+  CHANNEL3_API_URL: z.string().url().optional(),
 })
 
 export type AppConfig = {
@@ -74,6 +78,8 @@ export type AppConfig = {
   /** When on, the owner can reset the demo from the System page. Refused unless PayPal is the sandbox. */
   demoReset: boolean
   version: string
+  /** Channel3 product search, when a key is set. Null means product search is off. */
+  channel3: { apiKey: string; baseUrl: string | undefined } | null
   paypal: { clientId: string; clientSecret: string; baseUrl: string } | null
   /** Which PayPal the browser SDK must talk to, and which hosts the console's content security policy may name. */
   paypalEnvironment: 'sandbox' | 'live'
@@ -90,6 +96,7 @@ export type BootSecrets = {
   signingKey: SecretString | null
   paypalClientSecret: SecretString | null
   ollamaApiKey: SecretString | null
+  channel3ApiKey: SecretString | null
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
@@ -150,6 +157,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     version: VERSION,
     paypalWebhookId: value.PAYPAL_WEBHOOK_ID ?? null,
     paypal,
+    channel3: value.CHANNEL3_API_KEY ? { apiKey: value.CHANNEL3_API_KEY, baseUrl: value.CHANNEL3_API_URL } : null,
     paypalEnvironment: (() => { try { return new URL(value.PAYPAL_API).hostname === 'api-m.paypal.com' ? 'live' : 'sandbox' } catch { return 'sandbox' } })(),
     secrets: {
       apiKey: new SecretString(apiKey),
@@ -158,6 +166,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
       signingKey: value.SIGNING_KEY ? new SecretString(value.SIGNING_KEY) : null,
       paypalClientSecret: paypal ? new SecretString(paypal.clientSecret) : null,
       ollamaApiKey: value.OLLAMA_API_KEY ? new SecretString(value.OLLAMA_API_KEY) : null,
+      channel3ApiKey: value.CHANNEL3_API_KEY ? new SecretString(value.CHANNEL3_API_KEY) : null,
     },
   }
 }

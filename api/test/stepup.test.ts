@@ -17,7 +17,7 @@ import { FakePayPal } from '../src/paypal/fake'
 import { buildServices } from '../src/services/container'
 import { openSeal } from '../src/tenancy/envelope'
 import { TenantRegistry } from '../src/tenancy/registry'
-import { call, closeAll, EVIDENCE, harness, JOB, NOW, OWNER_KEY, type Requester } from './support'
+import { call, closeAll, EVIDENCE, harness, JOB, NOW, OWNER_KEY, type Requester, allowRawWrites } from './support'
 import { SoftAuthenticator } from './soft-authenticator'
 
 afterEach(closeAll)
@@ -400,7 +400,7 @@ describe('step-up grants', () => {
     const { auth } = await enroll(h.app, headers)
     const id = await proposeCharge(h.app)
     const signed = await signApprove(h.app, headers, auth, id)
-    h.db.prepare('UPDATE proposals SET amount_cents = amount_cents + 1 WHERE id = ?').run(id)
+    allowRawWrites(h.db); h.db.prepare('UPDATE proposals SET amount_cents = amount_cents + 1 WHERE id = ?').run(id)
     const approved = await h.app.request(`http://mandate.test/v1/proposals/${id}/approve`, { method: 'POST', headers: { ...headers, 'x-mandate-stepup': signed.grant } })
     expect(approved.status).toBe(409)
     expect((await approved.json() as { title: string }).title).toBe('changed since you looked')
@@ -578,20 +578,23 @@ describe('step-up grants', () => {
     controlDb.close()
   })
 
-  it('puts step-up routes in the auth rate-limit class', async () => {
-    expect(rateClass('POST', '/auth/stepup/options')).toBe('auth')
-    expect(rateClass('POST', '/auth/stepup/verify')).toBe('auth')
+  it('counts step-ups per signed-in session, not with sign-ins, so an owner can approve several in a row', async () => {
+    // A step-up needs a signed-in session and a passkey signature over a server nonce: there is nothing to guess.
+    expect(rateClass('POST', '/auth/stepup/options')).toBe('write')
+    expect(rateClass('POST', '/auth/stepup/verify')).toBe('write')
+    // Signing in is still counted strictly, per address.
+    expect(rateClass('POST', '/auth/login/options')).toBe('auth')
     const h = harness({ classedRates: true, rateLimitPerMinute: 100, flags: loadFlags({ FLAG_PASSKEYS: '1' }), webauthn: WA })
-    let status = 0
+    const statuses: number[] = []
     for (let i = 0; i < 6; i += 1) {
       const response = await h.app.request('http://mandate.test/auth/stepup/options', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: '{}',
       })
-      status = response.status
+      statuses.push(response.status)
     }
-    expect(status).toBe(429)
+    expect(statuses).not.toContain(429)
   })
 })
 

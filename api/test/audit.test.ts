@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { FakeInvoices, FakeWatch } from '../src/paypal/fake'
-import { agree, call, closeAll, collect, EVIDENCE, harness, idem, JOB, NOW, STUDIO_KEY } from './support'
+import { agree, call, closeAll, collect, EVIDENCE, harness, idem, JOB, NOW, STUDIO_KEY, allowRawWrites } from './support'
 
 afterEach(closeAll)
 
@@ -47,7 +47,7 @@ describe('the audit', () => {
     const report = await audit(h.app)
     expect(report.ok).toBe(true)
     expect(report.totals).toMatchObject({ requests: 0, moved: 0 })
-    expect(report.agentReach).toMatchObject({ toolkitTools: 47, agentCanCallDirectly: 0, mcpTools: 6 })
+    expect(report.agentReach).toMatchObject({ toolkitTools: 47, agentCanCallDirectly: 0, mcpTools: 13 })
   })
 
   it('passes on the whole frozen job: a tapped payout and a payout a rule sent', async () => {
@@ -73,7 +73,7 @@ describe('the audit', () => {
     expect(proof.note).toContain('legacy (grey)')
 
     const stored = JSON.parse((h.db.prepare(`SELECT payload_json FROM events WHERE proposal_id = ? AND type = 'proposal.approved'`).get(h.tapped) as { payload_json: string }).payload_json) as { cartHash: string }
-    h.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: stored.cartHash, method: 'passkey' }), h.tapped)
+    allowRawWrites(h.db); h.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: stored.cartHash, method: 'passkey' }), h.tapped)
     const red = await audit(h.app)
     expect(failing(red)).toContain('approval.proof')
     expect(red.checks.find((check: { id: string }) => check.id === 'approval.proof').failures[0]).toMatchObject({ proposalId: h.tapped, detail: 'passkey approval is missing its signature' })
@@ -81,11 +81,11 @@ describe('the audit', () => {
 
     const h2 = await worked()
     const kept = JSON.parse((h2.db.prepare(`SELECT payload_json FROM events WHERE proposal_id = ? AND type = 'proposal.approved'`).get(h2.tapped) as { payload_json: string }).payload_json) as { cartHash: string }
-    h2.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: kept.cartHash }), h2.tapped)
+    allowRawWrites(h2.db); h2.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: kept.cartHash }), h2.tapped)
     const legacy = await audit(h2.app)
     expect(failing(legacy)).not.toContain('approval.proof')
     expect((await call(h2.app, 'GET', `/v1/proposals/${h2.tapped}/packet`)).json.approvalProof).toMatchObject({ method: 'legacy', tone: 'grey', how: 'legacy' })
-    h2.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: kept.cartHash, method: 'demo' }), h2.tapped)
+    allowRawWrites(h2.db); h2.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: kept.cartHash, method: 'demo' }), h2.tapped)
     const demo = await audit(h2.app)
     expect(failing(demo)).not.toContain('approval.proof')
     expect(demo.checks.find((check: { id: string }) => check.id === 'approval.proof').note).toContain('demo (amber)')
@@ -94,7 +94,7 @@ describe('the audit', () => {
 
   it('catches an amount changed after approval', async () => {
     const h = await worked()
-    h.db.prepare('UPDATE proposals SET amount_cents = 90000 WHERE id = ?').run(h.tapped)
+    allowRawWrites(h.db); h.db.prepare('UPDATE proposals SET amount_cents = 90000 WHERE id = ?').run(h.tapped)
     const report = await audit(h.app)
     expect(report.ok).toBe(false)
     expect(failing(report)).toEqual(expect.arrayContaining(['locks.valid', 'amounts.match']))
@@ -103,8 +103,9 @@ describe('the audit', () => {
 
   it('catches a settled amount that differs from the lock', async () => {
     const h = await worked()
-    h.db.prepare('UPDATE proposals SET captured_amount_cents = 9100 WHERE id = ?').run(h.auto)
-    expect(failing(await audit(h.app))).toEqual(['amounts.match', 'jobs.in_covers_out'].filter((id) => id === 'amounts.match'))
+    allowRawWrites(h.db); h.db.prepare('UPDATE proposals SET captured_amount_cents = 9100 WHERE id = ?').run(h.auto)
+    // The double-entry books were posted from the real capture, so they disagree with the edited row as well.
+    expect(failing(await audit(h.app))).toEqual(['amounts.match', 'ledger.balanced'])
   })
 
   it('catches a short settlement whose reason no PayPal field stands behind', async () => {
@@ -114,12 +115,12 @@ describe('the audit', () => {
     const green = await audit(h.app)
     expect(green.checks.find((check: { id: string }) => check.id === 'amounts.explained')).toMatchObject({ status: 'pass', checked: 1 })
     // A reason nothing arrived for is exactly what this check exists to refuse.
-    h.db.prepare(`UPDATE proposals SET delta_reason = 'unexplained' WHERE id = ?`).run(h.id)
+    allowRawWrites(h.db); h.db.prepare(`UPDATE proposals SET delta_reason = 'unexplained' WHERE id = ?`).run(h.id)
     const unexplained = await audit(h.app)
     expect(failing(unexplained)).toContain('amounts.explained')
     expect(unexplained.checks.find((check: { id: string }) => check.id === 'amounts.explained').failures[0]).toMatchObject({ proposalId: h.id })
     // A reason with no field beside it is a number with no source, which is the same failure.
-    h.db.prepare(`UPDATE proposals SET delta_reason = 'early_discount', delta_source = NULL WHERE id = ?`).run(h.id)
+    allowRawWrites(h.db); h.db.prepare(`UPDATE proposals SET delta_reason = 'early_discount', delta_source = NULL WHERE id = ?`).run(h.id)
     const unsourced = await audit(h.app)
     expect(failing(unsourced)).toContain('amounts.explained')
     expect(unsourced.checks.find((check: { id: string }) => check.id === 'amounts.explained').failures[0].detail).toContain('records no field')
@@ -127,16 +128,16 @@ describe('the audit', () => {
 
   it('catches money that moved with no yes: a deleted approval, or a signature removed', async () => {
     const h = await worked()
-    h.db.prepare(`DELETE FROM events WHERE proposal_id = ? AND type = 'proposal.approved'`).run(h.tapped)
+    allowRawWrites(h.db); h.db.prepare(`DELETE FROM events WHERE proposal_id = ? AND type = 'proposal.approved'`).run(h.tapped)
     expect(failing(await audit(h.app))).toEqual(['moved.authorised'])
     const h2 = await worked()
-    h2.db.prepare('UPDATE proposals SET lock_sig = NULL WHERE id = ?').run(h2.auto)
+    allowRawWrites(h2.db); h2.db.prepare('UPDATE proposals SET lock_sig = NULL WHERE id = ?').run(h2.auto)
     expect(failing(await audit(h2.app))).toEqual(expect.arrayContaining(['locks.valid', 'moved.authorised']))
   })
 
   it('catches a payout bigger than its share of the client payment, and a job that paid out more than came in', async () => {
     const h = await worked()
-    h.db.prepare('UPDATE proposals SET amount_cents = 40000, captured_amount_cents = 40000 WHERE id = ?').run(h.auto)
+    allowRawWrites(h.db); h.db.prepare('UPDATE proposals SET amount_cents = 40000, captured_amount_cents = 40000 WHERE id = ?').run(h.auto)
     const report = await audit(h.app)
     expect(failing(report)).toEqual(expect.arrayContaining(['payouts.funded', 'jobs.in_covers_out', 'locks.valid']))
   })
@@ -144,18 +145,18 @@ describe('the audit', () => {
   it('catches a month that passed the cap, judged by the cap that was in force', async () => {
     const h = await worked()
     const row = h.db.prepare(`SELECT body_json FROM warrants WHERE version = 1`).get() as { body_json: string }
-    h.db.prepare(`UPDATE warrants SET body_json = ? WHERE version = 1`).run(JSON.stringify({ ...JSON.parse(row.body_json), monthlyCapCents: 5_000 }))
-    h.db.prepare(`UPDATE warrants SET body_json = ? WHERE version = 2`).run(JSON.stringify({ ...JSON.parse((h.db.prepare(`SELECT body_json FROM warrants WHERE version = 2`).get() as { body_json: string }).body_json), monthlyCapCents: 5_000 }))
+    allowRawWrites(h.db); h.db.prepare(`UPDATE warrants SET body_json = ? WHERE version = 1`).run(JSON.stringify({ ...JSON.parse(row.body_json), monthlyCapCents: 5_000 }))
+    allowRawWrites(h.db); h.db.prepare(`UPDATE warrants SET body_json = ? WHERE version = 2`).run(JSON.stringify({ ...JSON.parse((h.db.prepare(`SELECT body_json FROM warrants WHERE version = 2`).get() as { body_json: string }).body_json), monthlyCapCents: 5_000 }))
     expect(failing(await audit(h.app))).toEqual(['cap.respected'])
   })
 
   it('catches a settlement the ledger never recorded, and a deal that was edited', async () => {
     const h = await worked()
-    h.db.prepare(`DELETE FROM events WHERE proposal_id = ? AND type = 'payout.completed'`).run(h.tapped)
+    allowRawWrites(h.db); h.db.prepare(`DELETE FROM events WHERE proposal_id = ? AND type = 'payout.completed'`).run(h.tapped)
     expect(failing(await audit(h.app))).toEqual(['history.complete'])
     const h2 = await worked()
     const deal = h2.db.prepare('SELECT terms_json FROM deals WHERE id = ?').get(h2.deal.id) as { terms_json: string }
-    h2.db.prepare('UPDATE deals SET terms_json = ? WHERE id = ?').run(deal.terms_json.replace('15000', '99000'), h2.deal.id)
+    allowRawWrites(h2.db); h2.db.prepare('UPDATE deals SET terms_json = ? WHERE id = ?').run(deal.terms_json.replace('15000', '99000'), h2.deal.id)
     const report = await audit(h2.app)
     expect(failing(report)).toEqual(expect.arrayContaining(['deals.signed']))
   })
@@ -196,7 +197,7 @@ describe('the audit', () => {
 
   it('fails rules.signed when a warrant body is corrupt or signature is malformed', async () => {
     const h = await worked()
-    h.db.prepare('UPDATE warrants SET body_json = ? WHERE version = 1').run('{"corrupted": true}')
+    allowRawWrites(h.db); h.db.prepare('UPDATE warrants SET body_json = ? WHERE version = 1').run('{"corrupted": true}')
     const report = await audit(h.app)
     expect(failing(report)).toContain('rules.signed')
   })
@@ -207,14 +208,14 @@ describe('the audit', () => {
     const okReport = await audit(h.app)
     expect(okReport.checks.find((c: { id: string }) => c.id === 'safety.events')).toMatchObject({ status: 'pass', checked: 1 })
 
-    h.db.prepare("UPDATE safety_events SET sig = 'tampered-signature'").run()
+    allowRawWrites(h.db); h.db.prepare("UPDATE safety_events SET sig = 'tampered-signature'").run()
     const badReport = await audit(h.app)
     expect(failing(badReport)).toContain('safety.events')
   })
 
   it('fails assertions.valid when a passkey assertion has user verification off or missing signature', async () => {
     const h = await worked()
-    h.db.prepare("UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'").run(
+    allowRawWrites(h.db); h.db.prepare("UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'").run(
       JSON.stringify({ actor: 'owner', method: 'passkey', assertion: { userVerified: false } }),
       h.tapped,
     )
@@ -224,7 +225,7 @@ describe('the audit', () => {
 
   it('fails keys.fingerprint when a signing key PEM is corrupt', async () => {
     const h = await worked()
-    h.db.prepare("UPDATE signing_keys SET public_pem = 'invalid-pem-data'").run()
+    allowRawWrites(h.db); h.db.prepare("UPDATE signing_keys SET public_pem = 'invalid-pem-data'").run()
     const report = await audit(h.app)
     expect(failing(report)).toContain('keys.fingerprint')
   })

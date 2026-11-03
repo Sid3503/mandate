@@ -26,6 +26,9 @@ import { agree, call, closeAll, collect, EVIDENCE, harness, JOB, NOW, OWNER_KEY 
 
 afterEach(closeAll)
 
+/** What the console sends with a cookie write: its own origin and its name. */
+const WEB = { origin: 'http://127.0.0.1:8787', 'x-mandate-client': 'web' }
+
 const MASTER = Buffer.alloc(32, 7).toString('base64')
 const WA = { rpID: 'localhost', rpName: 'Mandate', origins: ['http://127.0.0.1:8787'] }
 const OUTSIDE = 'OUTSIDE_WEB_ROOT_SECRET'
@@ -321,7 +324,8 @@ describe('static files and security headers', () => {
     expect(await file.text()).toContain('inside-file')
     const page = await h.app.request('http://mandate.test/app/')
     expect(page.headers.get('content-security-policy')).toBe(WEB_CSP)
-    expectSecurity(page.headers, WEB_CSP)
+    // The console lets PayPal's own window (PayPal, Venmo, Pay Later) report back to the page that opened it.
+    expectSecurity(page.headers, WEB_CSP, 'same-origin-allow-popups')
     const api = await h.app.request('http://mandate.test/v1/session', { headers: { authorization: `Bearer ${OWNER_KEY}` } })
     expect(api.status).toBe(200)
     expectSecurity(api.headers, API_CSP)
@@ -331,13 +335,13 @@ describe('static files and security headers', () => {
   })
 })
 
-function expectSecurity(headers: Headers, csp: string) {
+function expectSecurity(headers: Headers, csp: string, opener = 'same-origin') {
   expect(headers.get('content-security-policy')).toBe(csp)
   expect(headers.get('x-content-type-options')).toBe('nosniff')
   expect(headers.get('referrer-policy')).toBe('no-referrer')
   expect(headers.get('x-frame-options')).toBe('DENY')
   expect(headers.get('permissions-policy')).toContain('camera=()')
-  expect(headers.get('cross-origin-opener-policy')).toBe('same-origin')
+  expect(headers.get('cross-origin-opener-policy')).toBe(opener)
   expect(headers.get('cross-origin-resource-policy')).toBe('same-origin')
 }
 
@@ -439,20 +443,20 @@ describe('sessions, invites, and demo doors', () => {
     h.control.createInvite({ id: randomUUID(), workspaceId: studioId, role: 'proposer', token, expiresAt: '2027-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     const wrong = await h.app.request('http://mandate.test/join', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Sam' }),
     })
     expect(wrong.status).toBe(400)
     expect(h.control.peekInvite(token, NOW.toISOString())?.workspace_id).toBe(studioId)
     const joined = await h.app.request(`http://mandate.test/w/${studioId}/join`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Sam' }),
     })
     expect(joined.status).toBe(200)
     const second = await h.app.request(`http://mandate.test/w/${studioId}/join`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Sam again' }),
     })
     expect(second.status).toBe(400)
@@ -460,7 +464,7 @@ describe('sessions, invites, and demo doors', () => {
     h.control.createInvite({ id: randomUUID(), workspaceId: studioId, role: 'viewer', token: expired, expiresAt: '2020-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     expect((await h.app.request(`http://mandate.test/w/${studioId}/join`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token: expired, name: 'Late' }),
     })).status).toBe(400)
     const revoked = 'invite-token-revoked-32chars'
@@ -469,7 +473,7 @@ describe('sessions, invites, and demo doors', () => {
     h.controlDb.prepare('UPDATE invites SET revoked_at = ? WHERE id = ?').run(NOW.toISOString(), revokedId)
     expect((await h.app.request(`http://mandate.test/w/${studioId}/join`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token: revoked, name: 'No' }),
     })).status).toBe(400)
     const missing = await h.app.request('http://mandate.test/v1/invites/revoke', { method: 'POST', headers: { authorization: `Bearer ${OWNER_KEY}` } })
@@ -482,8 +486,8 @@ describe('sessions, invites, and demo doors', () => {
     h.control.createInvite({ id: randomUUID(), workspaceId: 'ws_default', role: 'viewer', token, expiresAt: '2027-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     const body = JSON.stringify({ token, name: 'Sam' })
     const [left, right] = await Promise.all([
-      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body }),
-      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body }),
+      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json', ...WEB }, body }),
+      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json', ...WEB }, body }),
     ])
     const statuses = [left.status, right.status].sort()
     expect(statuses).toEqual([200, 400])

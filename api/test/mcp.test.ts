@@ -24,16 +24,16 @@ async function connect(app: App, key: string, runId: string = crypto.randomUUID(
 const payout = { kind: 'payment', payee: 'Priya', amountCents: 9000, currency: 'USD', category: 'design', description: 'Northwind milestone 1', evidenceUrl: EVIDENCE }
 
 describe('the MCP door', () => {
-  it('offers a studio agent nine tools and not one of them can pay', async () => {
+  it('offers a studio agent thirteen tools and not one of them can pay', async () => {
     const { app } = harness()
     const { client } = await connect(app, STUDIO_KEY)
     const tools = (await client.listTools()).tools
-    expect(tools.map((tool) => tool.name).sort()).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'verify_mandate', 'walk_away'])
+    expect(tools.map((tool) => tool.name).sort()).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'propose_purchase', 'search_products', 'verify_mandate', 'walk_away'])
     for (const name of ['approve', 'capture', 'reject', 'refund', 'send_payout', 'publish_rules', 'pay']) {
       expect(tools.map((tool) => tool.name)).not.toContain(name)
     }
     const readOnly = tools.filter((tool) => tool.annotations?.readOnlyHint).map((tool) => tool.name).sort()
-    expect(readOnly).toEqual(['explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'verify_mandate'])
+    expect(readOnly).toEqual(['explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'search_products', 'verify_mandate'])
     for (const tool of tools) expect(tool.description!.length, tool.name).toBeGreaterThan(60)
     await client.close()
   })
@@ -109,7 +109,7 @@ describe('the MCP door', () => {
     await call(app, 'PUT', '/v1/warrant', { body: { ...body, standing: [{ id: 'priya_from_northwind', payeeId: 'payee_priya', clientIds: ['client_northwind'], requireDeal: true }] } })
     const { client, use } = await connect(app, STUDIO_KEY)
     // Still no tool that can pay: the agent asks, exactly as before.
-    expect((await client.listTools()).tools).toHaveLength(11)
+    expect((await client.listTools()).tools).toHaveLength(13)
     const asked = await use('propose', { ...payout, jobId: JOB, fundingCaptureId: captureId, prompt: 'pay Priya her share for Northwind milestone 1' })
     expect(asked.data).toMatchObject({ decision: 'AUTO', ruleCode: 'standing.matched', phase: 'captured', moneyMoved: '$90.00' })
     expect(asked.data.inPlainWords).toContain('standing rule')
@@ -261,7 +261,7 @@ describe('MCP_EXPOSE_READ_TOOLS wiring (P11.T3)', () => {
       .filter(([, t]: any) => t.enabled !== false)
       .map(([name]) => name)
       .sort()
-    expect(hiddenTools).toEqual(['accept_offer', 'offer_deal', 'propose', 'verify_mandate', 'walk_away'])
+    expect(hiddenTools).toEqual(['accept_offer', 'offer_deal', 'propose', 'propose_purchase', 'verify_mandate', 'walk_away'])
 
     const exposed = createMandateMcpServer({
       services,
@@ -274,7 +274,7 @@ describe('MCP_EXPOSE_READ_TOOLS wiring (P11.T3)', () => {
       .filter(([, t]: any) => t.enabled !== false)
       .map(([name]) => name)
       .sort()
-    expect(exposedTools).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'verify_mandate', 'walk_away'])
+    expect(exposedTools).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'propose_purchase', 'search_products', 'verify_mandate', 'walk_away'])
   })
 
   it('drops read tools over HTTP when x-mandate-expose-read is 0', async () => {
@@ -286,7 +286,7 @@ describe('MCP_EXPOSE_READ_TOOLS wiring (P11.T3)', () => {
     const client = new Client({ name: 'test-agent', version: '1.0.0' })
     await client.connect(transport)
     const tools = (await client.listTools()).tools
-    expect(tools.map((t) => t.name).sort()).toEqual(['accept_offer', 'offer_deal', 'propose', 'verify_mandate', 'walk_away'])
+    expect(tools.map((t) => t.name).sort()).toEqual(['accept_offer', 'offer_deal', 'propose', 'propose_purchase', 'verify_mandate', 'walk_away'])
     await client.close()
   })
 })

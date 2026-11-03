@@ -15,7 +15,7 @@ import { buildServices } from '../src/services/container'
 import { openSeal, seal } from '../src/tenancy/envelope'
 import { newWorkspaceId } from '../src/tenancy/ids'
 import { TenantRegistry } from '../src/tenancy/registry'
-import { closeAll, harness } from './support'
+import { closeAll, harness, allowRawWrites } from './support'
 
 afterEach(closeAll)
 
@@ -106,7 +106,8 @@ function setupTenancyHarness() {
     const row = tDb.prepare('SELECT body_json FROM warrants WHERE id = ?').get('wnt_line_studio') as { body_json: string }
     const body = JSON.parse(row.body_json)
     body.fundingRequired = false
-    tDb.prepare('UPDATE warrants SET body_json = ? WHERE id = ?').run(JSON.stringify(body), 'wnt_line_studio')
+    allowRawWrites(tDb); tDb.prepare('UPDATE warrants SET body_json = ? WHERE id = ?').run(JSON.stringify(body), 'wnt_line_studio')
+    tDb.exec('DELETE FROM maintenance_mode')
     tDb.close()
 
     const { privateKey } = generateKeyPairSync('ed25519')
@@ -208,7 +209,7 @@ describe('Q3.5 tenant routing: public keys, MCP under /w, and webhook external_r
     await client.connect(transport)
 
     const tools = (await client.listTools()).tools
-    expect(tools.map((t) => t.name).sort()).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'verify_mandate', 'walk_away'])
+    expect(tools.map((t) => t.name).sort()).toEqual(['accept_offer', 'explain', 'get_jobs', 'get_metrics', 'get_negotiation', 'get_rules', 'list_ledger', 'offer_deal', 'propose', 'propose_purchase', 'search_products', 'verify_mandate', 'walk_away'])
 
     // Call a tool on tenant MCP
     const callResult = await client.callTool({ name: 'get_rules', arguments: {} })

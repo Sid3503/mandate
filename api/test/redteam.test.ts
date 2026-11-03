@@ -27,7 +27,7 @@ import { openSeal, seal } from '../src/tenancy/envelope'
 import { TenantRegistry } from '../src/tenancy/registry'
 import { scriptedModel } from './mockModel'
 import { SoftAuthenticator } from './soft-authenticator'
-import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, NOW, OWNER_KEY, STUDIO_KEY } from './support'
+import { agree, BUYER_KEY, call, closeAll, collect, EVIDENCE, harness, idem, JOB, NOW, OWNER_KEY, STUDIO_KEY, allowRawWrites } from './support'
 
 afterEach(closeAll)
 
@@ -143,7 +143,7 @@ describe('red team: the door has no handle to pull', () => {
     const w = await world()
     const { use, client } = await connect(w.app, STUDIO_KEY)
     const names = (await client.listTools()).tools.map((tool) => tool.name)
-    expect(names).toHaveLength(11)
+    expect(names).toHaveLength(13)
     const before = money(w.paypal!)
     for (const guess of ['approve', 'capture', 'pay', 'send_payout', 'refund', 'publish_rules', 'create_order', 'pay_order', 'create_refund', 'accept_dispute_claim', 'create_invoice', 'record_payment_for_invoice', 'execute_sql', 'reject']) {
       const result = await use(guess, { id: 'anything', proposalId: 'anything', amountCents: 9_000 })
@@ -728,7 +728,7 @@ describe('Appendix B red team: cases 1 to 35', () => {
     const payout = await call(h.app, 'POST', '/v1/proposals', { idem: idem(), body: { payee: 'Priya', amountCents: 9_000, currency: 'USD', category: 'design', description: 'M1 share', evidenceUrl: EVIDENCE, jobId: JOB, fundingCaptureId: collectRes.captureId } })
     await call(h.app, 'POST', `/v1/proposals/${payout.json.id}/approve`)
     const stored = JSON.parse((h.db.prepare(`SELECT payload_json FROM events WHERE proposal_id = ? AND type = 'proposal.approved'`).get(payout.json.id) as { payload_json: string }).payload_json) as { cartHash: string }
-    h.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: stored.cartHash, method: 'passkey' }), payout.json.id)
+    allowRawWrites(h.db); h.db.prepare(`UPDATE events SET payload_json = ? WHERE proposal_id = ? AND type = 'proposal.approved'`).run(JSON.stringify({ actor: 'owner', cartHash: stored.cartHash, method: 'passkey' }), payout.json.id)
     const redAudit = (await call(h.app, 'GET', '/v1/audit')).json
     expect(redAudit.ok).toBe(false)
     expect(redAudit.checks.find((c: { id: string }) => c.id === 'approval.proof').status).toBe('fail')
@@ -751,24 +751,24 @@ describe('Appendix B red team: cases 1 to 35', () => {
     h.control.createInvite({ id: randomUUID(), workspaceId: studioId, role: 'proposer', token, expiresAt: '2027-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     const joined = await h.app.request(`http://mandate.test/w/${studioId}/join`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Sam' }),
     })
     expect(joined.status).toBe(200)
     const second = await h.app.request(`http://mandate.test/w/${studioId}/join`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Sam' }),
     })
     expect(second.status).toBe(400)
     const expired = 'invite-token-expired-case-19'
     h.control.createInvite({ id: randomUUID(), workspaceId: studioId, role: 'viewer', token: expired, expiresAt: '2020-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
-    expect((await h.app.request(`http://mandate.test/w/${studioId}/join`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: expired, name: 'Late' }) })).status).toBe(400)
+    expect((await h.app.request(`http://mandate.test/w/${studioId}/join`, { method: 'POST', headers: { 'content-type': 'application/json', ...WEB }, body: JSON.stringify({ token: expired, name: 'Late' }) })).status).toBe(400)
     const revoked = 'invite-token-revoked-case-19'
     const revokedId = randomUUID()
     h.control.createInvite({ id: revokedId, workspaceId: studioId, role: 'viewer', token: revoked, expiresAt: '2027-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     h.controlDb.prepare('UPDATE invites SET revoked_at = ? WHERE id = ?').run(NOW.toISOString(), revokedId)
-    expect((await h.app.request(`http://mandate.test/w/${studioId}/join`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: revoked, name: 'No' }) })).status).toBe(400)
+    expect((await h.app.request(`http://mandate.test/w/${studioId}/join`, { method: 'POST', headers: { 'content-type': 'application/json', ...WEB }, body: JSON.stringify({ token: revoked, name: 'No' }) })).status).toBe(400)
     h.controlDb.close()
   })
 
@@ -778,8 +778,8 @@ describe('Appendix B red team: cases 1 to 35', () => {
     h.control.createInvite({ id: randomUUID(), workspaceId: 'ws_default', role: 'viewer', token, expiresAt: '2027-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     const body = JSON.stringify({ token, name: 'Sam' })
     const [left, right] = await Promise.all([
-      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body }),
-      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body }),
+      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json', ...WEB }, body }),
+      h.app.request('http://mandate.test/join', { method: 'POST', headers: { 'content-type': 'application/json', ...WEB }, body }),
     ])
     expect([left.status, right.status].sort()).toEqual([200, 400])
     h.controlDb.close()
@@ -802,7 +802,7 @@ describe('Appendix B red team: cases 1 to 35', () => {
     h.control.createInvite({ id: randomUUID(), workspaceId: studioId, role: 'proposer', token, expiresAt: '2027-01-01T00:00:00.000Z', createdBy: 'test', now: NOW.toISOString() })
     const wrong = await h.app.request('http://mandate.test/join', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...WEB },
       body: JSON.stringify({ token, name: 'Sam' }),
     })
     expect(wrong.status).toBe(400)

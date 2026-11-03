@@ -1,6 +1,7 @@
 import type { Context } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { ZodError } from 'zod'
+import { redactPath, redactText } from '../ops/redact'
 
 export class Problem extends Error {
   constructor(
@@ -58,7 +59,17 @@ export function onError(error: Error, c: Context): Response {
   if (code === 'SQLITE_FULL' || code === 'ENOSPC' || /disk is full|sqlite_full|enospc/i.test(msg)) {
     return sendProblem(c, new Problem(507, 'db.disk_full', 'Database storage full', 'The database or disk has run out of space. No changes were made.'))
   }
+  // A 500 is a bug, and a bug nobody can read is a bug nobody fixes: the name, message and stack always go to the
+  // operator's log, with secret-shaped values taken out. The caller is only told that the request failed.
   const requestId = c.get('requestId') as string | undefined
-  console.error(JSON.stringify({ level: 'error', requestId, name: error.name, message: process.env.LOG_ERRORS ? error.message : undefined }))
+  console.error(redactText(JSON.stringify({
+    level: 'error',
+    requestId,
+    method: c.req.method,
+    path: redactPath(c.req.path),
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+  })))
   return sendProblem(c, new Problem(500, 'internal', 'Internal error', 'The request failed.'))
 }

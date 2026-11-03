@@ -70,7 +70,7 @@ export type RunOutput = {
   turns: number
 }
 
-const WRITE_TOOLS = new Set(['propose', 'offer_deal', 'accept_offer', 'walk_away'])
+const WRITE_TOOLS = new Set(['propose', 'propose_purchase', 'offer_deal', 'accept_offer', 'walk_away'])
 
 /** True when the step called one of these tools and the tool did not answer with an error. */
 function succeeded(step: { toolResults: Array<{ toolName: string; output: unknown }> } | undefined, tools: string[]): boolean {

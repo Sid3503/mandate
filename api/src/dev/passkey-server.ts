@@ -67,6 +67,8 @@ const app = createApp({
     trustProxy: false,
     trustedProxyHops: product.trustedProxyHops,
     classedRates: false,
+    // This server opens a studio for nearly every spec, from one local address, so the per-address limit is off here.
+    studioOpenLimit: false,
     demoReset: true,
   },
 })

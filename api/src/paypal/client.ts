@@ -15,6 +15,10 @@ export function createPayPalClient(options: {
   guard?: GuardOptions
 }): PayPalPort {
   const guard = new UpstreamGuard(options.guard)
+  // The token has its own guard. It is fetched from inside calls the main guard is already running, and sharing one
+  // guard meant the half-open probe re-entered itself, saw "a probe is running", and shut the breaker for good.
+  const tokenGuard = new UpstreamGuard(options.guard)
+  let tokenInFlight: Promise<string> | null = null
   const fetchImpl = options.fetch ?? fetch
   const baseUrl = options.baseUrl.replace(/\/$/, '')
   let token: Token | null = null
@@ -48,9 +52,15 @@ export function createPayPalClient(options: {
     return value
   }
 
+  /** One token fetch at a time: callers that arrive while one is in flight wait for it instead of starting another. */
   async function accessToken(): Promise<string> {
     if (token && token.expiresAt > Date.now() + 60_000) return token.value
-    const json = await guard.run(async () => {
+    tokenInFlight ??= fetchToken().finally(() => { tokenInFlight = null })
+    return tokenInFlight
+  }
+
+  async function fetchToken(): Promise<string> {
+    const json = await tokenGuard.run(async () => {
       const made = await fetchImpl(`${baseUrl}/v1/oauth2/token`, {
         method: 'POST',
         headers: {
@@ -71,7 +81,7 @@ export function createPayPalClient(options: {
     return value
   }
 
-  async function call(path: string, init: { method: string; requestId?: string; body?: unknown }): Promise<{ status: number; json: Json }> {    // A read, or a write that carries PayPal's own request id (PayPal answers a repeat with the first answer), is safe to
+  async function call(path: string, init: { method: string; requestId?: string; body?: unknown; rawBody?: string }): Promise<{ status: number; json: Json }> {    // A read, or a write that carries PayPal's own request id (PayPal answers a repeat with the first answer), is safe to
     // try again. Anything else is tried once.
     const repeatable = init.method === 'GET' || Boolean(init.requestId)
     return guard.run(async () => {
@@ -85,7 +95,7 @@ export function createPayPalClient(options: {
         const response = await fetchImpl(`${baseUrl}${path}`, {
           method: init.method,
           headers,
-          body: init.body === undefined ? undefined : JSON.stringify(init.body),
+          body: init.rawBody ?? (init.body === undefined ? undefined : JSON.stringify(init.body)),
           signal: AbortSignal.timeout(20_000),
         })
         return { response, json: await readJson(response) }
@@ -107,7 +117,7 @@ export function createPayPalClient(options: {
     currency: string
     description: string
     payeeEmail: string | null
-    kind?: 'card' | 'checkout'
+    kind?: 'card' | 'checkout' | 'wallet'
     returnUrl?: string
     cancelUrl?: string
   }, attachPayee: boolean): Promise<CreatedOrder> {
@@ -120,9 +130,9 @@ export function createPayPalClient(options: {
     if (attachPayee && input.payeeEmail) unit.payee = { email_address: input.payeeEmail }
     const { json } = await call('/v2/checkout/orders', {
       method: 'POST',
-      // A card order and a checkout order are different orders on PayPal's side, so the request id carries the
-      // instrument. A retry of the same instrument still returns the same order.
-      requestId: paypalRequestId(`${input.proposalId}:create${input.kind === 'card' ? ':card' : ''}`),
+      // A card order, a wallet order and a checkout order are different orders on PayPal's side, so the request id
+      // carries the instrument. A retry of the same instrument still returns the same order.
+      requestId: paypalRequestId(`${input.proposalId}:create${input.kind === 'card' ? ':card' : input.kind === 'wallet' ? ':wallet' : ''}`),
       body: {
         intent: 'CAPTURE',
         purchase_units: [unit],
@@ -132,8 +142,11 @@ export function createPayPalClient(options: {
           attributes: { verification: { method: 'SCA_WHEN_REQUIRED' } },
           ...(input.returnUrl ? { experience_context: { return_url: input.returnUrl, cancel_url: input.cancelUrl ?? input.returnUrl } } : {}),
         } } } : {}),
+        // A wallet order carries no payment source and no return URL. PayPal's script approves it in its own window
+        // (PayPal, Venmo or Pay Later, whichever the buyer pressed). A payment source would tie the order to one
+        // wallet, and a return URL would send the buyer away from a page they never left.
         // With a return URL the buyer lands back on the receipt after approving, instead of being stranded on PayPal.
-        ...(input.returnUrl && input.kind !== 'card' ? { payment_source: { paypal: { experience_context: {
+        ...(input.returnUrl && input.kind !== 'card' && input.kind !== 'wallet' ? { payment_source: { paypal: { experience_context: {
           return_url: input.returnUrl,
           cancel_url: input.cancelUrl ?? input.returnUrl,
           user_action: 'PAY_NOW',
@@ -175,7 +188,8 @@ export function createPayPalClient(options: {
         currency: stringField(asJson(amount), 'currency_code'),
         customId: typeof unit?.custom_id === 'string' ? unit.custom_id : null,
         approveUrl: link(json, ['payer-action', 'approve']),
-      }
+        capture: firstCapture(json) ? captureOf(firstCapture(json)!) : null,
+      } satisfies LiveOrder
     },
     async cardResult(orderId) {
       // Only `fields=payment_source` carries the 3-D Secure answer, and it carries nothing else, so it is its own read.
@@ -198,18 +212,12 @@ export function createPayPalClient(options: {
         body: {},
       })
       const capture = firstCapture(json)
-      const amount = capture?.amount
-      const breakdown = asJson(capture?.seller_receivable_breakdown) ?? {}
-      return {
-        captureId: stringField(capture, 'id'),
-        status: stringField(capture, 'status'),
-        amountCents: payPalToCents(stringField(asJson(amount), 'value')),
-        currency: stringField(asJson(amount), 'currency_code'),
-        // PayPal states the fee it took and the net that reached the seller only on a capture that is complete. An
-        // absent field is null, never zero: zero would claim a fact PayPal did not state.
-        feeCents: moneyCents(breakdown.paypal_fee),
-        netCents: moneyCents(breakdown.net_amount),
-      } satisfies CapturedPayment
+      if (!capture) throw new PayPalError(502, 'paypal_malformed', null, 'captures')
+      return captureOf(capture)
+    },
+    async getCapture(captureId) {
+      const { json } = await call(`/v2/payments/captures/${encodeURIComponent(captureId)}`, { method: 'GET' })
+      return captureOf(json)
     },
     async refundCapture(input) {
       const { json } = await call(`/v2/payments/captures/${encodeURIComponent(input.captureId)}/refund`, {
@@ -217,7 +225,11 @@ export function createPayPalClient(options: {
         requestId: paypalRequestId(`${input.proposalId}:refund`),
         body: { amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) } },
       })
-      return { refundId: stringField(json, 'id'), status: stringField(json, 'status') } satisfies RefundedPayment
+      return refundOf(json)
+    },
+    async getRefund(refundId) {
+      const { json } = await call(`/v2/payments/refunds/${encodeURIComponent(refundId)}`, { method: 'GET' })
+      return refundOf(json)
     },
     async sendPayout(input) {
       const senderBatchId = `mandate_${input.cartHash.slice(0, 48)}`
@@ -256,18 +268,23 @@ export function createPayPalClient(options: {
       }
       return { availableCents: cents('available_balance'), withheldCents: cents('withheld_balance'), asOf: str(json.as_of_time) }
     },
-    async verifyWebhook({ webhookId, headers, event }) {
+    async verifyWebhook({ webhookId, headers, event, rawEvent }) {
+      const fields = {
+        auth_algo: headers['paypal-auth-algo'],
+        cert_url: headers['paypal-cert-url'],
+        transmission_id: headers['paypal-transmission-id'],
+        transmission_sig: headers['paypal-transmission-sig'],
+        transmission_time: headers['paypal-transmission-time'],
+        webhook_id: webhookId,
+      }
+      // PayPal signs the bytes it sent. The event is spliced in as those exact bytes, never parsed and re-serialised:
+      // a re-serialised copy can differ (number formatting, key order) and fail a genuine delivery.
+      const rawBody = rawEvent !== undefined && rawEvent.trim().startsWith('{')
+        ? `${JSON.stringify(fields).slice(0, -1)},"webhook_event":${rawEvent}}`
+        : undefined
       const { json } = await call('/v1/notifications/verify-webhook-signature', {
         method: 'POST',
-        body: {
-          auth_algo: headers['paypal-auth-algo'],
-          cert_url: headers['paypal-cert-url'],
-          transmission_id: headers['paypal-transmission-id'],
-          transmission_sig: headers['paypal-transmission-sig'],
-          transmission_time: headers['paypal-transmission-time'],
-          webhook_id: webhookId,
-          webhook_event: event,
-        },
+        ...(rawBody ? { rawBody } : { body: { ...fields, webhook_event: event } }),
       })
       return json.verification_status === 'SUCCESS'
     },
@@ -361,6 +378,29 @@ function firstUnit(json: Json): Json | null {
   const units = json.purchase_units
   if (!Array.isArray(units) || !units[0] || typeof units[0] !== 'object') return null
   return units[0] as Json
+}
+
+/** One capture as PayPal states it. The status is kept: only COMPLETED means the money arrived. */
+function captureOf(capture: Json): CapturedPayment {
+  const amount = asJson(capture.amount)
+  const breakdown = asJson(capture.seller_receivable_breakdown) ?? {}
+  const details = asJson(capture.status_details)
+  return {
+    captureId: stringField(capture, 'id'),
+    status: stringField(capture, 'status'),
+    amountCents: payPalToCents(stringField(amount, 'value')),
+    currency: stringField(amount, 'currency_code'),
+    // PayPal states the fee it took and the net that reached the seller only on a capture that is complete. An
+    // absent field is null, never zero: zero would claim a fact PayPal did not state.
+    feeCents: moneyCents(breakdown.paypal_fee),
+    netCents: moneyCents(breakdown.net_amount),
+    statusReason: typeof details?.reason === 'string' ? details.reason : null,
+  }
+}
+
+function refundOf(json: Json): RefundedPayment {
+  const details = asJson(json.status_details)
+  return { refundId: stringField(json, 'id'), status: stringField(json, 'status'), statusReason: typeof details?.reason === 'string' ? details.reason : null }
 }
 
 function firstCapture(json: Json): Json | null {

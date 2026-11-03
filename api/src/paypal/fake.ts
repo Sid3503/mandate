@@ -10,6 +10,8 @@ type StoredOrder = {
   captureId?: string
   /** True when the order was opened for a card on our own page: no way back to PayPal, so no payer-action link. */
   cardFlow?: boolean
+  /** Which instrument the order was opened for, as the request asked. */
+  kind?: 'card' | 'checkout' | 'wallet'
 }
 
 type StoredPayout = {
@@ -37,6 +39,18 @@ export class FakePayPal implements PayPalPort {
   autoApprove = true
   captureCalls = 0
   refundCalls = 0
+  /** What a new capture comes back as. Tests set PENDING (an eCheck, a risk review) or DECLINED. */
+  captureOutcome: 'COMPLETED' | 'PENDING' | 'DECLINED' = 'COMPLETED'
+  /** What a new refund comes back as. */
+  refundOutcome: 'COMPLETED' | 'PENDING' | 'FAILED' = 'COMPLETED'
+  /** Every capture the fake has made, by id, so a re-read and a later status change can be simulated. */
+  readonly captures = new Map<string, { captureId: string; orderId: string; amountCents: number; currency: string; status: string; feeCents: number; netCents: number }>()
+  readonly refunds = new Map<string, { refundId: string; status: string }>()
+  /** When set, the next capture call takes the money and then fails as if the answer was lost on the way back. */
+  loseNextCaptureAnswer = false
+  /** Past PayPal's request-id window: a repeated capture is refused instead of answered. */
+  requestIdsForgotten = false
+  getCaptureCalls = 0
   /** How many browser-safe client tokens have been minted. */
   clientTokenCalls = 0
 
@@ -52,13 +66,15 @@ export class FakePayPal implements PayPalPort {
     currency: string
     description: string
     payeeEmail: string | null
-    kind?: 'card' | 'checkout'
+    kind?: 'card' | 'checkout' | 'wallet'
     returnUrl?: string
     cancelUrl?: string
   }) {
-    this.lastReturnUrl = input.returnUrl ?? null
-    // A card order and a checkout order are different orders, as they are on PayPal's side.
-    const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}${input.kind === 'card' ? '-CARD' : ''}`
+    // A wallet order never carries a way back, even if a caller passed one. The real client does not send one.
+    const returnUrl = input.kind === 'wallet' ? undefined : input.returnUrl
+    this.lastReturnUrl = returnUrl ?? null
+    // A card order, a wallet order and a checkout order are different orders, as they are on PayPal's side.
+    const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}${input.kind === 'card' ? '-CARD' : input.kind === 'wallet' ? '-WALLET' : ''}`
     const existing = this.orders.get(orderId)
     if (!existing) {
       this.orders.set(orderId, {
@@ -66,8 +82,9 @@ export class FakePayPal implements PayPalPort {
         currency: input.currency,
         customId: input.proposalId,
         status: this.autoApprove ? 'APPROVED' : 'CREATED',
-        // An order opened for a card on our own page has no way back to PayPal, so it carries no payer-action link.
-        cardFlow: !input.returnUrl,
+        // An order opened on our own page has no way back to PayPal, so it carries no payer-action link.
+        cardFlow: !returnUrl,
+        kind: input.kind ?? 'checkout',
       })
     }
     const order = this.orders.get(orderId)!
@@ -87,6 +104,7 @@ export class FakePayPal implements PayPalPort {
   async getOrder(orderId: string) {
     const order = this.orders.get(orderId)
     if (!order) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'order')
+    const capture = order.captureId ? this.captures.get(order.captureId) : undefined
     return {
       orderId,
       status: order.status,
@@ -95,6 +113,7 @@ export class FakePayPal implements PayPalPort {
       customId: order.customId,
       // PayPal gives every order a payer-action link, card orders included.
       approveUrl: `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
+      capture: capture ? { captureId: capture.captureId, amountCents: capture.amountCents, currency: capture.currency, status: capture.status, feeCents: capture.feeCents, netCents: capture.netCents, statusReason: null } : null,
     }
   }
 
@@ -109,17 +128,58 @@ export class FakePayPal implements PayPalPort {
     if (order.status !== 'APPROVED' && order.status !== 'COMPLETED') {
       throw new PayPalError(422, 'ORDER_NOT_APPROVED', 'debug', 'status')
     }
+    // Within PayPal's request-id window a repeat gets the first answer back. Past it, PayPal refuses a second capture
+    // of a captured order; tests set `requestIdsForgotten` to step past the window.
+    const existing = order.captureId ? this.captures.get(order.captureId) : undefined
+    if (existing) {
+      if (this.requestIdsForgotten) throw new PayPalError(422, 'UNPROCESSABLE_ENTITY', 'debug', 'ORDER_ALREADY_CAPTURED')
+      return { captureId: existing.captureId, amountCents: existing.amountCents, currency: existing.currency, status: existing.status, feeCents: existing.feeCents, netCents: existing.netCents, statusReason: null }
+    }
     order.status = 'COMPLETED'
     order.captureId ??= `CAP-${orderId.slice(6, 18)}`
     // PayPal states the fee it took on a completed capture. The fake stands in with PayPal's published US rate
     // (2.9% + $0.30) so the receipt has a fee to show; the product reads the number, it never computes one.
     const feeCents = Math.round((order.amountCents * 29) / 1000) + 30
-    return { captureId: order.captureId, amountCents: order.amountCents, currency: order.currency, status: 'COMPLETED', feeCents, netCents: order.amountCents - feeCents }
+    const capture = { captureId: order.captureId, orderId, amountCents: order.amountCents, currency: order.currency, status: this.captureOutcome as string, feeCents, netCents: order.amountCents - feeCents }
+    this.captures.set(capture.captureId, capture)
+    if (this.loseNextCaptureAnswer) {
+      this.loseNextCaptureAnswer = false
+      throw new PayPalError(504, 'network_timeout', null, 'the answer was lost')
+    }
+    return { captureId: capture.captureId, amountCents: capture.amountCents, currency: capture.currency, status: capture.status, feeCents, netCents: capture.netCents, statusReason: capture.status === 'COMPLETED' ? null : capture.status === 'PENDING' ? 'PENDING_REVIEW' : 'DECLINED_BY_RISK_FRAUD_FILTERS' }
+  }
+
+  async getCapture(captureId: string) {
+    this.getCaptureCalls += 1
+    const capture = this.captures.get(captureId)
+    if (!capture) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'capture')
+    return { captureId, amountCents: capture.amountCents, currency: capture.currency, status: capture.status, feeCents: capture.feeCents, netCents: capture.netCents, statusReason: null }
+  }
+
+  /** Simulates PayPal finishing, declining, refunding or reversing a capture after the fact. */
+  setCaptureStatus(captureId: string, status: string): void {
+    const capture = this.captures.get(captureId)
+    if (!capture) throw new Error(`missing ${captureId}`)
+    capture.status = status
   }
 
   async refundCapture(input: { proposalId: string; captureId: string; amountCents: number; currency: string }) {
     this.refundCalls += 1
-    return { refundId: `REFUND-${input.proposalId.replaceAll('-', '').slice(0, 12)}`, status: 'COMPLETED' }
+    const refundId = `REFUND-${input.proposalId.replaceAll('-', '').slice(0, 12)}`
+    if (!this.refunds.has(refundId)) this.refunds.set(refundId, { refundId, status: this.refundOutcome })
+    return { refundId, status: this.refunds.get(refundId)!.status, statusReason: null }
+  }
+
+  async getRefund(refundId: string) {
+    const refund = this.refunds.get(refundId)
+    if (!refund) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'refund')
+    return { refundId, status: refund.status, statusReason: null }
+  }
+
+  setRefundStatus(refundId: string, status: string): void {
+    const refund = this.refunds.get(refundId)
+    if (!refund) throw new Error(`missing ${refundId}`)
+    refund.status = status
   }
 
   async sendPayout(input: { proposalId: string; cartHash: string; receiverEmail: string; amountCents: number; currency: string }) {
@@ -320,6 +380,17 @@ export class FakeInvoices implements InvoicePort {
   async findByNumber(number: string) {
     const found = [...this.invoices.entries()].find(([, item]) => item.number === number)
     return found ? { invoiceId: found[0] } : null
+  }
+
+  /** Invoices this server asked PayPal to draw a QR code for. */
+  qrCalls: string[] = []
+  async qrCode(invoiceId: string) {
+    const invoice = this.invoices.get(invoiceId)
+    if (!invoice) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', null, invoiceId)
+    // PayPal only draws a code for an invoice the client can open. A draft has no pay page yet.
+    if (invoice.status === 'DRAFT' || invoice.status === 'CANCELLED') throw new PayPalError(422, 'INVALID_INVOICE_STATE', null, 'a QR code is only for an invoice that has been sent')
+    this.qrCalls.push(invoiceId)
+    return { imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', contentType: 'image/png' as const }
   }
 
   /** The client pays the invoice in PayPal. */

@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Mark } from '../components/Shell'
-import { PayCardFields } from '../components/PayCardFields'
+import { PaySheet } from '../components/PaySheet'
 import { Chip, Loading, Money } from '../components/ui'
 import { api, ApiError } from '../lib/api'
 import { relative } from '../lib/format'
@@ -104,22 +104,23 @@ function Client({ data, token }: { data: ShareView; token: string }) {
               <div className="row between wrap gap-s"><strong>{invoice.description}</strong><Money cents={invoice.amountCents} size="lg" /></div>
               <div className="row gap-s wrap">
                 {invoice.state === 'paid' || (invoice.payable && paidId === invoice.payable.proposalId) ? <Chip tone="auto">Paid</Chip> : <Chip tone="need">Due</Chip>}
-                {invoice.state === 'due' && invoice.payUrl ? <a className="btn btn-lime btn-small" href={invoice.payUrl} target="_blank" rel="noreferrer noopener">Pay on PayPal ↗</a> : null}
+                {invoice.state === 'due' && invoice.payUrl && !invoice.payable ? <a className="btn btn-lime btn-small" href={invoice.payUrl} target="_blank" rel="noreferrer noopener">Pay on PayPal ↗</a> : null}
                 {invoice.state === 'due' && invoice.payable && paying !== invoice.payable.proposalId ? (
                   <button type="button" className="btn btn-lime btn-small" onClick={() => setPaying(invoice.payable!.proposalId)} data-testid="pay-here">
                     Pay here
                   </button>
                 ) : null}
               </div>
-              {/* The card form is a block of its own, the bill's full width: inside the row of chips it could grow past a
+              {/* The pay sheet is a block of its own, the bill's full width: inside the row of chips it could grow past a
                   phone's screen and end up under the next bill, where the Pay button cannot be pressed. */}
               {invoice.state === 'due' && invoice.payable && paying === invoice.payable.proposalId ? (
-                <PayCardFields
+                <PaySheet
                   token={token}
                   proposalId={invoice.payable.proposalId}
                   amountCents={invoice.payable.amountCents}
                   currency={invoice.payable.currency}
                   description={invoice.payable.description}
+                  approveUrl={invoice.payUrl}
                   onPaid={() => setPaidId(invoice.payable!.proposalId)}
                 />
               ) : null}
