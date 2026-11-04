@@ -56,6 +56,35 @@ export function deployNeeded(changedFiles, ignoredPaths) {
 }
 
 /** Every check, as { ok, name, detail }. `tracked` lets a test say which files git tracks. */
+/**
+ * Whether the braces in a stylesheet balance, ignoring comments and quoted strings. One missing closing brace does not
+ * fail a build: the rest of the file silently becomes part of the open rule (an unclosed @media makes every rule after
+ * it, and every stylesheet bundled after it, apply only at that width), and no test of behaviour notices a layout.
+ * Returns { balanced, depth }: depth is how many blocks are still open at the end (negative means an extra closer).
+ */
+export function cssBracesBalance(css) {
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '').replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, '""')
+  let depth = 0
+  for (const ch of bare) {
+    if (ch === '{') depth += 1
+    else if (ch === '}') {
+      depth -= 1
+      if (depth < 0) return { balanced: false, depth }
+    }
+  }
+  return { balanced: depth === 0, depth }
+}
+
+function cssFiles(dir) {
+  const out = []
+  for (const entry of existsSync(dir) ? readdirSync(dir, { withFileTypes: true }) : []) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...cssFiles(full))
+    else if (entry.name.endsWith('.css')) out.push(full)
+  }
+  return out
+}
+
 export function checkRepo(root, { tracked } = {}) {
   const results = []
   const add = (ok, name, detail = '') => results.push({ ok, name, detail })
@@ -105,5 +134,11 @@ export function checkRepo(root, { tracked } = {}) {
     add(unpinned.length === 0, `${name}: every action is pinned to a commit SHA`, `unpinned: ${unpinned.join(', ')}`)
     add(!/pull_request_target/.test(text), `${name}: does not use pull_request_target`, 'pull_request_target runs fork code with secrets')
   }
+  // Every stylesheet in the console has balanced braces. A missing one swallows the styles after it without any error.
+  for (const file of cssFiles(join(root, 'web', 'src'))) {
+    const { balanced, depth } = cssBracesBalance(readFileSync(file, 'utf8'))
+    add(balanced, `${file.slice(root.length + 1)}: braces balance`, `${Math.abs(depth)} ${depth > 0 ? 'unclosed {' : 'extra }'}`)
+  }
+
   return results
 }

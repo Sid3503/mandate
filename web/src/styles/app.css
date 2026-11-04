@@ -1423,6 +1423,7 @@ html { scroll-behavior: smooth; }
 @media (max-width: 860px) {
   .breaks-kpis { grid-template-columns: repeat(2, 1fr); }
   .receipt-ledgers { grid-template-columns: 1fr; }
+}
 /* Line items, due date and note on a bill: the request form, the receipt and the client page. */
 .line-items { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; min-width: 0; }
 .line-items legend { padding: 0; font-weight: 700; margin-bottom: 6px; }
