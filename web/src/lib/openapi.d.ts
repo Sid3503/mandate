@@ -1104,6 +1104,27 @@ export interface paths {
                              */
                             modelFloor?: "auto" | "needs_approval" | "deny";
                         };
+                        /**
+                         * @default {
+                         *       "enabled": false,
+                         *       "duplicateOnly": true,
+                         *       "skipDisputed": true,
+                         *       "maxCents": 0,
+                         *       "monthlyCapCents": 0
+                         *     }
+                         */
+                        autoRefund?: {
+                            /** @default false */
+                            enabled?: boolean;
+                            /** @default true */
+                            duplicateOnly?: boolean;
+                            /** @default true */
+                            skipDisputed?: boolean;
+                            /** @default 0 */
+                            maxCents?: number;
+                            /** @default 0 */
+                            monthlyCapCents?: number;
+                        };
                     };
                 };
             };
@@ -4608,7 +4629,86 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Owner only. The last 30 days of PayPal activity (Transaction search) matched against the ledger. Read-only. */
+        /** Owner only. PayPal activity (Transaction search) matched against the ledger. Read-only. `days` is 1 to 180 (default 30). PayPal answers at most 31 days at a time, so a longer look is several windows and a transaction on a shared edge is kept once. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Problem details (RFC 9457) */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+                /** @description Problem details (RFC 9457) */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/paypal/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Owner only. The PayPal log: every call made to PayPal that can move money (written before the call left, with its status and PayPal's own id) and everything PayPal pushed to the webhook inbox (its delivery status, attempts and errors), newest first, with counts and whether webhook signing is configured. Read-only. */
         get: {
             parameters: {
                 query?: never;
@@ -8016,10 +8116,15 @@ export interface components {
                 modelFloor: "auto" | "needs_approval" | "deny";
             };
             /**
-             * Automatic refunds of a payment the books show was paid twice.
-             * Off unless the owner publishes it. A tracking URL is unrelated.
+             * @default {
+             *       "enabled": false,
+             *       "duplicateOnly": true,
+             *       "skipDisputed": true,
+             *       "maxCents": 0,
+             *       "monthlyCapCents": 0
+             *     }
              */
-            autoRefund?: {
+            autoRefund: {
                 /** @default false */
                 enabled: boolean;
                 /** @default true */
