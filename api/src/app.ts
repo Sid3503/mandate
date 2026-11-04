@@ -234,7 +234,7 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/books(\/journal)?$/ },
   { method: 'GET', pattern: /^\/v1\/(breaks(\/.+)?|proposals\/[^/]+\/attempts)$/ },
   { method: 'POST', pattern: /^\/v1\/breaks(\/scan|\/.+\/(fix|dismiss))$/ },
-  { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance)$/ },
+  { method: 'GET', pattern: /^\/v1\/paypal\/(features|activity|disputes|tools|balance|log)$/ },
   { method: 'POST', pattern: /^\/v1\/paypal\/(features\/check|disputes\/sync)$/ },
 ]
 
@@ -365,6 +365,7 @@ export function createApp(deps: AppDeps) {
     control: deps.control,
     workspaceId: deps.workspace?.id ?? 'ws_default',
     onExternalRef: (kind, externalId) => deps.control?.rememberRef(kind, externalId, deps.workspace?.id ?? 'ws_default'),
+    webhookId: deps.config.webhookId,
   })
   if (deps.control && !services.mandate.hasExternalRef) {
     services.mandate.setOnExternalRef((kind, externalId) => deps.control?.rememberRef(kind, externalId, deps.workspace?.id ?? 'ws_default'))
@@ -1511,6 +1512,7 @@ export function createApp(deps: AppDeps) {
   app.get('/v1/paypal/balance', async (c) => c.json(await service.balance()))
   app.get('/v1/paypal/tools', (c) => c.json(toolSummary()))
   app.get('/v1/paypal/activity', async (c) => c.json(await service.activity(Number(c.req.query('days') ?? 30) || 30)))
+  app.get('/v1/paypal/log', (c) => c.json(service.paypalLog(Number(c.req.query('limit') ?? 100) || 100)))
   app.get('/v1/paypal/disputes', (c) => c.json({ data: services.repo.listDisputes(50) }))
   app.post('/v1/paypal/disputes/sync', async (c) => {
     await assertEmpty(c)

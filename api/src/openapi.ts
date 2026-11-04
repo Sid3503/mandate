@@ -479,6 +479,7 @@ export function buildOpenApi(publicUrl: string) {
   ownerRoute('get', '/v1/paypal/balance', 'What PayPal says the account holds, with the time of its last report. Advice only: PayPal\'s report lags by hours.')
   ownerRoute('get', '/v1/paypal/tools', 'Every PayPal Agent Toolkit tool, its tier (read, propose, out of scope) and whether the server itself uses it. Agents can call none of them directly.')
   ownerRoute('get', '/v1/paypal/activity', 'The last 30 days of PayPal activity (Transaction search) matched against the ledger. Read-only.')
+  ownerRoute('get', '/v1/paypal/log', 'The PayPal log: every call made to PayPal that can move money (written before the call left, with its status and PayPal\'s own id) and everything PayPal pushed to the webhook inbox (its delivery status, attempts and errors), newest first, with counts and whether webhook signing is configured. Read-only.')
   ownerRoute('get', '/v1/paypal/disputes', 'Stored PayPal disputes.')
   ownerRoute('post', '/v1/paypal/disputes/sync', 'Read disputes from PayPal now. A disputed client payment cannot fund a payout (funding.disputed).')
   // The Breaks desk: where the books and PayPal disagree. Owner only; a fix re-reads PayPal or files a request the gate decides.

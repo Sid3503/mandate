@@ -51,13 +51,13 @@ export type Services = {
 import type { ControlStore } from '../control/store'
 
 /** The one place the services are wired together. The HTTP app, the MCP server and the agents all start here. */
-export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | null; invoices?: InvoicePort | null; watch?: WatchPort | null; publicUrl?: string; now: () => Date; signer?: Signer; safety?: Partial<SafetyConfig>; payeeBook?: boolean; newPayeeWaitHours?: number; onExternalRef?: (kind: string, externalId: string) => void; control?: ControlStore | null; workspaceId?: string; paypalEnvironment?: 'sandbox' | 'live'; /** The product catalog. Null or absent: product search is off. */ catalog?: CatalogPort | null; /** The PayPal disputes API. Absent: built from the real PayPal client when there is one, else off. */ disputes?: DisputePort | null }): Services {
+export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | null; invoices?: InvoicePort | null; watch?: WatchPort | null; publicUrl?: string; now: () => Date; signer?: Signer; safety?: Partial<SafetyConfig>; payeeBook?: boolean; newPayeeWaitHours?: number; onExternalRef?: (kind: string, externalId: string) => void; control?: ControlStore | null; workspaceId?: string; paypalEnvironment?: 'sandbox' | 'live'; /** The product catalog. Null or absent: product search is off. */ catalog?: CatalogPort | null; /** The PayPal disputes API. Absent: built from the real PayPal client when there is one, else off. */ disputes?: DisputePort | null; /** PayPal's id for the registered webhook. When set, webhook deliveries must be signed. */ webhookId?: string | null }): Services {
   const repo = new Repo(deps.db)
   const signer = deps.signer ?? ephemeralSigner()
   const safety = new SafetyService(repo, signer, deps.now, deps.safety)
   const agents = new AgentService(repo, deps.now, deps.workspaceId ?? 'ws_default')
   const clientKeys = new ClientKeyService(repo, deps.now, deps.workspaceId ?? 'ws_default')
-  const mandate = new MandateService(repo, deps.paypal, deps.now, signer, deps.invoices ?? null, { publicUrl: deps.publicUrl, watch: deps.watch ?? null, safety, agents, payeeBook: deps.payeeBook, newPayeeWaitHours: deps.newPayeeWaitHours, onExternalRef: deps.onExternalRef, paypalEnvironment: deps.paypalEnvironment })
+  const mandate = new MandateService(repo, deps.paypal, deps.now, signer, deps.invoices ?? null, { publicUrl: deps.publicUrl, watch: deps.watch ?? null, safety, agents, payeeBook: deps.payeeBook, newPayeeWaitHours: deps.newPayeeWaitHours, onExternalRef: deps.onExternalRef, paypalEnvironment: deps.paypalEnvironment, webhookId: deps.webhookId ?? null })
   const deals = new DealService(repo, signer, deps.now, mandate)
   repo.stampEvents = () => (safety.paused() ? { paused: true } : {})
   safety.onResume = async () => {

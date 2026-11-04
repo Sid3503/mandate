@@ -245,6 +245,8 @@ export class MandateService {
       onExternalRef?: (kind: string, externalId: string) => void
       /** Which PayPal the browser SDK must talk to. Sandbox and live are different scripts. */
       paypalEnvironment?: 'sandbox' | 'live'
+      /** PayPal's id for the registered webhook. When set, webhook deliveries must be signed. */
+      webhookId?: string | null
     } = {},
   ) {}
 
@@ -1133,6 +1135,31 @@ export class MandateService {
     for (const live of await watch.listDisputes()) this.recordDispute(live)
     const disputes = this.repo.listDisputes(50)
     return { checked: true, open: disputes.filter((item) => item.status !== 'RESOLVED').length, disputes }
+  }
+
+  /**
+   * The PayPal log: everything the account says the server asked of PayPal and everything PayPal pushed to the
+   * webhook inbox, newest first, read-only. What a lock proved and what the sweep settled stays in each request's
+   * packet; this is the other half of the story — the attempts (what left before PayPal answered) and the inbox
+   * (what PayPal said first). One failing read never stops the other.
+   */
+  paypalLog(limit = 100) {
+    const attempts = this.repo.recentAttempts(limit)
+    const webhooks = this.repo.recentWebhookEvents(limit)
+    const counts = {
+      attempts: attempts.length,
+      attemptsUnknown: attempts.filter((row) => row.status === 'unknown').length,
+      attemptsFailed: attempts.filter((row) => row.status === 'failed').length,
+      webhooks: webhooks.length,
+      webhooksFailed: webhooks.filter((row) => row.status === 'failed').length,
+      webhooksStuck: webhooks.filter((row) => row.status === 'processing').length,
+    }
+    return {
+      counts,
+      webhookConfigured: Boolean(this.options.webhookId),
+      attempts,
+      webhooks,
+    }
   }
 
   private recordDispute(live: LiveDispute): void {

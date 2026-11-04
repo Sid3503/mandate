@@ -1564,6 +1564,16 @@ export class Repo {
     return this.db.prepare('SELECT * FROM paypal_attempts WHERE proposal_id = ? ORDER BY started_at, rowid').all(proposalId) as AttemptRow[]
   }
 
+  /** Newest first: what was asked of PayPal across the account, for the PayPal log. */
+  recentAttempts(limit: number): AttemptRow[] {
+    return this.db.prepare('SELECT * FROM paypal_attempts ORDER BY started_at DESC, rowid DESC LIMIT ?').all(limit) as AttemptRow[]
+  }
+
+  /** Newest first: what PayPal delivered to the webhook inbox, for the PayPal log. */
+  recentWebhookEvents(limit: number): Array<{ event_id: string; event_type: string; status: string; attempts: number; received_at: string; processed_at: string | null; error: string | null }> {
+    return this.db.prepare('SELECT event_id, event_type, status, attempts, received_at, processed_at, error FROM webhook_events ORDER BY received_at DESC, rowid DESC LIMIT ?').all(limit) as never
+  }
+
   /**
    * True when a money-moving call for this request was sent at or after `sinceIso` and PayPal did not clearly refuse
    * it: it may have moved money. A retry must then resume that call (same request id) rather than decide again.
