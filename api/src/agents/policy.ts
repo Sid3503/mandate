@@ -121,6 +121,9 @@ export function factsOf(body: WarrantBody): Fact[] {
     { key: 'risk.escalateNewEvidenceHost', label: 'proof hosted somewhere no earlier request pointed at needs a tap', value: yes(body.risk.escalateNewEvidenceHost) },
     { key: 'risk.patternMatchPayees', label: 'a payee name that looks like a known party without being one waits for a tap', value: yes(body.risk.patternMatchPayees) },
     { key: 'frictionBudget.modelFloor', label: 'the minimum friction floor enforced for AI agents', value: body.frictionBudget?.modelFloor ?? 'auto' },
+    { key: 'autoRefund.enabled', label: 'payments the books show as paid twice are refunded automatically, inside the policy below', value: yes(body.autoRefund.enabled) },
+    { key: 'autoRefund.maxCents', label: 'the most one automatic refund may be', value: body.autoRefund.enabled ? money(body.autoRefund.maxCents) : '—' },
+    { key: 'autoRefund.monthlyCapCents', label: 'the most automatic refunds may total in one month', value: body.autoRefund.enabled ? money(body.autoRefund.monthlyCapCents) : '—' },
   ]
   for (const person of body.payees) facts.push({ key: `payee:${person.id}`, label: `${person.displayName} can be paid`, value: person.email })
   for (const person of body.clients) facts.push({ key: `client:${person.id}`, label: `${person.displayName} can be billed`, value: person.email })

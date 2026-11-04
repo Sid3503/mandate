@@ -86,6 +86,30 @@ export const FrictionBudgetSchema = z.object({
 export type FrictionBudget = z.infer<typeof FrictionBudgetSchema>
 export const DEFAULT_FRICTION_BUDGET: FrictionBudget = { modelFloor: 'auto' }
 
+/**
+ * The auto-refund policy: automatic refunds of payments the books prove were paid twice. It is a rule like any
+ * other, signed when the warrant is published: it only removes the tap, and only for a refund that satisfies
+ * every refund check (settled parent, same payee and currency, cents still available) that already applies. It
+ * never covers an open dispute unless the owner switches `skipDisputed` off, never exceeds `maxCents` for one
+ * refund, and never passes `monthlyCapCents` of automatic refunds in a month. Above the policy's line the refund
+ * still goes ahead as an ordinary refund that needs the owner's tap.
+ */
+export const AutoRefundPolicySchema = z.object({
+  /** Off by default: a warrant written before this existed refunds only through the gate it always had. */
+  enabled: z.boolean().default(false),
+  /** Only a capture with an open `capture.duplicate` break counts. Switching this off widens it to every refund, which is refused at publish. */
+  duplicateOnly: z.boolean().default(true),
+  /** Never send a refund by itself while the parent payment has an open dispute. */
+  skipDisputed: z.boolean().default(true),
+  /** The most one automatic refund may be. */
+  maxCents: z.number().int().min(0).max(100_000_000).default(0),
+  /** The most automatic refunds may total in one month. At least `maxCents`. */
+  monthlyCapCents: z.number().int().min(0).max(100_000_000).default(0),
+}).strict()
+
+export type AutoRefundPolicy = z.infer<typeof AutoRefundPolicySchema>
+export const NO_AUTO_REFUND: AutoRefundPolicy = { enabled: false, duplicateOnly: true, skipDisputed: true, maxCents: 0, monthlyCapCents: 0 }
+
 export const WarrantBodySchema = z.object({
   currency: z.string().regex(/^[A-Z]{3}$/),
   autoSettleUnderCents: z.number().int().positive().max(100_000_000),
@@ -110,6 +134,7 @@ export const WarrantBodySchema = z.object({
   automation: AutomationSchema.default(NO_AUTOMATION),
   risk: RiskConfigSchema.default(DEFAULT_RISK),
   frictionBudget: FrictionBudgetSchema.default(DEFAULT_FRICTION_BUDGET),
+  autoRefund: AutoRefundPolicySchema.default(NO_AUTO_REFUND),
 }).strict().superRefine((warrant, ctx) => {
   if (warrant.autoSettleUnderCents > warrant.perPaymentCeilingCents) {
     ctx.addIssue({ code: 'custom', path: ['autoSettleUnderCents'], message: 'auto settle must be at or under the per-payment ceiling' })
@@ -143,6 +168,18 @@ export const WarrantBodySchema = z.object({
   }
   if (warrant.automation.payOnSettle && warrant.standing.length === 0) {
     ctx.addIssue({ code: 'custom', path: ['automation', 'payOnSettle'], message: 'paying on settle needs at least one standing rule to say whom to pay' })
+  }
+  if (warrant.autoRefund.enabled) {
+    if (warrant.autoRefund.duplicateOnly === false) {
+      ctx.addIssue({ code: 'custom', path: ['autoRefund', 'duplicateOnly'], message: 'automatic refunds are limited to payments the books prove were paid twice; switch the policy off to refund through the gate instead' })
+    }
+    if (warrant.autoRefund.maxCents < 1) {
+      ctx.addIssue({ code: 'custom', path: ['autoRefund', 'maxCents'], message: 'a switched-on auto-refund policy needs a per-refund maximum above zero' })
+    } else if (warrant.autoRefund.monthlyCapCents < warrant.autoRefund.maxCents) {
+      ctx.addIssue({ code: 'custom', path: ['autoRefund', 'monthlyCapCents'], message: 'the monthly automatic-refund cap must be at least the per-refund maximum, or the first refund would already be over the cap' })
+    }
+  } else if (warrant.autoRefund.maxCents !== 0 || warrant.autoRefund.monthlyCapCents !== 0) {
+    ctx.addIssue({ code: 'custom', path: ['autoRefund'], message: 'the auto-refund limits are meaningless while the policy is off; leave them at zero or switch it on' })
   }
   // Contractors paid out of one client's money can never be promised more than the contractor share in total.
   for (const client of warrant.clients) {
@@ -182,6 +219,7 @@ export const BLANK_WARRANT: WarrantBody = {
   automation: { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 },
   risk: DEFAULT_RISK,
   frictionBudget: DEFAULT_FRICTION_BUDGET,
+  autoRefund: NO_AUTO_REFUND,
 }
 export type Payee = z.infer<typeof PayeeSchema>
 
@@ -289,6 +327,7 @@ export const LINE_STUDIO_WARRANT: WarrantBody = {
   allowPartialPayment: false,
   risk: DEFAULT_RISK,
   frictionBudget: DEFAULT_FRICTION_BUDGET,
+  autoRefund: NO_AUTO_REFUND,
 }
 
 export const DEMO_JOB_ID = 'job_northwind_logo'
