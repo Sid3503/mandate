@@ -497,7 +497,7 @@ export type ActivityRow = {
 
 export type Activity =
   | { available: false; reason: string }
-  | { available: true; from: string; to: string; rows: ActivityRow[]; matched: number; unmatched: number; unmatchedNetCents: number; mismatched: number; mismatchedNetCents: number }
+  | { available: true; from: string; to: string; days: number; windows: number; rows: ActivityRow[]; matched: number; unmatched: number; unmatchedNetCents: number; mismatched: number; mismatchedNetCents: number }
 
 export type ToolSummary = {
   total: number

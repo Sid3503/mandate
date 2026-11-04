@@ -1140,7 +1140,7 @@ html { scroll-behavior: smooth; }
 @media (max-width: 860px) { .rail-more { display: none; } }
 
 /* Activity: Ledger, Proof and the Control room are three views of one thing, so they share one tab row. */
-.activity-tabs { display: flex; gap: 4px; margin: 0 0 18px; border-bottom: 2px solid var(--ink); overflow-x: auto; }
+.activity-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 18px; border-bottom: 2px solid var(--ink); }
 .activity-tabs a { padding: 10px 16px; font: 700 13px var(--mono); letter-spacing: 0.05em; text-transform: uppercase; text-decoration: none; color: var(--ink); border: 2px solid transparent; border-bottom: 0; margin-bottom: -2px; white-space: nowrap; }
 .activity-tabs a:hover { background: #ece7da; }
 .activity-tabs a[aria-current='page'] { background: var(--ink); color: var(--lime); }
@@ -1420,8 +1420,11 @@ html { scroll-behavior: smooth; }
 .call-status { font: 700 11px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px; border: 1.5px solid var(--ink); }
 .call-succeeded { background: var(--lime); }
 .call-failed, .call-unknown { background: var(--ink); color: var(--paper); }
+.ops-kpis { grid-template-columns: repeat(3, 1fr); }
+.ops-feed { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ops-feed a { color: inherit; }
 @media (max-width: 860px) {
-  .breaks-kpis { grid-template-columns: repeat(2, 1fr); }
+  .breaks-kpis, .ops-kpis { grid-template-columns: repeat(2, 1fr); }
   .receipt-ledgers { grid-template-columns: 1fr; }
 }
 /* Line items, due date and note on a bill: the request form, the receipt and the client page. */

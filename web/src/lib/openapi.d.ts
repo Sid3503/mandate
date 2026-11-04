@@ -8015,6 +8015,22 @@ export interface components {
                  */
                 modelFloor: "auto" | "needs_approval" | "deny";
             };
+            /**
+             * Automatic refunds of a payment the books show was paid twice.
+             * Off unless the owner publishes it. A tracking URL is unrelated.
+             */
+            autoRefund?: {
+                /** @default false */
+                enabled: boolean;
+                /** @default true */
+                duplicateOnly: boolean;
+                /** @default true */
+                skipDisputed: boolean;
+                /** @default 0 */
+                maxCents: number;
+                /** @default 0 */
+                monthlyCapCents: number;
+            };
             id: string;
             version: number;
             createdAt: string;

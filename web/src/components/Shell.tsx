@@ -25,11 +25,12 @@ const NAV: NavItem[] = [
   { to: '/', label: 'Today', tour: 'nav-waiting', icon: 'M4 5h16v14H4z M4 9h16', end: true },
   { to: '/jobs', label: 'Jobs', tour: 'nav-jobs', icon: 'M4 7h16v12H4z M9 7V4h6v3', also: ['/deals'] },
   { to: '/rules', label: 'Rules', tour: 'nav-rules', icon: 'M6 4h12v16H6z M9 9h6 M9 13h6 M9 17h3' },
-  { to: '/ledger', label: 'Activity', tour: 'nav-activity', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16', also: ['/proof', '/control-room', '/books', '/breaks', '/disputes', '/invoices'] },
+  { to: '/ledger', label: 'Activity', tour: 'nav-activity', icon: 'M4 5h16 M4 10h16 M4 15h16 M4 20h16', also: ['/proof', '/control-room', '/books', '/breaks', '/disputes', '/invoices', '/ops'] },
 ]
 
 /** Quiet shortcuts on the desktop rail. On a phone they live inside Jobs and Today. */
 const MORE: NavItem[] = [
+  { to: '/ops', label: 'Money at risk', tour: 'nav-ops', icon: 'M12 3v18 M3 12h18' },
   { to: '/invoices', label: 'Invoices', tour: 'nav-invoices', icon: 'M6 3h9l4 4v14H6z M14 3v5h5 M9 13h7 M9 17h5' },
   { to: '/breaks', label: 'Breaks', tour: 'nav-breaks', icon: 'M12 3l10 18H2z M12 10v5 M12 18h.01' },
   { to: '/disputes', label: 'Disputes', tour: 'nav-disputes', icon: 'M12 3l9 16H3z M12 10v4 M12 17h.01' },

@@ -3,6 +3,7 @@ import { session, workspaceFromKey } from './session'
 import type { ConnectionCheck } from './connect'
 import type { InvoiceDraft, InvoicesList } from './invoices'
 import type { AttemptRow, BreakDetail, BreaksList, FixResult as BreakFixResult, ScanResult as BreakScanResult } from './breaks'
+import type { PayPalLog } from './paypallog'
 import type { AgentActivityRow, OauthRequestInfo, NegotiationView, ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, Books, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, JournalEntry, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PayMethod, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
@@ -572,7 +573,8 @@ export const api = {
   draftRules: (instruction: string) => request<RulesDraft>('/v1/rules/draft', { method: 'POST', body: { instruction } }),
   balance: () => request<Balance>('/v1/paypal/balance'),
   tools: () => request<ToolSummary>('/v1/paypal/tools'),
-  activity: () => request<Activity>('/v1/paypal/activity'),
+  activity: (days = 30) => request<Activity>(`/v1/paypal/activity?days=${days}`),
+  paypalLog: () => request<PayPalLog>('/v1/paypal/log'),
   syncDisputes: () => request<{ checked: boolean; open: number }>('/v1/paypal/disputes/sync', { method: 'POST' }),
   capture: (id: string, claimedAmountCents?: number) =>
     request<Proposal>(`/v1/proposals/${id}/capture`, { method: 'POST', body: claimedAmountCents === undefined ? undefined : { claimedAmountCents } }),
