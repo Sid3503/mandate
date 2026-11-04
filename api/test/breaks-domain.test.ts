@@ -140,6 +140,43 @@ describe('breaks: detection rules', () => {
     expect(found.map((x) => x.key).sort()).toEqual(['paypal.unknown_or_differs:T1', 'paypal.unknown_or_differs:q'])
     expect(found.find((x) => x.proposalId === 'q')).toMatchObject({ severity: 'critical', deltaCents: -1000 })
   })
+  it('16 dispute.response_overdue past the assumed tenth day, with no payouts needed', () => {
+    const dispute = (openedAgo: number, status = 'WAITING_FOR_SELLER_RESPONSE') => ({ disputeId: 'D1', transactionId: 'capC', status, reason: 'x', amountCents: 7500, currency: 'USD', openedAt: ago(openedAgo), updatedAt: ago(openedAgo) })
+    expect(rules(facts([row({ id: 'c', capture_id: 'capC' })], { disputes: [dispute(9 * D)] }))).not.toContain('dispute.response_overdue')
+    const found = detectBreaks(facts([row({ id: 'c', capture_id: 'capC' })], { disputes: [dispute(12 * D)] })).find((x) => x.rule === 'dispute.response_overdue')!
+    expect(found).toMatchObject({ key: 'dispute.response_overdue:D1', severity: 'critical', proposalId: 'c', deltaCents: -7500 })
+    expect(found.detail).toContain('dispute desk')
+    expect(rules(facts([row({ id: 'c', capture_id: 'capC' })], { disputes: [dispute(12 * D, 'RESOLVED')] }))).not.toContain('dispute.response_overdue')
+  })
+  it('17 refund.awaiting_owner after a week, only for a refund ask still waiting for the tap', () => {
+    expect(rules(facts([row({ kind: 'refund', phase: 'pending_approval', updated_at: ago(6 * D), created_at: ago(8 * D), capture_id: null, settled_cents: null, captured_amount_cents: null })]))).not.toContain('refund.awaiting_owner')
+    const found = detectBreaks(facts([row({ kind: 'refund', phase: 'pending_approval', updated_at: ago(9 * D), created_at: ago(9 * D), capture_id: null, settled_cents: null, captured_amount_cents: null })])).find((x) => x.rule === 'refund.awaiting_owner')!
+    expect(found).toMatchObject({ key: expect.stringMatching(/^refund\.awaiting_owner:/), severity: 'warning' })
+    expect(found.title).toContain('refund')
+    expect(rules(facts([row({ kind: 'refund', phase: 'refunded', updated_at: ago(9 * D), capture_id: null, settled_cents: null, captured_amount_cents: null })]))).not.toContain('refund.awaiting_owner')
+  })
+  it('18 invoice.partial_unresolved after ten days, only for a gap PayPal does not explain', () => {
+    const partial = { phase: 'settled_short', settled_cents: 8000, delta_cents: -2000, delta_reason: 'partial' as const }
+    expect(rules(facts([row({ ...partial, updated_at: ago(5 * D) })]))).not.toContain('invoice.partial_unresolved')
+    const found = detectBreaks(facts([row({ ...partial, updated_at: ago(11 * D) })])).find((x) => x.rule === 'invoice.partial_unresolved')!
+    expect(found).toMatchObject({ severity: 'warning', deltaCents: 2000 })
+    expect(found.title).toContain('part paid')
+    // A shortfall with a reason PayPal stated (a discount, a fee) is attributed, so it is not this one.
+    expect(rules(facts([row({ ...partial, delta_reason: 'early_discount' as const, updated_at: ago(11 * D) })]))).not.toContain('invoice.partial_unresolved')
+  })
+  it('19 fees.anomaly above the plan share plus a fixed allowance, only on big-enough payments', () => {
+    const fee = (settled: number, feeCents: number) => ({ captured_amount_cents: settled, settled_cents: settled, capture_fee_cents: feeCents })
+    // A plan fee, 2.9% + 30 cents, is never called an anomaly.
+    expect(rules(facts([row(fee(15000, 465))]))).not.toContain('fees.anomaly')
+    // A small payment where the fixed part dominates is never judged, and fees on too-small payments are never judged at all.
+    expect(rules(facts([row(fee(1200, 65))]))).not.toContain('fees.anomaly')
+    expect(rules(facts([row(fee(800, 400))]))).not.toContain('fees.anomaly')
+    const found = detectBreaks(facts([row(fee(10000, 800))])).find((x) => x.rule === 'fees.anomaly')!
+    expect(found).toMatchObject({ severity: 'warning', deltaCents: 340 }) // 800 against a 460 ceiling.
+    expect(found.title).toContain('8.00%')
+    // At the ceiling exactly: not an anomaly.
+    expect(rules(facts([row(fee(10000, 460))]))).not.toContain('fees.anomaly')
+  })
   it('keys are stable between runs', () => {
     const f = facts([row({ id: 'k', phase: 'mismatch_hold' })])
     expect(detectBreaks(f).map((x) => x.key)).toEqual(detectBreaks(f).map((x) => x.key))

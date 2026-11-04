@@ -62,6 +62,16 @@ export const DEFAULT_INFLIGHT_MS = 180_000
 export const DISPUTE_RESPONSE_DAYS = 10
 /** A dispute due within this long (or already overdue) is critical. */
 export const DISPUTE_SOON_MS = 3 * DAY
+/** A refund filed as a request that has waited this long without the owner's tap needs chasing. */
+export const REFUND_OWNER_WAIT_MS = 7 * DAY
+/** The missing part of a partly paid invoice that has not arrived this long is unresolved. */
+export const PARTIAL_UNRESOLVED_MS = 10 * DAY
+/** A capture fee heavier than this share of what arrived (plus a fixed allowance) is an anomaly worth reading. */
+export const FEE_ANOMALY_BPS = 400
+/** The fixed cents allowance on top of the share, so PayPal's small `3.49% + 49¢`-shaped fees are never called anomalies. */
+export const FEE_ANOMALY_FIXED_CENTS = 60
+/** Fees on very small payments are dominated by the fixed part and never judged. */
+export const FEE_ANOMALY_MIN_CENTS = 1_000
 
 const money = (cents: number, currency: string): string => `${(cents / 100).toFixed(2)} ${currency}`
 
@@ -135,6 +145,15 @@ export function detectBreaks(facts: BreakFacts): Break[] {
       }
     }
 
+    // Rule 17. A refund that was filed and never tapped: the client is still waiting for money the books already set
+    // aside for return. PayPal is not involved; the fault is that nobody decided the ask.
+    if (row.kind === 'refund' && row.phase === 'pending_approval') {
+      const age = ageOf(facts.now, phaseSince(row, events, ['proposal.created']))
+      if (age > REFUND_OWNER_WAIT_MS) {
+        add({ key: `refund.awaiting_owner:${row.id}`, rule: 'refund.awaiting_owner', severity: 'warning', proposalId: row.id, title: `A ${amount} refund has waited ${hoursWords(age)} without the owner's tap`, detail: 'A refund request was filed and is waiting for the owner\'s approval. The client has not been paid back yet; PayPal has not been asked for anything.', expected: 'decided within 7 days', observed: `undecided for ${hoursWords(age)}`, deltaCents: null })
+      }
+    }
+
     if (row.phase === 'payout_unclaimed') {
       const age = ageOf(facts.now, phaseSince(row, events, ['payout.unclaimed']))
       if (age > UNCLAIMED_AGING_MS) {
@@ -169,6 +188,16 @@ export function detectBreaks(facts: BreakFacts): Break[] {
         const short = row.delta_cents !== null ? row.delta_cents : (row.settled_cents ?? 0) - row.amount_cents
         add({ key: `settlement.short_aging:${row.id}`, rule: 'settlement.short_aging', severity: 'warning', proposalId: row.id, title: `The client paid ${money(Math.abs(short), row.currency)} short ${hoursWords(age)} ago`, detail: 'The client paid less than was locked and the rest has not arrived.', expected: money(row.amount_cents, row.currency), observed: money(row.settled_cents ?? 0, row.currency), deltaCents: short })
       }
+      // Rule 18. A part payment whose missing part PayPal does not explain, still missing days later. Nothing
+      // attributes the gap, so it cannot be closed by itself: someone must chase the remainder, refund the paid
+      // part, or write it off, and say which.
+      if (row.delta_reason === 'partial') {
+        const age = ageOf(facts.now, phaseSince(row, events, ['invoice.partial', 'invoice.settled']))
+        if (age > PARTIAL_UNRESOLVED_MS) {
+          const missing = row.amount_cents - (row.settled_cents ?? 0)
+          add({ key: `invoice.partial_unresolved:${row.id}`, rule: 'invoice.partial_unresolved', severity: 'warning', proposalId: row.id, title: `A part payment of ${money(row.settled_cents ?? 0, row.currency)} on a ${amount} invoice has stayed part paid for ${hoursWords(age)}`, detail: 'The client paid part of the invoice and no PayPal field explains the missing part. It has not arrived either. Chase the remainder with PayPal\'s reminder, refund the paid part, or write it off.', expected: `${money(row.amount_cents, row.currency)} arrived`, observed: `${money(row.settled_cents ?? 0, row.currency)} arrived, ${money(missing, row.currency)} still outstanding`, deltaCents: missing })
+        }
+      }
     }
 
     if (row.phase === 'capture_inflight') {
@@ -183,6 +212,8 @@ export function detectBreaks(facts: BreakFacts): Break[] {
   refundsExceed(facts, add)
   booksDrift(facts, add)
   disputesOpen(facts, add)
+  disputesOverdue(facts, add)
+  feeAnomalies(facts, add)
   paypalDiffers(facts, add)
   return out.sort((a, b) => a.rule.localeCompare(b.rule) || a.key.localeCompare(b.key))
 }
@@ -290,6 +321,38 @@ function disputesOpen(facts: BreakFacts, add: (found: Break) => void): void {
     const soon = !Number.isNaN(due) && due - facts.now.getTime() <= DISPUTE_SOON_MS
     const cents = dispute.amountCents ?? arrivedCents(charge)
     add({ key: `dispute.open:${dispute.disputeId}`, rule: 'dispute.open', severity: soon ? 'critical' : 'warning', proposalId: charge.id, title: `A ${money(cents, charge.currency)} client dispute is open and ${left > 0 ? `${money(left, charge.currency)} already went out` : `${held} payout${held === 1 ? ' is' : 's are'} held`}`, detail: `Dispute ${dispute.disputeId}${dispute.reason ? ` (${dispute.reason})` : ''} is ${dispute.status}. Response assumed due ${Number.isNaN(due) ? 'unknown' : new Date(due).toISOString().slice(0, 10)} (ten days after it opened: PayPal's own due date is not stored here).`, expected: 'no open dispute on money already paid out', observed: `${dispute.status}, ${left > 0 ? `${money(left, charge.currency)} paid out` : `${held} held`}`, deltaCents: left > 0 ? -left : null })
+  }
+}
+
+/** Rule 16. An open dispute whose answer is already late. `dispute.open` needs payouts to matter; this one does not,
+ * because while a dispute waits for an answer the money it names is held in this PayPal account either way. PayPal
+ * does not store a due date here, so the response is assumed to have been due ten days after it opened. */
+function disputesOverdue(facts: BreakFacts, add: (found: Break) => void): void {
+  for (const dispute of facts.disputes) {
+    if (dispute.status === 'RESOLVED') continue
+    const charge = facts.proposals.find((row) => row.kind === 'charge' && row.capture_id === dispute.transactionId)
+    if (!charge) continue
+    const opened = dispute.openedAt ?? dispute.updatedAt
+    const due = Date.parse(opened) + DISPUTE_RESPONSE_DAYS * DAY
+    if (Number.isNaN(due) || due > facts.now.getTime()) continue
+    const late = facts.now.getTime() - due
+    const cents = dispute.amountCents ?? arrivedCents(charge)
+    add({ key: `dispute.response_overdue:${dispute.disputeId}`, rule: 'dispute.response_overdue', severity: 'critical', proposalId: charge.id, title: `A ${money(cents, charge.currency)} dispute has gone ${hoursWords(late)} past the day a response was due`, detail: `Dispute ${dispute.disputeId} opened ${Number.isNaN(Date.parse(opened)) ? 'at an unknown time' : opened.slice(0, 10)} and PayPal does not store its due date here, so it was assumed due ${new Date(due).toISOString().slice(0, 10)} (ten days later). Past that day PayPal may decide by default, and its default favours the client. Answer it in the dispute desk.`, expected: `a response by ${new Date(due).toISOString().slice(0, 10)}`, observed: 'no response sent', deltaCents: -cents })
+  }
+}
+
+/** Rule 19. PayPal's own fee on a capture is heavier than the plan's share of what arrived (plus a small fixed
+ * allowance), and the payment is big enough for the fixed part of the plan never to explain it. A fee a wrong
+ * charge plan, a currency conversion or a promo swallowed is money a receipt cannot attribute. */
+function feeAnomalies(facts: BreakFacts, add: (found: Break) => void): void {
+  for (const row of facts.proposals) {
+    if (row.kind !== 'charge' || row.capture_id === null || row.capture_fee_cents === null || row.capture_fee_cents <= 0) continue
+    const arrived = arrivedCents(row)
+    if (arrived < FEE_ANOMALY_MIN_CENTS) continue
+    const ceiling = Math.round((FEE_ANOMALY_BPS * arrived) / 10_000) + FEE_ANOMALY_FIXED_CENTS
+    if (row.capture_fee_cents <= ceiling) continue
+    const share = (row.capture_fee_cents / arrived) * 10_000
+    add({ key: `fees.anomaly:${row.id}`, rule: 'fees.anomaly', severity: 'warning', proposalId: row.id, title: `PayPal's fee on a ${money(arrived, row.currency)} payment is ${(share / 100).toFixed(2)}%, heavier than the ${(FEE_ANOMALY_BPS / 100).toFixed(1)}% a plan would take`, detail: `PayPal charged ${money(row.capture_fee_cents, row.currency)} on ${money(arrived, row.currency)} that arrived. A fee this heavy next to the plan's share can mean a wrong charge plan, a currency conversion or something else PayPal has not said; it is money the receipt cannot attribute. Read the fee on PayPal's side, or answer why.`, expected: `at most ${money(ceiling, row.currency)} (${(FEE_ANOMALY_BPS / 100).toFixed(1)}% plus a fixed allowance)`, observed: `${money(row.capture_fee_cents, row.currency)}`, deltaCents: row.capture_fee_cents - ceiling })
   }
 }
 
