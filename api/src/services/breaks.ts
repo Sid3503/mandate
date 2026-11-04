@@ -142,7 +142,7 @@ export class BreaksService {
     let paypalReason: string | undefined
     if (options.withPayPal) {
       try {
-        activity = await this.mandate.activity(30)
+        activity = await this.mandate.activity(90)
         if (activity.available) paypal = 'checked'
         else {
           paypal = 'unavailable'

@@ -438,11 +438,14 @@ export class FakeWatch implements WatchPort {
   transactions: LiveTransaction[] = []
   disputes: LiveDispute[] = []
   calls = { transactions: 0, disputes: 0 }
+  /** Each Transaction Search window the server asked for. PayPal answers at most 31 days at a time. */
+  ranges: Array<{ start: string; end: string }> = []
   /** HTTP status to fail with, or 0 for none. 403 is an app without the permission. */
   failStatus = 0
 
-  async listTransactions() {
+  async listTransactions(input?: { start: string; end: string }) {
     this.calls.transactions += 1
+    if (input) this.ranges.push(input)
     if (this.failStatus) throw new PayPalError(this.failStatus, 'UPSTREAM', null, 'down')
     return this.transactions
   }

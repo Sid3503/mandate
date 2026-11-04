@@ -177,6 +177,26 @@ describe('breaks: detection rules', () => {
     // At the ceiling exactly: not an anomaly.
     expect(rules(facts([row(fee(10000, 460))]))).not.toContain('fees.anomaly')
   })
+  it('20 refund.not_made when a reversed capture has no refund PayPal was asked for', () => {
+    const charge = row({ id: 'c', phase: 'capture_reversed', capture_id: 'capC' })
+    expect(rules(facts([charge]))).toContain('refund.not_made')
+    const waiting = row({ kind: 'refund', parent_capture_id: 'capC', phase: 'pending_approval', amount_cents: 10000, capture_id: null, settled_cents: null, captured_amount_cents: null })
+    expect(rules(facts([charge, waiting]))).toContain('refund.not_made')
+    const sent = row({ kind: 'refund', parent_capture_id: 'capC', phase: 'refunded', amount_cents: 10000, capture_id: null, settled_cents: null, captured_amount_cents: null })
+    expect(rules(facts([charge, sent]))).not.toContain('refund.not_made')
+    const partial = row({ kind: 'refund', parent_capture_id: 'capC', phase: 'refunded', amount_cents: 4000, capture_id: null, settled_cents: null, captured_amount_cents: null })
+    const found = detectBreaks(facts([charge, partial])).find((item) => item.rule === 'refund.not_made')!
+    expect(found).toMatchObject({ severity: 'critical', proposalId: 'c', deltaCents: -6000 })
+  })
+  it('21 tracking.unproven on an open dispute whose proof is not a carrier link, and not once it is', () => {
+    const dispute = { disputeId: 'D1', transactionId: 'capC', status: 'WAITING_FOR_SELLER_RESPONSE', reason: 'x', amountCents: 10000, currency: 'USD', openedAt: ago(D), updatedAt: ago(D) }
+    const plain = row({ id: 'c', capture_id: 'capC', evidence_url: 'https://www.figma.com/file/northwind-logo' })
+    const found = detectBreaks(facts([plain], { disputes: [dispute] })).find((item) => item.rule === 'tracking.unproven')!
+    expect(found).toMatchObject({ key: 'tracking.unproven:D1', severity: 'info', deltaCents: null })
+    const tracked = row({ id: 'c', capture_id: 'capC', evidence_url: 'https://www.ups.com/track?tracknum=1Z999AA10123456784' })
+    expect(rules(facts([tracked], { disputes: [dispute] }))).not.toContain('tracking.unproven')
+    expect(rules(facts([plain], { disputes: [{ ...dispute, status: 'RESOLVED' }] }))).not.toContain('tracking.unproven')
+  })
   it('keys are stable between runs', () => {
     const f = facts([row({ id: 'k', phase: 'mismatch_hold' })])
     expect(detectBreaks(f).map((x) => x.key)).toEqual(detectBreaks(f).map((x) => x.key))

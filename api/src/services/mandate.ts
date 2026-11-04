@@ -17,6 +17,7 @@ import { cardAuthDecision } from '../domain/cardAuth'
 import type { LiveDispute, WatchPort } from '../paypal/watch'
 import { assessFeatures } from '../domain/paypalFeatures'
 import { reconcile } from '../domain/reconcile'
+import { activityWindows } from '../domain/windows'
 import { Problem } from '../http/problem'
 import { overdueDays } from './today'
 import { paypalProblem } from './paypalProblem'
@@ -1111,15 +1112,31 @@ export class MandateService {
     }
   }
 
-  /** PayPal's own list of what moved in the account, lined up against the ledger. Read-only. */
+  /**
+   * PayPal's own list of what moved in the account, lined up against the ledger. Read-only.
+   * Transaction Search answers at most 31 days at a time, so a longer look (up to 180 days) is several of those
+   * windows. The same transaction reported on a shared edge is kept once.
+   */
   async activity(days = 30) {
     const watch = this.options.watch
     if (!watch) return { available: false as const, reason: 'PayPal is not configured.' }
     const end = this.now()
-    const start = new Date(end.getTime() - Math.min(Math.max(days, 1), 31) * 86_400_000)
+    const windows = activityWindows(end, days)
+    const start = windows.at(-1)!.start
     try {
-      const transactions = await watch.listTransactions({ start: payPalTime(start), end: payPalTime(end) })
-      return { available: true as const, from: start.toISOString(), to: end.toISOString(), ...reconcile(transactions, this.repo.knownPayPalIds()) }
+      const seen = new Map<string, Awaited<ReturnType<typeof watch.listTransactions>>[number]>()
+      for (const window of windows) {
+        const batch = await watch.listTransactions({ start: payPalTime(window.start), end: payPalTime(window.end) })
+        for (const txn of batch) if (!seen.has(txn.id)) seen.set(txn.id, txn)
+      }
+      return {
+        available: true as const,
+        from: start.toISOString(),
+        to: end.toISOString(),
+        days: Math.round((end.getTime() - start.getTime()) / 86_400_000),
+        windows: windows.length,
+        ...reconcile([...seen.values()], this.repo.knownPayPalIds()),
+      }
     } catch (error) {
       if (error instanceof PayPalError && (error.httpStatus === 401 || error.httpStatus === 403)) {
         return { available: false as const, reason: 'The PayPal app has no Transaction Search permission.' }

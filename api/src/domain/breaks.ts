@@ -1,5 +1,6 @@
 import { GENESIS_HASH, journalHash, ledgerTargets, type DisputeRow, type JournalEntryRow, type Posting, type ProposalRow } from '../db/repo'
 import type { Activity } from './reconcile'
+import { readTrackingLink } from './tracking'
 import { FUNDED_PHASES, REFUND_HELD_PHASES, arrivedCents, fullPhase } from './phases'
 
 /**
@@ -214,6 +215,8 @@ export function detectBreaks(facts: BreakFacts): Break[] {
   disputesOpen(facts, add)
   disputesOverdue(facts, add)
   feeAnomalies(facts, add)
+  refundsNotMade(facts, add)
+  trackingUnproven(facts, add)
   paypalDiffers(facts, add)
   return out.sort((a, b) => a.rule.localeCompare(b.rule) || a.key.localeCompare(b.key))
 }
@@ -353,6 +356,55 @@ function feeAnomalies(facts: BreakFacts, add: (found: Break) => void): void {
     if (row.capture_fee_cents <= ceiling) continue
     const share = (row.capture_fee_cents / arrived) * 10_000
     add({ key: `fees.anomaly:${row.id}`, rule: 'fees.anomaly', severity: 'warning', proposalId: row.id, title: `PayPal's fee on a ${money(arrived, row.currency)} payment is ${(share / 100).toFixed(2)}%, heavier than the ${(FEE_ANOMALY_BPS / 100).toFixed(1)}% a plan would take`, detail: `PayPal charged ${money(row.capture_fee_cents, row.currency)} on ${money(arrived, row.currency)} that arrived. A fee this heavy next to the plan's share can mean a wrong charge plan, a currency conversion or something else PayPal has not said; it is money the receipt cannot attribute. Read the fee on PayPal's side, or answer why.`, expected: `at most ${money(ceiling, row.currency)} (${(FEE_ANOMALY_BPS / 100).toFixed(1)}% plus a fixed allowance)`, observed: `${money(row.capture_fee_cents, row.currency)}`, deltaCents: row.capture_fee_cents - ceiling })
+  }
+}
+
+/** Phases in which a refund has been handed to PayPal, or is locked to be. A refund still waiting for a tap has not been made. */
+const REFUND_SENT = ['locked', 'order_created', 'capture_inflight', 'refund_pending', 'refunded']
+
+/** Rule 20. PayPal took a client payment back and no refund covering it has been sent. The books know the reversal;
+ * the client has not been paid back through Mandate. A refund still waiting for the owner's tap does not count:
+ * PayPal has not been asked. */
+function refundsNotMade(facts: BreakFacts, add: (found: Break) => void): void {
+  for (const row of facts.proposals) {
+    if (row.kind !== 'charge' || row.phase !== 'capture_reversed' || row.capture_id === null) continue
+    const covered = facts.proposals
+      .filter((other) => other.kind === 'refund' && other.parent_capture_id === row.capture_id && REFUND_SENT.includes(other.phase))
+      .reduce((sum, other) => sum + other.amount_cents, 0)
+    const arrived = arrivedCents(row)
+    if (covered >= arrived) continue
+    const gap = arrived - covered
+    add({
+      key: `refund.not_made:${row.id}`, rule: 'refund.not_made', severity: 'critical', proposalId: row.id,
+      title: `A ${money(arrived, row.currency)} payment was taken back and ${money(gap, row.currency)} has not been refunded`,
+      detail: covered > 0
+        ? `PayPal reversed the capture. Refunds already sent cover ${money(covered, row.currency)}; ${money(gap, row.currency)} has not been sent back. A refund still waiting for a tap does not count, because PayPal has not been asked.`
+        : 'PayPal reversed the capture and no refund has been sent through Mandate. The client has not been paid back.',
+      expected: `${money(arrived, row.currency)} refunded`,
+      observed: covered > 0 ? `${money(covered, row.currency)} refunded` : 'no refund sent',
+      deltaCents: -gap,
+    })
+  }
+}
+
+/** Rule 21. An open dispute whose proof link is not a UPS, FedEx, USPS or DHL tracking page. A Figma file can show
+ * the work; it cannot show a parcel. This names the gap. It never says a parcel arrived, and it never moves money. */
+function trackingUnproven(facts: BreakFacts, add: (found: Break) => void): void {
+  for (const dispute of facts.disputes) {
+    if (dispute.status === 'RESOLVED') continue
+    const charge = facts.proposals.find((row) => row.kind === 'charge' && row.capture_id === dispute.transactionId)
+    if (!charge) continue
+    if (readTrackingLink(charge.evidence_url)) continue
+    add({
+      key: `tracking.unproven:${dispute.disputeId}`, rule: 'tracking.unproven', severity: 'info', proposalId: charge.id,
+      title: `Dispute ${dispute.disputeId} has no carrier tracking link`,
+      detail: charge.evidence_url
+        ? `The payment's proof link is ${charge.evidence_url}. It is not a UPS, FedEx, USPS or DHL tracking page, so it cannot be cited as a shipment. A tracking link would still not prove the parcel arrived: Mandate does not ask the carrier.`
+        : 'The disputed payment has no proof link at all, so there is no shipment to cite. Mandate does not ask a carrier whether anything arrived.',
+      expected: 'a carrier tracking link on the payment, cited as a link and not as a delivery',
+      observed: charge.evidence_url ? 'a proof link that is not a carrier tracker' : 'no proof link',
+      deltaCents: null,
+    })
   }
 }
 
