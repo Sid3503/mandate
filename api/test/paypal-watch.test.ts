@@ -213,6 +213,22 @@ describe('comparing the PayPal account with the ledger', () => {
     expect(extra).toMatchObject({ proposalId: h.proposalId, matchedBy: 'custom', balanced: false, deltaCents: null })
   })
 
+  it('reads 90 days as PayPal windows of at most 31 days and keeps a transaction that sits on two edges once', async () => {
+    const watch = new FakeWatch()
+    const h = harness({ watch })
+    watch.transactions = [txn('EDGE-1', 1_000)]
+    const result = await call(h.app, 'GET', '/v1/paypal/activity?days=90')
+    expect(result.json).toMatchObject({ available: true, days: 90, windows: 3, matched: 0, unmatched: 1 })
+    expect(watch.calls.transactions).toBe(3)
+    expect(result.json.rows).toHaveLength(1)
+    for (const range of watch.ranges) {
+      const span = Date.parse(range.end) - Date.parse(range.start)
+      expect(span).toBeGreaterThan(0)
+      expect(span).toBeLessThanOrEqual(31 * 86_400_000)
+    }
+    expect(watch.ranges[0]!.start).toBe(watch.ranges[1]!.end)
+  })
+
   it('says so, instead of failing, when Transaction Search is off', async () => {
     const watch = new FakeWatch()
     watch.failStatus = 403

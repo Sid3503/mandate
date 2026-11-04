@@ -90,7 +90,7 @@ export function Breaks() {
       <ActivityTabs />
       <PageHead eyebrow="Your books, checked against PayPal · a fix only asks, your rules decide" title="Breaks">
         <div className="row gap-s" style={{ alignItems: 'center' }}>
-          <span className="fine" data-testid="synced">Synced {ago}</span>
+          <span className="fine" data-testid="synced">Synced {ago}. Reconcile compares 90 days, in the 31-day windows PayPal allows.</span>
           <button type="button" className="btn" disabled={scan.isPending} onClick={() => scan.mutate()}>{scan.isPending ? 'Reconciling…' : 'Reconcile now'}</button>
         </div>
       </PageHead>

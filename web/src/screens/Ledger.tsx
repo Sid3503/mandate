@@ -3,7 +3,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef, type ICellRendererParams } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
 import { useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { EnableSteps, useFeatures } from '../components/PayPalFeatures'
 import { useToast } from '../components/Toast'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
@@ -11,6 +11,7 @@ import { api } from '../lib/api'
 import { shortId, when } from '../lib/format'
 import { useNames, useNarrow, useProposals, useWarrant } from '../lib/hooks'
 import { dollars } from '../lib/money'
+import type { LogAttemptRow, WebhookEventRow } from '../lib/paypallog'
 import type { ActivityRow, LedgerEvent, Proposal } from '../lib/types'
 import { EVENT, explain, GATE, KIND, paidPhase, phaseInfo } from '../lib/words'
 
@@ -50,8 +51,12 @@ function Tone({ value, tone }: { value: string; tone: 'deny' | 'auto' | 'need' |
   return <Chip tone={tone}>{value}</Chip>
 }
 
+type LedgerTab = 'requests' | 'events' | 'paypal' | 'log'
+
 export function Ledger() {
-  const [tab, setTab] = useState<'requests' | 'events' | 'paypal'>('requests')
+  const [params] = useSearchParams()
+  const asked = params.get('tab')
+  const [tab, setTab] = useState<LedgerTab>(asked === 'events' || asked === 'paypal' || asked === 'log' ? asked : 'requests')
   return (
     <div className="page page-wide">
       <ActivityTabs />
@@ -62,10 +67,11 @@ export function Ledger() {
             <button type="button" role="tab" aria-selected={tab === 'requests'} className={tab === 'requests' ? 'on' : ''} onClick={() => setTab('requests')}>Requests</button>
             <button type="button" role="tab" aria-selected={tab === 'events'} className={tab === 'events' ? 'on' : ''} onClick={() => setTab('events')}>Events</button>
             <button type="button" role="tab" aria-selected={tab === 'paypal'} className={tab === 'paypal' ? 'on' : ''} onClick={() => setTab('paypal')}>PayPal activity</button>
+            <button type="button" role="tab" aria-selected={tab === 'log'} className={tab === 'log' ? 'on' : ''} onClick={() => setTab('log')}>PayPal log</button>
           </div>
         </div>
       </PageHead>
-      {tab === 'requests' ? <Requests /> : tab === 'events' ? <Events /> : <PayPalActivity />}
+      {tab === 'requests' ? <Requests /> : tab === 'events' ? <Events /> : tab === 'paypal' ? <PayPalActivity /> : <PayPalLog />}
     </div>
   )
 }
@@ -217,11 +223,14 @@ function moneyCell(row: ActivityRow | undefined) {
   return <Chip tone="deny" title={`PayPal shows ${dollars(row.cents, row.currency)}; the ledger holds ${ledger}.`}>{`Differs by ${dollars(Math.abs(row.deltaCents), row.currency)}`}</Chip>
 }
 
-/** What PayPal says moved in the account over the last 30 days, lined up against this ledger. */
+const WINDOWS = [30, 90, 180] as const
+
+/** What PayPal says moved in the account, lined up against this ledger. PayPal answers 31 days at a time. */
 function PayPalActivity() {
   const navigate = useNavigate()
   const features = useFeatures()
-  const activity = useQuery({ queryKey: ['paypal-activity'], queryFn: api.activity })
+  const [days, setDays] = useState<(typeof WINDOWS)[number]>(30)
+  const activity = useQuery({ queryKey: ['paypal-activity', days], queryFn: () => api.activity(days) })
   const columns = useMemo<ColDef<ActivityRow>[]>(() => [
     { headerName: 'When', field: 'date', width: 160, sort: 'desc', valueFormatter: (params) => when(params.value as string) },
     { headerName: 'Amount', field: 'cents', width: 120, cellClass: 'grid-mono', valueFormatter: (params) => dollars(params.value as number) },
@@ -251,7 +260,12 @@ function PayPalActivity() {
   }
   return (
     <>
-      <div className="grid-tools"><p className="fine">{data.matched} matched to a Mandate request · <strong>{data.unmatched}</strong> that Mandate has no record of ({dollars(data.unmatchedNetCents)} net){data.mismatched ? <> · <strong>{data.mismatched}</strong> whose money does not agree ({dollars(data.mismatchedNetCents)} net)</> : null} · last 30 days</p></div>
+      <div className="grid-tools">
+        <p className="fine">{data.matched} matched to a Mandate request · <strong>{data.unmatched}</strong> that Mandate has no record of ({dollars(data.unmatchedNetCents)} net){data.mismatched ? <> · <strong>{data.mismatched}</strong> whose money does not agree ({dollars(data.mismatchedNetCents)} net)</> : null} · last {data.days} days{data.windows > 1 ? `, read as ${data.windows} PayPal windows of at most 31 days` : ''}</p>
+        <div className="chips-row" role="group" aria-label="How far back">
+          {WINDOWS.map((window) => <button key={window} type="button" aria-pressed={days === window} className={`filter${days === window ? ' on' : ''}`} onClick={() => setDays(window)}>{window} days</button>)}
+        </div>
+      </div>
       <div className="grid-wrap" style={{ height: Math.min(640, 140 + data.rows.length * 46) }}>
         <AgGridReact<ActivityRow>
           theme={ledgerGridTheme}
@@ -266,7 +280,54 @@ function PayPalActivity() {
           overlayNoRowsTemplate="PayPal shows no activity in this window."
         />
       </div>
-      <p className="fine">Read-only. Nothing on this tab moves money. A row marked Not in Mandate is money PayPal shows that no Mandate request created or recorded. A row whose money does not agree matched a request, but PayPal's cents or currency differ from what the ledger holds, so it is surfaced rather than accepted.</p>
+      <p className="fine">Read-only. Nothing on this tab moves money. A row marked Not in Mandate is money PayPal shows that no Mandate request created or recorded. A row whose money does not agree matched a request, but PayPal's cents or currency differ from what the ledger holds, so it is surfaced rather than accepted. PayPal's report lags by hours, and it will not answer more than 31 days in one read, so 90 and 180 days are several reads of the same report.</p>
     </>
+  )
+}
+
+const ATTEMPT_TONE: Record<LogAttemptRow['status'], 'auto' | 'deny' | 'need' | 'muted'> = {
+  succeeded: 'auto', failed: 'deny', unknown: 'need', started: 'muted',
+}
+
+/** Every money-moving call and every webhook delivery, as rows. No raw payload is shown, and nothing here can be replayed into PayPal. */
+function PayPalLog() {
+  const log = useQuery({ queryKey: ['paypal-log'], queryFn: api.paypalLog, refetchInterval: 30_000 })
+  const attempts = useMemo<ColDef<LogAttemptRow>[]>(() => [
+    { headerName: 'When', field: 'started_at', width: 170, sort: 'desc', valueFormatter: (params) => when(params.value as string) },
+    { headerName: 'Call', field: 'op', width: 140 },
+    { headerName: 'Status', field: 'status', width: 130, cellRenderer: (params: ICellRendererParams<LogAttemptRow>) => params.data ? <Chip tone={ATTEMPT_TONE[params.data.status]}>{params.data.status}</Chip> : null },
+    { headerName: 'PayPal id', field: 'external_id', flex: 1, minWidth: 160, valueFormatter: (params) => (params.value as string | null) ?? '—' },
+    { headerName: 'Error', field: 'error', flex: 1, minWidth: 160, valueFormatter: (params) => (params.value as string | null) ?? '' },
+  ], [])
+  const webhooks = useMemo<ColDef<WebhookEventRow>[]>(() => [
+    { headerName: 'When', field: 'received_at', width: 170, sort: 'desc', valueFormatter: (params) => when(params.value as string) },
+    { headerName: 'Event', field: 'event_type', flex: 1, minWidth: 220 },
+    { headerName: 'Delivery', field: 'status', width: 130, cellRenderer: (params: ICellRendererParams<WebhookEventRow>) => params.data ? <Chip tone={params.data.status === 'done' ? 'auto' : params.data.status === 'failed' ? 'deny' : 'need'}>{params.data.status}</Chip> : null },
+    { headerName: 'Tries', field: 'attempts', width: 90 },
+    { headerName: 'Error', field: 'error', flex: 1, minWidth: 160, valueFormatter: (params) => (params.value as string | null) ?? '' },
+  ], [])
+  if (log.isLoading) return <Loading label="Opening the PayPal log" />
+  const data = log.data
+  if (!data) return <ProblemCard error={log.error} />
+  const counts = data.counts
+  return (
+    <div data-testid="paypal-log">
+      <div className="breaks-kpis">
+        <div className="breaks-kpi"><span className="kv-k">Calls</span><strong>{counts.attempts}</strong></div>
+        <div className="breaks-kpi"><span className="kv-k">Calls failed or unanswered</span><strong>{counts.attemptsFailed + counts.attemptsUnknown}</strong></div>
+        <div className="breaks-kpi"><span className="kv-k">Webhook deliveries</span><strong>{counts.webhooks}</strong></div>
+        <div className="breaks-kpi"><span className="kv-k">Deliveries failed or stuck</span><strong>{counts.webhooksFailed + counts.webhooksStuck}</strong></div>
+      </div>
+      <p className="fine">{data.webhookConfigured ? 'Webhook deliveries are checked against PayPal’s signature.' : 'Webhook signing is not configured, so a delivery is stored and then re-read from PayPal before it changes a request.'} The webhook id itself is not shown. Nothing on this tab is sent again.</p>
+      <h2 className="panel-title">Calls to PayPal</h2>
+      <div className="grid-wrap" style={{ height: Math.min(420, 120 + data.attempts.length * 44) }}>
+        <AgGridReact<LogAttemptRow> theme={ledgerGridTheme} rowData={data.attempts} columnDefs={attempts} getRowId={(params) => params.data.id} rowHeight={44} headerHeight={40} suppressCellFocus overlayNoRowsTemplate="No money-moving call has been recorded." />
+      </div>
+      <h2 className="panel-title">What PayPal pushed</h2>
+      <div className="grid-wrap" style={{ height: Math.min(420, 120 + data.webhooks.length * 44) }}>
+        <AgGridReact<WebhookEventRow> theme={ledgerGridTheme} rowData={data.webhooks} columnDefs={webhooks} getRowId={(params) => params.data.event_id} rowHeight={44} headerHeight={40} suppressCellFocus overlayNoRowsTemplate="No webhook delivery has been recorded." />
+      </div>
+      <ProblemCard error={log.error} />
+    </div>
   )
 }

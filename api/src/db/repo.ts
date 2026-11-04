@@ -929,9 +929,26 @@ export class Repo {
     this.db.prepare('UPDATE proposals SET pay_instrument = ?, updated_at = ? WHERE id = ?').run(instrument, now, id)
   }
 
-  /** Payouts and bills a standing rule approved that have not reached PayPal yet. */
+  /** Payouts and bills a standing rule approved that have not reached PayPal yet, plus auto-refund-policy refunds still locked. */
   lockedStandingItems(): ProposalRow[] {
-    return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE clause IN ('standing.matched', 'standing.billing') AND kind IN ('payment', 'charge') AND phase IN ('locked', 'order_created') AND payout_batch_id IS NULL ORDER BY created_at LIMIT 20`).all() as ProposalRow[]
+    return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE ((clause IN ('standing.matched', 'standing.billing') AND kind IN ('payment', 'charge') AND payout_batch_id IS NULL) OR (clause = 'refund.auto_policy' AND kind = 'refund')) AND phase IN ('locked', 'order_created') ORDER BY created_at LIMIT 20`).all() as ProposalRow[]
+  }
+
+  /** True when the break named by a rule and a proposal id is open (not resolved, not dismissed). */
+  breakOpen(proposalId: string, rule: string): boolean {
+    const row = this.db.prepare('SELECT resolved_at, dismissed_at FROM breaks WHERE key = ?').get(`${rule}:${proposalId}`) as { resolved_at: string | null; dismissed_at: string | null } | undefined
+    return Boolean(row && row.resolved_at === null && row.dismissed_at === null)
+  }
+
+  /** What the auto-refund policy has spent this month on locked, sent, or paid refunds: every refund that holds its capture's money for return. */
+  autoRefundUsedCents(warrantId: string, start: string, end: string, currency: string): number {
+    const row = this.db.prepare(
+      `SELECT COALESCE(SUM(amount_cents), 0) AS cents FROM proposals
+       WHERE warrant_id = ? AND kind = 'refund' AND clause = 'refund.auto_policy'
+         AND phase IN ('locked', 'capture_inflight', 'refund_pending', 'refunded')
+         AND created_at >= ? AND created_at < ? AND currency = ?`,
+    ).get(warrantId, start, end, currency) as { cents: number } | undefined
+    return row?.cents ?? 0
   }
 
   /** Invoices that are out, with their proposal, for the reminder schedule. */
@@ -1545,6 +1562,16 @@ export class Repo {
 
   attemptsFor(proposalId: string): AttemptRow[] {
     return this.db.prepare('SELECT * FROM paypal_attempts WHERE proposal_id = ? ORDER BY started_at, rowid').all(proposalId) as AttemptRow[]
+  }
+
+  /** Newest first: what was asked of PayPal across the account, for the PayPal log. */
+  recentAttempts(limit: number): AttemptRow[] {
+    return this.db.prepare('SELECT * FROM paypal_attempts ORDER BY started_at DESC, rowid DESC LIMIT ?').all(limit) as AttemptRow[]
+  }
+
+  /** Newest first: what PayPal delivered to the webhook inbox, for the PayPal log. */
+  recentWebhookEvents(limit: number): Array<{ event_id: string; event_type: string; status: string; attempts: number; received_at: string; processed_at: string | null; error: string | null }> {
+    return this.db.prepare('SELECT event_id, event_type, status, attempts, received_at, processed_at, error FROM webhook_events ORDER BY received_at DESC, rowid DESC LIMIT ?').all(limit) as never
   }
 
   /**

@@ -10,13 +10,14 @@ import { paypalRequestId } from '../domain/hash'
 import { ATTRIBUTED_REASONS, explainDelta, explainTotal, SOURCE_OF, type InvoiceMoney } from '../domain/settlement'
 import { DealTermsSchema, type DealTerms, type PartyRules } from '../domain/deal'
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
-import { lineItemsTotal, MAX_DUE_DAYS, NO_AUTOMATION, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema, DEFAULT_RISK } from '../domain/schemas'
+import { lineItemsTotal, MAX_DUE_DAYS, NO_AUTOMATION, NO_AUTO_REFUND, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema, DEFAULT_RISK } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
 import { PayPalError, type CapturedPayment, type CardOnOrder, type CreatedOrder, type LivePayout, type PayPalPort } from '../paypal/port'
 import { cardAuthDecision } from '../domain/cardAuth'
 import type { LiveDispute, WatchPort } from '../paypal/watch'
 import { assessFeatures } from '../domain/paypalFeatures'
 import { reconcile } from '../domain/reconcile'
+import { activityWindows } from '../domain/windows'
 import { Problem } from '../http/problem'
 import { overdueDays } from './today'
 import { paypalProblem } from './paypalProblem'
@@ -245,6 +246,8 @@ export class MandateService {
       onExternalRef?: (kind: string, externalId: string) => void
       /** Which PayPal the browser SDK must talk to. Sandbox and live are different scripts. */
       paypalEnvironment?: 'sandbox' | 'live'
+      /** PayPal's id for the registered webhook. When set, webhook deliveries must be signed. */
+      webhookId?: string | null
     } = {},
   ) {}
 
@@ -404,7 +407,7 @@ export class MandateService {
    * the owner's Send button runs, and that path re-checks funding, disputes and the lock. If PayPal cannot be
    * reached, the payout stays locked and the next sweep tries again.
    */
-  async proposeAndDispatch(input: ProposalCreate, idempotencyKey: string, actor: Role = 'owner', runId: string | null = null): Promise<HttpResult> {
+  async proposeAndDispatch(input: ProposalCreate, idempotencyKey: string, actor: Role = 'owner', runId: string | null = null): Promise<HttpResult & { replayed?: boolean }> {
     // Look for a client dispute first, so a disputed payment is refused at the gate instead of waiting at the door.
     if (input.kind === 'payment' && input.fundingCaptureId) await this.refreshDisputesFor(input.fundingCaptureId).catch(() => undefined)
     const result = this.propose(input, idempotencyKey, actor, runId)
@@ -417,26 +420,33 @@ export class MandateService {
     return sent ? { status: result.status, body: sent } : result
   }
 
-  /** Sends a locked payout, or an invoice, that a standing rule approved. Returns the fresh view, or null if it is not such a request. */
+  /**
+   * Sends a locked payout, an invoice, or an auto-refund-policy refund that a rule the owner signed approved.
+   * Returns the fresh view, or null if it is not such a request.
+   */
   async dispatchStanding(id: string): Promise<ProposalView | null> {
     const row = this.repo.proposal(id)
-    if (!row || !['payment', 'charge'].includes(row.kind) || !STANDING_CLAUSES.includes(row.clause) || !['locked', 'order_created'].includes(row.phase)) return null
+    if (!row) return null
+    const isAutoRefund = row.kind === 'refund' && row.clause === Clause.refundAutoPolicy
+    if (!isAutoRefund && (!['payment', 'charge'].includes(row.kind) || !STANDING_CLAUSES.includes(row.clause))) return null
+    if (!['locked', 'order_created'].includes(row.phase)) return null
     // Paused: a payout the owner's rule already approved waits, locked, and is sent when Mandate is resumed.
     if (this.options.safety?.isAutopilotPaused()) {
       const last = [...this.repo.eventsFor(id)].reverse().find((event) => event.type === 'standing.waiting')
       if (!last || (JSON.parse(last.payload_json) as { code?: string }).code !== Clause.systemPaused) {
-        this.repo.insertEvent(randomUUID(), id, 'standing.waiting', Clause.standingMatched, { code: Clause.systemPaused, detail: 'Mandate is paused, so this waits locked until the owner resumes it' }, this.iso())
+        this.repo.insertEvent(randomUUID(), id, 'standing.waiting', row.clause, { code: Clause.systemPaused, detail: 'Mandate is paused, so this waits locked until the owner resumes it' }, this.iso())
       }
       return toView(this.require(id))
     }
     // A rule that was signed before the owner asked for a clearing window waits too: the money is not yet safe to send.
+    // A refund returns money rather than spending it, so the clearing window does not hold it.
     const funder = row.kind === 'payment' && row.funding_capture_id ? this.repo.paymentByCapture(row.funding_capture_id) : null
     const rules = this.repo.latestWarrant()?.body
     const hold = funder && rules ? clearingState(rules, this.fundingState(funder), this.now().getTime()) : null
     if (hold?.pending) {
       const last = [...this.repo.eventsFor(id)].reverse().find((event) => event.type === 'standing.waiting')
       if (!last || (JSON.parse(last.payload_json) as { code?: string }).code !== Clause.fundingClearing) {
-        this.repo.insertEvent(randomUUID(), id, 'standing.waiting', Clause.standingMatched, { code: Clause.fundingClearing, detail: `the client's payment is still clearing${hold.clearsAt ? ` until ${hold.clearsAt.slice(0, 10)}` : ''}, so this waits locked` }, this.iso())
+        this.repo.insertEvent(randomUUID(), id, 'standing.waiting', row.clause, { code: Clause.fundingClearing, detail: `the client's payment is still clearing${hold.clearsAt ? ` until ${hold.clearsAt.slice(0, 10)}` : ''}, so this waits locked` }, this.iso())
       }
       return toView(this.require(id))
     }
@@ -450,7 +460,7 @@ export class MandateService {
         // Something outside Mandate is in the way. Say so once, keep the payout locked, and let the sweep try again.
         const last = [...this.repo.eventsFor(id)].reverse().find((event) => event.type === 'standing.waiting')
         if (!last || (JSON.parse(last.payload_json) as { code?: string }).code !== error.code) {
-          this.repo.insertEvent(randomUUID(), id, 'standing.waiting', Clause.standingMatched, { code: error.code, detail: error.detail }, now)
+          this.repo.insertEvent(randomUUID(), id, 'standing.waiting', row.clause, { code: error.code, detail: error.detail }, now)
         }
       } else if (canTransition(this.require(id).phase, 'capture_refused') && this.require(id).phase !== 'capture_refused') {
         // The lock, the funding or the state is wrong. Retrying cannot fix that, and it must not hold the money forever.
@@ -1102,15 +1112,31 @@ export class MandateService {
     }
   }
 
-  /** PayPal's own list of what moved in the account, lined up against the ledger. Read-only. */
+  /**
+   * PayPal's own list of what moved in the account, lined up against the ledger. Read-only.
+   * Transaction Search answers at most 31 days at a time, so a longer look (up to 180 days) is several of those
+   * windows. The same transaction reported on a shared edge is kept once.
+   */
   async activity(days = 30) {
     const watch = this.options.watch
     if (!watch) return { available: false as const, reason: 'PayPal is not configured.' }
     const end = this.now()
-    const start = new Date(end.getTime() - Math.min(Math.max(days, 1), 31) * 86_400_000)
+    const windows = activityWindows(end, days)
+    const start = windows.at(-1)!.start
     try {
-      const transactions = await watch.listTransactions({ start: payPalTime(start), end: payPalTime(end) })
-      return { available: true as const, from: start.toISOString(), to: end.toISOString(), ...reconcile(transactions, this.repo.knownPayPalIds()) }
+      const seen = new Map<string, Awaited<ReturnType<typeof watch.listTransactions>>[number]>()
+      for (const window of windows) {
+        const batch = await watch.listTransactions({ start: payPalTime(window.start), end: payPalTime(window.end) })
+        for (const txn of batch) if (!seen.has(txn.id)) seen.set(txn.id, txn)
+      }
+      return {
+        available: true as const,
+        from: start.toISOString(),
+        to: end.toISOString(),
+        days: Math.round((end.getTime() - start.getTime()) / 86_400_000),
+        windows: windows.length,
+        ...reconcile([...seen.values()], this.repo.knownPayPalIds()),
+      }
     } catch (error) {
       if (error instanceof PayPalError && (error.httpStatus === 401 || error.httpStatus === 403)) {
         return { available: false as const, reason: 'The PayPal app has no Transaction Search permission.' }
@@ -1126,6 +1152,31 @@ export class MandateService {
     for (const live of await watch.listDisputes()) this.recordDispute(live)
     const disputes = this.repo.listDisputes(50)
     return { checked: true, open: disputes.filter((item) => item.status !== 'RESOLVED').length, disputes }
+  }
+
+  /**
+   * The PayPal log: everything the account says the server asked of PayPal and everything PayPal pushed to the
+   * webhook inbox, newest first, read-only. What a lock proved and what the sweep settled stays in each request's
+   * packet; this is the other half of the story — the attempts (what left before PayPal answered) and the inbox
+   * (what PayPal said first). One failing read never stops the other.
+   */
+  paypalLog(limit = 100) {
+    const attempts = this.repo.recentAttempts(limit)
+    const webhooks = this.repo.recentWebhookEvents(limit)
+    const counts = {
+      attempts: attempts.length,
+      attemptsUnknown: attempts.filter((row) => row.status === 'unknown').length,
+      attemptsFailed: attempts.filter((row) => row.status === 'failed').length,
+      webhooks: webhooks.length,
+      webhooksFailed: webhooks.filter((row) => row.status === 'failed').length,
+      webhooksStuck: webhooks.filter((row) => row.status === 'processing').length,
+    }
+    return {
+      counts,
+      webhookConfigured: Boolean(this.options.webhookId),
+      attempts,
+      webhooks,
+    }
   }
 
   private recordDispute(live: LiveDispute): void {
@@ -1784,6 +1835,7 @@ export class MandateService {
       parentCaptureId: input.parentCaptureId ?? null,
     })
     const safety = this.options.safety?.state() ?? NOT_PAUSED
+    const refundAuto = input.kind === 'refund' ? this.refundAutoFacts(input, warrant) : null
     const risk: RiskSignal | null = riskEnabled(warrant.body)
       ? assessRisk(warrant.body, {
           recentProposalCount: this.repo.recentProposalCount(
@@ -1818,6 +1870,7 @@ export class MandateService {
       safety,
       actor,
       risk,
+      refundAuto,
     }, { ...cap, nowMs: Date.parse(now), counterpartyWarrant })
     const withPayee = this.options.payeeBook && input.kind === 'payment'
       ? applyPayeeBook(decision, this.payeeView(payee?.id ?? null, Date.parse(now)))
@@ -2217,6 +2270,26 @@ export class MandateService {
     return partyId !== null && warrant.clients.some((client) => client.id === partyId)
   }
 
+  /**
+   * The auto-refund policy's facts for a refund ask, or null while the policy is off. Resolved here from the ledger
+   * so the gate stays a pure function: is the parent payment the *later* payment of an open duplicate break, does it
+   * carry an open dispute, and what has the policy already spent this month.
+   */
+  private refundAutoFacts(input: ProposalCreate, warrant: { id: string; body: WarrantBody }): { isDuplicate: boolean; disputed: boolean; monthUsedCents: number } | null {
+    const policy = warrant.body.autoRefund
+    if (!policy?.enabled) return null
+    const captureId = input.parentCaptureId ?? null
+    if (!captureId) return null
+    const parent = this.repo.paymentByCapture(captureId)
+    if (!parent) return null
+    const window = monthWindow(this.now(), warrant.body.timezone)
+    return {
+      isDuplicate: this.repo.breakOpen(parent.id, 'capture.duplicate'),
+      disputed: this.repo.openDisputeFor(captureId) !== null,
+      monthUsedCents: this.repo.autoRefundUsedCents(warrant.id, window.start, window.end, warrant.body.currency),
+    }
+  }
+
   job(jobId: string) {
     const rows = this.repo.proposalsForJob(jobId)
     if (rows.length === 0) throw new Problem(404, 'job.missing', 'Job not found', 'No proposal names this job.')
@@ -2265,6 +2338,14 @@ export class MandateService {
     const ownInMonth = own && row.kind === 'payment' && row.reserved_at !== null && row.reserved_at >= window.start && row.reserved_at < window.end
     const evidenceUrl = over.evidenceUrl !== undefined ? over.evidenceUrl : row.evidence_url
     const amountCents = over.amountCents ?? row.amount_cents
+    let refundAuto: { isDuplicate: boolean; disputed: boolean; monthUsedCents: number } | null = null
+    if (row.kind === 'refund' && row.parent_capture_id && body.autoRefund.enabled && parent) {
+      refundAuto = {
+        isDuplicate: this.repo.breakOpen(parent.id, 'capture.duplicate'),
+        disputed: this.repo.openDisputeFor(row.parent_capture_id) !== null,
+        monthUsedCents: this.repo.autoRefundUsedCents(row.warrant_id, window.start, window.end, body.currency),
+      }
+    }
     let deal: DealContext | null = null
     if (row.kind === 'charge') {
       deal = this.dealContext(row.deal_id, row.milestone, row.job_id, evidenceUrl)
@@ -2285,6 +2366,7 @@ export class MandateService {
       dealId: row.deal_id,
       milestone: row.milestone,
       deal,
+      refundAuto,
     }, { reservedCents: Math.max(0, cap.reservedCents - (ownInMonth ? row.amount_cents : 0)), priorCaptureIds: cap.priorCaptureIds, nowMs: Date.parse(row.created_at) })
   }
 
@@ -2470,6 +2552,7 @@ function emptyWarrant(): WarrantBody {
     allowPartialPayment: false,
     risk: DEFAULT_RISK,
     frictionBudget: { modelFloor: 'needs_approval' },
+    autoRefund: NO_AUTO_REFUND,
   }
 }
 

@@ -68,6 +68,7 @@ export function harness(options: { commit?: string | null; demoReset?: boolean; 
       workspaceId: options.workspace?.id ?? 'ws_default',
       catalog: options.catalog ?? null,
       onExternalRef: (kind, externalId) => options.control?.rememberRef(kind, externalId, options.workspace?.id ?? 'ws_default'),
+      webhookId: options.webhookId,
     })),
     now: () => clock,
     config: {

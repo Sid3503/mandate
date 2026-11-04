@@ -141,6 +141,7 @@ describe('the draft', () => {
     expect(check('See https://evil.example/proof')).toMatch(/link/)
     expect(check('A passkey approved it.')).toMatch(/passkey/)
     expect(check('Capture of $150.00 was locked and signed.')).toBeNull()
+    expect(check('The parcel was delivered and signed for.')).toMatch(/arrived/)
   })
 
   it('keeps every edit as a new row and the history append-only', async () => {

@@ -5,6 +5,7 @@ import { callTool } from '../agents/structured'
 import type { AgentModel } from '../agents/model'
 import type { Repo } from '../db/repo'
 import { paypalRequestId } from '../domain/hash'
+import { readTrackingLink, type TrackingLink } from '../domain/tracking'
 import { Problem } from '../http/problem'
 import type { ModelBudget } from '../ops/budget'
 import { DISPUTE_TEXT_MAX, disputeRequestFor, type DisputeDetail, type DisputePort, type DisputeRequest } from '../paypal/disputes'
@@ -54,6 +55,11 @@ export type EvidencePacket = {
     milestone: number | null
     proofUrl: string | null
   }
+  /**
+   * A carrier tracking link read from the proof URL. `delivered` is always false: Mandate does not ask the carrier,
+   * so a URL is never treated as proof the parcel arrived.
+   */
+  tracking: TrackingLink | null
   lock: null | { verdict: string; keyId: string | null; cartHash: string | null }
   approval: null | { method: string; who: string; how: string; at: string | null; fingerprint: string | null }
   acceptance: null | { status: string; decidedBy: string | null; decidedAt: string | null; milestone: number; signatureValid: boolean | null; keyId: string | null; proofUrl: string }
@@ -213,7 +219,7 @@ export class DisputeService {
     const base = { disputeId: id, builtAt, dispute: { transactionId: stored.transactionId, status: stored.status, reason: stored.reason, amountCents: stored.amountCents, currency: stored.currency } }
     if (!row) {
       const checklist: ChecklistItem[] = [{ id: 'payment', label: 'The disputed payment is in Mandate\'s records', present: false, detail: `No payment in Mandate has capture ${stored.transactionId}. Nothing here can be cited.` }]
-      return { ...base, proposalId: null, payment: null, lock: null, approval: null, acceptance: null, timeline: [], books: [], links: { receipt: null, verify: null }, checklist, strength: { present: 0, total: 1 } }
+      return { ...base, proposalId: null, payment: null, tracking: null, lock: null, approval: null, acceptance: null, timeline: [], books: [], links: { receipt: null, verify: null }, checklist, strength: { present: 0, total: 1 } }
     }
     const packet = this.mandate.packet(row.id)
     const lockCheck = this.mandate.verifyLock(row.id)
@@ -230,6 +236,7 @@ export class DisputeService {
     const lock = locked ? { verdict: lockCheck.verdict, keyId: lockCheck.keyId, cartHash: lockCheck.cartHash } : null
     const approval = packet.approvalProof ? { method: packet.approvalProof.method, who: packet.approvalProof.who, how: packet.approvalProof.how, at: packet.approvalProof.at, fingerprint: packet.approvalProof.fingerprint } : null
     const proofUrl = row.evidence_url
+    const tracking = readTrackingLink(proofUrl)
     const accepted = acceptance !== null && acceptance.status === 'accepted'
     const checklist: ChecklistItem[] = [
       { id: 'payment', label: 'The disputed payment is in Mandate\'s records', present: true, detail: `${row.kind === 'charge' ? 'Client charge' : 'Payment'} ${row.id}, ${money(row.amount_cents, row.currency)}.` },
@@ -238,6 +245,8 @@ export class DisputeService {
       { id: 'approval', label: 'The owner\'s approval, and how it was given', present: approval !== null && approval.method !== 'legacy', detail: approval ? `${approval.who} approved by ${approval.how}${approval.at ? ` at ${approval.at}` : ''}.` : 'No approval is recorded for this payment.' },
       { id: 'acceptance', label: 'The client accepted the delivery, with a signature', present: accepted && acceptance!.signatureValid === true, detail: !delivery ? (row.deal_id ? 'The deal milestone has no delivery on record.' : 'This payment is not from a deal milestone, so there is no delivery acceptance.') : accepted ? (acceptance!.signatureValid === true ? `${acceptance!.decidedBy ?? 'The client'} accepted milestone ${acceptance!.milestone}${acceptance!.decidedAt ? ` at ${acceptance!.decidedAt}` : ''}; signature (key ${acceptance!.keyId}) verifies.` : 'An acceptance is recorded but its signature did NOT verify. Do not cite it.') : `The delivery is ${delivery.status}, not accepted.` },
       { id: 'proof', label: 'A link to the proof of the work', present: Boolean(proofUrl), detail: proofUrl ?? 'No proof link was attached to this payment.' },
+      { id: 'tracking', label: 'A carrier tracking link', present: tracking !== null, detail: tracking ? `${tracking.carrier.toUpperCase()} tracking link${tracking.trackingNumber ? ` ${tracking.trackingNumber}` : ''}. This is a link, not a statement that the parcel arrived.` : 'The proof link is not a UPS, FedEx, USPS or DHL tracking page.' },
+      { id: 'arrived', label: 'A carrier confirmation the parcel arrived', present: false, detail: 'Mandate does not ask a carrier. A tracking link is never read as arrival.' },
       { id: 'books', label: 'Entries in the books', present: journal.length > 0, detail: journal.length > 0 ? `${journal.length} balanced double-entry ${journal.length === 1 ? 'entry' : 'entries'} for this payment.` : 'The books hold no entry for this payment.' },
       { id: 'timeline', label: 'The timeline of the request', present: packet.events.length > 0, detail: `${packet.events.length} recorded event${packet.events.length === 1 ? '' : 's'}.` },
     ]
@@ -247,6 +256,7 @@ export class DisputeService {
       dispute: { ...base.dispute, status: snapshot?.status ?? base.dispute.status },
       proposalId: row.id,
       payment: { captureId: row.capture_id, amountCents: row.amount_cents, capturedCents: row.captured_amount_cents, feeCents: row.capture_fee_cents, currency: row.currency, description: row.description, phase: row.phase, jobId: row.job_id, dealId: row.deal_id, milestone: row.milestone, proofUrl },
+      tracking,
       lock: isPresent('lock') || lock ? lock : null,
       approval,
       acceptance: acceptance && accepted && acceptance.signatureValid === true ? acceptance : acceptance,
@@ -283,6 +293,8 @@ export class DisputeService {
     const a = packet.acceptance
     if (a && a.status === 'accepted' && a.signatureValid === true) lines.push(`The client accepted the delivery of milestone ${a.milestone}${a.decidedAt ? ` at ${a.decidedAt}` : ''}, with a signed acceptance (key ${a.keyId}) that verifies.`)
     if (payment?.proofUrl) lines.push(`Proof of the work: ${payment.proofUrl}`)
+    const track = packet.tracking
+    if (track) lines.push(`A ${track.carrier.toUpperCase()} tracking link is on file${track.trackingNumber ? ` (${track.trackingNumber})` : ''}: ${track.url}. Mandate has not been told the parcel arrived.`)
     if (packet.books.length > 0) lines.push(`The books hold ${packet.books.length} balanced ${packet.books.length === 1 ? 'entry' : 'entries'} for this payment.`)
     if (packet.links.verify && packet.lock?.verdict === 'valid') lines.push(`Anyone can check the signed receipt here: ${packet.links.verify}`)
     return this.withMissing(lines.join('\n'), packet)
@@ -328,6 +340,9 @@ export class DisputeService {
     if (/\bpasskey\b/i.test(text) && packet.approval?.method !== 'passkey') return 'it says a passkey approved the payment, but the packet does not say that.'
     if (/\b(approved|authori[sz]ed) by\b/i.test(text) && !has('approval')) return 'it speaks of an approval, but the packet holds none.'
     if (/\bproof of (the )?(work|delivery)\b/i.test(text) && !has('proof')) return 'it cites proof of the work, but the packet holds no proof link.'
+    // "delivered" and "proof of delivery" are claims about a parcel. A tracking URL is not that claim, and the
+    // arrived item is never present, because Mandate does not ask the carrier.
+    if (/\bdelivered\b|\bproof of delivery\b|\bsigned for\b/i.test(text) && !has('arrived')) return 'it says the parcel arrived, but the packet holds no carrier confirmation.'
     return null
   }
 
@@ -344,7 +359,7 @@ export class DisputeService {
         const result = await callTool({
           model: this.model,
           system: 'You write the seller\'s response to a PayPal payment dispute, in plain business English, from a packet of verified facts. Use ONLY facts that are in the packet. Never invent an amount, id, date, link, tracking number or event. If something is not in the packet, do not mention it: a code-written list of what is missing is added after your text. Never say a person or the client did something the packet does not show. Under 1500 characters. Do not accept the claim, offer a refund or promise anything.',
-          user: `Packet (JSON, the only facts you may use):\n${JSON.stringify({ dispute: packet.dispute, payment: packet.payment, lock: packet.lock, approval: packet.approval, acceptance: packet.acceptance, books: packet.books.length, verifyLink: packet.links.verify, missing: packet.checklist.filter((item) => !item.present).map((item) => item.id) })}\n\nThe code-written version, for reference:\n${template}`,
+          user: `Packet (JSON, the only facts you may use):\n${JSON.stringify({ dispute: packet.dispute, payment: packet.payment, tracking: packet.tracking, lock: packet.lock, approval: packet.approval, acceptance: packet.acceptance, books: packet.books.length, verifyLink: packet.links.verify, missing: packet.checklist.filter((item) => !item.present).map((item) => item.id) })}\n\nThe code-written version, for reference:\n${template}`,
           name: 'write_response',
           description: 'Write the response text.',
           schema: z.object({ text: z.string().min(20).max(1500) }),

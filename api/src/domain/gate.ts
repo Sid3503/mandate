@@ -14,6 +14,9 @@ export const Clause = {
   refundUnlinked: 'refund.unlinked',
   refundExceeds: 'refund.exceeds',
   refundUnfunds: 'refund.unfunds',
+  refundAutoPolicy: 'refund.auto_policy',
+  refundPolicyCap: 'refund.policy_cap',
+  refundPolicyDisputed: 'refund.policy_disputed',
   capMonthly: 'cap.monthly',
   amountAuto: 'amount.auto',
   amountNeedsApproval: 'amount.needs_approval',
@@ -126,6 +129,13 @@ export type GateProposal = {
   rawPayee?: string | null
   /** A risk signal gathered by the service from the ledger. It may only add friction to an automatic decision. */
   risk?: RiskSignal | null
+  /**
+   * The auto-refund policy's facts, resolved by the service from the ledger. Present only for a refund under a
+   * switched-on policy. `isDuplicate` is true when the parent capture has an open duplicate break; `disputed` is
+   * true when the payment has an open client dispute; `monthUsedCents` is what automatic refunds have spent this
+   * month. The gate stays a pure function of these facts plus the warrant.
+   */
+  refundAuto?: { isDuplicate: boolean; disputed: boolean; monthUsedCents: number } | null
 }
 
 /** Cents a settled client charge can still fund for contractors under the share rule. */
@@ -244,6 +254,39 @@ function evaluateProposal(warrant: WarrantBody, proposal: GateProposal, context:
         gate: 'NEEDS_APPROVAL',
         clause: Clause.refundUnfunds,
         detail: `refunding ${proposal.amountCents} cents would leave ${hole.leftCents} cents settled, which funds ${hole.shareCents} cents at the contractor share, but ${parent.payoutCommittedCents} cents is already committed to a contractor, so the studio would be short ${hole.shortCents} cents. PayPal cannot pull that payout back. A rule cannot send this refund. The owner can.`,
+      }
+    }
+    // The auto-refund policy: the owner said yes once to refunds of payments the books prove were paid twice.
+    // It sits after every refund check, so it only removes the tap for a refund the rules already allow. When a
+    // refund would leave a contractor short, the owner's tap is still owed first, so the policy does not apply.
+    const auto = proposal.refundAuto
+    const policy = auto && warrant.autoRefund.enabled ? warrant.autoRefund : null
+    if (policy && auto!.isDuplicate) {
+      if (auto!.disputed && policy.skipDisputed) {
+        return {
+          gate: 'NEEDS_APPROVAL',
+          clause: Clause.refundPolicyDisputed,
+          detail: 'the auto-refund policy does not send a refund while the client payment it reverses is under an open dispute; the dispute must resolve first. The owner can still tap this refund.',
+        }
+      }
+      if (proposal.amountCents > policy.maxCents) {
+        return {
+          gate: 'NEEDS_APPROVAL',
+          clause: Clause.refundPolicyCap,
+          detail: `the auto-refund policy sends at most ${(policy.maxCents / 100).toFixed(2)} ${proposal.currency} by itself; this refund is for ${(proposal.amountCents / 100).toFixed(2)} ${proposal.currency}, so it waits for the owner's tap.`,
+        }
+      }
+      if (auto!.monthUsedCents + proposal.amountCents > policy.monthlyCapCents) {
+        return {
+          gate: 'NEEDS_APPROVAL',
+          clause: Clause.refundPolicyCap,
+          detail: `the auto-refund policy spends at most ${(policy.monthlyCapCents / 100).toFixed(2)} ${proposal.currency} a month; ${(auto!.monthUsedCents / 100).toFixed(2)} ${proposal.currency} has gone this month, so this ${(proposal.amountCents / 100).toFixed(2)} ${proposal.currency} refund waits for the owner's tap.`,
+        }
+      }
+      return {
+        gate: 'AUTO',
+        clause: Clause.refundAutoPolicy,
+        detail: 'covered by the owner\'s auto-refund policy: a payment the books show as paid twice, refunded through the same gate and the same settle path, inside the policy\'s per-refund and monthly limits',
       }
     }
   }

@@ -53,7 +53,7 @@ function RulesAtAGlance({ warrant }: { warrant: Warrant }) {
     <section className="rules-glance" aria-label="Your rules at a glance" data-testid="rules-glance">
       <div className="glance-col glance-auto">
         <span className="eyebrow">No tap needed</span>
-        <p>Under {dollars(warrant.autoSettleUnderCents, warrant.currency)}{standing > 0 ? `, and anything your ${standing === 1 ? 'standing rule covers' : `${standing} standing rules cover`}` : ''}.</p>
+        <p>Under {dollars(warrant.autoSettleUnderCents, warrant.currency)}{standing > 0 ? `, and anything your ${standing === 1 ? 'standing rule covers' : `${standing} standing rules cover`}` : ''}{warrant.autoRefund?.enabled ? `. A payment the books show was paid twice is refunded with no tap, up to ${dollars(warrant.autoRefund.maxCents, warrant.currency)}` : ''}.</p>
         {stats ? <p className="glance-count"><b>{stats.automatic}</b> in the last 30 days</p> : null}
       </div>
       <div className="glance-col glance-tap">
@@ -92,6 +92,7 @@ const LABELS: Array<{ key: keyof Body; label: string; show: (body: Body) => stri
   { key: 'automation', label: 'Autopilot', show: (b) => automationWords(b.automation) },
   { key: 'risk', label: 'Adaptive friction', show: (b) => riskWords(b.risk) },
   { key: 'frictionBudget', label: 'AI friction floor', show: (b) => b.frictionBudget?.modelFloor === 'needs_approval' ? 'Needs approval' : b.frictionBudget?.modelFloor === 'deny' ? 'Deny' : 'Standard' },
+  { key: 'autoRefund', label: 'Automatic refund of a double payment', show: (b) => (b.autoRefund?.enabled ? `on, up to ${dollars(b.autoRefund.maxCents, b.currency)} each and ${dollars(b.autoRefund.monthlyCapCents, b.currency)} a month, only when the books show it was paid twice, never while a dispute is open` : 'off') },
   { key: 'clients', label: 'Who can be billed', show: (b) => (b.clients ?? []).map((p) => `${p.displayName} (${p.id}) · ${p.email}`).join(', ') || 'nobody' },
 ]
 
@@ -460,6 +461,7 @@ const BLANK: Body = {
   automation: { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 },
   risk: { enabled: false, velocityMaxPerHour: 20, velocityWindowMinutes: 60, escalateNewEvidenceHost: false, patternMatchPayees: false },
   frictionBudget: { modelFloor: 'auto' },
+  autoRefund: { enabled: false, duplicateOnly: true, skipDisputed: true, maxCents: 0, monthlyCapCents: 0 },
 }
 
 function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | null; seed: RulesDraft | null; resume: Body | null; onKeep: (body: Body | null) => void; onDone: (version: number | null) => void }) {
@@ -496,13 +498,20 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
   const [riskPattern, setRiskPattern] = useState(from.risk?.patternMatchPayees ?? false)
   const [riskHost, setRiskHost] = useState(from.risk?.escalateNewEvidenceHost ?? false)
   const [review, setReview] = useState(false)
+  const policy = from.autoRefund ?? BLANK.autoRefund!
+  const [refundOn, setRefundOn] = useState(policy.enabled)
+  const [refundMax, setRefundMax] = useState(policy.enabled ? centsInput(policy.maxCents) : '')
+  const [refundMonth, setRefundMonth] = useState(policy.enabled ? centsInput(policy.monthlyCapCents) : '')
 
   const draft: Body | null = (() => {
     const a = parseCents(auto)
     const c = parseCents(cap)
     const ce = parseCents(ceiling)
     const sh = Number(share)
+    const refundEach = parseCents(refundMax)
+    const refundCap = parseCents(refundMonth)
     if (a === null || c === null || ce === null || !Number.isFinite(sh)) return null
+    if (refundOn && (refundEach === null || refundEach < 1 || refundCap === null || refundCap < refundEach)) return null
     // A studio that allows no kind of work can be asked for nothing: the rules need at least one.
     if (categories.split(',').map((item) => item.trim()).filter(Boolean).length === 0) return null
     return {
@@ -533,6 +542,9 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
         patternMatchPayees: riskPattern,
         escalateNewEvidenceHost: riskHost,
       },
+      autoRefund: refundOn
+        ? { enabled: true, duplicateOnly: true, skipDisputed: true, maxCents: refundEach ?? 0, monthlyCapCents: refundCap ?? 0 }
+        : { enabled: false, duplicateOnly: true, skipDisputed: true, maxCents: 0, monthlyCapCents: 0 },
     }
   })()
   const problem = draft && draft.automation?.payOnSettle && draft.standing.length === 0 ? 'Paying when the client pays needs at least one standing rule, to say whom to pay.' : null
@@ -595,6 +607,17 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
               <label className="field"><span>Remind unpaid invoices after (days)</span><input inputMode="numeric" value={remindDays} placeholder="off" onChange={(e) => setRemindDays(e.target.value)} /></label>
               <label className="field"><span>At most this many reminders</span><input inputMode="numeric" value={maxReminders} onChange={(e) => setMaxReminders(e.target.value)} /></label>
             </div>
+          </fieldset>
+          <fieldset className="parties autopilot" data-testid="rules-auto-refund">
+            <legend>Automatic refunds · a payment the books show was paid twice</legend>
+            <p className="fine">This only removes the tap, and only for a refund the other rules already allow. It never covers an open dispute, and it never covers a payment the books do not show as paid twice. Anything above the line waits for you, the same as any other refund.</p>
+            <label className="check"><input type="checkbox" checked={refundOn} onChange={(e) => setRefundOn(e.target.checked)} /> Refund that double payment with no tap</label>
+            {refundOn ? (
+              <div className="field-row three">
+                <label className="field"><span>At most this much, each refund</span><span className="dollar-input"><span>{currency}</span><input inputMode="decimal" aria-label="Automatic refund maximum" value={refundMax} onChange={(e) => setRefundMax(e.target.value)} placeholder="You choose" /></span></label>
+                <label className="field"><span>At most this much a month</span><span className="dollar-input"><span>{currency}</span><input inputMode="decimal" aria-label="Automatic refund monthly cap" value={refundMonth} onChange={(e) => setRefundMonth(e.target.value)} placeholder="You choose" /></span><small>At least the per-refund maximum.</small></label>
+              </div>
+            ) : null}
           </fieldset>
           <fieldset className="parties autopilot" data-tour="rules-risk">
             <legend>Adaptive friction · when a request looks off</legend>

@@ -142,7 +142,7 @@ export class BreaksService {
     let paypalReason: string | undefined
     if (options.withPayPal) {
       try {
-        activity = await this.mandate.activity(30)
+        activity = await this.mandate.activity(90)
         if (activity.available) paypal = 'checked'
         else {
           paypal = 'unavailable'
@@ -349,15 +349,23 @@ export class BreaksService {
         if (!request.capture_id) throw new Problem(409, 'break.state', 'Nothing to refund', 'That payment has no PayPal capture to refund.')
         const rules = this.repo.latestWarrant()?.body
         const client = rules?.clients.find((party) => party.id === request.payee_id)
-        // The refund goes through the front door as the autopilot: the gate decides it from the owner's rules, as for anyone.
-        const filed = this.mandate.propose({
+        // The refund goes through the front door as the autopilot: the gate decides it from the owner's rules, as
+        // for anyone. When the owner's auto-refund policy covers it, the same settle path sends it with no tap.
+        const filed = await this.mandate.proposeAndDispatch({
           kind: 'refund', payee: client?.displayName ?? request.payee_id ?? 'client', amountCents: arrivedCents(request), currency: request.currency,
           description: 'Refund the duplicate payment (filed by the Breaks desk)', parentCaptureId: request.capture_id,
           ...(request.job_id ? { jobId: request.job_id } : {}),
         }, `breaks-fix-${key}`, 'autopilot')
         const body = filed.body as { id?: string; gate?: string; phase?: string; clause?: string; detail?: string }
-        const decided = body.gate === 'AUTO' ? 'The gate allowed it under your rules (the request is locked and follows the same path as any refund).' : body.gate === 'DENY' ? `The gate refused it: ${body.detail ?? body.clause ?? 'a rule says no'}.` : 'The gate needs your approval: it is waiting in your approvals.'
-        return { action, statement: `${filed.replayed ? 'A refund request was already filed for this break. ' : 'Filed a refund request. '}${decided} Nothing was refunded by this button.`, gate: body.gate, filedProposalId: body.id, phase: body.phase }
+        const decided = body.gate === 'AUTO'
+          ? body.phase === 'refunded'
+            ? 'The gate allowed it under your rules and it was refunded through the same settle path any refund takes.'
+            : body.gate === 'AUTO' && body.clause === 'refund.auto_policy'
+              ? 'The gate allowed it under your auto-refund policy; it is locked and follows the same path as any refund.'
+              : 'The gate allowed it under your rules (the request is locked and follows the same path as any refund).'
+          : body.gate === 'DENY' ? `The gate refused it: ${body.detail ?? body.clause ?? 'a rule says no'}.` : 'The gate needs your approval: it is waiting in your approvals.'
+        const moved = body.phase === 'refunded' ? '' : ' Nothing was refunded by this button.'
+        return { action, statement: `${filed.replayed ? 'A refund request was already filed for this break. ' : 'Filed a refund request. '}${decided}${moved}`, gate: body.gate, filedProposalId: body.id, phase: body.phase }
       }
       case 'refresh_capture': {
         const result = await this.mandate.refreshCapture(request.capture_id ?? '', 'server')
