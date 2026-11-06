@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { AttackPanel, BlastDelta } from '../components/BlastRadius'
 import { EmailNotice } from '../components/EmailNotice'
 import { Chip, Loading, PageHead, ProblemCard } from '../components/ui'
 import { api, ApiError, type DraftStage } from '../lib/api'
@@ -81,6 +82,7 @@ const LABELS: Array<{ key: keyof Body; label: string; show: (body: Body) => stri
   { key: 'perPaymentCeilingCents', label: 'Per-payment ceiling', show: (b) => dollars(b.perPaymentCeilingCents, b.currency) },
   { key: 'contractorShareBps', label: 'Contractor share of client money', show: (b) => `${(b.contractorShareBps ?? 10000) / 100}%` },
   { key: 'clearingDays', label: 'Wait after a client pays', show: (b) => ((b.clearingDays ?? 0) === 0 ? 'no wait' : `${b.clearingDays} day${b.clearingDays === 1 ? '' : 's'} before a rule pays from it`) },
+  { key: 'regretSeconds', label: 'Hold before a rule sends', show: (b) => ((b.regretSeconds ?? 0) === 0 ? 'sent at once' : `${b.regretSeconds} seconds, with Undo`) },
   { key: 'fundingRequired', label: 'Payouts need client money', show: (b) => (b.fundingRequired ? 'yes' : 'no') },
   { key: 'evidenceRequired', label: 'Proof link required', show: (b) => (b.evidenceRequired ? 'yes' : 'no') },
   { key: 'allowPartialPayment', label: 'Clients may pay an invoice in part', show: (b) => (b.allowPartialPayment ? 'yes' : 'no') },
@@ -124,6 +126,10 @@ export function Rules() {
   const words = useQuery({ queryKey: ['rule-words'], queryFn: api.ruleWords, enabled: owner, staleTime: 30_000, retry: false })
   // Unpublished work survives leaving the screen and reloading (for this tab), and is set aside if the rules move on.
   const [resume, setResume] = useState<Body | null>(null)
+  const [resumeN, setResumeN] = useState(0)
+  // "Attack my rules" from Today opens straight onto the attack. A fix someone previewed arrives as a patch to the rules.
+  const [autoAttack] = useState(() => (location.state as { attack?: boolean } | null)?.attack === true)
+  const attackRef = useRef<HTMLDivElement | null>(null)
   const [saved, setSaved] = useState<RulesWip | null>(() => wip.read())
   const [notice, setNotice] = useState<string | null>(null)
   // The people on this studio. Their addresses may only come from the owner's own words, so the first version is
@@ -167,6 +173,22 @@ export function Rules() {
   useEffect(() => {
     if (selected === null && list[0]) setSelected(list[0].version)
   }, [list, selected])
+  // A change someone asked to preview (a way to bring the Blast Radius down, or the fix an attack found) opens the editor
+  // on the rules with that one change made. Nothing is live until the owner reads it, reviews it and publishes it.
+  const patch = (location.state as { patch?: Partial<Body> } | null)?.patch
+  useEffect(() => {
+    const live = list[0]
+    if (!patch || !live) return
+    setSeed(null)
+    setResume({ ...(saved?.body && saved.baseVersion === live.version ? saved.body : body(live)), ...patch } as Body)
+    setResumeN((n) => n + 1)
+    setEditing(true)
+    navigate(location.pathname, { replace: true, state: null })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patch, list[0]?.version])
+  useEffect(() => {
+    if (autoAttack) attackRef.current?.scrollIntoView?.({ block: 'start' })
+  }, [autoAttack, list.length])
   useEffect(() => {
     // Not while the editor is open: publishing refetches the live version a moment before the editor hands back, and the
     // draft that "fell behind" is then the one just published, not a stranger's change.
@@ -286,6 +308,7 @@ export function Rules() {
       ) : null}
 
       {!editing ? <RulesAtAGlance warrant={current} /> : null}
+      {owner && !editing ? <div ref={attackRef}><AttackPanel auto={autoAttack} /></div> : null}
 
       {owner && !editing ? (
         <DraftBox
@@ -300,10 +323,11 @@ export function Rules() {
       {owner && !editing && showPolicyBox ? <PolicyBox onUse={(result) => { setSeed(result); setResume(null); setEditing(true) }} /> : null}
       {editing ? (
         <Editor
-          key={resume ? 'resume' : seed?.runId ?? 'blank'}
+          key={resume ? `resume${resumeN}` : seed?.runId ?? 'blank'}
           current={current}
           seed={seed}
           resume={resume}
+          onPatch={(next, change) => { setSeed(null); setResume({ ...next, ...change } as Body); setResumeN((n) => n + 1) }}
           onKeep={(next) => keep({ body: next })}
           onDone={(version) => {
             setEditing(false)
@@ -456,6 +480,7 @@ const BLANK: Body = {
   fundingRequired: true,
   contractorShareBps: 10000,
   clearingDays: 0,
+  regretSeconds: 0,
   allowPartialPayment: false,
   standing: [],
   automation: { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 },
@@ -464,7 +489,7 @@ const BLANK: Body = {
   autoRefund: { enabled: false, duplicateOnly: true, skipDisputed: true, maxCents: 0, monthlyCapCents: 0 },
 }
 
-function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | null; seed: RulesDraft | null; resume: Body | null; onKeep: (body: Body | null) => void; onDone: (version: number | null) => void }) {
+function Editor({ current, seed, resume, onKeep, onPatch, onDone }: { current: Warrant | null; seed: RulesDraft | null; resume: Body | null; onKeep: (body: Body | null) => void; /** Re-open the editor on the draft with one change made, for a fix an attack found. */ onPatch?: (draft: Body, change: Partial<Body>) => void; onDone: (version: number | null) => void }) {
   const client = useQueryClient()
   const toast = useToast()
   const online = useOnline()
@@ -482,6 +507,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
   const [timezone, setTimezone] = useState(from.timezone)
   const [share, setShare] = useState(String((from.contractorShareBps ?? 10000) / 100))
   const [clearing, setClearing] = useState(String(from.clearingDays ?? 0))
+  const [regret, setRegret] = useState(String(from.regretSeconds ?? 0))
   const [funding, setFunding] = useState(Boolean(from.fundingRequired))
   const [partial, setPartial] = useState(Boolean(from.allowPartialPayment))
   const [evidence, setEvidence] = useState(from.evidenceRequired)
@@ -522,6 +548,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
       perPaymentCeilingCents: ce,
       contractorShareBps: Math.round(sh * 100),
       clearingDays: Math.max(0, Math.min(60, Math.round(Number(clearing)) || 0)),
+      regretSeconds: Math.max(0, Math.min(3600, Math.round(Number(regret)) || 0)),
       fundingRequired: funding,
       evidenceRequired: evidence,
       allowPartialPayment: partial,
@@ -593,6 +620,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
             <p className="fine">A part payment settles the request for what actually arrived, and contractors can only be funded up to their share of that. PayPal offers part payment to sellers in some countries only, so this is a request to PayPal, not a guarantee.</p>
           </div>
           <label className="field"><span>Wait after a client pays, before a rule pays a contractor from it</span><span className="dollar-input"><input inputMode="numeric" aria-label="Days to wait after a client pays" value={clearing} onChange={(e) => setClearing(e.target.value)} /><span>days</span></span><small>0 means no wait. A client can still take money back for a while, so a rule or autopilot waits this long. You can still tap to pay earlier.</small></label>
+          <label className="field"><span>Hold what a rule sends by itself, so you can undo it</span><span className="dollar-input"><input inputMode="numeric" aria-label="Seconds to hold a request a rule sends by itself" data-testid="regret-seconds" value={regret} onChange={(e) => setRegret(e.target.value)} /><span>seconds</span></span><small>0 sends at once. A payout or refund that a standing rule or the auto-refund policy sends waits this long on Today with an Undo button, and nothing reaches PayPal until the time is up. It only adds a pause: it never lets through anything the rules would not.</small></label>
           <label className="field"><span>Allowed work, comma separated</span><input value={categories} onChange={(e) => setCategories(e.target.value)} placeholder="logo-design, photography" /><small>{categories.trim() ? 'Every request names one of these.' : 'Add at least one: every request must name the kind of work it is for.'}</small></label>
           <Parties title="Who can be paid" prefix="payee_" list={payees} onChange={setPayees} />
           <Parties title="Who can be billed" prefix="client_" list={clients} onChange={setClients} />
@@ -636,6 +664,7 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
               </span>
             </div>
           ) : null}
+          {draft && changes.length > 0 && current ? <BlastDelta rules={draft} compact /> : null}
           <div className="row between wrap gap-s">
             <span className="muted">{draft ? `${changes.length} change${changes.length === 1 ? '' : 's'}` : 'Some amounts are not valid money'}</span>
             <button type="button" className="btn btn-ink" disabled={!draft || changes.length === 0 || Boolean(problem)} onClick={() => setReview(true)}>Review changes</button>
@@ -645,7 +674,9 @@ function Editor({ current, seed, resume, onKeep, onDone }: { current: Warrant | 
         <div className="stack">
           <p>{current ? `Version ${current.version} → ${current.version + 1}. Open requests stay judged by version ${current.version}.` : 'This is version 1. Nothing can be asked for, approved or paid until you publish it.'}</p>
           <Changes changes={changes} />
+          {draft && current ? <BlastDelta rules={draft} /> : null}
           {draft ? <ReplayPanel rules={draft} seed={seed?.replay ?? null} /> : null}
+          {draft && current ? <AttackPanel rules={draft} onFix={onPatch ? (change) => onPatch(draft, change) : undefined} /> : null}
           {draft ? <TryRules rules={draft} /> : null}
           <div className="row gap-s wrap">
             <button type="button" className="btn btn-ghost" onClick={() => setReview(false)}>Back</button>

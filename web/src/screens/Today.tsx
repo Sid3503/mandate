@@ -11,7 +11,9 @@ import { session } from '../lib/session'
 import { useQuery } from '@tanstack/react-query'
 import { relative } from '../lib/format'
 import { reviewKey, useLive, type ReviewState } from '../lib/live'
+import { BlastTile } from '../components/BlastRadius'
 import { BreakIt } from '../components/BreakIt'
+import { RegretBand } from '../components/Regret'
 import { StoryRail } from '../components/StoryRail'
 import { EmailNotice } from '../components/EmailNotice'
 import { ToolTrail } from '../components/ToolTrail'
@@ -38,6 +40,7 @@ const KIND_LABEL: Record<TodayItem['kind'], { label: string; tone: 'deny' | 'nee
   autopilot_blocked: { label: 'Autopilot stopped', tone: 'deny' },
   dispute: { label: 'Disputed', tone: 'deny' },
   in_flight: { label: 'In flight', tone: 'muted' },
+  regret: { label: 'Sending soon', tone: 'auto' },
   done: { label: 'Done', tone: 'auto' },
   stopped: { label: 'Refused', tone: 'deny' },
 }
@@ -69,6 +72,9 @@ export function Today() {
   const open = waiting.filter((row) => !settledHere[row.id]).length + attention.length
   const owner = me.data?.role === 'owner'
   const approver = me.data?.role === 'approver'
+  // A request a rule is about to send by itself, held so the owner can take it back. It has its own band, above everything.
+  const regretting = (data?.inFlight ?? []).filter((item) => item.kind === 'regret')
+  const flight = (data?.inFlight ?? []).filter((item) => item.kind !== 'regret')
 
   return (
     <div className="page today">
@@ -90,11 +96,13 @@ export function Today() {
           <span><strong>Automation stopped.</strong> Mandate is paused{status.data.paused.reason ? ` (${status.data.paused.reason})` : ''}. Automatic billing and payouts are halted.</span>
         </div>
       ) : null}
+      {owner || approver ? <RegretBand items={regretting} /> : null}
       {owner ? <StoryRail /> : null}
       {owner ? <CoolingNote /> : null}
       {owner && data?.next ? <NextForJob next={data.next} /> : null}
 
       {data ? <MonthStrip data={data} /> : null}
+      {owner ? <BlastTile /> : null}
       {data ? <WaitingOnClient data={data} /> : null}
       {owner ? <TapToRule /> : null}
       {owner && data && !data.setup.complete && data.setup.steps.filter((step) => step.done).length < 4 ? <Setup data={data} /> : null}
@@ -135,11 +143,11 @@ export function Today() {
 
       {owner && data && data.readyToBill.some((item) => item.delivery?.status !== 'awaiting') ? <ReadyToBill data={data} /> : null}
 
-      {data && data.inFlight.length > 0 ? (
+      {data && flight.length > 0 ? (
         <section className="section" data-tour="ready" aria-labelledby="h-flight">
           <h2 className="section-title" id="h-flight">In flight · nothing for you to do</h2>
           <p className="fine watcher" role="status">{data.watcher.lastLook ? <>Mandate asks PayPal about these {cadence(data.watcher.everySeconds)}. Last asked {relative(data.watcher.lastLook.at)}, looking at {data.watcher.lastLook.invoices} invoice{data.watcher.lastLook.invoices === 1 ? '' : 's'} and {data.watcher.lastLook.payouts} payout{data.watcher.lastLook.payouts === 1 ? '' : 's'}.</> : <>Mandate asks PayPal about these {cadence(data.watcher.everySeconds)}. It has not asked yet since the server started.</>} Pay an invoice and this page updates by itself the moment PayPal says it was paid.</p>
-          <ul className="items"><AnimatePresence initial={false}>{data.inFlight.map((item) => <ItemRow key={item.id} item={item} />)}</AnimatePresence></ul>
+          <ul className="items"><AnimatePresence initial={false}>{flight.map((item) => <ItemRow key={item.id} item={item} />)}</AnimatePresence></ul>
         </section>
       ) : null}
 
@@ -439,7 +447,7 @@ function ItemRow({ item }: { item: TodayItem }) {
   const reduce = useReducedMotion()
   const role = useSession().data?.role
   const owner = role === 'owner'
-  const canAct = (action: TodayAction) => owner || (role === 'approver' && (action === 'approve' || action === 'reject'))
+  const canAct = (action: TodayAction) => owner || (role === 'approver' && (action === 'approve' || action === 'reject' || action === 'undo'))
   const online = useOnline()
   const refresh = useRefreshMoney()
   const toast = useToast()
@@ -450,10 +458,12 @@ function ItemRow({ item }: { item: TodayItem }) {
       if (action === 'cancel_payout') return api.cancelPayout(item.proposalId)
       if (action === 'approve') return api.approve(item.proposalId, session.mode() === 'demo' ? 'demo' : 'auto')
       if (action === 'reject') return api.reject(item.proposalId)
+      if (action === 'undo') return api.undo(item.proposalId)
       return Promise.resolve(null)
     },
     onSuccess: (result, action) => {
-      if (action === 'remind') toast({ title: 'Reminder sent', body: 'PayPal emailed the client about the invoice.', tone: 'info' })
+      if (action === 'undo') toast({ title: 'Taken back', body: 'It was never sent. PayPal was not called.', tone: 'info' })
+      else if (action === 'remind') toast({ title: 'Reminder sent', body: 'PayPal emailed the client about the invoice.', tone: 'info' })
       else if (action === 'cancel_payout') toast({ title: 'Payout cancelled', body: 'PayPal returned the money.', tone: 'info' })
       else if (result && 'phase' in result && result.phase === 'settled_short') toast({ title: `Part paid ${dollars(result.settledCents ?? 0)} of ${dollars(result.amountCents)}`, body: 'PayPal confirmed what arrived. The rest is still owed.', tone: 'info' })
       else if (result && 'phase' in result && result.phase === 'captured') toast({ title: `Settled ${dollars(result.amountCents)}`, body: 'PayPal confirmed it.' })
@@ -505,6 +515,7 @@ const ACTION: Record<Exclude<TodayAction, 'open'>, (item: TodayItem) => string> 
   check: () => 'Check PayPal',
   remind: () => 'Send a reminder',
   cancel_payout: () => 'Cancel and return the money',
+  undo: (item) => `Undo ${dollars(item.amountCents)}`,
 }
 
 /** The cart hash the tap will lock. A locked row already has it. A waiting row is hashed the same way the server hashes it. */

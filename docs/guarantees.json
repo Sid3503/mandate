@@ -11,7 +11,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "funded",
@@ -23,7 +23,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "cap",
@@ -35,7 +35,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "unknown",
@@ -46,7 +46,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "refused",
@@ -57,7 +57,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "once",
@@ -69,7 +69,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "lock",
@@ -80,7 +80,7 @@
         "test/redteam.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "attributed",
@@ -91,7 +91,7 @@
         "test/audit.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "yes",
@@ -102,7 +102,7 @@
         "test/standing.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "proof",
@@ -113,7 +113,7 @@
         "test/stepup.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "members",
@@ -124,7 +124,7 @@
         "test/identity.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "assertions",
@@ -135,7 +135,7 @@
         "test/stepup.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "rules",
@@ -146,7 +146,7 @@
         "test/stepup.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "safety_events",
@@ -157,7 +157,7 @@
         "test/safety.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "keys",
@@ -168,7 +168,7 @@
         "test/verify.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "agents",
@@ -180,7 +180,7 @@
         "test/redteam.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "words",
@@ -190,7 +190,7 @@
         "test/agents.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "address",
@@ -201,7 +201,7 @@
         "test/intent.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "locked_amount",
@@ -211,7 +211,7 @@
         "test/property.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "paused",
@@ -223,7 +223,7 @@
       ],
       "random": true,
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "verify",
@@ -232,7 +232,7 @@
         "test/verify.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "studio",
@@ -242,7 +242,7 @@
         "test/control-room.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "down",
@@ -252,17 +252,37 @@
         "test/robust.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-20T12:53:24.078Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     },
     {
       "id": "mandate",
-      "promise": "A mandate you were handed \u2014 one locked payment or a standing rule \u2014 can be checked by anyone, in a browser, with the public keys and no help from the server; and editing one cent breaks it.",
+      "promise": "A mandate you were handed — one locked payment or a standing rule — can be checked by anyone, in a browser, with the public keys and no help from the server; and editing one cent breaks it.",
       "tests": [
         "test/mandate-vc.test.ts",
         "test/verify.test.ts"
       ],
       "status": "pass",
-      "lastVerifiedAt": "2026-10-26T15:35:00.000Z"
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
+    },
+    {
+      "id": "blast",
+      "promise": "No sequence of requests, from a person, a stolen key or a fooled AI agent, can move more money with nobody pressing anything than the Blast Radius the owner is shown.",
+      "tests": [
+        "test/blast.test.ts",
+        "test/blast-http.test.ts"
+      ],
+      "random": true,
+      "status": "pass",
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
+    },
+    {
+      "id": "regret",
+      "promise": "A payout or refund a rule sends by itself waits out the owner's regret window before anything reaches PayPal; an Undo inside it takes it back for good, and the window never lets through what the rules would not.",
+      "tests": [
+        "test/regret.test.ts"
+      ],
+      "status": "pass",
+      "lastVerifiedAt": "2026-11-05T05:45:49.593Z"
     }
   ],
   "deepRun": {

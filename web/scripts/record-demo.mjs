@@ -766,6 +766,84 @@ const SCREENCAST = {
   maxHeight: 1080,
   everyNthFrame: 1,
 }
+// BEAT=desk records only the aftermath of that refund: Money at risk naming the hole, then the PayPal log
+// keeping the refund she already sent. Nothing on either page is asked to move money. It is cut in after the job.
+if (process.env.BEAT === 'desk') {
+  await page.getByLabel('API key').fill(OWNER)
+  await page.getByRole('button', { name: 'Unlock console' }).click()
+  await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
+  await page.goto(`${BASE}/app/ops`)
+  const hole = page.getByText('had already gone out')
+  await hole.waitFor()
+  await quiet()
+  await pause(1100)
+  await client.send('Page.startScreencast', SCREENCAST)
+  await pause(400)
+  mark('desk-ops')
+  await pause(Number(process.env.DESK_OPS_MS ?? 4800))
+  log('open the PayPal log')
+  mark('desk-log-click')
+  await click(page.getByRole('link', { name: 'Open the log' }), 900)
+  await page.getByText('Nothing on this tab is sent again').waitFor()
+  await page.getByText(process.env.REFUND_ID ?? '0PD428131S259545C').waitFor()
+  await quiet()
+  mark('desk-log')
+  await pause(Number(process.env.DESK_LOG_MS ?? 5200))
+  await client.send('Page.stopScreencast')
+  await pause(600)
+  await flushFrames()
+  writeFileSync(`${OUT}/frames.json`, JSON.stringify(frames))
+  writeFileSync(`${OUT}/marks.json`, JSON.stringify({ t0: frames[0] ?? null, marks }))
+  log(`frames ${frames.length}, span ${(frames[frames.length - 1] - frames[0]).toFixed(2)}s`)
+  await context.close()
+  await browser.close()
+  process.exit(0)
+}
+// BEAT=reach records the worst case and the attack on it, at the moment the client's money has settled and before the
+// contractor is paid (E2E_ADOPT_STAGE=charge): Today's Blast Radius tile, then "Attack my rules" against the real gate on a
+// copy of this ledger. Off camera it signs the standing rule the job's own rules sentence says ("pay her half, automatically"),
+// through the same PUT /v1/warrant the console makes. It moves no money and asks PayPal for nothing.
+if (process.env.BEAT === 'reach') {
+  const auth = { authorization: `Bearer ${OWNER}` }
+  const live = await (await page.request.get(`${BASE}/v1/warrant`, { headers: auth })).json()
+  const { id: _i, version: _v, createdAt: _c, ...rules } = live
+  const standing = [{ id: 'payee_standing', payeeId: SC.payee.id, clientIds: [SC.client.id], requireDeal: false, shareBps: SC.rules.contractorShareBps }]
+  const put = await page.request.put(`${BASE}/v1/warrant`, { headers: auth, data: { ...rules, standing, fundingRequired: true } })
+  if (put.status() !== 201) throw new Error(`the standing rule was not signed: ${put.status()} ${await put.text()}`)
+  await page.getByLabel('API key').fill(OWNER)
+  await page.getByRole('button', { name: 'Unlock console' }).click()
+  await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
+  const tile = page.getByTestId('blast')
+  await tile.waitFor()
+  await smoothScrollTo(tile, { ms: 10, align: 'start', margin: 70 })
+  await quiet()
+  await pause(500)
+  await client.send('Page.startScreencast', SCREENCAST)
+  await pause(300)
+  mark('reach-tile')
+  await pause(Number(process.env.REACH_TILE_MS ?? 3200))
+  log('attack my rules')
+  mark('reach-attack-click')
+  await click(page.getByTestId('blast-attack'), 500)
+  const result = page.getByTestId('attack-result')
+  await result.waitFor()
+  await quiet()
+  mark('reach-result')
+  await smoothScrollTo(page.getByTestId('attack'), { ms: 700, align: 'start', margin: 40 })
+  await pause(Number(process.env.REACH_RESULT_MS ?? 2600))
+  mark('reach-fuzz')
+  await smoothScrollTo(page.getByTestId('attack-fuzz'), { ms: Number(process.env.REACH_SCROLL_MS ?? 1500), align: 'end', margin: 60 })
+  await pause(Number(process.env.REACH_FUZZ_MS ?? 2400))
+  await client.send('Page.stopScreencast')
+  await pause(600)
+  await flushFrames()
+  writeFileSync(`${OUT}/frames.json`, JSON.stringify(frames))
+  writeFileSync(`${OUT}/marks.json`, JSON.stringify({ t0: frames[0] ?? null, marks }))
+  log(`frames ${frames.length}, span ${(frames[frames.length - 1] - frames[0]).toFixed(2)}s`)
+  await context.close()
+  await browser.close()
+  process.exit(0)
+}
 // BEAT=refund records only the refund beat, on a ledger that holds the film's real Coastline payment (E2E_ADOPT, see
 // api/src/dev/adopt.ts): the receipt's "Propose a refund", the rules' answer, Today waiting for the owner, her two taps,
 // and the job once the refund has really gone to PayPal. It is made to be cut in after the payout receipt.

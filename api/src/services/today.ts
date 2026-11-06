@@ -23,11 +23,11 @@ import type { MandateService } from './mandate'
  * Words are composed here, in one place, so the page and the tests agree on what is said.
  */
 
-export type TodayAction = 'approve' | 'reject' | 'settle' | 'check' | 'remind' | 'cancel_payout' | 'open'
+export type TodayAction = 'approve' | 'reject' | 'settle' | 'check' | 'remind' | 'cancel_payout' | 'undo' | 'open'
 
 export type TodayItem = {
   id: string
-  kind: 'approval' | 'ready' | 'unclaimed' | 'held' | 'overdue' | 'autopilot_blocked' | 'dispute' | 'in_flight' | 'done' | 'stopped'
+  kind: 'approval' | 'ready' | 'unclaimed' | 'held' | 'overdue' | 'autopilot_blocked' | 'dispute' | 'in_flight' | 'regret' | 'done' | 'stopped'
   proposalId: string
   proposalKind: 'charge' | 'payment' | 'refund'
   title: string
@@ -38,12 +38,20 @@ export type TodayItem = {
   clause: string
   at: string
   how?: 'tap' | 'standing' | 'billing' | 'autopilot' | 'auto'
+  /** A request waiting out the owner's regret window: when the window closes and the server sends it. */
+  until?: string
   actions: TodayAction[]
 }
 
 const DAY = 86_400_000
 /** How long an invoice may sit unpaid before the page calls it overdue, when the owner has set no schedule. */
 const DEFAULT_OVERDUE_DAYS = 3
+
+/** When a request's regret window closes, from the ledger, or null when it never had one. */
+function regretUntil(events: Array<{ type: string; payload_json: string }>): string | null {
+  const started = events.find((event) => event.type === 'regret.started')
+  return started ? (JSON.parse(started.payload_json) as { until?: string }).until ?? null : null
+}
 
 export class TodayService {
   constructor(
@@ -76,7 +84,7 @@ export class TodayService {
       const money = dollars(row.amount_cents)
       const base = { proposalId: row.id, proposalKind: row.kind, amountCents: row.amount_cents, currency: row.currency, phase: row.phase, clause: row.clause, at: row.updated_at }
       const events = this.repo.eventsFor(row.id)
-      const standing = row.clause === 'standing.matched' || row.clause === 'standing.billing'
+      const standing = row.clause === 'standing.matched' || row.clause === 'standing.billing' || row.clause === 'refund.auto_policy'
 
       if (row.phase === 'pending_approval' && row.gate === 'NEEDS_APPROVAL') {
         waiting.push({ ...base, id: `${row.id}:approval`, kind: 'approval', at: row.created_at, title: `${verb(row.kind)} ${who} ${money}`, detail: body ? explainClause({ clause: row.clause, kind: row.kind, amountCents: row.amount_cents, category: row.category, payeeName: who, warrant: body }) : row.detail, actions: ['approve', 'reject', 'open'] })
@@ -89,6 +97,8 @@ export class TodayService {
           inFlight.push({ ...base, id: `${row.id}:checkout`, kind: 'in_flight', title: `Waiting for ${who} to approve the ${money} checkout`, detail: 'The invoice could not be used, so PayPal checkout was opened. It settles by itself once they approve it.', actions: ['open'] })
         } else if (code) {
           waiting.push({ ...base, id: `${row.id}:held`, kind: 'held', title: `${verb(row.kind)} ${who} ${money} is on hold`, detail: HELD[code] ?? 'Something outside Mandate is in the way. It will retry every minute.', actions: ['settle', 'open'] })
+        } else if (regretUntil(events) !== null && Date.parse(regretUntil(events)!) > now.getTime()) {
+          inFlight.push({ ...base, id: `${row.id}:regret`, kind: 'regret', until: regretUntil(events)!, title: `${row.kind === 'refund' ? 'Refunding' : 'Paying'} ${who} ${money}`, detail: 'Covered by a rule you signed. It is held for a moment so you can take it back.', actions: ['undo', 'open'] })
         } else {
           inFlight.push({ ...base, id: `${row.id}:sending`, kind: 'in_flight', title: `Mandate is ${row.kind === 'charge' ? 'sending the invoice to' : 'paying'} ${who} ${money}`, detail: 'Covered by a rule you signed. It should be out within a minute.', actions: ['open'] })
         }
