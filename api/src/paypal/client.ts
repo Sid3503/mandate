@@ -2,7 +2,7 @@ import { centsToPayPal, moneyCents, payPalToCents } from '../domain/money'
 import { paypalRequestId } from '../domain/hash'
 import { arr, obj, str } from './toolkit'
 import { UpstreamGuard, type GuardOptions } from './resilience'
-import { PayPalError, type CapturedPayment, type CreatedOrder, type LiveOrder, type LivePayout, type PayPalPort, type RefundedPayment, type SentPayout } from './port'
+import { PayPalError, type CapturedPayment, type CreatedOrder, type HeldPayment, type LiveOrder, type LivePayout, type PayPalPort, type RefundedPayment, type SentPayout } from './port'
 
 type Token = { value: string; expiresAt: number }
 
@@ -120,7 +120,9 @@ export function createPayPalClient(options: {
     kind?: 'card' | 'checkout' | 'wallet'
     returnUrl?: string
     cancelUrl?: string
+    intent?: 'CAPTURE' | 'AUTHORIZE'
   }, attachPayee: boolean): Promise<CreatedOrder> {
+    const hold = input.intent === 'AUTHORIZE'
     const unit: Record<string, unknown> = {
       custom_id: input.proposalId,
       invoice_id: input.proposalId,
@@ -132,9 +134,11 @@ export function createPayPalClient(options: {
       method: 'POST',
       // A card order, a wallet order and a checkout order are different orders on PayPal's side, so the request id
       // carries the instrument. A retry of the same instrument still returns the same order.
-      requestId: paypalRequestId(`${input.proposalId}:create${input.kind === 'card' ? ':card' : input.kind === 'wallet' ? ':wallet' : ''}`),
+      // A held order (AUTHORIZE) is a different order again, so it has its own seed: PayPal must never answer a request
+      // for a hold with an order that captures, or the other way round.
+      requestId: paypalRequestId(`${input.proposalId}:create${input.kind === 'card' ? ':card' : input.kind === 'wallet' ? ':wallet' : ''}${hold ? ':hold' : ''}`),
       body: {
-        intent: 'CAPTURE',
+        intent: hold ? 'AUTHORIZE' : 'CAPTURE',
         purchase_units: [unit],
         // A card paid on our own page asks the card's bank to confirm the cardholder wherever the law requires it
         // (3-D Secure: PSD2 in Europe, the RBI's additional factor in India). PayPal's card form runs the check.
@@ -189,6 +193,7 @@ export function createPayPalClient(options: {
         customId: typeof unit?.custom_id === 'string' ? unit.custom_id : null,
         approveUrl: link(json, ['payer-action', 'approve']),
         capture: firstCapture(json) ? captureOf(firstCapture(json)!) : null,
+        authorization: firstAuthorization(json) ? holdOf(firstAuthorization(json)!, typeof asJson(json.payer)?.email_address === 'string' ? asJson(json.payer)!.email_address as string : null) : null,
       } satisfies LiveOrder
     },
     async cardResult(orderId) {
@@ -214,6 +219,43 @@ export function createPayPalClient(options: {
       const capture = firstCapture(json)
       if (!capture) throw new PayPalError(502, 'paypal_malformed', null, 'captures')
       return captureOf(capture)
+    },
+    async authorizeOrder(orderId, proposalId) {
+      const { json } = await call(`/v2/checkout/orders/${encodeURIComponent(orderId)}/authorize`, {
+        method: 'POST',
+        requestId: paypalRequestId(`${proposalId}:authorize`),
+        body: {},
+      })
+      const authorization = firstAuthorization(json)
+      if (!authorization) throw new PayPalError(502, 'paypal_malformed', null, 'authorizations')
+      const payer = asJson(json.payer)
+      return holdOf(authorization, typeof payer?.email_address === 'string' ? payer.email_address : null)
+    },
+    async getAuthorization(authorizationId) {
+      const { json } = await call(`/v2/payments/authorizations/${encodeURIComponent(authorizationId)}`, { method: 'GET' })
+      return holdOf(json, null)
+    },
+    async captureAuthorization(input) {
+      const { json } = await call(`/v2/payments/authorizations/${encodeURIComponent(input.authorizationId)}/capture`, {
+        method: 'POST',
+        // A renewed hold is a new authorization, so it gets its own request id: a refusal of the old one is never replayed.
+        requestId: paypalRequestId(`${input.proposalId}:capture-hold:${input.authorizationId}`),
+        // One final capture of exactly the held amount: the lock's cents, never more and never in parts.
+        body: { amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) }, invoice_id: input.invoiceId.slice(0, 127), final_capture: true },
+      })
+      return captureOf(json)
+    },
+    async voidAuthorization(authorizationId) {
+      const { json } = await call(`/v2/payments/authorizations/${encodeURIComponent(authorizationId)}/void`, { method: 'POST', requestId: paypalRequestId(`${authorizationId}:void`), body: {} })
+      return { status: typeof json.status === 'string' && json.status ? json.status : 'VOIDED' }
+    },
+    async reauthorize(input) {
+      const { json } = await call(`/v2/payments/authorizations/${encodeURIComponent(input.authorizationId)}/reauthorize`, {
+        method: 'POST',
+        requestId: paypalRequestId(`${input.proposalId}:reauthorize:${input.authorizationId}`),
+        body: { amount: { currency_code: input.currency, value: centsToPayPal(input.amountCents, input.currency) } },
+      })
+      return holdOf(json, null)
     },
     async getCapture(captureId) {
       const { json } = await call(`/v2/payments/captures/${encodeURIComponent(captureId)}`, { method: 'GET' })
@@ -410,6 +452,36 @@ function captureOf(capture: Json): CapturedPayment {
 function refundOf(json: Json): RefundedPayment {
   const details = asJson(json.status_details)
   return { refundId: stringField(json, 'id'), status: stringField(json, 'status'), statusReason: typeof details?.reason === 'string' ? details.reason : null }
+}
+
+/** PayPal honours a hold's funds for three days after it is placed. */
+const HONOR_MS = 3 * 86_400_000
+/** And keeps the authorization capturable for twenty-nine. */
+const AUTH_LIFE_MS = 29 * 86_400_000
+
+function holdOf(authorization: Json, payerEmail: string | null): HeldPayment {
+  const amount = asJson(authorization.amount)
+  const created = typeof authorization.create_time === 'string' ? Date.parse(authorization.create_time) : Number.NaN
+  const expires = typeof authorization.expiration_time === 'string' ? authorization.expiration_time : null
+  return {
+    authorizationId: stringField(authorization, 'id'),
+    status: stringField(authorization, 'status'),
+    amountCents: payPalToCents(stringField(amount, 'value')),
+    currency: stringField(amount, 'currency_code'),
+    customId: typeof authorization.custom_id === 'string' ? authorization.custom_id : null,
+    honorUntil: Number.isFinite(created) ? new Date(created + HONOR_MS).toISOString() : null,
+    expiresAt: expires ?? (Number.isFinite(created) ? new Date(created + AUTH_LIFE_MS).toISOString() : null),
+    payerEmail,
+  }
+}
+
+function firstAuthorization(json: Json): Json | null {
+  const unit = firstUnit(json)
+  const payments = unit?.payments
+  if (!payments || typeof payments !== 'object') return null
+  const list = (payments as Json).authorizations
+  if (!Array.isArray(list) || !list[0] || typeof list[0] !== 'object') return null
+  return list[0] as Json
 }
 
 function firstCapture(json: Json): Json | null {

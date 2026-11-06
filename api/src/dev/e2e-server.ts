@@ -5,7 +5,7 @@ import { appendFileSync, readFileSync, writeSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { createApp } from '../app'
 import { buildServices } from '../services/container'
-import { migrate, openDatabase, seed } from '../db/database'
+import { migrate, openDatabase, seed, withMaintenance } from '../db/database'
 import { createAgentModel, DEFAULT_OLLAMA_MODEL } from '../agents/model'
 import { FakeInvoices, FakePayPal, FakeWatch } from '../paypal/fake'
 import { createPayPalClient } from '../paypal/client'
@@ -58,7 +58,11 @@ if (scenarioName !== 'line') {
   const now = new Date().toISOString()
   const row = db.prepare('SELECT body_json FROM warrants WHERE version = 1').get() as { body_json: string }
   const body = { ...JSON.parse(row.body_json), ...scenario.rules, payees: [scenario.payee], clients: [scenario.client], categories: scenario.categories, standing: [] }
-  db.prepare('UPDATE warrants SET body_json = ? WHERE version = 1').run(JSON.stringify(body))
+  // The seed warrant is the demo's cast, written before any request exists. A published version cannot be edited
+  // once the server is up, so this throwaway rewrite happens with the guards off.
+  withMaintenance(db, () => {
+    db.prepare('UPDATE warrants SET body_json = ? WHERE version = 1').run(JSON.stringify(body))
+  })
   db.exec('DELETE FROM payees')
   db.prepare('INSERT INTO payees (id, email, status, verified_method, first_seen, total_paid_cents) VALUES (?, ?, ?, ?, ?, 0)').run(scenario.payee.id, scenario.payee.email, 'active', 'owner_attested', now)
   db.exec('DELETE FROM party_rules')
@@ -82,7 +86,9 @@ if (realPayPal) {
     db.prepare('UPDATE payees SET email = ? WHERE id = ?').run(process.env.E2E_PAYEE_EMAIL, body.payees[0].id)
   }
   if (process.env.E2E_CLIENT_EMAIL) body.clients[0].email = process.env.E2E_CLIENT_EMAIL
-  db.prepare('UPDATE warrants SET body_json = ? WHERE version = 1').run(JSON.stringify(body))
+  withMaintenance(db, () => {
+    db.prepare('UPDATE warrants SET body_json = ? WHERE version = 1').run(JSON.stringify(body))
+  })
 }
 const fakePayPal = new FakePayPal()
 const paypal = realPayPal ? createPayPalClient({ clientId: process.env.PAYPAL_CLIENT_ID!, clientSecret: process.env.PAYPAL_CLIENT_SECRET!, baseUrl: process.env.PAYPAL_API ?? 'https://api-m.sandbox.paypal.com' }) : fakePayPal
@@ -105,7 +111,12 @@ const services = buildServices({ db, paypal, invoices, watch, publicUrl, ...(rea
 // to it next. With E2E_REAL_PAYPAL=1 a refund then goes to the real capture.
 if (process.env.E2E_ADOPT) {
   const cast = { client: scenario.client, payee: scenario.payee, categories: scenario.categories, proof: (scenario as unknown as { proof: string }).proof }
-  console.log(JSON.stringify({ message: 'adopted', ...adoptPayment(services, process.env.E2E_ADOPT, cast) }))
+  const adopted = adoptPayment(services, process.env.E2E_ADOPT, cast, process.env.E2E_ADOPT_STAGE === 'charge' ? 'charge' : 'all')
+  // Money at risk reads the last scan. Look once, without PayPal's transaction list, so the desk is ready
+  // and a fake account cannot add rows the film would have to explain.
+  await services.breaks.scan(new Date(), { withPayPal: false })
+  const open = services.breaks.list().data.filter((row) => row.state === 'open').map((row) => ({ rule: row.rule, title: row.title }))
+  console.log(JSON.stringify({ message: 'adopted', ...adopted, open }))
 }
 const app = createApp({
   db,

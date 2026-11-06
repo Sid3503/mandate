@@ -146,7 +146,7 @@ let sweeping: Promise<unknown> | null = null
 const standingTimer = setInterval(() => {
   // Check every second whether it is time: 5 s apart while something is in flight, a minute apart otherwise.
   if (sweeping || draining || Date.now() - lastSweep < services.mandate.nextSweepMs()) return
-  sweeping = services.mandate.sweepStanding().then(() => services.mandate.sweepPending()).then(() => services.breaks.scanIfDue()).catch(() => undefined).finally(() => { lastSweep = Date.now(); sweeping = null })
+  sweeping = services.mandate.sweepStanding().then(() => services.mandate.sweepPending()).then(() => services.projects.sweep()).then(() => services.breaks.scanIfDue()).catch(() => undefined).finally(() => { lastSweep = Date.now(); sweeping = null })
 }, 1_000)
 standingTimer.unref()
 

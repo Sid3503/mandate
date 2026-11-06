@@ -37,6 +37,8 @@ export const PHASE: Record<string, { label: string; tone: 'deny' | 'auto' | 'nee
   refund_pending: { label: 'Refund · PayPal processing', tone: 'need' },
   refund_failed: { label: 'Refund failed', tone: 'deny' },
   mismatch_hold: { label: 'Held · PayPal amount differs', tone: 'deny' },
+  authorized: { label: 'In a PayPal hold · client reviewing', tone: 'need' },
+  voided: { label: 'Hold released · not charged', tone: 'muted' },
 }
 
 /** Money out reads differently from money in: it is sent and paid, not captured. */

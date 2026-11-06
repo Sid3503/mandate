@@ -66,6 +66,8 @@ export type ProposalRow = {
   customer_note: string | null
   /** How this charge is to be paid: 'invoice' (PayPal invoices it) or 'checkout' (the client pays on our page). */
   pay_instrument: string | null
+  /** 'hold' when the client pays this charge into a PayPal hold (intent AUTHORIZE) that is captured only on release. */
+  settle_mode: string | null
   /** What PayPal reported actually arrived. Null until a settlement is seen. */
   settled_cents: number | null
   /** settled_cents minus the locked amount. Negative means the client paid less. */
@@ -421,10 +423,31 @@ const PROPOSAL_COLUMNS = `id, warrant_id, warrant_version, kind, parent_capture_
   category, description, evidence_url, prompt, gate, clause, detail, phase, cart_hash, order_id, order_kind, capture_id,
   refund_id, approve_url, captured_amount_cents, capture_fee_cents, capture_net_cents, reserved_at, job_id, funding_capture_id, payout_batch_id, payout_item_id,
   payout_status, payout_txn_id, payout_fee_cents, deal_id, milestone, lock_sig, lock_key_id, invoice_id, invoice_url,
-  invoice_status, line_items_json, due_date, customer_note, pay_instrument, settled_cents, delta_cents, delta_reason, delta_source, created_at, updated_at`
+  invoice_status, line_items_json, due_date, customer_note, pay_instrument, settle_mode, settled_cents, delta_cents, delta_reason, delta_source, created_at, updated_at`
 
 /** How many transactions are open on each database, however many Repo objects look at it. */
 const DEPTH = new WeakMap<DatabaseSync, number>()
+
+/** A PayPal hold on a client charge (intent AUTHORIZE). */
+export type HoldRow = {
+  proposal_id: string
+  order_id: string
+  authorization_id: string
+  status: 'held' | 'captured' | 'voided' | 'expired'
+  amount_cents: number
+  currency: string
+  payer_email: string | null
+  authorized_at: string
+  honor_until: string | null
+  expires_at: string | null
+  reauthorized_at: string | null
+  released_by: string | null
+  released_at: string | null
+  capture_id: string | null
+  voided_at: string | null
+  void_reason: string | null
+  updated_at: string
+}
 
 export class Repo {
   constructor(private readonly db: DatabaseSync) {}
@@ -924,6 +947,40 @@ export class Repo {
     return (this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE order_id = ?`).get(orderId) as ProposalRow | undefined) ?? null
   }
 
+  /** A charge the client pays into a PayPal hold. Set once, before the charge is locked, and only by the project desk. */
+  setSettleMode(id: string, mode: 'hold', now: string): void {
+    this.db.prepare(`UPDATE proposals SET settle_mode = ?, pay_instrument = 'checkout', updated_at = ? WHERE id = ? AND settle_mode IS NULL AND phase IN ('pending_approval', 'locked')`).run(mode, now, id)
+  }
+
+  /** The hold PayPal placed for a charge, if it has one. */
+  hold(proposalId: string): HoldRow | null {
+    return (this.db.prepare('SELECT * FROM holds WHERE proposal_id = ?').get(proposalId) as HoldRow | undefined) ?? null
+  }
+
+  insertHold(row: HoldRow): void {
+    this.db.prepare(`INSERT INTO holds (proposal_id, order_id, authorization_id, status, amount_cents, currency, payer_email, authorized_at, honor_until, expires_at, reauthorized_at, released_by, released_at, capture_id, voided_at, void_reason, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(row.proposal_id, row.order_id, row.authorization_id, row.status, row.amount_cents, row.currency, row.payer_email, row.authorized_at, row.honor_until, row.expires_at, row.reauthorized_at, row.released_by, row.released_at, row.capture_id, row.voided_at, row.void_reason, row.updated_at)
+  }
+
+  /** A hold renewed past PayPal's honor period: the new authorization replaces the old one. */
+  renewHold(proposalId: string, authorizationId: string, honorUntil: string | null, expiresAt: string | null, now: string): void {
+    this.db.prepare('UPDATE holds SET authorization_id = ?, honor_until = ?, expires_at = COALESCE(?, expires_at), reauthorized_at = ?, updated_at = ? WHERE proposal_id = ?').run(authorizationId, honorUntil, expiresAt, now, now, proposalId)
+  }
+
+  closeHold(proposalId: string, patch: { status: 'captured' | 'voided' | 'expired'; captureId?: string | null; releasedBy?: string | null; voidReason?: string | null }, now: string): void {
+    // phase-compare-ok: a hold's own status word, not a proposal phase.
+    if (patch.status === 'captured') {
+      this.db.prepare(`UPDATE holds SET status = 'captured', capture_id = ?, released_by = ?, released_at = ?, updated_at = ? WHERE proposal_id = ? AND status = 'held'`).run(patch.captureId ?? null, patch.releasedBy ?? null, now, now, proposalId)
+    } else {
+      this.db.prepare(`UPDATE holds SET status = ?, voided_at = ?, void_reason = ?, updated_at = ? WHERE proposal_id = ? AND status = 'held'`).run(patch.status, now, patch.voidReason ?? null, now, proposalId)
+    }
+  }
+
+  /** Holds still open, for the sweep that watches their PayPal deadlines. */
+  openHolds(): HoldRow[] {
+    return this.db.prepare(`SELECT * FROM holds WHERE status = 'held' ORDER BY authorized_at LIMIT 50`).all() as HoldRow[]
+  }
+
   /** How a charge is to be paid: an invoice the client gets, or a card form on our own page. */
   setPayInstrument(id: string, instrument: 'invoice' | 'checkout', now: string): void {
     this.db.prepare('UPDATE proposals SET pay_instrument = ?, updated_at = ? WHERE id = ?').run(instrument, now, id)
@@ -932,6 +989,13 @@ export class Repo {
   /** Payouts and bills a standing rule approved that have not reached PayPal yet, plus auto-refund-policy refunds still locked. */
   lockedStandingItems(): ProposalRow[] {
     return this.db.prepare(`SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE ((clause IN ('standing.matched', 'standing.billing') AND kind IN ('payment', 'charge') AND payout_batch_id IS NULL) OR (clause = 'refund.auto_policy' AND kind = 'refund')) AND phase IN ('locked', 'order_created') ORDER BY created_at LIMIT 20`).all() as ProposalRow[]
+  }
+
+  /** Client payments that have settled, newest first: the money a payout or a refund can still be made from. */
+  settledCharges(limit = 100): ProposalRow[] {
+    return this.db.prepare(
+      `SELECT ${PROPOSAL_COLUMNS} FROM proposals WHERE kind = 'charge' AND phase IN ('captured', 'settled_short') AND capture_id IS NOT NULL ORDER BY created_at DESC, id DESC LIMIT ?`,
+    ).all(limit) as ProposalRow[]
   }
 
   /** True when the break named by a rule and a proposal id is open (not resolved, not dismissed). */

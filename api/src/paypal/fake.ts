@@ -1,7 +1,7 @@
 import { invoiceItemsFor, invoiceNoteFor, type InvoicePort, type InvoiceRequest, type LiveInvoice } from './invoices'
 import { payPalToCents } from '../domain/money'
 import type { LiveDispute, LiveTransaction, WatchPort } from './watch'
-import { PayPalError, type CardOnOrder, type LivePayout, type PayPalPort } from './port'
+import { PayPalError, type CardOnOrder, type HeldPayment, type LivePayout, type PayPalPort } from './port'
 
 type StoredOrder = {
   amountCents: number
@@ -13,6 +13,20 @@ type StoredOrder = {
   cardFlow?: boolean
   /** Which instrument the order was opened for, as the request asked. */
   kind?: 'card' | 'checkout' | 'wallet'
+  /** AUTHORIZE orders hold the money instead of taking it. */
+  intent?: 'CAPTURE' | 'AUTHORIZE'
+  authorizationId?: string
+}
+
+type StoredHold = {
+  authorizationId: string
+  orderId: string
+  amountCents: number
+  currency: string
+  customId: string
+  status: string
+  createdAt: string
+  captureId?: string
 }
 
 type StoredPayout = {
@@ -70,12 +84,13 @@ export class FakePayPal implements PayPalPort {
     kind?: 'card' | 'checkout' | 'wallet'
     returnUrl?: string
     cancelUrl?: string
+    intent?: 'CAPTURE' | 'AUTHORIZE'
   }) {
     // A wallet order never carries a way back, even if a caller passed one. The real client does not send one.
     const returnUrl = input.kind === 'wallet' ? undefined : input.returnUrl
     this.lastReturnUrl = returnUrl ?? null
     // A card order, a wallet order and a checkout order are different orders, as they are on PayPal's side.
-    const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}${input.kind === 'card' ? '-CARD' : input.kind === 'wallet' ? '-WALLET' : ''}`
+    const orderId = `ORDER-${input.proposalId.replaceAll('-', '').slice(0, 12)}${input.kind === 'card' ? '-CARD' : input.kind === 'wallet' ? '-WALLET' : ''}${input.intent === 'AUTHORIZE' ? '-HOLD' : ''}`
     const existing = this.orders.get(orderId)
     if (!existing) {
       this.orders.set(orderId, {
@@ -86,6 +101,7 @@ export class FakePayPal implements PayPalPort {
         // An order opened on our own page has no way back to PayPal, so it carries no payer-action link.
         cardFlow: !returnUrl,
         kind: input.kind ?? 'checkout',
+        intent: input.intent ?? 'CAPTURE',
       })
     }
     const order = this.orders.get(orderId)!
@@ -115,6 +131,7 @@ export class FakePayPal implements PayPalPort {
       // PayPal gives every order a payer-action link, card orders included.
       approveUrl: `https://www.sandbox.paypal.com/checkoutnow?token=${orderId}`,
       capture: capture ? { captureId: capture.captureId, amountCents: capture.amountCents, currency: capture.currency, status: capture.status, feeCents: capture.feeCents, netCents: capture.netCents, statusReason: null } : null,
+      authorization: order.authorizationId && this.holds.get(order.authorizationId) ? this.heldOf(this.holds.get(order.authorizationId)!) : null,
     }
   }
 
@@ -129,6 +146,8 @@ export class FakePayPal implements PayPalPort {
     if (order.status !== 'APPROVED' && order.status !== 'COMPLETED') {
       throw new PayPalError(422, 'ORDER_NOT_APPROVED', 'debug', 'status')
     }
+    // PayPal refuses to capture an order that was opened to authorize: its money is taken through the hold.
+    if (order.intent === 'AUTHORIZE') throw new PayPalError(422, 'ACTION_DOES_NOT_MATCH_INTENT', 'debug', 'intent')
     // Within PayPal's request-id window a repeat gets the first answer back. Past it, PayPal refuses a second capture
     // of a captured order; tests set `requestIdsForgotten` to step past the window.
     const existing = order.captureId ? this.captures.get(order.captureId) : undefined
@@ -148,6 +167,80 @@ export class FakePayPal implements PayPalPort {
       throw new PayPalError(504, 'network_timeout', null, 'the answer was lost')
     }
     return { captureId: capture.captureId, amountCents: capture.amountCents, currency: capture.currency, status: capture.status, feeCents, netCents: capture.netCents, statusReason: capture.status === 'COMPLETED' ? null : capture.status === 'PENDING' ? 'PENDING_REVIEW' : 'DECLINED_BY_RISK_FRAUD_FILTERS' }
+  }
+
+  // ---------- holds (intent AUTHORIZE) ----------
+
+  readonly holds = new Map<string, StoredHold>()
+  authorizeCalls = 0
+  voidCalls = 0
+  reauthorizeCalls = 0
+  /** The fake's clock for hold windows. Tests that need days to pass move it. */
+  clock: () => Date = () => new Date()
+  /** What the next capture of a hold comes back as. Tests set a PayPal refusal to simulate an expired honor period. */
+  holdCaptureError: PayPalError | null = null
+
+  private heldOf(hold: StoredHold): HeldPayment {
+    const created = Date.parse(hold.createdAt)
+    return { authorizationId: hold.authorizationId, status: hold.status, amountCents: hold.amountCents, currency: hold.currency, customId: hold.customId, honorUntil: new Date(created + 3 * 86_400_000).toISOString(), expiresAt: new Date(created + 29 * 86_400_000).toISOString(), payerEmail: 'client@sandbox.example' }
+  }
+
+  async authorizeOrder(orderId: string) {
+    this.authorizeCalls += 1
+    const order = this.orders.get(orderId)
+    if (!order) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'order')
+    if (order.intent !== 'AUTHORIZE') throw new PayPalError(422, 'ACTION_DOES_NOT_MATCH_INTENT', 'debug', 'intent')
+    if (order.authorizationId) return this.heldOf(this.holds.get(order.authorizationId)!)
+    if (order.status !== 'APPROVED') throw new PayPalError(422, 'ORDER_NOT_APPROVED', 'debug', 'status')
+    const authorizationId = `AUTH-${orderId.slice(6, 18)}`
+    this.holds.set(authorizationId, { authorizationId, orderId, amountCents: order.amountCents, currency: order.currency, customId: order.customId, status: 'CREATED', createdAt: this.clock().toISOString() })
+    order.authorizationId = authorizationId
+    order.status = 'COMPLETED'
+    return this.heldOf(this.holds.get(authorizationId)!)
+  }
+
+  async getAuthorization(authorizationId: string) {
+    const hold = this.holds.get(authorizationId)
+    if (!hold) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'authorization')
+    return this.heldOf(hold)
+  }
+
+  async captureAuthorization(input: { authorizationId: string; proposalId: string; amountCents: number; currency: string }) {
+    const hold = this.holds.get(input.authorizationId)
+    if (!hold) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'authorization')
+    if (hold.captureId) {
+      const done = this.captures.get(hold.captureId)!
+      return { captureId: done.captureId, amountCents: done.amountCents, currency: done.currency, status: done.status, feeCents: done.feeCents, netCents: done.netCents, statusReason: null }
+    }
+    if (this.holdCaptureError) { const error = this.holdCaptureError; this.holdCaptureError = null; throw error }
+    if (hold.status !== 'CREATED' && hold.status !== 'PENDING') throw new PayPalError(422, 'AUTHORIZATION_ALREADY_CAPTURED_OR_VOIDED', 'debug', hold.status)
+    if (input.amountCents > hold.amountCents) throw new PayPalError(422, 'MAX_CAPTURE_AMOUNT_EXCEEDED', 'debug', 'amount')
+    this.captureCalls += 1
+    const feeCents = Math.round((input.amountCents * 29) / 1000) + 30
+    const captureId = `CAP-${input.authorizationId.slice(5, 17)}`
+    const capture = { captureId, orderId: hold.orderId, amountCents: input.amountCents, currency: input.currency, status: this.captureOutcome as string, feeCents, netCents: input.amountCents - feeCents }
+    this.captures.set(captureId, capture)
+    hold.captureId = captureId
+    hold.status = 'CAPTURED'
+    return { captureId, amountCents: capture.amountCents, currency: capture.currency, status: capture.status, feeCents, netCents: capture.netCents, statusReason: null }
+  }
+
+  async voidAuthorization(authorizationId: string) {
+    const hold = this.holds.get(authorizationId)
+    if (!hold) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'authorization')
+    this.voidCalls += 1
+    if (hold.status === 'CAPTURED') throw new PayPalError(422, 'PREVIOUSLY_CAPTURED', 'debug', 'status')
+    hold.status = 'VOIDED'
+    return { status: 'VOIDED' }
+  }
+
+  async reauthorize(input: { authorizationId: string; amountCents: number; currency: string }) {
+    const hold = this.holds.get(input.authorizationId)
+    if (!hold) throw new PayPalError(404, 'RESOURCE_NOT_FOUND', 'debug', 'authorization')
+    this.reauthorizeCalls += 1
+    const authorizationId = `${input.authorizationId}-R`
+    if (!this.holds.has(authorizationId)) this.holds.set(authorizationId, { ...hold, authorizationId, status: 'CREATED', createdAt: this.clock().toISOString() })
+    return this.heldOf(this.holds.get(authorizationId)!)
   }
 
   async getCapture(captureId: string) {

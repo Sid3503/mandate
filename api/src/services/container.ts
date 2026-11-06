@@ -22,6 +22,7 @@ import { ProcureService } from '../procure/service'
 import { DisputeService } from './disputes'
 import { InvoiceDeskService } from './invoiceDesk'
 import { createPayPalDisputes, type DisputePort } from '../paypal/disputes'
+import { ProjectService } from './projects'
 
 export type Services = {
   repo: Repo
@@ -46,6 +47,8 @@ export type Services = {
   disputes: DisputeService
   /** The Invoices desk: charges read as invoices, with KPIs and a cash outlook. Reads only. */
   invoiceDesk: InvoiceDeskService
+  /** Two-sided projects: a plan the client approves, sealed delivery, and stages paid into PayPal holds. */
+  projects: ProjectService
 }
 
 import type { ControlStore } from '../control/store'
@@ -77,5 +80,6 @@ export function buildServices(deps: { db: DatabaseSync; paypal: PayPalPort | nul
   const breaks = new BreaksService(deps.db, repo, mandate, deps.now)
   const procure = new ProcureService(deps.catalog ?? null, repo, mandate)
   const disputes = new DisputeService(deps.db, repo, mandate, books, signer, deps.now, deps.publicUrl ?? 'http://localhost:3000', deps.disputes !== undefined ? deps.disputes : deps.paypal ? createPayPalDisputes(deps.paypal) : null)
-  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares, projections, receipt, books, breaks, procure, disputes, invoiceDesk }
+  const projects = new ProjectService({ db: deps.db, repo, mandate, signer, now: deps.now, publicUrl: deps.publicUrl ?? 'http://localhost:3000', workspaceId: deps.workspaceId, paypalEnvironment: deps.paypalEnvironment })
+  return { repo, signer, mandate, deals, today, audit, ask, safety, agents, clientKeys, shares, projections, receipt, books, breaks, procure, disputes, invoiceDesk, projects }
 }

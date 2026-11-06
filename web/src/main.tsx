@@ -38,6 +38,11 @@ import { OAuthConsent } from './screens/OAuthConsent'
 import { LiveProof } from './screens/LiveProof'
 import { PayeePayments } from './screens/PayeePayments'
 import { Payees } from './screens/Payees'
+import { Projects } from './screens/Projects'
+import { NewProject } from './screens/NewProject'
+import { ProjectScreen } from './screens/Project'
+import { ClientPortal } from './screens/ClientPortal'
+import { PublicProfile } from './screens/PublicProfile'
 import { Loading } from './components/ui'
 
 // The same move as the page script, for a copy of the app that was cached on the IP address.
@@ -125,9 +130,14 @@ createRoot(document.getElementById('root')!).render(
           <Route path="/verify" element={<Verify />} />
           <Route path="/live-proof" element={<LiveProof />} />
           <Route path="/s/:token" element={<SharedStatus />} />
+          <Route path="/c/:token" element={<ClientPortal />} />
+          <Route path="/u/:handle" element={<PublicProfile />} />
           <Route element={<RequireKey><LiveProvider><Shell /></LiveProvider></RequireKey>}>
             <Route index element={<Today />} />
             <Route path="p/:id" element={<Receipt />} />
+            <Route path="projects" element={<Projects />} />
+            <Route path="projects/new" element={<NewProject />} />
+            <Route path="projects/:id" element={<ProjectScreen />} />
             <Route path="jobs" element={<Jobs />} />
             <Route path="jobs/:jobId" element={<JobScreen />} />
             <Route path="deals" element={<Deals />} />

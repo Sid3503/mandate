@@ -447,6 +447,7 @@ export class DealService {
   async bill(dealId: string, milestone: number, body: { evidenceUrl: string; prompt?: string }, who: Principal): Promise<HttpResult> {
     const row = this.repo.deal(dealId)
     if (!row || row.status !== 'agreed' || !row.job_id) throw new Problem(404, 'deal.missing', 'No agreed deal', 'Only an agreed deal can be billed.')
+    if (row.thread_id.startsWith('prj_')) throw new Problem(409, 'deal.project', 'This deal belongs to a project', 'Its stages are delivered and paid from the project page, into a PayPal hold.')
     const terms = JSON.parse(row.terms_json) as StoredTerms
     const item = terms.milestones[milestone]
     if (!item) throw new Problem(404, 'deal.milestone_unknown', 'No such milestone', `The deal has ${terms.milestones.length} milestones.`)
@@ -478,6 +479,7 @@ export class DealService {
     if (who.side === 'buyer') throw new Problem(403, 'auth.forbidden', 'Not available to a client agent', 'Only the studio says its work is delivered.')
     const row = this.repo.deal(dealId)
     if (!row || row.status !== 'agreed' || !row.job_id) throw new Problem(404, 'deal.missing', 'No agreed deal', 'Only an agreed deal can be delivered against.')
+    if (row.thread_id.startsWith('prj_')) throw new Problem(409, 'deal.project', 'This deal belongs to a project', 'Its stages are delivered from the project page, sealed.')
     const terms = JSON.parse(row.terms_json) as StoredTerms
     const item = terms.milestones[milestone]
     if (!item) throw new Problem(404, 'deal.milestone_unknown', 'No such milestone', `The deal has ${terms.milestones.length} milestones.`)
@@ -596,7 +598,8 @@ export class DealService {
     const name = (id: string) => warrant?.body.clients.find((client) => client.id === id)?.displayName ?? id
     const out: Array<{ dealId: string; jobId: string; buyerId: string; buyerName: string; scope: string; milestone: number; title: string; amountCents: number; currency: string; billed: number; total: number; delivery: ReturnType<DealService['deliveryView']> | null }> = []
     for (const row of this.repo.agreedDeals()) {
-      if (!row.job_id) continue
+      // A project's deal is billed from its project page, stage by stage, into a hold. Never from here.
+      if (!row.job_id || row.thread_id.startsWith('prj_')) continue
       const terms = JSON.parse(row.terms_json) as StoredTerms
       const next = terms.milestones.findIndex((_, index) => !this.repo.chargeForMilestone(row.id, index))
       if (next === -1) continue

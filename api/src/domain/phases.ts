@@ -28,10 +28,10 @@ export const SHORT_PHASES = ['settled_short'] as const
  * PayPal accepted but has not finished moving (an eCheck, a risk review). `mismatch_hold` is money PayPal moved that does
  * not match the lock: it needs a person, so it stays open and in everyone's way until one looks.
  */
-export const OPEN_PHASES = ['pending_approval', 'locked', 'order_created', 'capture_inflight', 'capture_pending', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed', 'refund_pending', 'mismatch_hold'] as const
+export const OPEN_PHASES = ['pending_approval', 'locked', 'order_created', 'authorized', 'capture_inflight', 'capture_pending', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed', 'refund_pending', 'mismatch_hold'] as const
 
 /** A billed milestone stays billed unless the request that billed it was refused, thrown away, or declined by PayPal. */
-export const DEAD_PHASES = ['denied', 'rejected', 'capture_refused', 'invoice_cancelled', 'capture_failed', 'refund_failed'] as const
+export const DEAD_PHASES = ['denied', 'rejected', 'capture_refused', 'invoice_cancelled', 'capture_failed', 'refund_failed', 'voided'] as const
 
 /**
  * A payout's money is spoken for: locked, sent to PayPal, or paid. A payout held on a mismatch stays reserved: PayPal
@@ -51,11 +51,15 @@ export const REFUND_HELD_PHASES = ['pending_approval', 'locked', 'order_created'
 export const TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
   pending_approval: ['locked', 'rejected', 'denied'],
   locked: ['capture_inflight', 'order_created', 'capture_refused', 'rejected'],
-  order_created: ['capture_inflight', 'captured', 'capture_pending', 'capture_failed', 'capture_refused', 'mismatch_hold', 'rejected'],
+  order_created: ['capture_inflight', 'captured', 'capture_pending', 'capture_failed', 'capture_refused', 'mismatch_hold', 'rejected', 'authorized'],
+  // A hold: PayPal reserved the client's money on an AUTHORIZE order, and none of it has reached the studio. It is
+  // captured (the client approved the work, or the review window they agreed to ran out), or voided (the client was
+  // never charged). A hold is not money: no payout may cite it, because it is not funded until it is captured.
+  authorized: ['capture_inflight', 'captured', 'capture_pending', 'capture_failed', 'mismatch_hold', 'voided'],
   capture_inflight: [
-    'locked', 'order_created', 'invoice_draft', 'invoice_sent', 'invoice_cancelled', 'payout_sent', 'payout_unclaimed', 'payout_failed',
+    'locked', 'order_created', 'authorized', 'invoice_draft', 'invoice_sent', 'invoice_cancelled', 'payout_sent', 'payout_unclaimed', 'payout_failed',
     'captured', 'settled_short', 'capture_pending', 'capture_failed', 'capture_refused', 'mismatch_hold',
-    'refunded', 'refund_pending', 'refund_failed',
+    'refunded', 'refund_pending', 'refund_failed', 'voided',
   ],
   capture_pending: ['captured', 'capture_failed', 'capture_reversed'],
   invoice_draft: ['invoice_sent', 'capture_inflight', 'invoice_cancelled', 'captured', 'settled_short', 'capture_refused'],
@@ -75,6 +79,8 @@ export const TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
   capture_failed: [],
   capture_reversed: [],
   invoice_cancelled: [],
+  // Final. The hold was released back to the client: nothing was charged.
+  voided: [],
   payout_failed: [],
   refunded: [],
   refund_failed: [],

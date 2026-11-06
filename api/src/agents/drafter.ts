@@ -206,6 +206,9 @@ export function compareRules(before: WarrantBody, after: WarrantBody): { loosens
   up('The monthly contractor cap', before.monthlyCapCents, after.monthlyCapCents, money)
   up('The per-payment ceiling', before.perPaymentCeilingCents, after.perPaymentCeilingCents, money)
   up('The contractor share of a client payment', before.contractorShareBps, after.contractorShareBps, (n) => `${n / 100}%`)
+  // A longer regret window is more time to take a payout back, so a shorter one is the loosening.
+  if (after.regretSeconds < before.regretSeconds) loosens.push(`The pause before a rule sends money by itself goes down from ${before.regretSeconds} to ${after.regretSeconds} seconds, so there is less time to Undo it.`)
+  if (after.regretSeconds > before.regretSeconds) tightens.push(`The pause before a rule sends money by itself goes up from ${before.regretSeconds} to ${after.regretSeconds} seconds, so there is more time to Undo it.`)
   if (before.evidenceRequired && !after.evidenceRequired) loosens.push('Requests would no longer need a link to the work.')
   if (!before.evidenceRequired && after.evidenceRequired) tightens.push('Every request would need a link to the work.')
   if (before.fundingRequired && !after.fundingRequired) loosens.push('Contractors could be paid without a client payment behind it.')

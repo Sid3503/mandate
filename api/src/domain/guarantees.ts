@@ -33,6 +33,8 @@ export const GUARANTEES: Guarantee[] = [
   { id: 'chain', promise: 'The ledger export is hash-chained: any tampered entry breaks the chain at that entry, detectable without asking this server.', tests: ['test/ledger-chain.test.ts'] },
   { id: 'friction', promise: 'When the friction budget floor is set, an agent proposal can never receive an automatic decision: the system enforces the tap and logs the override attempt as a verifiable ledger event.', tests: ['test/friction.test.ts'] },
   { id: 'dual_tap', promise: 'When two rule sheets disagree on a proposal, money is frozen as DUAL_TAP and no payment moves until both parties ratify or 48 hours elapse and a signed refusal receipt is issued.', tests: ['test/dual_tap.test.ts'] },
+  { id: 'blast', promise: 'No sequence of requests, from a person, a stolen key or a fooled AI agent, can move more money with nobody pressing anything than the Blast Radius the owner is shown.', tests: ['test/blast.test.ts', 'test/blast-http.test.ts'], random: true },
+  { id: 'regret', promise: 'A payout or refund a rule sends by itself waits out the owner\'s regret window before anything reaches PayPal; an Undo inside it takes it back for good, and the window never lets through what the rules would not.', tests: ['test/regret.test.ts'] },
 ]
 
 /** The deepest randomised run recorded for this build. `PROPERTY_RUNS=3000 npm test -- property` repeats it. */

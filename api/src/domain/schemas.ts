@@ -125,6 +125,12 @@ export const WarrantBodySchema = z.object({
   /** Days a client payment must have been settled before a rule may send a payout from it with no tap. 0 means no wait. The owner can still tap to pay earlier. */
   clearingDays: z.number().int().min(0).max(60).default(0),
   /**
+   * Seconds a request that goes by itself (a standing rule's payout, an auto-refund) waits, locked and unsent, before the
+   * server sends it. The owner can Undo it inside that window. It adds a pause and nothing else: it never lets anything
+   * through that the rules would not, and 0 (the default) sends at once, as a warrant written before this existed does.
+   */
+  regretSeconds: z.number().int().min(0).max(3600).default(0),
+  /**
    * Whether an invoice this studio sends may be paid in part. Off unless the owner asks for it, which is what the
    * invoice path hardcoded before this became a rule. PayPal offers the option only to sellers in some countries,
    * and ignores it elsewhere, so turning it on is a request, not a guarantee.
@@ -214,6 +220,7 @@ export const BLANK_WARRANT: WarrantBody = {
   fundingRequired: true,
   contractorShareBps: 10000,
   clearingDays: 0,
+  regretSeconds: 0,
   allowPartialPayment: false,
   standing: [],
   automation: { billSignedDeals: false, requireAcceptance: false, payOnSettle: false, remindUnpaidAfterDays: null, maxReminders: 2 },
@@ -324,6 +331,7 @@ export const LINE_STUDIO_WARRANT: WarrantBody = {
   fundingRequired: true,
   contractorShareBps: 6000,
   clearingDays: 0,
+  regretSeconds: 0,
   allowPartialPayment: false,
   risk: DEFAULT_RISK,
   frictionBudget: DEFAULT_FRICTION_BUDGET,

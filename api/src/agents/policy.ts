@@ -104,6 +104,7 @@ export function factsOf(body: WarrantBody): Fact[] {
     { key: 'perPaymentCeilingCents', label: 'the per-payment ceiling (no single payment above it)', value: money(body.perPaymentCeilingCents) },
     { key: 'contractorShareBps', label: 'the most of a client payment contractors can receive', value: `${body.contractorShareBps / 100}%` },
     { key: 'clearingDays', label: 'a rule pays a contractor only after the client\'s payment has settled this long (the owner can still tap sooner)', value: body.clearingDays === 0 ? 'no wait' : `${body.clearingDays} day${body.clearingDays === 1 ? '' : 's'}` },
+    { key: 'regretSeconds', label: 'a request a rule sends by itself waits this long, locked, so the owner can Undo it', value: body.regretSeconds === 0 ? 'no wait' : `${body.regretSeconds} second${body.regretSeconds === 1 ? '' : 's'}` },
     { key: 'evidenceRequired', label: 'every request needs an https link to the work', value: yes(body.evidenceRequired) },
     { key: 'allowPartialPayment', label: 'an invoice this studio sends may be paid in part (PayPal only offers this to sellers in some countries)', value: yes(body.allowPartialPayment) },
     { key: 'fundingRequired', label: 'a contractor is paid only from a client payment that has settled', value: yes(body.fundingRequired) },

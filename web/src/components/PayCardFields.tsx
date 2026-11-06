@@ -14,7 +14,7 @@ import { Chip, Money } from './ui'
  * The card fields themselves are PayPal-hosted iframes dropped into our own form, so no card number reaches this
  * server and the buyer never leaves the page.
  */
-export function PayCardFields({ token, proposalId, amountCents, currency, description, onPaid, embedded = false, paused = false, initialSession = null, cardFields = null, prepareCard, onActivity }: {
+export function PayCardFields({ token, proposalId, amountCents, currency, description, onPaid, embedded = false, paused = false, initialSession = null, cardFields = null, prepareCard, onActivity, confirm }: {
   /** The link the buyer holds. Without one, the owner is paying, and the owner key is used. */
   token?: string
   proposalId: string
@@ -23,6 +23,8 @@ export function PayCardFields({ token, proposalId, amountCents, currency, descri
   description: string
   /** `phase` is what the server settled to. `capture_pending` means PayPal is still reviewing it. */
   onPaid: (result?: { phase: string }) => void
+  /** Finishes a payment through another door (a project stage paid into a hold) instead of the bill's capture. */
+  confirm?: () => Promise<unknown>
   /** The pay sheet around this form already shows the amount and the result. */
   embedded?: boolean
   /** A wallet window is open, so the card button waits. */
@@ -141,7 +143,7 @@ export function PayCardFields({ token, proposalId, amountCents, currency, descri
       // accepted order even when this call is lost.
       let paid: { phase: string }
       try {
-        paid = token ? await api.payCapture(token, proposalId) : await api.payCaptureOwner(proposalId)
+        paid = confirm ? (await confirm(), { phase: 'authorized' }) : token ? await api.payCapture(token, proposalId) : await api.payCaptureOwner(proposalId)
       } catch (error) {
         // The server's own sweep is already settling this same payment: it went through, and the page will say so.
         if (error instanceof ApiError && error.code === 'capture.inflight') {

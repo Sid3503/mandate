@@ -441,6 +441,7 @@ export function buildOpenApi(publicUrl: string) {
     ...(withId ? { request: { params: z.object({ id: z.uuid() }) } } : {}),
     responses: { 200: { description: 'OK' }, 401: problem, 403: problem, 409: problem, 502: problem, 503: problem },
   })
+  ownerRoute('post', '/v1/proposals/{id}/undo', 'Take back a payout or refund a rule was about to send by itself, while its regret window (the rules\' regretSeconds) is open. Nothing has gone to PayPal. After the window it answers 409 proposal.too_late.', true)
   ownerRoute('post', '/v1/proposals/{id}/cancel-payout', 'Cancel a payout PayPal is holding as UNCLAIMED. PayPal returns the money and the reservation is released.', true)
   ownerRoute('get', '/v1/proposals/{id}/invoice-qr', 'PayPal\'s QR code for an invoice that has been sent. The image is Base64 PNG. Scanning it opens PayPal. Nothing is written and no money moves.', true)
   ownerRoute('post', '/v1/proposals/{id}/remind-invoice', 'Send the client a PayPal reminder for an invoice that is out and unpaid.', true)
@@ -472,6 +473,9 @@ export function buildOpenApi(publicUrl: string) {
   ownerRoute('get', '/v1/payees', 'The payout book when FLAG_PAYEE_BOOK is on. Otherwise 404. Reading it does not pay anyone.')
   ownerRoute('post', '/v1/rules/policy', 'Paste a written spending policy (up to 20,000 characters). Returns every sentence with a status found by code (covered, partly, not_covered, unenforceable, context, untrusted, skipped), the pieces of the rules that carry each one out, and a draft for the sentences that could be rules. Quoted or forwarded text and instructions aimed at the system are set aside and never reach the model. Nothing is published.')
   ownerRoute('post', '/v1/rules/draft', 'Describe a change to the rules in plain words and get a DRAFT back: the new rules, a one-line summary, and which changes loosen or tighten what can happen without you. The model drafts; it never publishes. Publishing is PUT /v1/warrant with the owner key, after reading the diff.')
+  ownerRoute('get', '/v1/blast-radius', 'The most money that can leave if every proposer is fooled, hostile or wrong, under the live rules: what goes with nobody pressing anything, and what would wait only for the owner\'s Send. A pure function of the signed rules and the ledger; levers list the changes that would lower it.')
+  ownerRoute('post', '/v1/rules/blast', 'The same number under live rules and under a draft (the body is {"rules": ...}), so a change can be seen before it is published. Nothing is stored or sent.')
+  ownerRoute('post', '/v1/rules/attack', 'Play a hostile proposer against the real gate on a copy of the ledger (strangers, lookalikes, splits, refund loops, a fooled agent, random requests) and report what was held and what got through. Nothing is filed, stored or sent to PayPal.')
   ownerRoute('post', '/v1/rules/replay', 'Run the last requests again under proposed rules (the body is the full rules) and list the ones whose answer would change: no tap, tap, refused. Nothing is stored or sent.')
   ownerRoute('post', '/v1/replay', 'Replay ledger history against current or proposed rules as a Proof control to verify consistency without writing rows or calling PayPal.')
   ownerRoute('post', '/v1/ask', 'Decide where a sentence typed into Ask should go, with no model: a direct answer from the ledger (waiting, refused, month, in flight, ready, done, autopilot), a prepared delivery card for the owner to press, a hand-off to the rules drafter, or the clerk.')

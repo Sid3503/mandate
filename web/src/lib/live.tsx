@@ -24,18 +24,19 @@ export const reviewKey = (dealId: string, milestone: number) => `${dealId}:${mil
 export const useLive = () => useContext(LiveContext)
 
 type ServerEvent =
-  | { type: 'changed'; scope: 'ledger' | 'delivery' | 'deal' | 'rules' | 'safety'; what: string; id?: string; dealId?: string; milestone?: number }
+  | { type: 'changed'; scope: 'ledger' | 'delivery' | 'deal' | 'rules' | 'safety' | 'projects'; what: string; id?: string; dealId?: string; milestone?: number }
   | { type: 'review'; stage: 'started' | 'decided' | 'failed'; dealId: string; milestone: number; model?: string; decision?: 'accepted' | 'rejected'; note?: string | null; ms?: number }
   | { type: 'agent'; agent: 'reviewer'; dealId: string; milestone: number; call: { phase: 'start' | 'call' | 'end'; id: string; tool: string; source: 'code' | 'model'; input?: unknown; ok?: boolean; ms?: number; note?: string; output?: unknown } }
   | { type: 'hello' }
 
 const KEYS: Record<string, string[][]> = {
   // An agent's request moves its scorecard, and the breaker can suspend it: both show the moment they happen.
-  ledger: [['proposals'], ['today'], ['packet'], ['job'], ['ledger'], ['deals'], ['audit'], ['agent-keys']],
+  ledger: [['proposals'], ['today'], ['packet'], ['job'], ['ledger'], ['deals'], ['audit'], ['agent-keys'], ['blast']],
   delivery: [['today'], ['deals'], ['proposals'], ['job']],
   deal: [['today'], ['deals'], ['job']],
-  rules: [['warrant'], ['versions'], ['today'], ['party-rules']],
-  safety: [['status'], ['safety'], ['today'], ['proposals'], ['audit'], ['deals'], ['agent-keys']],
+  rules: [['warrant'], ['versions'], ['today'], ['party-rules'], ['blast']],
+  safety: [['status'], ['safety'], ['today'], ['proposals'], ['audit'], ['deals'], ['agent-keys'], ['blast']],
+  projects: [['projects'], ['project'], ['today'], ['proposals']],
 }
 
 /**
