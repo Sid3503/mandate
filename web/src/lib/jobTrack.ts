@@ -10,7 +10,7 @@ export type NextStep = { text: string; to: string | null; cta: string | null; ow
 const PAYOUT_BUSY = ['payout_sent', 'payout_unclaimed', 'capture_inflight', 'locked', 'order_created']
 /** A charge only counts as billed once the owner has said yes. One still waiting for the tap has not reached the client. */
 const NOT_BILLED = ['pending_approval', 'denied', 'rejected']
-const CLIENT_BUSY = ['order_created', 'capture_inflight', 'invoice_sent', 'invoice_draft']
+const CLIENT_BUSY = ['order_created', 'authorized', 'capture_inflight', 'invoice_sent', 'invoice_draft']
 
 /** Where a job stands, read only from what the server already says about it. Nothing here decides or moves money. */
 export function jobStages(job: Job): Stage[] {

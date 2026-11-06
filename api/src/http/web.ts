@@ -36,7 +36,9 @@ export function webCsp(environment: 'sandbox' | 'live' = 'sandbox'): string {
     "default-src 'self'",
     `script-src 'self' ${paypal}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    // blob: is an image this page made itself from a response it fetched with its own key (the studio's delivered files,
+    // a review close-up). It never names another origin.
+    "img-src 'self' data: blob:",
     "font-src 'self'",
     `connect-src 'self' ${paypal}`,
     "manifest-src 'self'",

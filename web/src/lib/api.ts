@@ -4,7 +4,7 @@ import type { ConnectionCheck } from './connect'
 import type { InvoiceDraft, InvoicesList } from './invoices'
 import type { AttemptRow, BreakDetail, BreaksList, FixResult as BreakFixResult, ScanResult as BreakScanResult } from './breaks'
 import type { PayPalLog } from './paypallog'
-import type { AgentActivityRow, OauthRequestInfo, NegotiationView, ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AuditReport, Balance, Books, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, JournalEntry, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PayMethod, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
+import type { AgentActivityRow, OauthRequestInfo, NegotiationView, ShareSummary, ShareView, Activity, AgentHealth, AgentRow, AgentRun, AgentScope, AgentScorecard, AskRoute, AttackReport, AuditReport, Balance, BlastRadius, Books, ClerkReply, ClerkStreamEvent, ClientErrorRow, ClientKeyRow, Deal, DealCheck, Delivered, Delivery, Features, Guarantees, Health, Job, JournalEntry, LedgerEvent, LockCheck, Negotiation, Packet, Page, PartyRulesView, PayeeBookEntry, PayMethod, PaySession, Proposal, ProposalInput, QuickId, Replay, RulesDraft, Safety, ServerFlags, Session, SigningKey, SystemStatus, Today, ToolSummary, TryCases, TryOne, Warrant, Suggestions } from './types'
 
 /** An RFC 9457 problem from the server, kept whole so screens can show the exact words. */
 export class ApiError extends Error {
@@ -36,6 +36,33 @@ export class ApiError extends Error {
 
 type Options = { method?: string; body?: unknown; idempotencyKey?: string; key?: string; headers?: Record<string, string> }
 
+/** A server path as this tab must address it (inside its studio), for links and images that are not fetched by `request`. */
+export function scopedUrl(path: string): string {
+  return scopePath(path, null).path
+}
+
+/** Sends one file as a form. The same key, studio and errors as `request`. */
+export async function upload<T>(path: string, file: File | Blob, name?: string): Promise<T> {
+  const key = session.get()
+  const scoped = scopePath(path, key)
+  const headers: Record<string, string> = { accept: 'application/json' }
+  if (key) headers.authorization = `Bearer ${key}`
+  if (scoped.client) headers['x-mandate-client'] = 'web'
+  const form = new FormData()
+  form.append('file', file, name ?? (file instanceof File ? file.name : 'file'))
+  let response: Response
+  try {
+    response = await fetch(scoped.path, { method: 'POST', headers, body: form, credentials: scoped.credentials, signal: AbortSignal.timeout(120_000) })
+  } catch {
+    throw new ApiError(0, 'network.offline', 'The upload did not reach the server', 'Nothing was stored. Try again.', {})
+  }
+  const text = await response.text()
+  let body: Record<string, unknown> = {}
+  try { body = text ? JSON.parse(text) as Record<string, unknown> : {} } catch { body = { detail: text.slice(0, 160) } }
+  if (!response.ok) throw new ApiError(response.status, String(body.code ?? 'http.error'), String(body.title ?? response.statusText), String(body.detail ?? ''), body)
+  return body as T
+}
+
 /** Prefix tenant routes only. Public doors (/demo/start, /workspaces, /join) stay on the outer server. */
 function scopePath(path: string, bearer?: string | null): { path: string; credentials: RequestCredentials; client: boolean } {
   // A client or agent key names its studio. That wins over a tab that has not chosen a workspace yet.
@@ -50,7 +77,7 @@ function scopePath(path: string, bearer?: string | null): { path: string; creden
   return { path: tenant && workspace ? `/w/${workspace}${path}` : path, credentials: chosen ? 'include' : 'same-origin', client: Boolean(chosen) }
 }
 
-async function request<T>(path: string, options: Options = {}): Promise<T> {
+export async function request<T>(path: string, options: Options = {}): Promise<T> {
   const headers: Record<string, string> = { accept: 'application/json' }
   const key = options.key ?? session.get()
   if (key) headers.authorization = `Bearer ${key}`
@@ -413,6 +440,12 @@ export const api = {
   clientErrors: () => request<{ data: ClientErrorRow[] }>('/v1/client-errors'),
   ask: (input: { message?: string; quick?: QuickId; context?: { jobId?: string; proposalId?: string; receiptId?: string; dealId?: string } }) => request<AskRoute>('/v1/ask', { method: 'POST', body: input }),
   replayRules: (rules: unknown) => request<Replay>('/v1/rules/replay', { method: 'POST', body: rules }),
+  /** The most that can leave under the live rules. */
+  blastRadius: () => request<BlastRadius>('/v1/blast-radius'),
+  /** The same number under the live rules and a draft, so a change is seen before it is published. */
+  blastFor: (rules: unknown) => request<{ live: BlastRadius; draft: BlastRadius | null }>('/v1/rules/blast', { method: 'POST', body: { rules } }),
+  /** A hostile proposer played against the real gate on a copy of the ledger. Nothing is filed or sent. */
+  attackRules: (rules?: unknown) => request<AttackReport>('/v1/rules/attack', { method: 'POST', body: rules ? { rules } : {} }),
   replayHistory: (rules?: unknown) => request<Replay>('/v1/replay', { method: 'POST', body: rules ?? {} }),
   agents: () => request<AgentRow[]>('/v1/agents'),
   /** The owner's check that a key opens the door: the server walks initialize, the tool list and the rules with it. */
@@ -547,6 +580,8 @@ export const api = {
     }
   },
   reject: (id: string) => request<Proposal>(`/v1/proposals/${id}/reject`, { method: 'POST' }),
+  /** Take back a payout or refund a rule was about to send by itself, while its regret window is open. */
+  undo: (id: string) => request<Proposal>(`/v1/proposals/${id}/undo`, { method: 'POST' }),
   cancelPayout: (id: string) => request<Proposal>(`/v1/proposals/${id}/cancel-payout`, { method: 'POST' }),
   invoiceQr: (id: string) => request<{ image: string; contentType: 'image/png' }>(`/v1/proposals/${id}/invoice-qr`),
   remindInvoice: (id: string) => request<Proposal>(`/v1/proposals/${id}/remind-invoice`, { method: 'POST' }),

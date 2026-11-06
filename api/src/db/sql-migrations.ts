@@ -276,6 +276,249 @@ BEGIN
 END;
 `,
   },
+  {
+    // Two-sided projects: a client approves a priced plan, the studio delivers sealed files, and the client pays each
+    // stage into a PayPal hold that is captured only when they approve the work or the review window they agreed to
+    // runs out. The money still goes through the gate and the signed lock: a stage's bill is an ordinary charge on a
+    // signed deal. What is new is where the money waits (a hold, not the studio's balance) and what the lock's proof
+    // is (a manifest of SHA-256 file fingerprints, not a link nobody opens).
+    id: '0008_projects_and_holds',
+    sql: `
+-- 'hold' when the client pays this charge into a PayPal hold (intent AUTHORIZE) instead of paying it outright.
+ALTER TABLE proposals ADD COLUMN settle_mode TEXT;
+
+CREATE TABLE IF NOT EXISTS holds (
+  proposal_id TEXT PRIMARY KEY REFERENCES proposals(id),
+  order_id TEXT NOT NULL,
+  authorization_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK (status IN ('held', 'captured', 'voided', 'expired')),
+  amount_cents INTEGER NOT NULL CHECK (typeof(amount_cents) = 'integer' AND amount_cents > 0),
+  currency TEXT NOT NULL,
+  payer_email TEXT,
+  authorized_at TEXT NOT NULL,
+  honor_until TEXT,
+  expires_at TEXT,
+  reauthorized_at TEXT,
+  released_by TEXT,
+  released_at TEXT,
+  capture_id TEXT,
+  voided_at TEXT,
+  void_reason TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL UNIQUE,
+  client_id TEXT NOT NULL,
+  client_name TEXT NOT NULL,
+  client_email TEXT,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL DEFAULT '',
+  brief TEXT NOT NULL DEFAULT '',
+  brief_source TEXT,
+  currency TEXT NOT NULL,
+  category TEXT NOT NULL,
+  review_days INTEGER NOT NULL CHECK (review_days BETWEEN 1 AND 14),
+  revise_days INTEGER NOT NULL CHECK (revise_days BETWEEN 1 AND 14),
+  questions_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL CHECK (status IN ('draft', 'sent', 'changes', 'agreed', 'done', 'cancelled')),
+  plan_version INTEGER NOT NULL DEFAULT 0,
+  agreed_version INTEGER,
+  deal_id TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_stages (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  position INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  deliverables_json TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL CHECK (typeof(amount_cents) = 'integer' AND amount_cents > 0),
+  due_date TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('open', 'delivered', 'held', 'changes', 'released', 'cancelled', 'removed')),
+  milestone INTEGER,
+  charge_id TEXT,
+  round INTEGER NOT NULL DEFAULT 0,
+  review_ends_at TEXT,
+  revise_by TEXT,
+  released_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_stages_project ON project_stages(project_id, position);
+CREATE UNIQUE INDEX IF NOT EXISTS project_stages_charge ON project_stages(charge_id) WHERE charge_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS project_plans (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  version INTEGER NOT NULL,
+  terms_json TEXT NOT NULL,
+  terms_hash TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('sent', 'agreed', 'changes', 'superseded')),
+  sent_by TEXT NOT NULL,
+  sent_at TEXT NOT NULL,
+  studio_sig TEXT NOT NULL,
+  studio_key_id TEXT NOT NULL,
+  decided_at TEXT,
+  client_note TEXT,
+  client_sig TEXT,
+  client_key_id TEXT,
+  deal_id TEXT,
+  PRIMARY KEY (project_id, version)
+);
+
+-- A plan's terms are what the studio signed. They never change: a new plan is a new version.
+CREATE TRIGGER IF NOT EXISTS project_plans_terms_immutable BEFORE UPDATE ON project_plans
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode)
+  AND (NEW.terms_json IS NOT OLD.terms_json OR NEW.terms_hash IS NOT OLD.terms_hash OR NEW.studio_sig IS NOT OLD.studio_sig)
+BEGIN
+  SELECT RAISE(ABORT, 'project_plans: signed terms cannot change; send a new version');
+END;
+
+CREATE TABLE IF NOT EXISTS project_links (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  secret_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  revoked_at TEXT,
+  last_seen_at TEXT,
+  views INTEGER NOT NULL DEFAULT 0
+);
+
+-- Delivered files, by their SHA-256. The bytes are stored once and never served to a client before release.
+CREATE TABLE IF NOT EXISTS project_blobs (
+  sha256 TEXT PRIMARY KEY,
+  bytes BLOB NOT NULL,
+  size INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_files (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  stage_id TEXT NOT NULL REFERENCES project_stages(id),
+  round INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  sha256 TEXT NOT NULL REFERENCES project_blobs(sha256),
+  width INTEGER,
+  height INTEGER,
+  kind TEXT NOT NULL CHECK (kind IN ('image', 'file')),
+  uploaded_by TEXT NOT NULL,
+  uploaded_at TEXT NOT NULL,
+  removed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS project_files_stage ON project_files(stage_id, uploaded_at);
+
+-- A file's fingerprint is what a lock and a release name. It cannot be rewritten.
+CREATE TRIGGER IF NOT EXISTS project_files_fingerprint_immutable BEFORE UPDATE ON project_files
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode)
+  AND (NEW.sha256 IS NOT OLD.sha256 OR NEW.size IS NOT OLD.size OR NEW.name IS NOT OLD.name OR NEW.stage_id IS NOT OLD.stage_id)
+BEGIN
+  SELECT RAISE(ABORT, 'project_files: a delivered file cannot be rewritten; upload a new one');
+END;
+
+CREATE TABLE IF NOT EXISTS project_deliveries (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  stage_id TEXT NOT NULL REFERENCES project_stages(id),
+  round INTEGER NOT NULL,
+  manifest_json TEXT NOT NULL,
+  manifest_hash TEXT NOT NULL,
+  check_json TEXT,
+  sent_by TEXT NOT NULL,
+  sent_at TEXT NOT NULL,
+  charge_id TEXT,
+  UNIQUE (stage_id, round)
+);
+
+CREATE TABLE IF NOT EXISTS project_views (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  stage_id TEXT NOT NULL,
+  file_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('open', 'closeup', 'download')),
+  session_code TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_views_stage ON project_views(stage_id, at);
+
+CREATE TABLE IF NOT EXISTS project_requests (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  stage_id TEXT,
+  kind TEXT NOT NULL CHECK (kind IN ('stage_changes', 'plan_changes')),
+  note TEXT NOT NULL,
+  at TEXT NOT NULL,
+  resolved_at TEXT
+);
+
+-- The client's release of a stage (or the review window's), signed by the server over the exact files released.
+CREATE TABLE IF NOT EXISTS project_releases (
+  stage_id TEXT PRIMARY KEY REFERENCES project_stages(id),
+  project_id TEXT NOT NULL,
+  charge_id TEXT NOT NULL,
+  manifest_hash TEXT NOT NULL,
+  decided_by TEXT NOT NULL CHECK (decided_by IN ('client', 'review_window')),
+  sig TEXT NOT NULL,
+  key_id TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS project_releases_append_only BEFORE UPDATE ON project_releases
+WHEN NOT EXISTS (SELECT 1 FROM maintenance_mode)
+BEGIN
+  SELECT RAISE(ABORT, 'project_releases: a signed release cannot change');
+END;
+
+CREATE TABLE IF NOT EXISTS project_reviews (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL UNIQUE REFERENCES projects(id),
+  stars INTEGER NOT NULL CHECK (stars BETWEEN 1 AND 5),
+  text TEXT NOT NULL,
+  capture_ids_json TEXT NOT NULL,
+  sig TEXT NOT NULL,
+  key_id TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS project_activity (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  stage_id TEXT,
+  kind TEXT NOT NULL,
+  text TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_activity_at ON project_activity(at);
+
+CREATE TABLE IF NOT EXISTS project_reminders (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  stage_id TEXT NOT NULL,
+  n INTEGER NOT NULL,
+  tone TEXT NOT NULL,
+  text TEXT NOT NULL,
+  written_by TEXT NOT NULL,
+  at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS studio_profile (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  handle TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  headline TEXT NOT NULL DEFAULT '',
+  bio TEXT NOT NULL DEFAULT '',
+  website TEXT,
+  email TEXT,
+  updated_at TEXT NOT NULL
+);
+`,
+  },
 ]
 
 /**

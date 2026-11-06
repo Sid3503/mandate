@@ -12,7 +12,7 @@ import { DealTermsSchema, type DealTerms, type PartyRules } from '../domain/deal
 import type { ProposalCreate, WarrantBody } from '../domain/schemas'
 import { lineItemsTotal, MAX_DUE_DAYS, NO_AUTOMATION, NO_AUTO_REFUND, ProposalCreateSchema, WARRANT_ID, WarrantBodySchema, DEFAULT_RISK } from '../domain/schemas'
 import { invoiceNumberFor, type InvoicePort, type LiveInvoice } from '../paypal/invoices'
-import { PayPalError, type CapturedPayment, type CardOnOrder, type CreatedOrder, type LivePayout, type PayPalPort } from '../paypal/port'
+import { PayPalError, type CapturedPayment, type CardOnOrder, type CreatedOrder, type HeldPayment, type LivePayout, type PayPalPort } from '../paypal/port'
 import { cardAuthDecision } from '../domain/cardAuth'
 import type { LiveDispute, WatchPort } from '../paypal/watch'
 import { assessFeatures } from '../domain/paypalFeatures'
@@ -24,6 +24,8 @@ import { paypalProblem } from './paypalProblem'
 import { applyPayeeBook, type PayeeView } from '../domain/payee-book'
 import { applyPause, NOT_PAUSED } from '../domain/safety'
 import { assessRisk, riskEnabled, type RiskSignal } from '../domain/risk'
+import { blastRadius, type BlastFacts, type BlastRadius } from '../domain/blast'
+import { runAttacks, type AttackReport } from '../domain/attack'
 import type { SafetyService } from './safety'
 import { runIdempotent } from './idempotency'
 
@@ -31,7 +33,7 @@ export type HttpResult = { status: number; body: unknown }
 /** Who asked. `autopilot` is the server itself, acting under a rule the owner signed. */
 export type Role = 'owner' | 'proposer' | 'autopilot' | `agent:${string}`
 
-const RESUME_PHASES = new Set(['locked', 'order_created', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'])
+const RESUME_PHASES = new Set(['locked', 'order_created', 'authorized', 'invoice_draft', 'invoice_sent', 'payout_sent', 'payout_unclaimed'])
 /** Charge phases where a PayPal invoice exists. The client may already have paid it. */
 export const FAST_SWEEP_MS = 5_000
 export const IDLE_SWEEP_MS = 60_000
@@ -102,6 +104,8 @@ export type ProposalView = {
   payInstrument: 'invoice' | 'checkout' | null
   /** How the order on this row was opened: a card (paid on our page) or a checkout (the buyer is sent to PayPal). */
   orderKind: 'card' | 'checkout' | null
+  /** 'hold' when the client pays this charge into a PayPal hold that is captured only when the work is released. */
+  settleMode: 'hold' | null
   createdAt: string
   updatedAt: string
   links: { self: string; packet: string }
@@ -131,6 +135,8 @@ export type PaySession = {
   description: string
   /** Which PayPal the browser SDK must talk to. */
   environment: 'sandbox' | 'live'
+  /** 'authorize' when the payment goes into a hold: the browser SDK must be loaded with the same intent. */
+  intent: 'capture' | 'authorize'
 }
 
 export function toView(row: ProposalRow): ProposalView {
@@ -183,6 +189,7 @@ export function toView(row: ProposalRow): ProposalView {
     /** How this charge is to be paid: an invoice the client gets, or a card form on our own page. */
     payInstrument: row.pay_instrument === 'checkout' ? 'checkout' : row.pay_instrument === 'invoice' ? 'invoice' : null,
     orderKind: row.order_kind === 'card' ? 'card' : row.order_kind === 'checkout' ? 'checkout' : null,
+    settleMode: row.settle_mode === 'hold' ? 'hold' : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     links: { self: `/v1/proposals/${row.id}`, packet: `/v1/proposals/${row.id}/packet` },
@@ -427,6 +434,8 @@ export class MandateService {
   async dispatchStanding(id: string): Promise<ProposalView | null> {
     const row = this.repo.proposal(id)
     if (!row) return null
+    // A stage paid into a hold is never sent by a rule: the client pays it into the hold from their own page.
+    if (row.settle_mode === 'hold') return null
     const isAutoRefund = row.kind === 'refund' && row.clause === Clause.refundAutoPolicy
     if (!isAutoRefund && (!['payment', 'charge'].includes(row.kind) || !STANDING_CLAUSES.includes(row.clause))) return null
     if (!['locked', 'order_created'].includes(row.phase)) return null
@@ -450,6 +459,10 @@ export class MandateService {
       }
       return toView(this.require(id))
     }
+    // The owner's regret window: a request a rule sends by itself waits, locked, for the seconds the rules name, and the
+    // owner can Undo it until then. Only a payout or a refund waits; billing a client moves no money out.
+    const until = this.regretUntil(row)
+    if (until && Date.parse(until) > this.now().getTime()) return toView(this.require(id))
     try {
       await this.capture(id)
       this.options.safety?.noteAutopilotSuccess()
@@ -476,6 +489,45 @@ export class MandateService {
     return toView(this.require(id))
   }
 
+  /**
+   * When a request that goes by itself may actually be sent: the end of the owner's regret window, or null when there is
+   * none. The clock starts the first time the request is otherwise ready to go, and is written to the ledger so a restart
+   * does not give the request a second window or cut the first one short.
+   */
+  private regretUntil(row: ProposalRow): string | null {
+    if (row.kind === 'charge') return null
+    const seconds = this.repo.warrant(row.warrant_id, row.warrant_version)?.body.regretSeconds ?? 0
+    if (seconds <= 0) return null
+    const started = this.repo.eventsFor(row.id).find((event) => event.type === 'regret.started')
+    if (started) return (JSON.parse(started.payload_json) as { until: string }).until
+    const until = new Date(this.now().getTime() + seconds * 1000).toISOString()
+    this.repo.insertEvent(randomUUID(), row.id, 'regret.started', row.clause, { until, seconds }, this.iso())
+    return until
+  }
+
+  /**
+   * Takes back a request a rule was about to send by itself, while its regret window is still open. Nothing has gone to
+   * PayPal, so nothing needs to come back: the lock is dropped and the money it held is free again. Once the window has
+   * closed the request is sent or being sent, and the only honest answer is that it is too late.
+   */
+  undo(id: string): HttpResult {
+    const now = this.iso()
+    return this.repo.transaction(() => {
+      const row = this.require(id)
+      const events = this.repo.eventsFor(id)
+      if (row.phase === 'rejected' && events.some((event) => event.type === 'proposal.undone')) return { status: 200, body: toView(row) }
+      const started = events.find((event) => event.type === 'regret.started')
+      if (row.kind === 'charge' || !started || !['locked', 'order_created'].includes(row.phase)) {
+        throw new Problem(409, 'proposal.state', 'Nothing to undo', row.phase === 'rejected' ? 'It was already stopped.' : `It is ${row.phase.replace(/_/g, ' ')}; only a request waiting out its regret window can be undone.`)
+      }
+      const until = (JSON.parse(started.payload_json) as { until: string }).until
+      if (Date.parse(until) <= this.now().getTime()) throw new Problem(409, 'proposal.too_late', 'Too late to undo', `The window closed at ${until}. It is being sent.`)
+      if (!this.repo.transitionPhase(id, ['locked', 'order_created'], 'rejected', now)) throw new Problem(409, 'proposal.too_late', 'Too late to undo', 'It started to send a moment ago.')
+      this.repo.insertEvent(randomUUID(), id, 'proposal.undone', row.clause, { actor: 'owner', until }, now)
+      return { status: 200, body: toView(this.require(id)) }
+    })
+  }
+
   /** When the server last asked PayPal about money in flight, and how much it looked at. Shown on Today so the automation is visible. */
   private lastLook: { at: string; payouts: number; invoices: number; orders: number; reminded: number } | null = null
 
@@ -486,7 +538,8 @@ export class MandateService {
 
   /** Quick while money is in flight (so a payment shows within seconds), slow when nothing is. */
   nextSweepMs(): number {
-    return this.inFlightCount() > 0 ? FAST_SWEEP_MS : IDLE_SWEEP_MS
+    // A request waiting out a regret window is sent by the next sweep after the window, so the sweep keeps close.
+    return this.inFlightCount() > 0 || this.repo.lockedStandingItems().length > 0 ? FAST_SWEEP_MS : IDLE_SWEEP_MS
   }
 
   watcher() {
@@ -512,6 +565,7 @@ export class MandateService {
     for (const row of this.repo.pendingCaptures()) await this.refreshCapture(row.capture_id!, 'server').catch(() => undefined)
     for (const row of this.repo.pendingRefunds()) await this.refreshRefund(row.id, 'server').catch(() => undefined)
     this.repo.prune(this.now())
+    await this.refreshHolds().catch(() => 0)
     const reminded = await this.remindOverdueInvoices().catch(() => 0)
     // Money that was waiting to clear may have cleared by now. This is idempotent: it only asks for payouts not yet asked for.
     if ((this.repo.latestWarrant()?.body.clearingDays ?? 0) > 0) await this.resumeAutopilot().catch(() => 0)
@@ -550,7 +604,7 @@ export class MandateService {
       if (this.repo.hasLiveAttempt(row.id, row.updated_at)) {
         await this.capture(row.id, undefined, 'server').catch(() => undefined)
       } else {
-        const back = row.payout_batch_id ? 'payout_sent' : row.invoice_id ? 'invoice_sent' : row.order_id ? 'order_created' : 'locked'
+        const back = this.restingPhase(row)
         const now = this.iso()
         this.repo.transaction(() => {
           if (this.repo.transitionPhase(row.id, ['capture_inflight'], back, now)) {
@@ -731,9 +785,12 @@ export class MandateService {
       if (stamp?.challenge) payload.challenge = stamp.challenge
       // How this charge is to be paid is the owner's choice, made at the tap: a PayPal invoice the client gets, or a
       // card form on our own page. It is recorded with the approval, so the receipt can say which it was.
-      if (instrument && row.kind === 'charge') {
-        this.repo.setPayInstrument(row.id, instrument, now)
-        payload.instrument = instrument
+      // A stage paid into a hold is always paid on the client's page: an invoice would take the money outright and
+      // skip the review the client was promised.
+      const chosen = row.settle_mode === 'hold' ? 'checkout' : instrument
+      if (chosen && row.kind === 'charge') {
+        this.repo.setPayInstrument(row.id, chosen, now)
+        payload.instrument = chosen
       }
       this.repo.insertEvent(randomUUID(), row.id, 'proposal.approved', row.clause, payload, now)
       return { status: 200, body: toView(this.require(id)) }
@@ -806,6 +863,7 @@ export class MandateService {
       currency: row.currency,
       description: row.description,
       environment: this.options.paypalEnvironment ?? 'sandbox',
+      intent: row.settle_mode === 'hold' ? 'authorize' : 'capture',
     }
   }
 
@@ -829,6 +887,8 @@ export class MandateService {
         // The contractor's identity stays on the warrant. The receiver is the studio.
         payeeEmail: null,
         kind: 'card',
+        // A stage paid into a hold reserves the client's money instead of taking it.
+        ...(row.settle_mode === 'hold' ? { intent: 'AUTHORIZE' as const } : {}),
       })
     } catch (error) {
       if (!previousOrderId) throw error
@@ -867,6 +927,7 @@ export class MandateService {
       // The contractor's identity stays on the warrant. The receiver is the studio.
       payeeEmail: null,
       kind: 'wallet',
+      ...(row.settle_mode === 'hold' ? { intent: 'AUTHORIZE' as const } : {}),
     })
     const now = this.iso()
     this.repo.transaction(() => {
@@ -929,6 +990,7 @@ export class MandateService {
       const current = this.require(id)
       if (current.kind === 'refund') return await this.settleRefund(current)
       if (current.kind === 'payment') return await this.settlePayout(current)
+      if (current.kind === 'charge' && current.settle_mode === 'hold') return await this.settleHold(current, by)
       if (current.kind === 'charge' && this.invoices && !current.order_id && current.pay_instrument !== 'checkout') {
         const invoiced = await this.settleInvoice(current)
         if (invoiced) return invoiced
@@ -1077,6 +1139,203 @@ export class MandateService {
       }, now)
     })
     return { status: 200, body: toView(this.require(row.id)) }
+  }
+
+  // ---------- holds: a client's money reserved at PayPal, not yet the studio's ----------
+
+  /** Requests whose hold is being released right now, by the one path allowed to release it, and who released it. */
+  private readonly releasing = new Map<string, 'client' | 'review_window'>()
+
+  /** Where an interrupted settle goes back to when nothing reached PayPal. A live hold goes back to being a hold. */
+  private restingPhase(row: ProposalRow): string {
+    if (row.payout_batch_id) return 'payout_sent'
+    if (row.invoice_id) return 'invoice_sent'
+    if (row.settle_mode === 'hold' && this.repo.hold(row.id)?.status === 'held') return 'authorized'
+    return row.order_id ? 'order_created' : 'locked'
+  }
+
+  /** The hold on a charge, if PayPal placed one. */
+  holdFor(id: string) {
+    return this.repo.hold(id)
+  }
+
+  /**
+   * A stage the client pays into a hold. The first time, this places the hold: the order the client approved on their
+   * page is re-read and must match the lock to the cent, the card's bank check is read from PayPal, and only then is the
+   * order authorized. Nothing reaches the studio. The second time (a release, and only a release) it captures the hold.
+   */
+  private async settleHold(current: ProposalRow, by: 'server' | null): Promise<HttpResult> {
+    const paypal = this.paypal!
+    if (!paypal.authorizeOrder || !paypal.captureAuthorization) throw new Problem(503, 'paypal.holds_off', 'Holds are not available', 'This PayPal connection cannot place holds.')
+    const held = this.repo.hold(current.id)
+    if (held?.status === 'held') return this.captureHold(current, held.authorization_id, held, by)
+    if (held) {
+      this.repo.setPhase(current.id, this.restingPhase(current), this.iso())
+      return { status: 200, body: toView(this.require(current.id)) }
+    }
+    if (!current.order_id) {
+      this.repo.setPhase(current.id, this.restingPhase(current), this.iso())
+      throw new Problem(409, 'pay.no_card', 'The client pays this into a hold from their page', 'Nothing has been paid yet. The client opens the payment form on their project page.', { proposalId: current.id })
+    }
+    const live = await paypal.getOrder(current.order_id)
+    if (live.amountCents !== current.amount_cents || live.currency !== current.currency || live.customId !== current.id) {
+      return this.refuseLive(current, live.amountCents, live.currency)
+    }
+    let placed: HeldPayment
+    if (live.authorization) {
+      // Authorized already: our answer was lost on the way back. Read it, never authorize twice.
+      placed = live.authorization
+    } else {
+      if (live.status !== 'APPROVED') {
+        this.repo.setPhase(current.id, 'order_created', this.iso())
+        throw new Problem(409, 'paypal.buyer_pending', 'The client has not approved the payment yet', 'Finish the payment in PayPal\'s window, then try again.', { proposalId: current.id, orderId: current.order_id })
+      }
+      if (current.order_kind === 'card' && paypal.cardResult) {
+        const card = await paypal.cardResult(current.order_id)
+        const decision = cardAuthDecision(card?.authentication ?? null)
+        if (decision.action !== 'capture') {
+          const now = this.iso()
+          this.repo.transaction(() => {
+            this.repo.setPhase(current.id, 'order_created', now)
+            this.repo.insertEvent(randomUUID(), current.id, 'card.not_verified', current.clause, { orderId: current.order_id, action: decision.action, why: decision.why, brand: card?.brand ?? null, lastDigits: card?.lastDigits ?? null, ...(card?.authentication ?? {}) }, now)
+          })
+          throw new Problem(402, decision.action === 'refuse' ? 'pay.card_not_verified' : 'pay.card_check_incomplete', decision.action === 'refuse' ? 'The card was not confirmed by its bank' : 'The bank check did not finish', decision.why, { proposalId: current.id })
+        }
+      }
+      placed = await this.attempt(current.id, 'authorize', `${current.id}:authorize`, (value) => value.authorizationId, () => paypal.authorizeOrder!(current.order_id!, current.id))
+    }
+    return this.applyHold(current, placed, by)
+  }
+
+  private async applyHold(row: ProposalRow, placed: HeldPayment, by: 'server' | null): Promise<HttpResult> {
+    const now = this.iso()
+    if (placed.amountCents !== row.amount_cents || placed.currency !== row.currency) {
+      // PayPal reserved a different sum than the lock. Let it go at once: nothing is held that the client was not shown.
+      await this.paypal?.voidAuthorization?.(placed.authorizationId).catch(() => undefined)
+      this.repo.transaction(() => {
+        this.repo.transitionPhase(row.id, ['capture_inflight', 'order_created'], 'capture_refused', now)
+        this.repo.insertEvent(randomUUID(), row.id, 'hold.mismatch', Clause.cartImmutable, { authorizationId: placed.authorizationId, lockedAmountCents: row.amount_cents, liveAmountCents: placed.amountCents, liveCurrency: placed.currency, voided: true }, now)
+      })
+      return { status: 409, body: problemValue(Clause.cartImmutable, 'PayPal held a different amount than the lock', `The lock says ${row.amount_cents} ${row.currency} cents; PayPal held ${placed.amountCents} ${placed.currency}. The hold was released at once.`, { proposalId: row.id }) }
+    }
+    if (placed.status !== 'CREATED' && placed.status !== 'PENDING') {
+      this.repo.transaction(() => {
+        this.repo.transitionPhase(row.id, ['capture_inflight'], 'capture_failed', now)
+        this.repo.insertEvent(randomUUID(), row.id, 'hold.failed', row.clause, { authorizationId: placed.authorizationId, status: placed.status }, now)
+      })
+      throw new Problem(402, 'pay.hold_declined', 'PayPal did not hold the payment', `PayPal answered ${placed.status}. Nothing was held or charged. The client can try another way to pay.`, { proposalId: row.id })
+    }
+    this.repo.transaction(() => {
+      if (!this.repo.hold(row.id)) {
+        this.repo.insertHold({ proposal_id: row.id, order_id: row.order_id!, authorization_id: placed.authorizationId, status: 'held', amount_cents: placed.amountCents, currency: placed.currency, payer_email: placed.payerEmail, authorized_at: now, honor_until: placed.honorUntil, expires_at: placed.expiresAt, reauthorized_at: null, released_by: null, released_at: null, capture_id: null, voided_at: null, void_reason: null, updated_at: now })
+      }
+      this.repo.transitionPhase(row.id, ['capture_inflight', 'order_created'], 'authorized', now)
+      this.repo.insertEvent(randomUUID(), row.id, 'hold.placed', row.clause, { orderId: row.order_id, authorizationId: placed.authorizationId, amountCents: placed.amountCents, honorUntil: placed.honorUntil, expiresAt: placed.expiresAt, ...(by ? { by } : {}) }, now)
+    })
+    this.options.onExternalRef?.('authorization', placed.authorizationId)
+    return { status: 200, body: toView(this.require(row.id)) }
+  }
+
+  /**
+   * Takes held money, for exactly the lock. Past PayPal's three-day honor period the hold is renewed first, once, as PayPal
+   * allows within its twenty-nine days, so a stage that went through a round of changes is still captured against funds
+   * PayPal honours. If the renewal fails the capture is still tried: PayPal often captures a valid authorization anyway.
+   */
+  private async captureHold(row: ProposalRow, authorizationId: string, held: { amount_cents: number; currency: string; honor_until: string | null; expires_at: string | null; reauthorized_at: string | null }, by: 'server' | null): Promise<HttpResult> {
+    const paypal = this.paypal!
+    const nowMs = this.now().getTime()
+    let authId = authorizationId
+    const pastHonor = held.honor_until !== null && Date.parse(held.honor_until) < nowMs
+    const stillAlive = held.expires_at === null || Date.parse(held.expires_at) > nowMs
+    if (pastHonor && stillAlive && !held.reauthorized_at && paypal.reauthorize) {
+      try {
+        const renewed = await this.attempt(row.id, 'reauthorize', `${row.id}:reauthorize:${authId}`, (value) => value.authorizationId, () => paypal.reauthorize!({ authorizationId: authId, amountCents: held.amount_cents, currency: held.currency, proposalId: row.id }))
+        if (renewed.status === 'CREATED' || renewed.status === 'PENDING') {
+          const now = this.iso()
+          this.repo.transaction(() => {
+            this.repo.renewHold(row.id, renewed.authorizationId, renewed.honorUntil, renewed.expiresAt, now)
+            this.repo.insertEvent(randomUUID(), row.id, 'hold.renewed', row.clause, { from: authId, to: renewed.authorizationId, honorUntil: renewed.honorUntil }, now)
+          })
+          authId = renewed.authorizationId
+        }
+      } catch (error) {
+        this.repo.insertEvent(randomUUID(), row.id, 'hold.renew_failed', row.clause, { authorizationId: authId, detail: error instanceof Error ? error.message.slice(0, 200) : 'error' }, this.iso())
+      }
+    }
+    const captured = await this.attempt(row.id, 'capture-hold', `${row.id}:capture-hold:${authId}`, (value) => value.captureId, () => paypal.captureAuthorization!({ authorizationId: authId, proposalId: row.id, amountCents: row.amount_cents, currency: row.currency, invoiceId: row.id }))
+    if (captured.status === 'COMPLETED' || captured.status === 'PENDING') {
+      this.repo.closeHold(row.id, { status: 'captured', captureId: captured.captureId, releasedBy: this.releasing.get(row.id) ?? 'resumed' }, this.iso())
+    }
+    return this.applyCapture(this.require(row.id), captured, null, by)
+  }
+
+  /**
+   * Releases a stage's hold: the client approved the work, or the review window they agreed to ran out. The same
+   * capture path every payment takes runs, so the lock and its signature are checked before PayPal is called, and a
+   * contractor's standing share is paid from the money once it has arrived.
+   */
+  async releaseHold(id: string, decidedBy: 'client' | 'review_window'): Promise<HttpResult> {
+    const row = this.require(id)
+    if (row.settle_mode !== 'hold') throw new Problem(409, 'hold.missing', 'This is not a held payment', 'Only a stage paid into a hold is released.')
+    if (fullPhase(row.phase) || row.phase === 'capture_pending') return { status: 200, body: toView(row) }
+    if (row.phase !== 'authorized' && row.phase !== 'capture_inflight') throw new Problem(409, 'hold.missing', 'Nothing is held for this stage', `Phase is ${row.phase}.`)
+    this.releasing.set(id, decidedBy)
+    try {
+      return await this.capture(id)
+    } finally {
+      this.releasing.delete(id)
+    }
+  }
+
+  /**
+   * Lets a hold go back to the client: nothing is charged. The row is claimed first (moved to settling), so a release
+   * and a void can never both reach PayPal for the same hold.
+   */
+  async voidHold(id: string, reason: string, by: string): Promise<HttpResult> {
+    const row = this.require(id)
+    if (row.phase === 'voided') return { status: 200, body: toView(row) }
+    const held = this.repo.hold(id)
+    if (row.phase !== 'authorized' || !held || held.status !== 'held') throw new Problem(409, 'hold.missing', 'Nothing is held for this stage', `Phase is ${row.phase}.`)
+    if (!this.paypal?.voidAuthorization) throw new Problem(503, 'paypal.holds_off', 'Holds are not available', 'This PayPal connection cannot release holds.')
+    if (!this.repo.transitionPhase(id, ['authorized'], 'capture_inflight', this.iso())) throw new Problem(409, 'capture.inflight', 'This hold is being settled', 'Try again in a moment.')
+    try {
+      await this.attempt(id, 'void', `${held.authorization_id}:void`, () => null, () => this.paypal!.voidAuthorization!(held.authorization_id))
+    } catch (error) {
+      const gone = error instanceof PayPalError && error.httpStatus === 422 && /VOID|EXPIRED/i.test(`${error.paypalName} ${error.fields}`)
+      if (!gone) {
+        this.repo.transitionPhase(id, ['capture_inflight'], 'authorized', this.iso())
+        if (error instanceof PayPalError) throw paypalProblem(error, 'to release the hold', { proposalId: id })
+        throw error
+      }
+    }
+    const now = this.iso()
+    this.repo.transaction(() => {
+      this.repo.closeHold(id, { status: 'voided', voidReason: reason }, now)
+      this.repo.transitionPhase(id, ['capture_inflight'], 'voided', now)
+      this.repo.insertEvent(randomUUID(), id, 'hold.voided', row.clause, { authorizationId: held.authorization_id, reason, by }, now)
+    })
+    return { status: 200, body: toView(this.require(id)) }
+  }
+
+  /** Holds whose PayPal life ran out are recorded as released: an expired authorization can never be captured. */
+  async refreshHolds(): Promise<number> {
+    if (!this.paypal?.getAuthorization) return 0
+    let closed = 0
+    const nowMs = this.now().getTime()
+    for (const held of this.repo.openHolds()) {
+      if (!held.expires_at || Date.parse(held.expires_at) > nowMs) continue
+      const live = await this.paypal.getAuthorization(held.authorization_id).catch(() => null)
+      if (!live || !['EXPIRED', 'VOIDED', 'DENIED'].includes(live.status)) continue
+      const now = this.iso()
+      this.repo.transaction(() => {
+        this.repo.closeHold(held.proposal_id, { status: 'expired', voidReason: `PayPal says the hold is ${live.status.toLowerCase()}` }, now)
+        if (this.repo.transitionPhase(held.proposal_id, ['authorized'], 'voided', now)) {
+          this.repo.insertEvent(randomUUID(), held.proposal_id, 'hold.expired', 'hold.expired', { authorizationId: held.authorization_id, status: live.status }, now)
+        }
+      })
+      closed += 1
+    }
+    return closed
   }
 
   /** Money out. Sends one PayPal Payouts item from the lock, then reads it back from PayPal and checks it. */
@@ -1931,6 +2190,52 @@ export class MandateService {
     return { live: live ? under(live.body) : null, draft: rules ? under(rules) : null }
   }
 
+  /**
+   * What a hostile proposer could spend against, read from the ledger: this month's reservations, the settled client
+   * payments and what each has already promised, and whether Mandate or autopilot is paused. The same facts the gate
+   * is given for a real request, gathered once.
+   */
+  blastFacts(rules?: WarrantBody): BlastFacts {
+    const live = this.repo.latestWarrant()
+    if (!live) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+    const body = rules ?? live.body
+    const now = this.now()
+    const nowIso = now.toISOString()
+    const window = monthWindow(now, body.timezone)
+    const safety = this.options.safety?.state() ?? NOT_PAUSED
+    return {
+      nowMs: now.getTime(),
+      reservedCents: this.reservation(live.id, body, nowIso).reservedCents,
+      charges: this.repo.settledCharges(100).map((row) => ({
+        ...this.fundingState(row),
+        captureId: row.capture_id!,
+        category: row.category,
+        duplicate: this.repo.breakOpen(row.id, 'capture.duplicate'),
+      })),
+      autoRefundUsedCents: this.repo.autoRefundUsedCents(live.id, window.start, window.end, body.currency),
+      paused: safety.paused,
+      autopilotPaused: Boolean(safety.autopilotPaused),
+    }
+  }
+
+  /** The most that can leave under the live rules, and under a draft if one is given. Nothing is written or sent. */
+  blast(rules?: WarrantBody): { live: BlastRadius; draft: BlastRadius | null } {
+    const live = this.repo.latestWarrant()
+    if (!live) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+    return {
+      live: blastRadius(live.body, this.blastFacts()),
+      draft: rules ? blastRadius(rules, this.blastFacts(rules)) : null,
+    }
+  }
+
+  /** A hostile proposer played against the gate, on a copy of the ledger. Nothing is written, filed or sent. */
+  attack(rules?: WarrantBody): AttackReport & { of: 'live' | 'draft' } {
+    const live = this.repo.latestWarrant()
+    if (!live) throw new Problem(404, 'warrant.missing', 'Warrant is missing', 'No warrant has been written.')
+    const body = rules ?? live.body
+    return { ...runAttacks(body, this.blastFacts(rules)), of: rules ? 'draft' : 'live' }
+  }
+
   /** The live rules, or null when the studio has not written any yet. */
   liveRules(): WarrantBody | null {
     return this.repo.latestWarrant()?.body ?? null
@@ -2099,6 +2404,10 @@ export class MandateService {
       resuming = this.repo.hasLiveAttempt(row.id, row.updated_at)
     } else if (!RESUME_PHASES.has(row.phase) || !row.cart_hash || row.gate === 'DENY') {
       throw new Problem(409, 'proposal.state', 'Proposal cannot be captured', `Phase is ${row.phase}.`)
+    } else if (row.phase === 'authorized' && !this.releasing.has(row.id)) {
+      // Held money moves only when it is released: the client approved the work, or the review window they agreed to
+      // ran out. Not the owner's Settle button, not a sweep, not an agent.
+      throw new Problem(409, 'hold.client_decides', 'This money is in the client\'s hold', 'It is captured when the client approves the work, or when the review window they agreed to runs out. Nobody else can take it.', { proposalId: row.id })
     }
     const fields = this.cartFields(row)
     if (cartHash(fields) !== row.cart_hash) {
@@ -2132,7 +2441,7 @@ export class MandateService {
         })
       }
     }
-    const resume = row.phase === 'capture_inflight' ? (row.payout_batch_id ? 'payout_sent' : row.invoice_id ? 'invoice_sent' : row.order_id ? 'order_created' : 'locked') : row.phase
+    const resume = row.phase === 'capture_inflight' ? this.restingPhase(row) : row.phase
     this.repo.setPhase(row.id, 'capture_inflight', now)
     return { result: null, row, resume }
   }
@@ -2549,6 +2858,7 @@ function emptyWarrant(): WarrantBody {
     fundingRequired: false,
     contractorShareBps: 10_000,
     clearingDays: 0,
+    regretSeconds: 0,
     allowPartialPayment: false,
     risk: DEFAULT_RISK,
     frictionBudget: { modelFloor: 'needs_approval' },

@@ -513,11 +513,11 @@ export type Balance =
   | { available: false; reason: string }
   | { available: true; availableCents: number; withheldCents: number; asOf: string | null; currency: string }
 
-export type TodayAction = 'approve' | 'reject' | 'settle' | 'check' | 'remind' | 'cancel_payout' | 'open'
+export type TodayAction = 'approve' | 'reject' | 'settle' | 'check' | 'remind' | 'cancel_payout' | 'undo' | 'open'
 
 export type TodayItem = {
   id: string
-  kind: 'approval' | 'ready' | 'unclaimed' | 'held' | 'overdue' | 'autopilot_blocked' | 'dispute' | 'in_flight' | 'done' | 'stopped'
+  kind: 'approval' | 'ready' | 'unclaimed' | 'held' | 'overdue' | 'autopilot_blocked' | 'dispute' | 'in_flight' | 'regret' | 'done' | 'stopped'
   proposalId: string
   proposalKind: Kind
   title: string
@@ -528,6 +528,8 @@ export type TodayItem = {
   clause: string
   at: string
   how?: 'tap' | 'standing' | 'billing' | 'autopilot' | 'auto'
+  /** A request waiting out the owner's regret window: when it closes and the server sends it. */
+  until?: string
   actions: TodayAction[]
 }
 
@@ -597,6 +599,56 @@ export type Replay = {
   nowTap: number
   nowRefused: number
   nowAllowed: number
+}
+
+/** Money that could leave, split by how: payouts, and refunds back to clients. */
+export type Reach = { payoutsCents: number; refundsCents: number; totalCents: number }
+
+export type BlastLever = { id: string; sentence: string; toCents: number; patch: Partial<Omit<Warrant, 'id' | 'version' | 'createdAt'>> }
+
+/** The most money that can leave if everyone who may ask is fooled, hostile or wrong. See api/src/domain/blast.ts. */
+export type BlastRadius = {
+  currency: string
+  paused: boolean
+  /** Nobody presses anything. */
+  alone: Reach
+  aloneAgent: Reach
+  /** If the owner also presses Send on everything the rules lock without approval. */
+  queued: Reach
+  queuedAgent: Reach
+  monthCapCents: number
+  reservedCents: number
+  capLeftCents: number
+  lines: Array<{ id: string; cents: number; words: string }>
+  levers: BlastLever[]
+}
+
+export type AttackOutcome = 'refused' | 'tap' | 'send' | 'alone'
+
+export type Attack = {
+  id: string
+  name: string
+  tried: string
+  outcome: AttackOutcome
+  clause: string
+  detail: string
+  movedCents: number
+  hypothetical: boolean
+  fix: { sentence: string; patch: BlastLever['patch']; toCents: number } | null
+}
+
+export type AttackReport = {
+  of: 'live' | 'draft'
+  currency: string
+  hypothetical: boolean
+  imagined: { clientName: string; cents: number } | null
+  held: number
+  total: number
+  attacks: Attack[]
+  fuzz: { tried: number; refused: number; needTap: number; waitForSend: number; wentAlone: number; alone: Reach; queued: Reach; seed: number }
+  radius: BlastRadius
+  verdict: 'sealed' | 'send' | 'alone'
+  caveat: string
 }
 
 export type IntentFlag = { phrase: string; why: string }
@@ -692,4 +744,6 @@ export type PaySession = {
   currency: string
   description: string
   environment: 'sandbox' | 'live'
+  /** 'authorize' when the payment goes into a hold rather than to the studio. */
+  intent?: 'capture' | 'authorize'
 }

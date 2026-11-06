@@ -17,7 +17,10 @@ import type { PayMethod, PaySession } from '../lib/types'
 
 const WALLET_LABEL: Record<WalletMethod, string> = { paypal: 'PayPal', venmo: 'Venmo', paylater: 'Pay Later' }
 
-export function PaySheet({ token, proposalId, amountCents, currency, description, approveUrl, onPaid }: {
+/** A different door to the same two steps: a project stage paid into a hold opens and confirms through its own routes. */
+export type PayVia = { session: (method: PayMethod) => Promise<PaySession>; confirm: () => Promise<unknown>; hold?: boolean }
+
+export function PaySheet({ token, proposalId, amountCents, currency, description, approveUrl, onPaid, via }: {
   /** The link the buyer holds. Without one, the owner is paying, and the owner key is used. */
   token?: string
   proposalId: string
@@ -27,6 +30,7 @@ export function PaySheet({ token, proposalId, amountCents, currency, description
   /** The checkout link, shown only when PayPal's script cannot run on this page. */
   approveUrl?: string | null
   onPaid: () => void
+  via?: PayVia
 }) {
   const [session, setSession] = useState<PaySession | null>(null)
   const [checkout, setCheckout] = useState<WalletCheckout | null>(null)
@@ -46,10 +50,10 @@ export function PaySheet({ token, proposalId, amountCents, currency, description
   const openInstrument = useCallback((method: PayMethod) => {
     // One order at a time. A card and a wallet are different orders, and the clicks are queued so they cannot
     // overwrite each other halfway through.
-    const run = tail.current.then(() => (token ? api.paySession(token, proposalId, method) : api.paySessionOwner(proposalId, method)))
+    const run = tail.current.then(() => (via ? via.session(method) : token ? api.paySession(token, proposalId, method) : api.paySessionOwner(proposalId, method)))
     tail.current = run.then(() => undefined, () => undefined)
     return run
-  }, [token, proposalId])
+  }, [token, proposalId, via])
 
   const prepareCard = useCallback(() => openInstrument('card'), [openInstrument])
 
@@ -60,8 +64,15 @@ export function PaySheet({ token, proposalId, amountCents, currency, description
   })
   handlers.current = {
     async onApprove() {
-      setNotice('Capturing…')
+      setNotice(via?.hold ? 'Placing the hold…' : 'Capturing…')
       try {
+        if (via) {
+          await via.confirm()
+          setNotice(via.hold ? 'Held by PayPal' : 'Paid')
+          setFinished('captured')
+          onPaid()
+          return
+        }
         const paid = token ? await api.payCapture(token, proposalId) : await api.payCaptureOwner(proposalId)
         if (paid.phase === 'capture_pending') {
           setNotice('PayPal is reviewing this payment')
@@ -185,7 +196,7 @@ export function PaySheet({ token, proposalId, amountCents, currency, description
           <strong>{description}</strong>
           <Money cents={amountCents} currency={currency} size="lg" />
         </div>
-        <p>{finished === 'reviewing' ? 'PayPal is reviewing this payment' : 'Captured — receipt updated'}</p>
+        <p>{finished === 'reviewing' ? 'PayPal is reviewing this payment' : via?.hold ? 'Held by PayPal. Nothing reaches the studio until you approve the work.' : 'Captured — receipt updated'}</p>
       </div>
     )
   }
@@ -198,7 +209,7 @@ export function PaySheet({ token, proposalId, amountCents, currency, description
         <strong id={`pay-sheet-${proposalId}`}>{description}</strong>
         <Money cents={amountCents} currency={currency} size="lg" />
       </div>
-      <p className="fine">This amount is locked. It will not change while you pay.</p>
+      <p className="fine">{via?.hold ? 'This amount is locked. PayPal holds it on your side: the studio receives it only when you approve the work, or when the review window you agreed to ends.' : 'This amount is locked. It will not change while you pay.'}</p>
       <div className="pay-live" role="status" aria-live="polite">{notice}</div>
       {problem ? <p className="pay-problem" role="alert">{problem}</p> : null}
       {anyWallet && checkout ? (
@@ -222,6 +233,7 @@ export function PaySheet({ token, proposalId, amountCents, currency, description
           initialSession={session}
           cardFields={checkout.card}
           prepareCard={prepareCard}
+          confirm={via ? via.confirm : undefined}
           paused={busy}
           onActivity={setCardBusy}
           onPaid={(result) => {

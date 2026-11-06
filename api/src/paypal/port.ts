@@ -23,6 +23,8 @@ export type LiveOrder = {
    * is how a capture whose answer was lost (a timeout, a crash) is recovered without asking PayPal to capture again.
    */
   capture?: CapturedPayment | null
+  /** The hold PayPal placed on this order, when it was opened to AUTHORIZE and has been authorized. */
+  authorization?: HeldPayment | null
 }
 
 export type CapturedPayment = {
@@ -67,6 +69,26 @@ export type LivePayout = {
   } | null
 }
 
+/**
+ * A hold: PayPal reserved the buyer's money on an order opened with `intent: AUTHORIZE`, and nothing reached the
+ * studio yet. It is captured (the money moves) or voided (the buyer was never charged). PayPal honours the funds for
+ * three days and keeps the authorization valid for twenty-nine; `honorUntil` and `expiresAt` say when, as PayPal
+ * reported them where it did, and as PayPal's documented windows where it did not.
+ */
+export type HeldPayment = {
+  authorizationId: string
+  /** CREATED or PENDING are a live hold. CAPTURED, VOIDED, EXPIRED and DENIED are not. */
+  status: string
+  amountCents: number
+  currency: string
+  customId: string | null
+  /** When PayPal stops honouring the funds (end of the honor period). */
+  honorUntil: string | null
+  /** When the authorization itself expires and can no longer be captured. */
+  expiresAt: string | null
+  payerEmail: string | null
+}
+
 import type { UpstreamStatus } from './resilience'
 
 export type PayPalPort = {
@@ -93,7 +115,22 @@ export type PayPalPort = {
     /** Where PayPal sends the buyer after they approve or cancel. */
     returnUrl?: string
     cancelUrl?: string
+    /**
+     * CAPTURE (the default) takes the money when the order is captured. AUTHORIZE only reserves it: the money is held
+     * on the buyer's side until it is captured or voided. A held order is a different order, so the request id says so.
+     */
+    intent?: 'CAPTURE' | 'AUTHORIZE'
   }): Promise<CreatedOrder>
+  /** Places the hold on an approved AUTHORIZE order. Idempotent per request: a repeat returns the same hold. */
+  authorizeOrder?(orderId: string, proposalId: string): Promise<HeldPayment>
+  /** Re-reads a hold. */
+  getAuthorization?(authorizationId: string): Promise<HeldPayment>
+  /** Takes the held money. One final capture of exactly the held amount. */
+  captureAuthorization?(input: { authorizationId: string; proposalId: string; amountCents: number; currency: string; invoiceId: string }): Promise<CapturedPayment>
+  /** Releases the hold back to the buyer. Nothing was ever charged. */
+  voidAuthorization?(authorizationId: string): Promise<{ status: string }>
+  /** Renews a hold past PayPal's three-day honor period, within its twenty-nine-day life. Returns the new hold. */
+  reauthorize?(input: { authorizationId: string; amountCents: number; currency: string; proposalId: string }): Promise<HeldPayment>
   getOrder(orderId: string): Promise<LiveOrder>
   /**
    * The card a buyer paid an order with, and the issuer's 3-D Secure answer, as PayPal reports them on the order's

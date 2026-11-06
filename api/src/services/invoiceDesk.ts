@@ -312,6 +312,9 @@ function statusOf(phase: string): InvoiceStatus {
     case 'locked': case 'invoice_draft': case 'capture_inflight': return 'approved'
     // An order opened for the client, an invoice out, a payment PayPal has accepted but not finished, a payment held on a mismatch: all unpaid so far.
     case 'order_created': case 'invoice_sent': case 'capture_pending': case 'mismatch_hold': return 'sent'
+    // Paid into a hold: reserved on the client's side, not yet the studio's money.
+    case 'authorized': return 'sent'
+    case 'voided': return 'cancelled'
     case 'settled_short': return 'part_paid'
     case 'captured': return 'paid'
     case 'invoice_cancelled': return 'cancelled'

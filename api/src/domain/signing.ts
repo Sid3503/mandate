@@ -76,6 +76,14 @@ export const acceptanceMessage = (row: { id: string; deal_id: string; milestone:
   `mandate:accept:v1\n${row.id}\n${row.deal_id}\n${row.milestone}\n${row.proof_hash}\n${row.status}`
 export const proofHash = (url: string) => createHash('sha256').update(url.trim()).digest('hex')
 export const dealMessage = (dealId: string, termsHash: string) => `mandate:deal:v1\n${dealId}\n${termsHash}`
+/** What the studio signs when it sends a plan: this version of this project's terms, exactly. */
+export const planMessage = (projectId: string, version: number, termsHash: string) => `mandate:plan:v1\n${projectId}\n${version}\n${termsHash}`
+/** The client's answer to one plan version, recorded and signed the moment they gave it. */
+export const planDecisionMessage = (projectId: string, version: number, termsHash: string, decision: 'agreed' | 'changes') => `mandate:plan-decision:v1\n${projectId}\n${version}\n${termsHash}\n${decision}`
+/** A stage released: this charge, for exactly the files in this manifest, by the client or by the window they agreed to. */
+export const releaseMessage = (stageId: string, chargeId: string, manifestHash: string, decidedBy: 'client' | 'review_window') => `mandate:release:v1\n${stageId}\n${chargeId}\n${manifestHash}\n${decidedBy}`
+/** A review left by a client who paid: the project, the stars, the text's hash and the PayPal captures that prove payment. */
+export const reviewMessage = (projectId: string, stars: number, textHash: string, captureIds: string[]) => `mandate:review:v1\n${projectId}\n${stars}\n${textHash}\n${captureIds.join(',')}`
 
 export function ephemeralSigner(): Signer {
   return new Signer(generateKeyPairSync('ed25519').privateKey)

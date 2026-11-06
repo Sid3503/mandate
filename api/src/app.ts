@@ -196,7 +196,8 @@ const OWNER_ONLY = [
   // whose sheet that is; the other side's sheet stays out of reach, so both limits stay private.
   { method: 'POST', pattern: /^\/v1\/negotiations(\/stream)?$/ },
   { method: 'POST', pattern: /^\/v1\/replay$/ },
-  { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay|try|cases|simulate|policy|policy\/stream)$/ },
+  { method: 'POST', pattern: /^\/v1\/rules\/(draft|draft\/stream|replay|try|cases|simulate|policy|policy\/stream|blast|attack)$/ },
+  { method: 'GET', pattern: /^\/v1\/blast-radius$/ },
   { method: 'GET', pattern: /^\/v1\/payees(\/[^/]+)?$/ },
   { method: 'POST', pattern: /^\/v1\/payees\/[^/]+\/(change|confirm-change|cancel-change|attest)$/ },
   { method: 'POST', pattern: /^\/v1\/ask$/ },
@@ -213,6 +214,8 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/client-keys$/ },
   { method: 'POST', pattern: /^\/v1\/client-keys$/ },
   { method: 'POST', pattern: /^\/v1\/client-keys\/[^/]+\/(revoke|rotate|upgrade)$/ },
+  { method: 'POST', pattern: /^\/v1\/projects\/[^/]+\/(link\/rotate|stages\/[^/]+\/release-hold)$/ },
+  { method: 'PUT', pattern: /^\/v1\/profile$/ },
   { method: 'GET', pattern: /^\/v1\/jobs\/[^/]+\/shares$/ },
   { method: 'POST', pattern: /^\/v1\/jobs\/[^/]+\/shares$/ },
   { method: 'POST', pattern: /^\/v1\/shares\/[^/]+\/revoke$/ },
@@ -225,7 +228,7 @@ const OWNER_ONLY = [
   { method: 'GET', pattern: /^\/v1\/notify$/ },
   { method: 'POST', pattern: /^\/v1\/notify\/test$/ },
   { method: 'POST', pattern: /^\/v1\/studio\/turn$/ },
-  { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
+  { method: 'POST', pattern: /^\/v1\/proposals\/[^/]+\/(approve|reject|undo|capture|cancel-payout|remind-invoice|cancel-invoice)$/ },
   { method: 'GET', pattern: /^\/v1\/proposals\/[^/]+\/invoice-qr$/ },
   { method: 'POST', pattern: /^\/v1\/pay\/(session|capture)$/ },
   { method: 'POST', pattern: /^\/v1\/workspace\/passkey-rule$/ },
@@ -294,6 +297,14 @@ function requireOwnOrigin(c: { req: { header(name: string): string | undefined }
  */
 function isSharePay(method: string, path: string): boolean {
   return method === 'POST' && /^\/v1\/share\/[^/]+\/pay\/(session|capture)$/.test(path)
+}
+
+/**
+ * A client's project page carries its own proof in the path (a link the studio sent), and a delivery manifest and a
+ * studio's public profile are public by design. None of them needs a key, and none can reach the studio's own routes.
+ */
+function isProjectPublic(path: string): boolean {
+  return path.startsWith('/v1/portal/') || /^\/v1\/manifests\/[^/]+$/.test(path) || /^\/v1\/profiles\/[^/]+$/.test(path)
 }
 
 function isWeb(path: string): boolean {
@@ -525,7 +536,7 @@ export function createApp(deps: AppDeps) {
   })
 
   app.use('*', async (c, next) => {
-    if (isAnonymous(c.req.path) || isWeb(c.req.path) || isShareRead(c.req.method, c.req.path) || isSharePay(c.req.method, c.req.path)) return next()
+    if (isAnonymous(c.req.path) || isWeb(c.req.path) || isShareRead(c.req.method, c.req.path) || isSharePay(c.req.method, c.req.path) || isProjectPublic(c.req.path)) return next()
     if (!deps.nested && c.req.path.startsWith('/w/')) return next()
     const header = c.req.header('authorization') ?? ''
     const token = header.startsWith('Bearer ') ? header.slice(7).trim() : ''
@@ -610,7 +621,8 @@ export function createApp(deps: AppDeps) {
     }
     if (c.get('memberRole') === 'approver' && !isDemoReset && OWNER_ONLY.some((rule) => rule.method === c.req.method && rule.pattern.test(c.req.path))) {
       const pause = c.req.method === 'POST' && (/^\/v1\/safety\/pause(\/autopilot)?$/.test(c.req.path) || /^\/v1\/agents\/[^/]+\/(pause|suspend)$/.test(c.req.path))
-      const approve = c.req.method === 'POST' && /^\/v1\/proposals\/[^/]+\/approve$/.test(c.req.path)
+      // Undo only stops money from leaving, so an approver may press it as readily as pause.
+      const approve = c.req.method === 'POST' && /^\/v1\/proposals\/[^/]+\/(approve|undo)$/.test(c.req.path)
       // Today is the queue. An approver reads it and acts on what is waiting. They still cannot publish rules or send money.
       const readToday = c.req.method === 'GET' && c.req.path === '/v1/today'
       if (!pause && !approve && !readToday) throw new Problem(403, 'auth/forbidden', 'Outside this role', 'An approver can read Today, approve up to their limit, and pause. They cannot publish rules or send money.')
@@ -902,6 +914,130 @@ export function createApp(deps: AppDeps) {
     const view = settled.body as { id: string; phase: string; amountCents: number; currency: string; captureId: string | null; capturedAmountCents: number | null }
     return c.json({ id: view.id, phase: view.phase, amountCents: view.amountCents, currency: view.currency, captureId: view.captureId, capturedAmountCents: view.capturedAmountCents }, settled.status as 200)
   })
+  // ---------- projects: a plan the client approves, sealed delivery, stages paid into PayPal holds ----------
+  services.projects.useModels(() => ({ primary: deps.model ?? null, fallback: deps.drafterModel && deps.drafterModel.name !== deps.model?.name ? deps.drafterModel : null }))
+  const studioOnly = (c: { get: (key: 'principal') => Principal }): Principal => {
+    const principal = c.get('principal')
+    if (principal.role === 'agent' || principal.side === 'buyer') throw new Problem(403, 'auth.forbidden', 'Projects are the studio\'s', 'Use the owner or studio key, or sign in.')
+    return principal
+  }
+  const fileFrom = async (c: { req: { parseBody: () => Promise<Record<string, unknown>> } }) => {
+    const body = await c.req.parseBody().catch(() => { throw new Problem(400, 'request.invalid', 'Send the file as a form', 'Use multipart/form-data with a field named file.') })
+    const file = body.file
+    if (!file || typeof file === 'string' || typeof (file as Blob).arrayBuffer !== 'function') throw new Problem(422, 'file.missing', 'No file was sent', 'Attach a file in the field named file.')
+    return { name: String((file as File).name || 'file'), bytes: new Uint8Array(await (file as Blob).arrayBuffer()) }
+  }
+  const image = (body: Buffer | Uint8Array, type = 'image/jpeg') => new Response(new Uint8Array(body), { status: 200, headers: { 'content-type': type, 'cache-control': 'no-store, private', 'x-content-type-options': 'nosniff', 'content-disposition': 'inline', 'cross-origin-resource-policy': 'same-origin' } })
+
+  app.get('/v1/projects', (c) => { studioOnly(c); return c.json(services.projects.summary()) })
+  app.get('/v1/projects/ledger', (c) => { studioOnly(c); return c.json(services.projects.ledger()) })
+  app.patch('/v1/projects/:id/stages/:sid', async (c) => {
+    const who = studioOnly(c)
+    assertJson(c)
+    const body = z.object({ title: z.string().trim().min(1).max(120).optional(), amountCents: z.number().int().positive().max(100_000_000).optional(), dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).strict().safeParse(await readJson(c))
+    if (!body.success) throw invalidRequest(body.error)
+    return c.json(services.projects.editStage(c.req.param('id'), c.req.param('sid'), body.data, who))
+  })
+  app.post('/v1/projects/draft', async (c) => {
+    studioOnly(c)
+    assertJson(c)
+    const body = z.object({ brief: z.string().min(1).max(20_000), rate: z.string().max(200).nullable().optional(), currency: z.string().length(3).optional() }).strict().safeParse(await readJson(c))
+    if (!body.success) throw invalidRequest(body.error)
+    return c.json(await services.projects.draft(body.data))
+  })
+  app.post('/v1/projects/brief-import', async (c) => { studioOnly(c); return c.json(await services.projects.importBrief(await fileFrom(c))) })
+  app.post('/v1/projects', async (c) => {
+    const who = studioOnly(c)
+    assertJson(c)
+    return c.json(services.projects.create(await readJson(c), who), 201)
+  })
+  app.get('/v1/projects/:id', (c) => { studioOnly(c); return c.json(services.projects.studioView(c.req.param('id'))) })
+  app.put('/v1/projects/:id/plan', async (c) => {
+    const who = studioOnly(c)
+    assertJson(c)
+    return c.json(services.projects.editPlan(c.req.param('id'), await readJson(c), who))
+  })
+  app.post('/v1/projects/:id/send', (c) => c.json(services.projects.sendPlan(c.req.param('id'), studioOnly(c))))
+  app.post('/v1/projects/:id/link/rotate', (c) => { studioOnly(c); return c.json(services.projects.rotateLink(c.req.param('id'))) })
+  app.post('/v1/projects/:id/stages/:sid/files', async (c) => {
+    const who = studioOnly(c)
+    return c.json(await services.projects.upload(c.req.param('id'), c.req.param('sid'), await fileFrom(c), who), 201)
+  })
+  app.delete('/v1/projects/:id/files/:fid', (c) => { studioOnly(c); return c.json(services.projects.removeFile(c.req.param('id'), c.req.param('fid'))) })
+  app.get('/v1/projects/:id/files/:fid', (c) => {
+    studioOnly(c)
+    const { bytes, file } = services.projects.original(c.req.param('id'), c.req.param('fid'))
+    // The studio's own file. Images are shown inline; anything else is downloaded, never rendered in the console.
+    return new Response(new Uint8Array(bytes), { headers: { 'content-type': file.kind === 'image' ? file.mime : 'application/octet-stream', 'content-disposition': `${file.kind === 'image' ? 'inline' : 'attachment'}; filename="${encodeURIComponent(file.name)}"`, 'cache-control': 'no-store, private', 'x-content-type-options': 'nosniff', 'content-security-policy': 'sandbox' } })
+  })
+  app.post('/v1/projects/:id/stages/:sid/check', async (c) => { studioOnly(c); return c.json(await services.projects.check(c.req.param('id'), c.req.param('sid'))) })
+  app.post('/v1/projects/:id/stages/:sid/send', async (c) => c.json(await services.projects.sendForReview(c.req.param('id'), c.req.param('sid'), studioOnly(c))))
+  app.post('/v1/projects/:id/stages/:sid/remind', async (c) => c.json(await services.projects.remind(c.req.param('id'), c.req.param('sid'), studioOnly(c))))
+  app.post('/v1/projects/:id/stages/:sid/release-hold', async (c) => { studioOnly(c); return c.json(await services.projects.studioCancelStage(c.req.param('id'), c.req.param('sid'))) })
+  app.get('/v1/profile', (c) => { studioOnly(c); return c.json({ profile: services.projects.profile() }) })
+  app.put('/v1/profile', async (c) => { studioOnly(c); assertJson(c); return c.json(services.projects.saveProfile(await readJson(c) as Record<string, string>)) })
+
+  // Public by design: what a delivery contained (names, sizes, fingerprints, never bytes), and a studio's verified record.
+  app.get('/v1/manifests/:id', (c) => c.json(services.projects.manifest(c.req.param('id'))))
+  app.get('/v1/profiles/:handle', (c) => c.json(services.projects.publicProfile(c.req.param('handle'))))
+
+  // The client's project page. The link is the proof; anything that acts must also come from this console.
+  const portal = (c: { req: { param: (name: string) => string } }) => c.req.param('token')
+  app.get('/v1/portal/:token', (c) => c.json(services.projects.portalView(portal(c))))
+  app.post('/v1/portal/:token/plan/agree', async (c) => {
+    assertJson(c); requireOwnOrigin(c, deps)
+    const body = z.object({ version: z.number().int().min(1) }).strict().safeParse(await readJson(c))
+    if (!body.success) throw invalidRequest(body.error)
+    return c.json(services.projects.agreePlan(portal(c), body.data.version))
+  })
+  app.post('/v1/portal/:token/plan/changes', async (c) => {
+    assertJson(c); requireOwnOrigin(c, deps)
+    const body = z.object({ note: z.string().max(2000) }).strict().safeParse(await readJson(c))
+    if (!body.success) throw invalidRequest(body.error)
+    return c.json(services.projects.askPlanChanges(portal(c), body.data.note))
+  })
+  app.post('/v1/portal/:token/stages/:sid/pay/session', async (c) => {
+    assertJson(c); requireOwnOrigin(c, deps)
+    const body = z.object({ instrument: z.enum(['card', 'paypal', 'venmo', 'paylater']).default('paypal') }).strict().safeParse(await readJson(c))
+    if (!body.success) throw invalidRequest(body.error)
+    try {
+      return c.json(await services.projects.paySession(portal(c), c.req.param('sid'), body.data.instrument))
+    } catch (error) {
+      if (error instanceof PayPalError) throw paypalProblem(error, 'to open the payment form', {})
+      throw error
+    }
+  })
+  app.post('/v1/portal/:token/stages/:sid/pay/confirm', async (c) => { requireOwnOrigin(c, deps); return c.json(await services.projects.payConfirm(portal(c), c.req.param('sid'))) })
+  app.post('/v1/portal/:token/stages/:sid/approve', async (c) => { requireOwnOrigin(c, deps); return c.json(await services.projects.approveStage(portal(c), c.req.param('sid'))) })
+  app.post('/v1/portal/:token/stages/:sid/changes', async (c) => {
+    assertJson(c); requireOwnOrigin(c, deps)
+    const body = z.object({ note: z.string().max(2000) }).strict().safeParse(await readJson(c))
+    if (!body.success) throw invalidRequest(body.error)
+    return c.json(services.projects.requestStageChanges(portal(c), c.req.param('sid'), body.data.note))
+  })
+  app.post('/v1/portal/:token/stages/:sid/cancel', async (c) => { requireOwnOrigin(c, deps); return c.json(await services.projects.cancelStage(portal(c), c.req.param('sid'))) })
+  app.post('/v1/portal/:token/files/:fid/session', (c) => { requireOwnOrigin(c, deps); return c.json(services.projects.openSession(portal(c), c.req.param('fid'))) })
+  app.get('/v1/portal/:token/review/:code', async (c) => image(await services.projects.reviewImage(portal(c), c.req.param('code'))))
+  app.get('/v1/portal/:token/review/:code/closeup', async (c) => {
+    const made = await services.projects.closeupImage(portal(c), c.req.param('code'), Number(c.req.query('x')), Number(c.req.query('y')))
+    const response = image(made.jpeg)
+    response.headers.set('x-closeups-left', String(made.left))
+    return response
+  })
+  app.get('/v1/portal/:token/files/:fid/thumb', async (c) => image(await services.projects.thumbnail(portal(c), c.req.param('fid'))))
+  app.get('/v1/portal/:token/files/:fid/download', (c) => {
+    const { bytes, file } = services.projects.download(portal(c), c.req.param('fid'), c.req.query('inline') !== '1')
+    // An unlocked image can be shown in the page; everything else is only ever saved, never rendered.
+    if (c.req.query('inline') === '1' && file.kind === 'image') return new Response(new Uint8Array(bytes), { headers: { 'content-type': file.mime, 'content-disposition': 'inline', 'cache-control': 'private, max-age=300', 'x-content-type-options': 'nosniff', 'content-security-policy': 'sandbox' } })
+    return new Response(new Uint8Array(bytes), { headers: { 'content-type': 'application/octet-stream', 'content-disposition': `attachment; filename="${encodeURIComponent(file.name)}"`, 'cache-control': 'no-store, private', 'x-content-type-options': 'nosniff', 'x-sha256': file.sha256 } })
+  })
+  app.post('/v1/portal/:token/review', async (c) => {
+    assertJson(c); requireOwnOrigin(c, deps)
+    const body = z.object({ stars: z.number().int().min(1).max(5), text: z.string().max(1000) }).strict().safeParse(await readJson(c))
+    if (!body.success) throw invalidRequest(body.error)
+    return c.json(services.projects.leaveReview(portal(c), body.data))
+  })
+
   // The same two steps for the owner, who may pay a bill themselves or open it on another screen.
   app.post('/v1/pay/session', async (c) => {
     assertJson(c)
@@ -1340,6 +1476,11 @@ export function createApp(deps: AppDeps) {
     await assertEmpty(c)
     return send(c, service.reject(c.req.param('id')))
   })
+  // Take back a request a rule was about to send by itself, while its regret window is open.
+  app.post('/v1/proposals/:id/undo', async (c) => {
+    await assertEmpty(c)
+    return send(c, service.undo(c.req.param('id')))
+  })
   app.post('/v1/proposals/:id/cancel-payout', async (c) => {
     await assertEmpty(c)
     return send(c, await service.cancelUnclaimedPayout(c.req.param('id')))
@@ -1687,6 +1828,21 @@ export function createApp(deps: AppDeps) {
     const funding = service.tryFunding()
     const cases = generateCases(body, funding).map((item) => ({ id: item.id, label: item.label, request: item.request, ...service.tryRequest(ProposalCreateSchema.parse(item.request), parsed.data.rules) }))
     return c.json({ cases, funding })
+  })
+  // The most that can leave if every proposer is fooled, under the live rules and (optionally) a draft. Reads only.
+  app.get('/v1/blast-radius', (c) => c.json(service.blast().live))
+  app.post('/v1/rules/blast', async (c) => {
+    assertJson(c)
+    const parsed = CasesSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return c.json(service.blast(parsed.data.rules))
+  })
+  // Play a hostile proposer against the gate on a copy of the ledger. Nothing is filed, written or sent to PayPal.
+  app.post('/v1/rules/attack', async (c) => {
+    assertJson(c)
+    const parsed = CasesSchema.safeParse(await readJson(c))
+    if (!parsed.success) throw invalidRequest(parsed.error)
+    return c.json(service.attack(parsed.data.rules))
   })
   app.post('/v1/rules/replay', async (c) => {
     assertJson(c)
@@ -2205,11 +2361,14 @@ function rememberVerifiedKey(token: string): void {
 export const DEFAULT_BODY_LIMIT = 256 * 1024
 /** The PayPal webhook, the agent door (which keeps its own 1 MB check too) and an AG Studio turn carry more. */
 export const LARGE_BODY_LIMIT = 1024 * 1024
+/** A delivered file or an attached brief: up to 15 MB of file, plus the form around it. */
+export const UPLOAD_BODY_LIMIT = 16 * 1024 * 1024
 
 /** The cap for a path, judged by what the path is inside its studio, so `/w/<id>/v1/webhooks/paypal` is the webhook. */
 export function bodyLimitFor(path: string): number {
   const inner = path.replace(/^\/w\/[^/]+/, '') || '/'
   if (inner === '/v1/webhooks/paypal' || inner === '/mcp' || inner.startsWith('/mcp/') || inner === '/v1/studio/turn') return LARGE_BODY_LIMIT
+  if (inner === '/v1/projects/brief-import' || /^\/v1\/projects\/[^/]+\/stages\/[^/]+\/files$/.test(inner)) return UPLOAD_BODY_LIMIT
   return DEFAULT_BODY_LIMIT
 }
 
@@ -2217,7 +2376,11 @@ function bodyLimitByPath() {
   const tooLarge = (c: Context) => sendProblem(c, new Problem(413, 'request.too_large', 'Request is too large', 'The body is over the size this route accepts. Send less.'))
   const small = bodyLimit({ maxSize: DEFAULT_BODY_LIMIT, onError: tooLarge })
   const large = bodyLimit({ maxSize: LARGE_BODY_LIMIT, onError: tooLarge })
-  return (c: Context, next: () => Promise<void>) => (bodyLimitFor(c.req.path) === LARGE_BODY_LIMIT ? large : small)(c, next)
+  const upload = bodyLimit({ maxSize: UPLOAD_BODY_LIMIT, onError: tooLarge })
+  return (c: Context, next: () => Promise<void>) => {
+    const limit = bodyLimitFor(c.req.path)
+    return (limit === UPLOAD_BODY_LIMIT ? upload : limit === LARGE_BODY_LIMIT ? large : small)(c, next)
+  }
 }
 
 function sameSecret(presented: string, expected: string): boolean {
