@@ -1,5 +1,5 @@
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
-import { session, workspaceFromKey } from './session'
+import { session, workspaceFromKey, workspaceId } from './session'
 import type { ConnectionCheck } from './connect'
 import type { InvoiceDraft, InvoicesList } from './invoices'
 import type { AttemptRow, BreakDetail, BreaksList, FixResult as BreakFixResult, ScanResult as BreakScanResult } from './breaks'
@@ -69,12 +69,12 @@ function scopePath(path: string, bearer?: string | null): { path: string; creden
   const embedded = bearer ? workspaceFromKey(bearer) : null
   // The default studio is not a studio: it is the server itself. Its requests are never prefixed, so a server with
   // workspaces switched off (which answers /w/... with 404) still serves a console that remembered `ws_default`.
-  const chosen = embedded || session.workspace()
+  const chosen = workspaceId(embedded) || session.workspace()
   const workspace = chosen && chosen !== 'ws_default' ? chosen : null
   const tenant = Boolean(workspace) && (path.startsWith('/v1/') || path.startsWith('/auth/') || path.startsWith('/mcp'))
   // A chosen workspace, the default one included, still marks the request as the console's own (a cookie session
   // may only write when it does), whatever the path.
-  return { path: tenant && workspace ? `/w/${workspace}${path}` : path, credentials: chosen ? 'include' : 'same-origin', client: Boolean(chosen) }
+  return { path: tenant && workspace ? `/w/${encodeURIComponent(workspace)}${path}` : path, credentials: chosen ? 'include' : 'same-origin', client: Boolean(chosen) }
 }
 
 export async function request<T>(path: string, options: Options = {}): Promise<T> {

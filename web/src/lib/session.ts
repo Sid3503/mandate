@@ -6,6 +6,11 @@ export function workspaceFromKey(key: string): string | null {
   return id
 }
 
+/** `ws_default`, or `ws_` and 20 lowercase base32 characters: the same shape the server's isWorkspaceId accepts. */
+export function workspaceId(value: string | null | undefined): string | null {
+  return value && (value === 'ws_default' || /^ws_[a-z2-7]{20}$/.test(value)) ? value : null
+}
+
 const KEY = 'mandate.apiKey'
 const WORKSPACE = 'mandate.workspace'
 const MODE = 'mandate.workspaceMode'
@@ -35,16 +40,18 @@ export const session = {
   },
   workspace(): string | null {
     try {
-      const q = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('workspace') : null
+      // A workspace id becomes the /w/<id> prefix of every URL this page builds, so only the server's own shape is
+      // accepted, wherever it came from (the address bar, this tab, a cookie). Anything else is as if none was given.
+      const q = typeof window !== 'undefined' ? workspaceId(new URLSearchParams(window.location.search).get('workspace')) : null
       if (q) {
         sessionStorage.setItem(WORKSPACE, q)
         return q
       }
-      const stored = sessionStorage.getItem(WORKSPACE)
+      const stored = workspaceId(sessionStorage.getItem(WORKSPACE))
       if (stored) return stored
       if (typeof document !== 'undefined') {
         const match = document.cookie.match(/(?:^|;\s*)(?:mandate_workspace|mnd_workspace)=([^;]+)/)
-        if (match && match[1]) return decodeURIComponent(match[1])
+        if (match && match[1]) return workspaceId(decodeURIComponent(match[1]))
       }
       return null
     } catch {
@@ -52,6 +59,7 @@ export const session = {
     }
   },
   setWorkspace(id: string): void {
+    if (!workspaceId(id)) return
     sessionStorage.setItem(WORKSPACE, id)
   },
   /** Drop the workspace this tab thinks it is in. The session cookie is left as it is. */
