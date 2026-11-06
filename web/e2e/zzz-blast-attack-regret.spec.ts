@@ -6,6 +6,8 @@ const EVIDENCE = 'https://www.figma.com/file/northwind-logo'
 const shots = (page: Page, name: string) => page.screenshot({ path: `e2e/shots/${test.info().project.name}-${name}.png`, fullPage: true, animations: 'disabled' })
 
 async function unlock(page: Page, key: string) {
+  // The first-visit tour would open over Today and take the click meant for the band (seen on the slower CI runner).
+  await page.addInitScript(() => localStorage.setItem('mandate.tour.welcome', '1'))
   await page.goto('/app/unlock')
   await page.getByLabel('API key').fill(key)
   await page.getByRole('button', { name: 'Unlock console' }).click()

@@ -3,6 +3,7 @@ import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
 import { call, closeAll, harness, NOW, OWNER_KEY, STUDIO_KEY } from './support'
 import { manifestFor, manifestHash, planFlags, promisedCount, ruleCheck, statedBudgetCents, statedDeadlineDays } from '../src/domain/project'
+import { importBrief } from '../src/services/briefImport'
 
 afterEach(closeAll)
 
@@ -352,6 +353,19 @@ describe('project facts read by code', () => {
     expect(items.find((item) => item.label === 'Final logo (SVG, PNG)' && /SVG promised/.test(item.note))?.status).toBe('missing')
     expect(items.some((item) => item.label === 'Duplicates')).toBe(true)
     expect(items.find((item) => item.label === '6 posts at 1080x1080' && /smaller/.test(item.note))?.status).toBe('partial')
+  })
+
+  it('reads a Word brief as text: tags never survive, and entities are decoded once', async () => {
+    const xml = Buffer.from('<w:document><w:body><w:p><w:t>We need a logo &amp;lt;script&amp;gt;</w:t></w:p><w:p><w:t>&lt;sc&lt;x&gt;ript&gt; Budget $900</w:t></w:p><sc<w:t/>ript>x</sc<w:t/>ript></w:body></w:document>')
+    const name = Buffer.from('word/document.xml')
+    const local = Buffer.alloc(30); local.writeUInt32LE(0x04034b50, 0); local.writeUInt32LE(xml.length, 18); local.writeUInt32LE(xml.length, 22); local.writeUInt16LE(name.length, 26)
+    const central = Buffer.alloc(46); central.writeUInt32LE(0x02014b50, 0); central.writeUInt32LE(xml.length, 20); central.writeUInt32LE(xml.length, 24); central.writeUInt16LE(name.length, 28); central.writeUInt32LE(0, 42)
+    const body = Buffer.concat([local, name, xml])
+    const end = Buffer.alloc(22); end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(1, 8); end.writeUInt16LE(1, 10); end.writeUInt32LE(central.length + name.length, 12); end.writeUInt32LE(body.length, 16)
+    const read = await importBrief({ name: 'brief.docx', bytes: new Uint8Array(Buffer.concat([body, central, name, end])) }, [])
+    expect(read.text).toContain('We need a logo &lt;script&gt;')
+    expect(read.text).toContain('Budget $900')
+    expect(read.text).not.toMatch(/<script/i)
   })
 
   it('hashes the same files to the same manifest, in any order', () => {

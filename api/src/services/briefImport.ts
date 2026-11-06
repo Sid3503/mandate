@@ -29,8 +29,13 @@ export async function importBrief(file: { name: string; bytes: Uint8Array }, mod
   if (head[0] === 0x50 && head[1] === 0x4b) {
     const xml = unzipEntry(file.bytes, 'word/document.xml')
     if (!xml) throw new Problem(422, 'brief.unreadable', 'That is not a Word file we can read', 'Attach a .docx, a PDF, or paste the text.')
-    const text = xml.replace(/<\/w:p>/g, '\n').replace(/<w:tab\/>/g, '\t').replace(/<w:br\/>/g, '\n').replace(/<[^>]+>/g, '')
-      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/\n{3,}/g, '\n\n').trim()
+    let markup = xml.replace(/<\/w:p>/g, '\n').replace(/<w:tab\/>/g, '\t').replace(/<w:br\/>/g, '\n')
+    // Strip tags until none are left, so a tag split around another (<sc<x>ript>) cannot survive one pass.
+    for (let previous = ''; previous !== markup;) { previous = markup; markup = markup.replace(/<[^<>]*>/g, '') }
+    // Entities are decoded in one pass, so "&amp;lt;" stays the text "&lt;" instead of becoming "<". The brief is
+    // only ever shown as text and handed to a model as data, never rendered as markup.
+    const entities: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }
+    const text = markup.replace(/[<>]/g, '').replace(/&(amp|lt|gt|quot|apos);/g, (_match, name: string) => entities[name]!).replace(/\n{3,}/g, '\n\n').trim()
     if (text.length < 5) throw new Problem(422, 'brief.unreadable', 'That Word file has no text', 'Paste the brief instead.')
     return { text: text.slice(0, 20_000), source: name, pages: null, readBy: 'code', model: null }
   }

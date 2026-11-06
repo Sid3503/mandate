@@ -110,22 +110,30 @@ export const projectsApi = {
   publicProfile: (handle: string) => request<PublicProfile>(`/v1/profiles/${enc(handle)}`, { key: '' }),
 }
 
+/**
+ * The link token, as it may appear in a path: an id, a tilde, a base64url secret, and nothing else. Anything else in the
+ * address bar becomes a token that matches no link, so it can never shape a URL the page builds.
+ */
+function tok(token: string): string {
+  return /^[A-Za-z0-9_-]{1,40}~[A-Za-z0-9_-]{1,80}$/.test(token) ? encodeURIComponent(token) : 'invalid~invalid'
+}
+
 /** The client's page. The link in the address bar is the only key, so no stored key is ever sent with these. */
 export const portalApi = {
-  view: (token: string) => request<PortalView>(`/v1/portal/${token}`, { key: '' }),
-  agree: (token: string, version: number) => request<PortalView>(`/v1/portal/${token}/plan/agree`, { method: 'POST', body: { version }, key: '' }),
-  askPlanChanges: (token: string, note: string) => request<PortalView>(`/v1/portal/${token}/plan/changes`, { method: 'POST', body: { note }, key: '' }),
-  paySession: (token: string, stageId: string, instrument: PayMethod) => request<PaySession>(`/v1/portal/${token}/stages/${enc(stageId)}/pay/session`, { method: 'POST', body: { instrument }, key: '' }),
-  payConfirm: (token: string, stageId: string) => request<PortalView>(`/v1/portal/${token}/stages/${enc(stageId)}/pay/confirm`, { method: 'POST', body: {}, key: '' }),
-  approve: (token: string, stageId: string) => request<PortalView>(`/v1/portal/${token}/stages/${enc(stageId)}/approve`, { method: 'POST', body: {}, key: '' }),
-  changes: (token: string, stageId: string, note: string) => request<PortalView>(`/v1/portal/${token}/stages/${enc(stageId)}/changes`, { method: 'POST', body: { note }, key: '' }),
-  cancel: (token: string, stageId: string) => request<PortalView>(`/v1/portal/${token}/stages/${enc(stageId)}/cancel`, { method: 'POST', body: {}, key: '' }),
-  openFile: (token: string, fileId: string) => request<{ session: string; expiresAt: string; closeupsLeft: number; width: number | null; height: number | null; name: string }>(`/v1/portal/${token}/files/${enc(fileId)}/session`, { method: 'POST', body: {}, key: '' }),
-  review: (token: string, stars: number, text: string) => request<PortalView>(`/v1/portal/${token}/review`, { method: 'POST', body: { stars, text }, key: '' }),
-  thumbUrl: (token: string, fileId: string) => scopedUrl(`/v1/portal/${token}/files/${enc(fileId)}/thumb`),
-  reviewUrl: (token: string, code: string) => scopedUrl(`/v1/portal/${token}/review/${enc(code)}`),
-  closeupUrl: (token: string, code: string, x: number, y: number) => scopedUrl(`/v1/portal/${token}/review/${enc(code)}/closeup?x=${x.toFixed(4)}&y=${y.toFixed(4)}`),
-  downloadUrl: (token: string, fileId: string) => scopedUrl(`/v1/portal/${token}/files/${enc(fileId)}/download`),
+  view: (token: string) => request<PortalView>(`/v1/portal/${tok(token)}`, { key: '' }),
+  agree: (token: string, version: number) => request<PortalView>(`/v1/portal/${tok(token)}/plan/agree`, { method: 'POST', body: { version }, key: '' }),
+  askPlanChanges: (token: string, note: string) => request<PortalView>(`/v1/portal/${tok(token)}/plan/changes`, { method: 'POST', body: { note }, key: '' }),
+  paySession: (token: string, stageId: string, instrument: PayMethod) => request<PaySession>(`/v1/portal/${tok(token)}/stages/${enc(stageId)}/pay/session`, { method: 'POST', body: { instrument }, key: '' }),
+  payConfirm: (token: string, stageId: string) => request<PortalView>(`/v1/portal/${tok(token)}/stages/${enc(stageId)}/pay/confirm`, { method: 'POST', body: {}, key: '' }),
+  approve: (token: string, stageId: string) => request<PortalView>(`/v1/portal/${tok(token)}/stages/${enc(stageId)}/approve`, { method: 'POST', body: {}, key: '' }),
+  changes: (token: string, stageId: string, note: string) => request<PortalView>(`/v1/portal/${tok(token)}/stages/${enc(stageId)}/changes`, { method: 'POST', body: { note }, key: '' }),
+  cancel: (token: string, stageId: string) => request<PortalView>(`/v1/portal/${tok(token)}/stages/${enc(stageId)}/cancel`, { method: 'POST', body: {}, key: '' }),
+  openFile: (token: string, fileId: string) => request<{ session: string; expiresAt: string; closeupsLeft: number; width: number | null; height: number | null; name: string }>(`/v1/portal/${tok(token)}/files/${enc(fileId)}/session`, { method: 'POST', body: {}, key: '' }),
+  review: (token: string, stars: number, text: string) => request<PortalView>(`/v1/portal/${tok(token)}/review`, { method: 'POST', body: { stars, text }, key: '' }),
+  thumbUrl: (token: string, fileId: string) => scopedUrl(`/v1/portal/${tok(token)}/files/${enc(fileId)}/thumb`),
+  reviewUrl: (token: string, code: string) => scopedUrl(`/v1/portal/${tok(token)}/review/${enc(code)}`),
+  closeupUrl: (token: string, code: string, x: number, y: number) => scopedUrl(`/v1/portal/${tok(token)}/review/${enc(code)}/closeup?x=${x.toFixed(4)}&y=${y.toFixed(4)}`),
+  downloadUrl: (token: string, fileId: string) => scopedUrl(`/v1/portal/${tok(token)}/files/${enc(fileId)}/download`),
 }
 
 export function bytes(size: number): string {

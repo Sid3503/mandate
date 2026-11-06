@@ -102,6 +102,7 @@ test('a client approves the plan, pays a sealed stage into a hold, and releases 
 })
 
 test('the studio sees what it is owed, project by project, with its ledger', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('mandate.tour.welcome', '1'))
   await page.goto('/app/unlock')
   await page.getByLabel('API key').fill(OWNER)
   await page.getByRole('button', { name: 'Unlock console' }).click()
