@@ -76,7 +76,7 @@ if (!REAL_PAYPAL) await page.route('**/web-sdk/**', (route) => route.fulfill({
   contentType: 'application/javascript',
   body: `window.paypal = {
   createInstance: async () => ({
-    findEligibleMethods: async () => ({ isEligible: () => true }),
+    findEligibleMethods: async () => ({ isEligible: () => true, getDetails: () => undefined }),
     createCardFieldsOneTimePaymentSession: () => ({
       createCardFieldsComponent: (options) => {
         const field = document.createElement('input')
@@ -843,6 +843,226 @@ if (process.env.BEAT === 'reach') {
   await context.close()
   await browser.close()
   process.exit(0)
+}
+// BEAT=projects records a project paid on approval, end to end, in one tab that moves between the studio's console and
+// the client's own link: the brief, the plan a live model drafts and code reads back, the client approving it, the
+// sealed delivery and its check, the client paying into a real PayPal hold by card, the watermarked review with a
+// close-up, and the approval that captures the hold and unlocks the files. Off camera it signs the rules the job's own
+// sentence asks for (bill a signed plan's stage when it is delivered, pay Mateo half from settled money), and a profile.
+// Each step's focus rectangle is written beside its mark, so the edit's camera follows what is on screen.
+if (process.env.BEAT === 'projects') {
+  const auth = { authorization: `Bearer ${OWNER}` }
+  const ASSETS = process.env.PROJECT_ASSETS ?? 'pitch/video/projects-assets'
+  const live = await (await page.request.get(`${BASE}/v1/warrant`, { headers: auth })).json()
+  const { id: _i, version: _v, createdAt: _c, ...rules } = live
+  const standing = [{ id: 'payee_standing', payeeId: SC.payee.id, clientIds: [SC.client.id], requireDeal: true, shareBps: SC.rules.contractorShareBps }]
+  const automation = { ...rules.automation, billSignedDeals: true, payOnSettle: true, requireAcceptance: false }
+  const put = await page.request.put(`${BASE}/v1/warrant`, { headers: auth, data: { ...rules, standing, automation, fundingRequired: true } })
+  if (put.status() !== 201) throw new Error(`the rules were not signed: ${put.status()} ${await put.text()}`)
+  const prof = await page.request.put(`${BASE}/v1/profile`, { headers: auth, data: { handle: 'ironbark-labs', displayName: SC.studio, headline: 'Web engineering studio, Bengaluru', bio: 'We design and build online stores for independent brands.', website: null, email: null } })
+  if (prof.status() !== 200) throw new Error(`profile: ${prof.status()} ${await prof.text()}`)
+  const clientEmail = live.clients.find((c) => c.id === SC.client.id)?.email ?? SC.client.email
+  const BRIEF = [
+    `${CLIENT}: a new online store`,
+    '',
+    `Hi ${OWNER_NAME}, we roast in small batches in Goa and sell at two cafés. We want to sell our beans online before the holidays.`,
+    '',
+    'What we need',
+    '• First, three page designs: the home page, a product page and the cart',
+    '• Then build the store with checkout, and launch it',
+    '',
+    'Budget is $2,500, paid in two equal parts, and we want it live in 4 weeks.',
+    '',
+    `Contact: ${clientEmail}`,
+  ].join('\n')
+  const focusMarks = []
+  const focus = async (id, locator) => {
+    mark(id)
+    const box = await locator.boundingBox().catch(() => null)
+    focusMarks.push({ id, ts: lastFrameTs, rect: box ? [Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)] : null })
+  }
+  const done = async () => {
+    await client.send('Page.stopScreencast')
+    await pause(600)
+    await flushFrames()
+    writeFileSync(`${OUT}/frames.json`, JSON.stringify(frames))
+    writeFileSync(`${OUT}/marks.json`, JSON.stringify({ t0: frames[0] ?? null, marks, focus: focusMarks }))
+    log(`frames ${frames.length}, span ${(frames[frames.length - 1] - frames[0]).toFixed(2)}s`)
+    await context.close()
+    await browser.close()
+    process.exit(0)
+  }
+
+  await page.getByLabel('API key').fill(OWNER)
+  await page.getByRole('button', { name: 'Unlock console' }).click()
+  await page.getByRole('heading', { name: /Waiting for you/ }).waitFor()
+  await page.goto(`${BASE}/app/projects/new`)
+  await page.getByTestId('brief').waitFor()
+  await quiet()
+  await pause(500)
+  await client.send('Page.startScreencast', SCREENCAST)
+  await pause(400)
+
+  // 1. The brief, pasted as it came.
+  await focus('p-brief', page.getByTestId('brief'))
+  await moveTo(page.getByTestId('brief'), 500)
+  await page.getByTestId('brief').fill(BRIEF)
+  await pause(1600)
+  log('plan the payments (live model)')
+  await focus('p-plan-click', page.getByTestId('plan-payments'))
+  await click(page.getByTestId('plan-payments'), 300)
+  const plan = page.getByTestId('drafted-plan')
+  await plan.waitFor({ timeout: 180000 })
+  await quiet()
+  await pause(300)
+  await focus('p-plan', plan)
+  const prices = page.getByTestId('stage-price')
+  const count = await prices.count()
+  log(`stages drafted: ${count}`)
+  const nameField = page.locator('.client-box input').first()
+  if (!(await nameField.inputValue())) await nameField.fill(CLIENT)
+  await pause(2400)
+  // The first stage is what the rest of the film follows: half of the $2,500, paid when its work is approved.
+  const first = await prices.first().inputValue()
+  if (first !== '1250') {
+    log(`first stage drafted at ${first}; ${OWNER_NAME} sets it to 1250`)
+    await click(prices.first(), 200)
+    await prices.first().selectText()
+    await page.keyboard.type('1250', { delay: 90 })
+    await pause(500)
+  }
+  await focus('p-flags', page.locator('.plan-flags, .flag-clear').first())
+  await pause(1800)
+  await focus('p-create', page.getByTestId('create-project'))
+  await click(page.getByTestId('create-project'), 400)
+  await page.waitForURL(/\/app\/projects\/prj_/, { timeout: 30000 })
+  await page.getByTestId('plan-waiting').waitFor()
+  await quiet()
+  const projectUrl = page.url()
+  const projectId = projectUrl.split('/projects/')[1]
+  const made = await (await page.request.get(`${BASE}/v1/projects/${projectId}`, { headers: auth })).json()
+  const link = `${BASE}/app/c/${made.link.url.split('/app/c/')[1]}`
+  const stageId = made.stages[0].id
+  await focus('p-sent', page.getByTestId('plan-waiting'))
+  await pause(1400)
+
+  // 2. The client opens their link: no account. They approve the plan before any money moves.
+  log('client: open the link')
+  await page.goto(link)
+  await page.getByTestId('plan-review').waitFor()
+  await quiet()
+  await focus('c-plan', page.getByTestId('plan-review'))
+  await pause(2600)
+  await focus('c-approve', page.getByTestId('approve-plan'))
+  await click(page.getByTestId('approve-plan'), 500)
+  await page.getByTestId('portal-stage').first().waitFor()
+  await quiet()
+  await focus('c-agreed', page.getByTestId('portal-stage').first())
+  await pause(1600)
+
+  // 3. The studio delivers two of the three designs; the check against the plan names what is missing.
+  log('studio: deliver')
+  await page.goto(projectUrl)
+  await page.getByTestId('plan-agreed').waitFor()
+  await quiet()
+  const stage = page.locator(`[data-testid="stage-card"]`).first()
+  await smoothScrollTo(stage, { ms: 700, align: 'top', margin: 90 })
+  await focus('s-stage', stage)
+  await moveTo(stage.getByTestId('add-files'), 500)
+  await stage.locator('input[type=file]').setInputFiles([`${ASSETS}/coastline-home.png`, `${ASSETS}/coastline-product.png`])
+  await stage.locator('.file-tile img').nth(1).waitFor({ timeout: 30000 })
+  await pause(900)
+  await focus('s-check-click', stage.getByRole('button', { name: /Check against the plan/ }))
+  await click(stage.getByRole('button', { name: /Check against the plan/ }), 300)
+  const check = stage.getByTestId('check-card')
+  await check.waitFor({ timeout: 120000 })
+  await check.locator('.check-card-head').click()
+  await quiet()
+  await focus('s-check', check)
+  await pause(3200)
+  await stage.locator('input[type=file]').setInputFiles([`${ASSETS}/coastline-cart.png`])
+  await stage.locator('.file-tile img').nth(2).waitFor({ timeout: 30000 })
+  await pause(700)
+  await focus('s-send-click', stage.getByTestId('send-stage'))
+  await click(stage.getByTestId('send-stage'), 300)
+  await page.locator('[data-testid="stage-card"][data-status="delivered"]').first().waitFor({ timeout: 120000 })
+  await quiet()
+  const bill = page.locator('.bill-line').first()
+  await smoothScrollTo(bill, { ms: 600, align: 'center' })
+  await focus('s-sent', bill)
+  await pause(2600)
+
+  // 4. The client sees it sealed, with the check, and pays into a PayPal hold by card.
+  log('client: pay into the hold')
+  await page.goto(link)
+  const cStage = page.getByTestId('portal-stage').first()
+  await cStage.getByTestId('pay-into-hold').waitFor({ timeout: 30000 })
+  await cStage.locator('.sealed-tile img').nth(2).evaluate((img) => (img.complete ? null : new Promise((r) => img.addEventListener('load', r, { once: true }))))
+  await smoothScrollTo(cStage, { ms: 10, align: 'top', margin: 90 })
+  await quiet()
+  await focus('c-sealed', cStage)
+  await pause(2400)
+  await focus('c-pay-click', cStage.getByTestId('pay-into-hold'))
+  await click(cStage.getByTestId('pay-into-hold'), 400)
+  if (REAL_PAYPAL) {
+    const field = (kind) => page.frameLocator(`[data-testid="pay-field-${kind}"] iframe`).first().locator('input').first()
+    await field('number').waitFor({ timeout: 60000 })
+    await smoothScrollTo(page.getByTestId('pay-sheet'), { ms: 600, align: 'center' })
+    await focus('c-card', page.getByTestId('pay-sheet'))
+    for (const [kind, value] of [['number', '4111111111111111'], ['expiry', '1228'], ['cvv', '123']]) {
+      await moveTo(page.getByTestId(`pay-field-${kind}`), 380)
+      await field(kind).click()
+      await field(kind).pressSequentially(value, { delay: 45 })
+    }
+  } else {
+    await page.locator('[data-paypal-field="number"]').waitFor()
+    await focus('c-card', page.getByTestId('pay-sheet'))
+    await page.locator('[data-paypal-field="number"]').fill('4111 1111 1111 1111')
+    await page.locator('[data-paypal-field="expiry"]').fill('12 / 28')
+    await page.locator('[data-paypal-field="cvv"]').fill('123')
+  }
+  await pause(500)
+  await focus('c-pay-submit', page.getByTestId('pay-submit'))
+  await click(page.getByTestId('pay-submit'), 300)
+  await cStage.getByTestId('hold-banner').waitFor({ timeout: 180000 })
+  await page.reload()
+  await cStage.getByTestId('hold-banner').waitFor()
+  await smoothScrollTo(cStage, { ms: 10, align: 'top', margin: 90 })
+  await quiet()
+  await focus('c-held', cStage.getByTestId('hold-banner'))
+  await pause(2600)
+
+  // 5. A watermarked review copy made for this session, and a close-up of the original resolution.
+  await focus('c-review-click', cStage.getByTestId('review-file').first())
+  await click(cStage.getByTestId('review-file').first(), 300)
+  const shown = page.locator('.viewer-stage > img').first()
+  await shown.waitFor({ timeout: 30000 })
+  await page.waitForFunction(() => { const img = document.querySelector('.viewer-stage > img'); return Boolean(img && img.naturalWidth > 0) })
+  await quiet()
+  await focus('c-review', page.locator('.viewer'))
+  await pause(1800)
+  const box = await shown.boundingBox()
+  await moveToPoint(box.x + box.width * 0.3, box.y + box.height * 0.28, 500)
+  await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.28)
+  await page.locator('.loupe').waitFor({ timeout: 20000 })
+  await page.waitForFunction(() => { const img = document.querySelector('.loupe'); return Boolean(img && img.naturalWidth > 0) })
+  await focus('c-closeup', page.locator('.loupe'))
+  await pause(2600)
+  await page.keyboard.press('Escape')
+  await pause(500)
+
+  // 6. They approve: the hold is captured through the gate's capture path, and the files unlock.
+  await smoothScrollTo(cStage.getByTestId('approve-release'), { ms: 600, align: 'center' })
+  await focus('c-approve-click', cStage.getByTestId('approve-release'))
+  await click(cStage.getByTestId('approve-release'), 300)
+  await page.locator('[data-testid="portal-stage"][data-status="released"]').first().waitFor({ timeout: 180000 })
+  await pause(1300)
+  await smoothScrollTo(cStage, { ms: 500, align: 'top', margin: 90 })
+  await focus('c-released', cStage)
+  await pause(3000)
+  log(`project ${projectId}, stage ${stageId}`)
+  writeFileSync(`${OUT}/project.json`, JSON.stringify(await (await page.request.get(`${BASE}/v1/projects/${projectId}`, { headers: auth })).json(), null, 1))
+  await done()
 }
 // BEAT=refund records only the refund beat, on a ledger that holds the film's real Coastline payment (E2E_ADOPT, see
 // api/src/dev/adopt.ts): the receipt's "Propose a refund", the rules' answer, Today waiting for the owner, her two taps,

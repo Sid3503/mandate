@@ -89,7 +89,7 @@ async function payIntoHold(h: ReturnType<typeof harness>, token: string, stageId
   return confirmed.json
 }
 
-describe('projects: nobody goes first', () => {
+describe('projects: paid on approval', () => {
   it('runs the whole job: signed plan, sealed delivery, a hold only the client releases, then the originals', async () => {
     const h = harness()
     const { id, token, stages } = await agreedProject(h)

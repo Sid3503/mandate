@@ -6,7 +6,7 @@ import { PaySheet, type PayVia } from '../components/PaySheet'
 import { Chip, Loading, ProblemCard, Spinner } from '../components/ui'
 import { ApiError } from '../lib/api'
 import { dollars } from '../lib/money'
-import { bytes, portalApi, when, type DeliveryCheck, type PortalStage, type PortalView } from '../lib/projects'
+import { bytes, checkTally, portalApi, when, type DeliveryCheck, type PortalStage, type PortalView } from '../lib/projects'
 
 /**
  * The client's project page. No account and no app: the link the studio sent is the key, and it can only act on this
@@ -27,7 +27,7 @@ export function ClientPortal() {
   const gone = view.error instanceof ApiError && view.error.status === 404
   return (
     <div className="share-page portal-page">
-      <header className="share-head"><div className="brand"><Mark size={28} /><span>Mandate</span></div><span className="eyebrow">Your project · nobody goes first</span></header>
+      <header className="share-head"><div className="brand"><Mark size={28} /><span>Mandate</span></div><span className="eyebrow">Your project · paid on approval</span></header>
       <main className="portal-main" id="main">
         {view.isLoading ? <Loading label="Opening your project" /> : null}
         {gone ? <section className="panel" role="alert" data-testid="portal-gone"><h1>This link is not available</h1><p>It may have been replaced. Ask the person who sent it for the current link.</p></section> : null}
@@ -167,7 +167,7 @@ function ClientCheck({ check }: { check: DeliveryCheck }) {
       <button type="button" className="check-card-head" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <span className="check-icon">{flagged.length > 0 ? 'ⓘ' : '✓'}</span>
         <strong>{flagged.length > 0 ? 'A few things to look at' : 'Delivered as agreed'}</strong>
-        <span className="fine">{check.items.filter((item) => item.status === 'missing').length} not delivered · {check.items.filter((item) => item.status === 'met').length} delivered</span>
+        <span className="fine">{checkTally(check)}</span>
         <span className="link small">{open ? 'Hide' : 'See details'}</span>
       </button>
       {open ? (
@@ -268,7 +268,7 @@ function PortalStageCard({ token, data, stage, index }: { token: string; data: P
         </div>
       ) : null}
       {status === 'cancelled' ? <p className="fine">Cancelled. The hold was released back to you; you were not charged.</p> : null}
-      {status !== 'released' && status !== 'cancelled' ? <div className="stage-price-line"><span className="money money-md">{dollars(stage.amountCents, c)}</span><span className="fine">{status === 'open' || status === 'delivered' ? `Due ${when(stage.dueDate)}` : ''}</span></div> : null}
+      {status === 'open' || (status === 'delivered' && !stage.canPay) ? <div className="stage-price-line"><span className="money money-md">{dollars(stage.amountCents, c)}</span><span className="fine">{status === 'open' || status === 'delivered' ? `Due ${when(stage.dueDate)}` : ''}</span></div> : null}
 
       {viewing ? <Viewer token={token} file={viewing} onClose={() => setViewing(null)} /> : null}
       {receipt && stage.receipt ? <ReceiptModal data={data} stage={stage} onClose={() => setReceipt(false)} /> : null}

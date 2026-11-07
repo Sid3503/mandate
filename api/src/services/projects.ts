@@ -21,7 +21,7 @@ import { closeup, forModel, imageSize, readableImage, reviewCopy, sealedThumb } 
 import { live, stamp } from './live'
 
 /**
- * Two-sided projects: nobody goes first.
+ * Two-sided projects, paid on approval: the work waits sealed, the money waits held.
  *
  *   1. The studio turns a brief into a plan (a model drafts it, code reads it back against the brief) and sends it. The
  *      studio's signature covers the plan's hash.

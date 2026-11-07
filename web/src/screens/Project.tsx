@@ -7,7 +7,7 @@ import { useToast } from '../components/Toast'
 import { ApiError } from '../lib/api'
 import { useIsOwner, useWarrant } from '../lib/hooks'
 import { dollars } from '../lib/money'
-import { bytes, projectsApi, STAGE_WORDS, when, type DeliveryCheck, type StudioProject, type StudioStage } from '../lib/projects'
+import { bytes, checkTally, projectsApi, STAGE_WORDS, when, type DeliveryCheck, type StudioProject, type StudioStage } from '../lib/projects'
 import { relative } from '../lib/format'
 import { session } from '../lib/session'
 
@@ -204,14 +204,12 @@ function Thumb({ projectId, file, onRemove }: { projectId: string; file: StudioS
 export function CheckCard({ check, compact = false }: { check: DeliveryCheck; compact?: boolean }) {
   const [open, setOpen] = useState(false)
   const flagged = check.items.filter((item) => item.status === 'missing' || item.status === 'partial')
-  const missing = check.items.filter((item) => item.status === 'missing').length
-  const delivered = check.items.filter((item) => item.status === 'met').length
   return (
     <div className={`check-card ${flagged.length > 0 ? 'is-flagged' : 'is-clear'}`} data-testid="check-card">
       <button type="button" className="check-card-head" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <span className="check-icon">{flagged.length > 0 ? 'ⓘ' : '✓'}</span>
         <strong>{flagged.length > 0 ? 'A few things to look at' : 'Delivered as agreed'}</strong>
-        <span className="fine">{missing} not delivered · {delivered} delivered{flagged.length - missing > 0 ? ` · ${flagged.length - missing} incomplete` : ''}</span>
+        <span className="fine">{checkTally(check)}</span>
         <span className="link small">{open ? 'Hide' : 'See details'}</span>
       </button>
       {open || (!compact && flagged.length > 0 && open) ? (

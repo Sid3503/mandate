@@ -4,7 +4,7 @@ import { deflateRawSync } from 'node:zlib'
 const OWNER = 'owner-e2e-key-0123456789'
 
 /**
- * Projects: nobody goes first, in the browser. The client approves the plan on their link, sees the stage sealed with
+ * Projects, paid on approval, in the browser. The client approves the plan on their link, sees the stage sealed with
  * its check, pays into a hold through the console's own card form (PayPal's script is a stand-in with the same shape),
  * and releases it; the files unlock. The server is the test server with the fake PayPal, so every step is the real
  * code path: the hold is placed by authorizing an AUTHORIZE order, and captured only by the client's release.
