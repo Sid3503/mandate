@@ -194,6 +194,14 @@ function ShellFrame() {
   const live = useLive()
   const paused = useQuery({ queryKey: ['status'], queryFn: api.status, refetchInterval: 15_000, retry: false }).data?.paused ?? null
   const location = useLocation()
+  // The links scroll on a short window: keep the current page's link in view, without moving the page itself.
+  useEffect(() => {
+    const here = document.querySelector<HTMLElement>('.rail-nav .rail-link.active, .rail-nav [aria-current="page"]')
+    const list = here?.closest<HTMLElement>('.rail-nav')
+    if (!here || !list) return
+    const top = here.offsetTop - list.offsetTop
+    if (top < list.scrollTop || top + here.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = Math.max(0, top - 8)
+  }, [location.pathname])
   const toast = useToast()
   const lock = () => {
     session.clear()
