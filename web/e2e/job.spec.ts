@@ -820,13 +820,14 @@ test('the control room shows the ledger in AG Studio, follows it live, keeps a s
 test('a visitor with no key sees what Mandate is first, and can reach the unlock', async ({ page }) => {
   await page.goto('/app/')
   await expect(page).toHaveURL(/\/app\/welcome/)
-  await expect(page.getByRole('heading', { level: 1 })).toContainText('Stop being the approval button')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Get paid on approval')
   await expect(page.getByTestId('tagline')).toContainText('Only you can pay.')
   await expect(page.getByTestId('theatre')).toBeVisible()
   await expect(page.getByTestId('whos-who')).toContainText('You are the studio.')
   await expect(page.getByRole('heading', { level: 2, name: /Ask\. Check\. Tap\. Pay\. Prove\./ })).toBeVisible()
   await expect(page.locator('.land-table tbody tr')).toHaveCount(6)
-  await expect(page.locator('.land-tools li')).toHaveCount(12)
+  // the studio agent's thirteen tools, and the row that says no tool can approve or send
+  await expect(page.locator('.land-tools li')).toHaveCount(14)
   await shots(page, '30-landing')
   // Deep links to the console still ask for a key rather than showing the landing page.
   await page.goto('/app/jobs')

@@ -76,6 +76,9 @@ describe('phase guards', () => {
     const off = await call(h.app, 'POST', '/demo/start')
     expect(off.status).toBe(404)
     expect(off.json.code).toBe('flag/disabled')
+    const closed = await call(h.app, 'GET', '/demo/status')
+    expect(closed.status).toBe(200)
+    expect(closed.json).toEqual({ available: false })
   })
 
   it('serves metrics only to the admin key', async () => {
@@ -131,6 +134,8 @@ describe('workspaces, passkeys, and demo', () => {
       return { id, fetch: (request) => built.fetch(request), close: () => db.close() }
     })
     const h = harness({ flags, control, registry, masterKey: MASTER, demo: { root: dir, template }, webauthn: WA })
+    const open = await h.app.request('http://mandate.test/demo/status')
+    expect(await open.json()).toEqual({ available: true })
     const started = await h.app.request('http://mandate.test/demo/start', { method: 'POST' })
     expect(started.status).toBe(200)
     const body = await started.json() as { workspaceId: string }

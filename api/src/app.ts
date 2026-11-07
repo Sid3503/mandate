@@ -171,7 +171,7 @@ const NegotiationSchema = z.object({
   threadId: z.uuid().optional(),
 }).strict()
 
-const PUBLIC = new Set(['/', '/health', '/ready', '/healthz', '/readyz', '/openapi.json', '/v1/webhooks/paypal', '/.well-known/mandate-keys.json', '/demo/start', '/workspaces', '/join', '/join/preview', '/ops/metrics', '/ops/model/kill', '/ops/model/resume', '/__fake/session'])
+const PUBLIC = new Set(['/', '/health', '/ready', '/healthz', '/readyz', '/openapi.json', '/v1/webhooks/paypal', '/.well-known/mandate-keys.json', '/demo/start', '/demo/status', '/workspaces', '/join', '/join/preview', '/ops/metrics', '/ops/model/kill', '/ops/model/resume', '/__fake/session'])
 
 /** A tool with one of these names could move money. The connection test fails if the door ever offered one. */
 const MONEY_MOVING_TOOLS = ['approve', 'reject', 'capture', 'pay', 'send_payout', 'refund', 'publish_rules', 'cancel', 'settle']

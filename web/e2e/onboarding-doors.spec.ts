@@ -8,9 +8,10 @@ test('welcome headline, one line of proof, three doors, and trust strip', async 
   mkdirSync(shots, { recursive: true })
   await page.goto('/app/welcome')
 
-  // Headline: the owner's problem first. The old line is still on the page, as the tagline under the doors.
+  // Headline: both halves of the studio's money, getting paid and paying out. The tagline sits under the doors.
   const h1 = page.getByRole('heading', { level: 1 })
-  await expect(h1).toContainText('Stop being the approval button')
+  await expect(h1).toContainText('Get paid on approval')
+  await expect(h1).toContainText('Pay your team by rules')
   const tagline = page.getByTestId('tagline')
   await expect(tagline).toContainText('Agents can ask.')
   await expect(tagline).toContainText('Only you can pay.')
@@ -25,10 +26,27 @@ test('welcome headline, one line of proof, three doors, and trust strip', async 
   const doors = page.getByTestId('three-doors')
   await expect(doors).toBeVisible()
 
-  // Primary door: Try the demo
-  const demoDoor = page.getByTestId('door-demo')
-  await expect(demoDoor).toBeVisible()
-  await expect(demoDoor).toContainText('Try the demo')
+  // Primary door: Try the demo, offered only when this server has the demo open. Where it is off, the first button
+  // plays the replay instead, and the page says why, rather than a button that answers with a 404.
+  const { available } = await (await page.request.get('/demo/status')).json() as { available: boolean }
+  if (available) {
+    const demoDoor = page.getByTestId('door-demo')
+    await expect(demoDoor).toBeVisible()
+    await expect(demoDoor).toContainText('Try the demo')
+    await expect(page.getByTestId('demo-off')).toHaveCount(0)
+  } else {
+    await expect(page.getByTestId('door-watch')).toContainText('Watch it run')
+    await expect(page.getByTestId('door-watch')).toHaveAttribute('href', '#watch')
+    await expect(page.getByTestId('demo-off')).toContainText('not switched on')
+    await expect(page.getByTestId('door-demo')).toHaveCount(0)
+  }
+
+  // Paid on approval: the three real screens of one stage, and the agent tools counted from the list itself.
+  const paid = page.getByTestId('paid-on-approval')
+  await expect(paid.getByRole('heading', { level: 2 })).toContainText('The work waits sealed')
+  await expect(paid.locator('img')).toHaveCount(3)
+  await expect(page.getByTestId('agent-tools').locator('li:not(.none) code')).toHaveCount(13)
+  await expect(page.locator('#agents')).toContainText('MCP server with 13 tools')
 
   // Second door: Create your studio
   const studioDoor = page.getByTestId('door-studio')

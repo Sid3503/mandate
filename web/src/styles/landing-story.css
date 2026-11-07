@@ -272,3 +272,16 @@
   .th-beat.is-on, .th-fake-btn, .th-chapter-bar > span, .th-switch::after { transition: none; }
   .map-node, .map-agent, .map-pipe i, .hero-cue span:last-child { animation: none; }
 }
+
+/* Paid on approval: three real screens of one stage, sealed, held, released */
+.paid-steps { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+.paid-steps li { display: grid; gap: 10px; align-content: start; }
+.paid-steps img { width: 100%; height: auto; border: 2px solid var(--ink); box-shadow: var(--shadow-s); background: var(--surface); }
+.paid-steps h3 { margin: 4px 0 0; font: 800 clamp(24px, 2.2vw, 30px)/1.02 var(--display); text-transform: uppercase; }
+.paid-steps h3 .mono { font-size: 0.55em; vertical-align: middle; margin-right: 6px; }
+.paid-steps p { margin: 0; font-size: 16px; line-height: 1.5; }
+.paid-facts { margin: 4px 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.paid-facts li { border-top: 4px solid var(--ink); padding-top: 12px; font-size: 15px; line-height: 1.5; }
+@media (max-width: 960px) {
+  .paid-steps, .paid-facts { grid-template-columns: 1fr; }
+}

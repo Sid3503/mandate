@@ -352,6 +352,8 @@ export const api = {
   safety: () => request<Safety>('/v1/safety'),
   suggestions: () => request<Suggestions>('/v1/suggestions'),
   guarantees: () => request<Guarantees>('/v1/guarantees'),
+  /** Whether the demo door is open on this server: the front page offers it only when it will work. */
+  demoStatus: () => request<{ available: boolean }>('/demo/status'),
   demoStart: () => request<{ workspaceId: string; expiresAt: string; role: string; mode: string }>('/demo/start', { method: 'POST', body: {} }),
   createStudio: (name: string) => request<{ workspaceId: string; memberId: string; challengeId: string; options: Record<string, unknown>; paypal: 'fake' | 'sandbox' }>('/workspaces', { method: 'POST', body: { name } }),
   /** Closes this studio. Money already sent stays in PayPal. The ledger on this server is deleted. */
