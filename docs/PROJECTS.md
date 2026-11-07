@@ -1,7 +1,7 @@
-# Projects: nobody goes first
+# Projects: paid on approval
 
-A freelancer won't send the work until they're paid. A client won't pay until they've seen it. Projects is how Mandate
-breaks that standoff, on the same engine that already decides every payment: the gate, the signed lock, the funding
+The work waits sealed. The money waits held. A studio is paid when its client approves the work, and a client pays
+only for work they have seen. Projects is how Mandate does that, on the same engine that already decides every payment: the gate, the signed lock, the funding
 rule, the contractor share, the audit.
 
 ## The flow

@@ -172,6 +172,10 @@ export function mountExtra(app: Hono<any>, ctx: ProductCtx, selfFetch: (request:
     app.all('/w/:workspace', forwardTenant)
     app.all('/w/:workspace/*', forwardTenant)
 
+    // Whether the demo door is open, so the front page offers it only when it will work. Says nothing about how many
+    // demos are running or who started them: one boolean.
+    app.get('/demo/status', (c) => c.json({ available: Boolean(flags.tenancy && flags.demoEnabled && ctx.demo && ctx.masterKey) }))
+
     app.post('/demo/start', async (c) => {
       if (!flags.tenancy || !flags.demoEnabled) throw new Problem(404, 'flag/disabled', 'Not available', 'The demo door is off on this server.')
       const control = requireControl(ctx)

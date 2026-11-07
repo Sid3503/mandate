@@ -18,7 +18,7 @@ export function Projects() {
   const owner = useIsOwner()
   return (
     <div className="page">
-      <PageHead eyebrow="Nobody goes first" title="Projects">
+      <PageHead eyebrow="Paid on approval" title="Projects">
         <Link className="btn btn-lime" to="/projects/new" data-testid="new-project">New project</Link>
       </PageHead>
       {summary.isLoading ? <Loading label="Opening projects" /> : null}

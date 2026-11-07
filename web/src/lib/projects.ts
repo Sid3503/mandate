@@ -166,3 +166,11 @@ export const STAGE_WORDS: Record<StageStatus, { label: string; tone: 'deny' | 'a
   cancelled: { label: 'Cancelled · not charged', tone: 'muted' },
   removed: { label: 'Removed', tone: 'muted' },
 }
+
+/** The check's tally in words, naming only what is there: "1 incomplete", "3 delivered · 1 not delivered". */
+export function checkTally(check: DeliveryCheck): string {
+  const count = (status: CheckItem['status']) => check.items.filter((item) => item.status === status).length
+  const parts = [[count('met'), 'delivered'], [count('missing'), 'not delivered'], [count('partial'), 'incomplete']] as const
+  const said = parts.filter(([n]) => n > 0).map(([n, word]) => `${n} ${word}`)
+  return said.length > 0 ? said.join(' · ') : `${check.items.length} note${check.items.length === 1 ? '' : 's'}`
+}
