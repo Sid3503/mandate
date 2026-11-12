@@ -194,6 +194,9 @@ export function openProduct(input: {
       watch,
       now: input.now,
       signer,
+      // Links a workspace hands out (a client's project link, a receipt, dispute evidence) use the site's own address,
+      // never the services' localhost default.
+      publicUrl: input.publicUrl,
       workspaceId: id,
       payeeBook: flags.payeeBook,
       newPayeeWaitHours: flags.newPayeeWaitHours,
