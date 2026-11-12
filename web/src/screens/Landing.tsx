@@ -177,7 +177,7 @@ export function Landing() {
         <section id="watch" className="watch" aria-labelledby="h-watch">
           <div className="watch-head">
             <span className="eyebrow">Watch it run</span>
-            <h2 id="h-watch">One job, start to finish, in twelve chapters.</h2>
+            <h2 id="h-watch">One job, start to finish, in thirteen chapters.</h2>
             <p className="fine">Pick any chapter, change the speed, or go full screen. Every card is the console’s own, with the real numbers.</p>
           </div>
           <Theatre onTry={() => void startDemo()} busy={busy} />

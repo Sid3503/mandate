@@ -81,11 +81,11 @@ const CHAPTERS: Chapter[] = [
     act: 'Run a job',
     short: 'Agree',
     title: 'Agree a price, with their limit sealed',
-    feature: 'Agent-to-agent deal · private limits',
-    caption: 'Northwind wants a logo. Your agent agrees $300 with theirs. Their ceiling stays sealed: you never see it, and they never see your floor.',
+    feature: 'Two AI negotiators · private limits',
+    caption: 'Northwind wants a logo. Your negotiator and theirs trade offers, each knowing only its own limit. A deal exists only when one side accepts the other’s exact offer, and the server signs it.',
     view: 'studio',
-    beats: [0, 2600, 5000, 7600],
-    ms: 11_000,
+    beats: [0, 2400, 4800, 7000, 9200],
+    ms: 12_000,
     scene: (beat) => (
       <div className="th-scene">
         <div className="th-limits">
@@ -100,11 +100,12 @@ const CHAPTERS: Chapter[] = [
             <span className="fine">Set by Northwind. Never shown to you.</span>
           </div>
         </div>
-        <ol className="th-offers" aria-label="Offers">
-          <li><Beat on={beat >= 1}><span className="money money-md">$450</span><span className="chip chip-deny">Refused</span><span className="th-why">Over Northwind’s limit</span></Beat></li>
-          <li><Beat on={beat >= 2}><span className="money money-md">$200</span><span className="chip chip-deny">Refused</span><span className="th-why">Under your floor</span></Beat></li>
-          <li><Beat on={beat >= 3} className="th-agreed"><span className="money money-md">$300</span><span className="chip chip-auto">Agreed · signed</span><span className="th-why">2 milestones of $150</span></Beat></li>
+        <ol className="th-moves" aria-label="Offers">
+          {([['You', '$400', 1], ['Northwind', '$200', 1], ['You', '$350', 2], ['Northwind', '$265', 2], ['You', '$300', 3]] as const).map(([who, amount, at], index) => (
+            <li key={index}><Beat on={beat >= at} className={`th-move${who === 'You' ? ' is-you' : ''}`}><span className="eyebrow">{who}</span><span className="money money-md">{amount}</span></Beat></li>
+          ))}
         </ol>
+        <Beat on={beat >= 4} className="th-agreed-line"><span className="chip chip-auto">Accepted · signed</span><span><b>$300</b>, 2 milestones of $150. The server checked both sides’ rules before it signed.</span></Beat>
       </div>
     ),
   },
@@ -158,6 +159,44 @@ const CHAPTERS: Chapter[] = [
           <div className={`btn ${beat >= 2 ? 'btn-ink' : 'btn-lime'} th-fake-btn`}>{beat >= 2 ? 'Paid ✓' : 'Pay $150.00'}</div>
           <Beat on={beat >= 2}><p className="fine">PayPal confirmed it. The card number never reached the studio’s server.</p></Beat>
         </div>
+      </div>
+    ),
+  },
+  {
+    act: 'Run a job',
+    short: 'On approval',
+    title: 'Or they pay on approval, into a PayPal hold',
+    feature: 'Sealed work · PayPal hold',
+    caption: 'For project work, neither side goes first. Northwind sees sealed previews and pays the stage into a PayPal hold. Only their approval captures it, and your own settle is refused.',
+    view: 'client',
+    beats: [0, 3000, 6200, 8800],
+    ms: 11_500,
+    scene: (beat) => (
+      <div className="th-scene">
+        <ol className="th-hold" aria-label="Paid on approval">
+          <li>
+            <Beat on className="th-hold-step">
+              <span className="eyebrow">1 · Sealed</span>
+              <span className="th-sealed-files" aria-hidden="true"><i /><i /><i /></span>
+              <span className="fine">Logo concepts · checked against the signed plan ✓</span>
+            </Beat>
+          </li>
+          <li>
+            <Beat on={beat >= 1} className="th-hold-step">
+              <span className="eyebrow">2 · Held by PayPal</span>
+              <span className="money money-md">$150.00</span>
+              <span className="fine">Still Northwind’s money. They review watermarked copies.</span>
+            </Beat>
+          </li>
+          <li>
+            <Beat on={beat >= 3} className="th-hold-step is-done">
+              <span className="eyebrow">3 · Approved</span>
+              <span className="money money-md">Captured ✓</span>
+              <span className="fine">PayPal captures the hold and the files unlock.</span>
+            </Beat>
+          </li>
+        </ol>
+        <Beat on={beat >= 2}><div className="th-refused"><span className="chip chip-deny">Refused</span><span>You press Settle yourself: <code>hold.client_decides</code>. Only Northwind’s approval, or silence past the review window, releases it.</span></div></Beat>
       </div>
     ),
   },
