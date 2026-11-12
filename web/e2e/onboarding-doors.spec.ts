@@ -91,16 +91,16 @@ test('the replay on the front page can be driven: any chapter, keys, seek, speed
   await expect(play).toContainText('Play')
 
   // Any chapter, straight away: picked while paused, it is shown whole.
-  await page.getByTestId('theatre-chapter-9').click()
-  await expect(title).toContainText('9/12')
+  await page.getByTestId('theatre-chapter-10').click()
+  await expect(title).toContainText('10/13')
   await expect(page.getByTestId('theatre-caption')).toContainText('$250')
   await expect(theatre.locator('.th-time')).toHaveText('0:11 / 0:11')
 
   // The keys move between chapters.
-  await page.getByTestId('theatre-chapter-9').press('ArrowRight')
-  await expect(title).toContainText('10/12')
-  await page.getByTestId('theatre-chapter-9').press('ArrowLeft')
-  await expect(title).toContainText('9/12')
+  await page.getByTestId('theatre-chapter-10').press('ArrowRight')
+  await expect(title).toContainText('11/13')
+  await page.getByTestId('theatre-chapter-10').press('ArrowLeft')
+  await expect(title).toContainText('10/13')
 
   // Seek inside a chapter.
   await theatre.locator('.th-seek input').fill('3000')
@@ -111,11 +111,11 @@ test('the replay on the front page can be driven: any chapter, keys, seek, speed
   await theatre.locator('.th-speed select').selectOption('2')
   await play.click()
   await expect(play).toContainText('Play', { timeout: 10_000 })
-  await expect(title).toContainText('9/12')
+  await expect(title).toContainText('10/13')
 
   // The last chapter leads to the end, which offers the demo.
-  await page.getByTestId('theatre-chapter-12').click()
-  await page.getByTestId('theatre-chapter-12').press('ArrowRight')
+  await page.getByTestId('theatre-chapter-13').click()
+  await page.getByTestId('theatre-chapter-13').press('ArrowRight')
   await expect(page.getByTestId('theatre-end')).toContainText('You tapped once.')
   await expect(page.getByRole('button', { name: 'Do this yourself →' })).toBeVisible()
 })
