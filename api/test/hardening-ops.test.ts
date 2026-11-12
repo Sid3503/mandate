@@ -15,7 +15,7 @@ import { inWorkspace, live, type LiveEvent } from '../src/services/live'
 import { acceptLegacyMachineKey, machineKeyHashKnown } from '../src/services/machine-key'
 import { seal } from '../src/tenancy/envelope'
 import { TenantRegistry, type TenantHandle } from '../src/tenancy/registry'
-import { closeAll, NOW } from './support'
+import { closeAll, harness, NOW } from './support'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -199,6 +199,52 @@ describe('a studio\'s own app is rate limited', () => {
       }
       expect(statuses.slice(0, 2).every((status) => status === 401)).toBe(true)
       expect(statuses[2]).toBe(429)
+    } finally {
+      product.close()
+    }
+  })
+})
+
+describe('a studio\'s links use the site\'s own address', () => {
+  it('gives a client a project link on the public address, never localhost', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mandate-tenant-links-'))
+    const master = Buffer.alloc(32, 4).toString('base64')
+    const flags = loadFlags({ FLAG_TENANCY: '1', DEMO_ENABLED: '1' })
+    // The real hosted wiring: openProduct builds each workspace's app, as the server does on Render.
+    const product = openProduct({
+      databasePath: join(dir, 'mandate.sqlite'),
+      flags,
+      env: { MASTER_KEY: master, KEY_PEPPER: 'pepper-pepper-pepper-32' },
+      publicUrl: 'https://mandate.example',
+      now: () => NOW,
+      nodeEnv: 'test',
+    })
+    try {
+      const h = harness({ flags, control: product.control, registry: product.registry, masterKey: master, demo: product.demo })
+      const started = await h.app.request('http://mandate.test/demo/start', { method: 'POST' })
+      expect(started.status).toBe(200)
+      const { workspaceId } = await started.json() as { workspaceId: string }
+      const cookie = started.headers.get('set-cookie') ?? ''
+      const call = async (path: string, body: unknown) => {
+        const response = await h.app.request(`http://mandate.test/w/${workspaceId}${path}`, {
+          method: 'POST',
+          headers: { cookie, origin: 'https://mandate.example', 'x-mandate-client': 'web', 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        return { status: response.status, json: await response.json() as Record<string, unknown> }
+      }
+      const due = (days: number) => new Date(NOW.getTime() + days * 86_400_000).toISOString().slice(0, 10)
+      const made = await call('/v1/projects', {
+        title: 'Brand kit', summary: 'Two stages.', clientName: 'Kola Press', clientEmail: 'hello@kolapress.example', currency: 'USD', category: 'design',
+        reviewDays: 3, reviseDays: 3, brief: 'A logo and a brand kit.', briefSource: null, questions: [],
+        stages: [{ title: 'Logo', description: '', deliverables: ['A logo'], amountCents: 15_000, dueDate: due(6) }],
+      })
+      expect(made.status, JSON.stringify(made.json)).toBe(201)
+      const sent = await call(`/v1/projects/${String(made.json.id)}/send`, {})
+      expect(sent.status).toBe(200)
+      const url = (sent.json.link as { url: string }).url
+      expect(url.startsWith('https://mandate.example/app/c/')).toBe(true)
+      expect(url).not.toContain('localhost')
     } finally {
       product.close()
     }

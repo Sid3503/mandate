@@ -26,6 +26,8 @@ Mandate is a spend-authority layer that sits in front of PayPal. Staff and AI ag
 6. **Money in releases money out.** A contractor is paid only from client money PayPal confirmed settled on the same job, never above their share, never twice, never past the monthly cap.
 7. **The client pays on our own page.** PayPal's card fields render *inside* Mandate; card data never reaches our server. The order is created from the lock; the server re-reads it and refuses to capture if the amount, currency or reference differ. The buyer still approves the order in PayPal — Mandate cannot do it for them. 3-D Secure is verified against PayPal, not trusted from the browser.
 8. **Every dollar has a receipt.** A SHA-256 lock signed with Ed25519, PayPal's ids, the fee and a cents match. The Proof page re-verifies the whole ledger on demand, and any receipt can be checked in a browser without trusting the server.
+9. **Paid on approval, for project work.** Paste a client's brief; a model drafts paid stages and code reads them back against the brief's own budget, deadline and counts. The client approves the plan on a private link, with no account, and both signatures make it a deal the gate enforces. Work goes out sealed: blurred previews, a check against the plan (an AI look at the images can only add doubt, never mark work delivered), watermarked review copies and close-ups. The client pays each stage into a **PayPal hold** (an Orders v2 `AUTHORIZE` order); only their approval captures it, and the studio's own Settle is refused (`hold.client_decides`). Silence past the review window releases it; a missed revision deadline lets the client void it. The files unlock only after capture, and a public review counts only if it comes with a paid stage.
+10. **Know the worst case before it happens.** *Blast radius* computes, from the signed rules and the ledger, the most that could leave with no tap. *Attack my rules* plays a hostile proposer against the real gate on a copy of the ledger and suggests the fix. A *regret window* lets the owner undo an automatic payment before it is sent.
 
 *Note on the demo cast: the recorded video uses Ironbark Labs (Ananya, Coastline Coffee, Mateo Silva); the seeded console opens with Line Studio (Meera, Northwind, Priya Shah). Same engine, same rules, same gate — only the story cast differs.*
 
@@ -33,10 +35,10 @@ Mandate is a spend-authority layer that sits in front of PayPal. Staff and AI ag
 
 ## How We Built It
 
-- **Server**: TypeScript on Node.js 24, Hono, Zod, and `node:sqlite` in immediate transactions. Integer cents everywhere, idempotency keys on every write, OpenAPI for all 118 routes.
-- **PayPal**: Orders v2 (checkout and card fields on our own page), Payouts v1, Payments v2 refunds, Invoicing through the Agent Toolkit, disputes and transaction search, and webhook signature verification. The Agent Toolkit has no Payouts tool, so Payouts calls REST directly.
+- **Server**: TypeScript on Node.js 24, Hono, Zod, and `node:sqlite` in immediate transactions. Integer cents everywhere, idempotency keys on every write, and an OpenAPI document for 116 operations (the newer project routes are not in it yet).
+- **PayPal**: Orders v2 (checkout and card fields on our own page, and `AUTHORIZE` holds with capture, void and reauthorize), Payouts v1, Payments v2 refunds, Invoicing through the Agent Toolkit, disputes and transaction search, and webhook signature verification. The Agent Toolkit has no Payouts tool, so Payouts calls REST directly.
 - **Authority**: a pure gate (`decide()`), a signed lock over payee, cents, proof, job and funding, WebAuthn passkeys for taps, and Ed25519 for locks, deals and receipts. Machine keys are HMAC-SHA256 with an environment pepper.
-- **AI**: Ollama Cloud open-weights models — `gpt-oss:120b` for the two negotiators, `gemma4:31b` for the rules drafter, `gpt-oss:20b` for the clerk and the outside agent. Prompts are versioned, fenced against injected text, snapshot-tested, and every sentence that claims money moved is taken back.
+- **AI**: Ollama Cloud open-weights models — `gpt-oss:120b` for the two negotiators, `gemma4:31b` for the rules drafter and the look at delivered images, `gpt-oss:20b` for the clerk, the outside agent and project plans (with `gemma4:31b` as the fallback). Prompts are versioned, fenced against injected text, snapshot-tested, and every sentence that claims money moved is taken back.
 - **Console**: React, Vite, TanStack Query and vanilla CSS; an AG Grid ledger with CSV export; the control room built on AG Studio; live updates over SSE; installable PWA.
 - **Proof**: Vitest, fast-check property tests, Playwright on desktop, a Pixel 7 and a passkey profile, and axe WCAG 2.1 AA on every signed-in screen.
 
@@ -55,10 +57,10 @@ Mandate is a spend-authority layer that sits in front of PayPal. Staff and AI ag
 
 ## Accomplishments That We Are Proud Of
 
-- **974 API tests across 83 files** passing clean in CI, including fast-check property sequences, 46 red-team cases and the chaos suite.
-- **160 browser tests in 24 specs** on desktop, a Pixel 7 and a passkey profile, with an axe WCAG 2.1 AA scan on every signed-in screen.
-- **23 verified cryptographic guarantees** in machine-readable JSON, checked on every build — including *no payout is larger than the contractor's share*, *nothing is paid from money that has not arrived*, *no AI can reach PayPal*, and *a buyer cannot change what is paid*.
-- **Real PayPal sandbox proof, end to end**: a bill paid **by card on our own page** (captures `16863006RF678602F`, `79204140TH113652R`), an invoice paid by the sandbox buyer and settled only when PayPal said `PAID` (`INV2-76H8-5LLT-E4P4-C2HD`), contractor payouts through Payouts v1 (`SJ5B3GGM7UBAU`, `DKPZEQ87HG8MU`), and a second payout sent by **autopilot under a signed standing rule, with no tap** (`9Z37SHHD8E598`, `SUCCESS`). A partial refund (`12C310409G863064M`) ran through the gated route.
+- **1,226 API tests across 102 files** passing clean in CI, including fast-check property sequences, 46 red-team cases and the chaos suite.
+- **189 browser tests in 30 specs** on desktop, a Pixel 7 and a passkey profile, with an axe WCAG 2.1 AA scan on every signed-in screen.
+- **26 verified cryptographic guarantees** in machine-readable JSON, checked on every build — including *no payout is larger than the contractor's share*, *nothing is paid from money that has not arrived*, *no AI can reach PayPal*, and *a buyer cannot change what is paid*.
+- **Real PayPal sandbox proof, end to end**: a bill paid **by card on our own page** (captures `16863006RF678602F`, `79204140TH113652R`), an invoice paid by the sandbox buyer and settled only when PayPal said `PAID` (`INV2-76H8-5LLT-E4P4-C2HD`), contractor payouts through Payouts v1 (`SJ5B3GGM7UBAU`, `DKPZEQ87HG8MU`), and a second payout sent by **autopilot under a signed standing rule, with no tap** (`9Z37SHHD8E598`, `SUCCESS`). A partial refund (`12C310409G863064M`) ran through the gated route. A project stage was paid **by card into a PayPal hold** (authorization `4YT88518FR6300422`) and captured only when the client approved it (`52Y4001561811571D`), and the contractor's half then went out under a standing rule.
 - **A refusal that tells you what would pass** — only variants re-run through the real gate, never a model's guess.
 - **Offline verification**: a tampered receipt fails in your browser, against public keys, with no call to our server.
 - **Mobile Lighthouse**: 90 on Welcome, 88 on Unlock, 80 on Today.
@@ -87,7 +89,7 @@ Mandate is a spend-authority layer that sits in front of PayPal. Staff and AI ag
 - TypeScript, Node.js 24, Hono, Zod
 - SQLite (`node:sqlite`)
 - React, Vite, TanStack Query, vanilla CSS
-- PayPal Orders v2, Payouts v1, Payments v2, Invoicing, Agent Toolkit
+- PayPal Orders v2 (capture and authorize-then-capture holds), Payouts v1, Payments v2, Invoicing, Agent Toolkit
 - WebAuthn / SimpleWebAuthn, Ed25519, HMAC-SHA256
 - Model Context Protocol (MCP)
 - Ollama Cloud (`gpt-oss:120b`, `gemma4:31b`, `gpt-oss:20b`)
@@ -103,7 +105,7 @@ Mandate is a spend-authority layer that sits in front of PayPal. Staff and AI ag
 
 Sandbox only. Nothing here moves real money.
 
-**Fastest, when the hosted console is up:** open the link on the Devpost page and click **Try the demo** — no key needed. Then try *Today → Try to break it* and *Deals → Let the negotiators negotiate*. If it is asleep, use the path below.
+**Fastest, when the hosted console is up:** open the link on the Devpost page and click **Try the demo** — no key needed. Then try *Today → Try to break it*, *Deals → Let the negotiators negotiate*, and *Projects → New project → Use an example*. The demo workspace runs on a **simulated PayPal** and says so in the header; **Create your studio** on the same site (a passkey, no key) runs on the real PayPal sandbox. If it is asleep, use the path below.
 
 **The real owner console, on your machine:**
 
@@ -126,6 +128,7 @@ The recorded demo uses the **Ironbark Labs** cast (`E2E_SCENARIO=ironbark` in `a
 
 - **PayPal sandbox only.** No real money moves here.
 - **Single-process SQLite.** Right for one studio, not a payment gateway.
+- **Try the demo uses a simulated PayPal.** It is labelled in the console, and it cannot take a card, so a client payment (a bill, or a project stage into a hold) needs the real sandbox: a studio you create on the same site, the owner key, your machine, or the film.
 - **The hosted demo is ephemeral.** A free Render instance sleeps and wipes its disk on restart, so a hosted copy shows a fresh ledger. The repo path above always works.
 - **An open PayPal dispute cannot be demonstrated.** The sandbox does not list a first-stage case, so the hold is fake-tested only.
 - **Browser sign-in (OAuth) is tested with the official MCP SDK client over a public https tunnel, not yet with Claude.ai or ChatGPT themselves.** It follows the MCP authorization spec (discovery, dynamic registration, PKCE S256, rotating refresh tokens), so those apps should connect, but we have not watched them do it. A key always works. It is also not in the demo video: the video's three minutes belong to the spend-authority story, and the sign-in is shown live instead.
